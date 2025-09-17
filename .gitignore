@@ -6,3 +6,6 @@ node_modules
 
 # Ignore web folder
 web/
+
+# Ignore Firebase credentials
+src/credentials/service-account.json
