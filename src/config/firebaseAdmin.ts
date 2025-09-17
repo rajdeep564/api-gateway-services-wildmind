@@ -3,8 +3,8 @@ import fs from 'fs';
 import path from 'path';
 
 if (!admin.apps.length) {
-  // 1) Try local JSON in src/config/credentials/service-account.json
-  const localJsonPath = path.resolve(__dirname, './credentials/service-account.json');
+  // 1) Try local JSON in src/credentials/service-account.json
+  const localJsonPath = path.resolve(__dirname, '../credentials/service-account.json');
   if (fs.existsSync(localJsonPath)) {
     const raw = fs.readFileSync(localJsonPath, 'utf8');
     const svc = JSON.parse(raw);
