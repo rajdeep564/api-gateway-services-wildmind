@@ -1,0 +1,40 @@
+{
+  "name": "api-gateway-services",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn src/index.ts",
+    "nodemon": "nodemon --watch src --ext ts,js,json --exec ts-node src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.15.0",
+    "compression": "^1.8.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^8.1.0",
+    "express-validator": "^7.2.1",
+    "firebase": "^12.2.1",
+    "firebase-admin": "^13.5.0",
+    "helmet": "^8.1.0",
+    "hpp": "^0.2.3",
+    "morgan": "^1.10.1",
+    "pino": "^9.9.5",
+    "pino-http": "^10.5.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/compression": "^1.8.1",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.21",
+    "@types/hpp": "^0.2.6",
+    "@types/morgan": "^1.9.10",
+    "@types/node": "^20.10.6",
+    "nodemon": "^3.1.10",
+    "pino-pretty": "^13.1.1",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.3.3"
+  }
+}
