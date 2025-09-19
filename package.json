@@ -9,7 +9,10 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.890.0",
+    "@aws-sdk/s3-request-presigner": "^3.890.0",
     "@prisma/client": "^6.15.0",
+    "@types/multer": "^2.0.0",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
@@ -21,6 +24,7 @@
     "helmet": "^8.1.0",
     "hpp": "^0.2.3",
     "morgan": "^1.10.1",
+    "multer": "^2.0.2",
     "pino": "^9.9.5",
     "pino-http": "^10.5.0",
     "uuid": "^13.0.0"

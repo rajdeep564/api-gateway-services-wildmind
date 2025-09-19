@@ -33,6 +33,7 @@ export const rateLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false
+  // Use default key generator to avoid IPv6 issues
 });
 
 
