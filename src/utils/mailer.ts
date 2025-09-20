@@ -37,10 +37,22 @@ function getTransporter() {
 export async function sendEmail(to: string, subject: string, text: string) {
   const from = process.env.SMTP_FROM || process.env.EMAIL_USER;
   const t = getTransporter();
+  
   if (!t || !from) {
-    throw new Error('Email not configured. Set EMAIL_USER and EMAIL_APP_PASSWORD in server .env');
+    // Fallback to console if email not configured
+    console.log(`[MAIL FALLBACK] To: ${to} | Subject: ${subject} | Body: ${text}`);
+    return;
   }
-  await t.sendMail({ from, to, subject, text });
+  
+  try {
+    await t.sendMail({ from, to, subject, text });
+    console.log(`[MAIL] Email sent successfully to ${to}`);
+  } catch (error: any) {
+    console.log(`[MAIL] Email failed, falling back to console log`);
+    console.log(`[MAIL FALLBACK] To: ${to} | Subject: ${subject} | Body: ${text}`);
+    console.log(`[MAIL ERROR] ${error.message}`);
+    // Don't throw error - just log OTP to console as fallback
+  }
 }
 
 

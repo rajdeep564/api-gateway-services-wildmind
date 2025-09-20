@@ -6,6 +6,7 @@ const COOKIE_NAME = 'app_session';
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   try {
+    console.log("cookies",req.cookies);
     const token = req.cookies?.[COOKIE_NAME];
     if (!token) {
       throw new ApiError('Unauthorized - No session token', 401);

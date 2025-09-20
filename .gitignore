@@ -14,5 +14,5 @@ src/config/credentials/*.json
 web/
 
 # Ignore Firebase credentials
-src/credentials/service-account.json
+src/config/credentials/service-account.json
 >>>>>>> 0865155ce1f1203295733682fae733abf57333b9
