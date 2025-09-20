@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { bflController } from '../controllers/bflController';
-import { validateBflGenerate } from '../middlewares/validateBflGenerate';
+import { validateBflGenerate } from '../middlewares/validators/bfl/validateBflGenerate';
 
 const router = Router();
 

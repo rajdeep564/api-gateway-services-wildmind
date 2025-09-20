@@ -1,0 +1,177 @@
+{
+    "info": {
+      "name": "MiniMax API E2E (Backend)",
+      "_postman_id": "e3a2f1b4-4e6b-4c25-b8f1-9a3d3fd0e2aa",
+      "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "variable": [
+      { "key": "baseUrl", "value": "http://localhost:5000" },
+      { "key": "taskId", "value": "" },
+      { "key": "fileId", "value": "" },
+      { "key": "pollCount", "value": "0" }
+    ],
+    "item": [
+      {
+        "name": "Image - Generate",
+        "request": {
+          "method": "POST",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "url": { "raw": "{{baseUrl}}/api/minimax/generate", "host": ["{{baseUrl}}"], "path": ["api","minimax","generate"] },
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"prompt\": \"A cozy cabin in a snowy forest at dusk\",\n  \"model\": \"image-01\",\n  \"aspect_ratio\": \"16:9\",\n  \"n\": 1,\n  \"response_format\": \"url\",\n  \"prompt_optimizer\": false\n}"
+          }
+        },
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "exec": [
+                "const j = pm.response.json();",
+                "pm.test('HTTP 200', () => pm.response.code === 200);",
+                "pm.test('API success', () => j.responseStatus === 'success');",
+                "pm.test('Images present', () => Array.isArray(j.data.images) && j.data.images.length > 0);"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "Video - Start",
+        "request": {
+          "method": "POST",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "url": { "raw": "{{baseUrl}}/api/minimax/video", "host": ["{{baseUrl}}"], "path": ["api","minimax","video"] },
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"model\": \"video-01\",\n  \"prompt\": \"A drone shot over a lush rainforest with morning fog\",\n  \"duration\": 5,\n  \"resolution\": \"1280x720\"\n}"
+          }
+        },
+        "event": [
+          {
+            "listen": "prerequest",
+            "script": {
+              "exec": [
+                "pm.environment.unset('taskId');",
+                "pm.environment.unset('fileId');",
+                "pm.environment.set('pollCount', '0');"
+              ]
+            }
+          },
+          {
+            "listen": "test",
+            "script": {
+              "exec": [
+                "const j = pm.response.json();",
+                "pm.test('HTTP 200', () => pm.response.code === 200);",
+                "pm.test('API success', () => j.responseStatus === 'success');",
+                "const tid = j.data.taskId || j.data.task_id || (j.data.result && j.data.result.task_id);",
+                "pm.environment.set('taskId', tid || '');",
+                "pm.test('taskId captured', () => !!pm.environment.get('taskId'));",
+                "postman.setNextRequest('Video - Status');"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "Video - Status",
+        "request": {
+          "method": "GET",
+          "url": {
+            "raw": "{{baseUrl}}/api/minimax/video/status?task_id={{taskId}}",
+            "host": ["{{baseUrl}}"],
+            "path": ["api","minimax","video","status"],
+            "query": [{ "key": "task_id", "value": "{{taskId}}" }]
+          }
+        },
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "exec": [
+                "const j = pm.response.json();",
+                "pm.test('HTTP 200', () => pm.response.code === 200);",
+                "pm.test('API success', () => j.responseStatus === 'success');",
+                "const data = j.data || {};",
+                "const status = data.status || (data.result && data.result.status);",
+                "let fileId = data.file_id || (data.result && data.result.file_id);",
+                "",
+                "let polls = parseInt(pm.environment.get('pollCount') || '0', 10);",
+                "if (status === 'Success') {",
+                "  if (fileId) {",
+                "    pm.environment.set('fileId', fileId);",
+                "    postman.setNextRequest('Video - File');",
+                "  } else {",
+                "    pm.test('fileId available on success', () => { throw new Error('Missing fileId in success status'); });",
+                "    postman.setNextRequest(null);",
+                "  }",
+                "} else if (status === 'Fail') {",
+                "  pm.test('Status should not be Fail', () => { throw new Error('MiniMax status: Fail'); });",
+                "  postman.setNextRequest(null);",
+                "} else {",
+                "  if (polls >= 30) {",
+                "    pm.test('Polling timeout', () => { throw new Error('Video polling exceeded 30 attempts'); });",
+                "    postman.setNextRequest(null);",
+                "  } else {",
+                "    pm.environment.set('pollCount', String(polls + 1));",
+                "    postman.setNextRequest('Video - Status');",
+                "  }",
+                "}"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "Video - File",
+        "request": {
+          "method": "GET",
+          "url": {
+            "raw": "{{baseUrl}}/api/minimax/video/file?file_id={{fileId}}",
+            "host": ["{{baseUrl}}"],
+            "path": ["api","minimax","video","file"],
+            "query": [{ "key": "file_id", "value": "{{fileId}}" }]
+          }
+        },
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "exec": [
+                "const j = pm.response.json();",
+                "pm.test('HTTP 200', () => pm.response.code === 200);",
+                "pm.test('API success', () => j.responseStatus === 'success');",
+                "pm.test('Has file response data', () => typeof j.data === 'object' && Object.keys(j.data).length > 0);"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "Music - Generate",
+        "request": {
+          "method": "POST",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "url": { "raw": "{{baseUrl}}/api/minimax/music", "host": ["{{baseUrl}}"], "path": ["api","minimax","music"] },
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"prompt\": \"Ambient lo-fi track with rain sounds, gentle piano, and soft pads\",\n  \"lyrics\": \"raindrops on window panes, distant city lights, heartbeats in the night\",\n  \"output_format\": \"hex\"\n}"
+          }
+        },
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "exec": [
+                "const j = pm.response.json();",
+                "pm.test('HTTP 200', () => pm.response.code === 200);",
+                "pm.test('API success', () => j.responseStatus === 'success');",
+                "pm.test('MiniMax music payload present', () => typeof j.data === 'object' && Object.keys(j.data).length > 0);"
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }

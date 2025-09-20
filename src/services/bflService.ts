@@ -5,11 +5,10 @@ import {
   FrameSize,
 } from "../types/bfl";
 import { ApiError } from "../utils/errorHandler";
-import { ALLOWED_MODELS } from "../middlewares/validateBflGenerate";
+import { ALLOWED_MODELS } from "../middlewares/validators/bfl/validateBflGenerate";
 import { bflRepository } from "../repository/bflRepository";
 import { bflutils } from "../utils/bflutils";
-
-
+import axios from "axios";
 
 async function pollForResults(
   pollingUrl: string,
@@ -17,16 +16,17 @@ async function pollForResults(
 ): Promise<string> {
   for (let i = 0; i < 60; i++) {
     await new Promise((resolve) => setTimeout(resolve, 500));
-    const pollResponse = await fetch(pollingUrl, {
+    const pollResponse = await axios.get(pollingUrl, {
       headers: { accept: "application/json", "x-key": apiKey },
+      validateStatus: () => true,
     });
-    if (!pollResponse.ok) {
+    if (pollResponse.status < 200 || pollResponse.status >= 300) {
       let errorPayload: any = undefined;
       try {
-        errorPayload = await pollResponse.json();
+        errorPayload = pollResponse.data;
       } catch (_) {
         try {
-          const text = await pollResponse.text();
+          const text = String(pollResponse.data);
           errorPayload = { message: text };
         } catch {}
       }
@@ -39,7 +39,7 @@ async function pollForResults(
         errorPayload
       );
     }
-    const result = await pollResponse.json();
+    const result = pollResponse.data;
     if (result.status === "Ready") {
       return result.result.sample as string;
     }
@@ -66,7 +66,8 @@ export async function generate(
   const apiKey = process.env.BFL_API_KEY as string;
   if (!apiKey) throw new ApiError("API key not configured", 500);
   if (!prompt) throw new ApiError("Prompt is required", 400);
-  if (!ALLOWED_MODELS.includes(model)) throw new ApiError("Unsupported model", 400);
+  if (!ALLOWED_MODELS.includes(model))
+    throw new ApiError("Unsupported model", 400);
 
   // create generation record (stubbed DB)
   const historyId = await bflRepository.createGenerationRecord(payload);
@@ -99,14 +100,14 @@ export async function generate(
           body.height = height;
         } else {
           const { width: convertedWidth, height: convertedHeight } =
-          bflutils.getDimensions(frameSize as FrameSize);
+            bflutils.getDimensions(frameSize as FrameSize);
           body.width = convertedWidth;
           body.height = convertedHeight;
         }
         body.output_format = "jpeg";
       } else if (normalizedModel === "flux-dev") {
         const { width: convertedWidth, height: convertedHeight } =
-        bflutils.getDimensions(frameSize as FrameSize);
+          bflutils.getDimensions(frameSize as FrameSize);
         body.width = convertedWidth;
         body.height = convertedHeight;
         body.output_format = "jpeg";
@@ -115,22 +116,21 @@ export async function generate(
         body.output_format = "jpeg";
       }
 
-      const response = await fetch(endpoint, {
-        method: "POST",
+      const response = await axios.post(endpoint, body, {
         headers: {
           accept: "application/json",
           "x-key": apiKey,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(body),
+        validateStatus: () => true,
       });
-      if (!response.ok) {
+      if (response.status < 200 || response.status >= 300) {
         let errorPayload: any = undefined;
         try {
-          errorPayload = await response.json();
+          errorPayload = response.data;
         } catch (_) {
           try {
-            const text = await response.text();
+            const text = String(response.data);
             errorPayload = { message: text };
           } catch {}
         }
@@ -143,8 +143,7 @@ export async function generate(
           errorPayload
         );
       }
-
-      const data = await response.json();
+      const data = response.data;
       if (!data.polling_url) throw new ApiError("No polling URL received", 502);
 
       const imageUrl = await pollForResults(data.polling_url, apiKey);
@@ -174,5 +173,5 @@ export async function generate(
 
 export const bflService = {
   generate,
-  pollForResults
-}
+  pollForResults,
+};

@@ -1,42 +1,40 @@
-import { BflGenerateRequest, GeneratedImage, FrameSize } from "../types/bfl";
+import { FalGenerateRequest, FalGeneratedImage } from "../types/fal";
 import { adminDb, admin } from "../config/firebaseAdmin";
 
 async function createGenerationRecord(
-  req: BflGenerateRequest
+  req: FalGenerateRequest
 ): Promise<string> {
-  const colRef = adminDb.collection("generations");
-  const docRef = await colRef.add({
+  const doc = await adminDb.collection("generations").add({
+    provider: "fal",
     prompt: req.prompt,
     model: req.model,
     n: req.n ?? 1,
-    frameSize: req.frameSize ?? "1:1",
-    style: req.style ?? null,
     status: "generating",
     images: [],
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
-  return docRef.id;
+  return doc.id;
 }
 
 async function updateGenerationRecord(
   id: string,
   data: {
     status: "completed" | "failed";
-    images?: GeneratedImage[];
+    images?: FalGeneratedImage[];
     error?: string;
-    frameSize?: FrameSize;
-    style?: string;
   }
 ): Promise<void> {
-  const docRef = adminDb.collection("generations").doc(id);
-  await docRef.update({
-    ...data,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
+  await adminDb
+    .collection("generations")
+    .doc(id)
+    .update({
+      ...data,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
 }
 
-export const bflRepository = {
+export const falRepository = {
   createGenerationRecord,
   updateGenerationRecord,
 };

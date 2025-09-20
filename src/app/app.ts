@@ -11,8 +11,9 @@ dotenv.config();
 
 const app = express();
 
-// Trust proxy (useful if behind reverse proxy)
-app.set('trust proxy', true);
+// Trust proxy settings (safe for rate limiting)
+const isProd = process.env.NODE_ENV === 'production';
+app.set('trust proxy', isProd ? 1 : false);
 
 // Security and common middlewares (SOC2 oriented)
 app.use(requestId);
