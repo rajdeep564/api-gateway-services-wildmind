@@ -1,7 +1,7 @@
-import { ApiResponse, Pagination } from '../types/apiResponse';
+import { ApiResponse, Pagination } from "../types/apiResponse";
 
 export function formatApiResponse<T = any>(
-  responseStatus: 'success' | 'error',
+  responseStatus: "success" | "error",
   message: string,
   data: T,
   pagination?: Pagination
@@ -10,6 +10,6 @@ export function formatApiResponse<T = any>(
     responseStatus,
     message,
     data,
-    ...(pagination ? { pagination } : {})
+    ...(pagination ? { pagination } : {}),
   };
 }

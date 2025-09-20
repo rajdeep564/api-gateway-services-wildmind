@@ -11,7 +11,7 @@ export class ApiError extends Error {
 }
 
 // Express error-handling middleware
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from "express";
 
 export function errorHandler(
   err: any,
@@ -20,11 +20,11 @@ export function errorHandler(
   next: NextFunction
 ) {
   const status = err.statusCode || 500;
-  const message = err.message || 'Internal Server Error';
+  const message = err.message || "Internal Server Error";
   const data = err.data || null;
   res.status(status).json({
-    responseStatus: 'error',
+    responseStatus: "error",
     message,
-    data
+    data,
   });
 }

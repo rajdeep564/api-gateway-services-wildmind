@@ -6,7 +6,7 @@ export interface Pagination {
 }
 
 export interface ApiResponse<T = any> {
-  responseStatus: 'success' | 'error';
+  responseStatus: "success" | "error";
   message: string;
   data: T;
   pagination?: Pagination;

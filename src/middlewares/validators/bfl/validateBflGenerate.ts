@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { validationResult, body } from 'express-validator';
-import { ApiError } from '../utils/errorHandler';
-import { FrameSize } from '../types/bfl';
+import { ApiError } from '../../../utils/errorHandler';
+import { FrameSize } from '../../../types/bfl';
 
 export const ALLOWED_MODELS = [
   'flux-kontext-pro',
