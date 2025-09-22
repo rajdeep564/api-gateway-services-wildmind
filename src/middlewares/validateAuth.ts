@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { validationResult, body } from 'express-validator';
+import { validationResult, body, query } from 'express-validator';
 import { ApiError } from '../utils/errorHandler';
 
 export const validateSession = [
@@ -115,6 +115,22 @@ export const validateGoogleUsername = [
       return next(new ApiError('Validation failed', 400, errors.array()));
     }
     console.log(`[VALIDATION] Google username validation passed`);
+    next();
+  }
+];
+
+export const validateCheckUsername = [
+  query('username')
+    .isString()
+    .trim()
+    .isLength({ min: 3, max: 30 })
+    .matches(/^[a-z0-9_.-]+$/)
+    .withMessage('Username must be 3-30 chars: a-z0-9_.-'),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return next(new ApiError('Validation failed', 400, errors.array()));
+    }
     next();
   }
 ];

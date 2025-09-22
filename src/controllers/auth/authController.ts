@@ -6,6 +6,16 @@ import { ApiError } from "../../utils/errorHandler";
 import { extractDeviceInfo } from "../../utils/deviceInfo";
 import { admin } from "../../config/firebaseAdmin";
 
+async function checkUsername(req: Request, res: Response, next: NextFunction) {
+  try {
+    const username = String(req.query.username || "");
+    const result = await authService.checkUsernameAvailability(username);
+    res.json(formatApiResponse("success", "Checked", result));
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function createSession(req: Request, res: Response, next: NextFunction) {
   try {
     const { idToken } = req.body;
@@ -308,4 +318,5 @@ export const authController = {
   loginWithEmailPassword,
   googleSignIn,
   setGoogleUsername,
+  checkUsername
 };
