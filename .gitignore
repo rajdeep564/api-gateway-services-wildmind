@@ -1,18 +1,7 @@
 node_modules
 # Keep environment variables out of version control
 .env
-<<<<<<< HEAD
 .env.*
 
 /src/generated/prisma
 src/config/credentials/*.json
-=======
-
-/src/generated/prisma
-
-# Ignore web folder
-web/
-
-# Ignore Firebase credentials
-src/config/credentials/service-account.json
->>>>>>> 0865155ce1f1203295733682fae733abf57333b9
