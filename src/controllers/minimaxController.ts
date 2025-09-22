@@ -6,7 +6,8 @@ import { minimaxService } from '../services/minimaxService';
 async function generate(req: Request, res: Response, next: NextFunction) {
   try {
     const { prompt, aspect_ratio, width, height, response_format, seed, n, prompt_optimizer, subject_reference, generationType, style } = req.body || {};
-    const result = await minimaxService.generate({ prompt, aspect_ratio, width, height, response_format, seed, n, prompt_optimizer, subject_reference, generationType, style });
+    const uid = (req as any).uid;
+    const result = await minimaxService.generate(uid, { prompt, aspect_ratio, width, height, response_format, seed, n, prompt_optimizer, subject_reference, generationType, style });
     res.json(formatApiResponse('success', 'Images generated', result));
   } catch (err) {
     next(err);

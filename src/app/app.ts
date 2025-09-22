@@ -21,7 +21,7 @@ app.use(securityHeaders);
 app.use(rateLimiter);
 // CORS for frontend on localhost:3000 with credentials
 const corsOptions: cors.CorsOptions = {
-  origin: ['http://localhost:3000'],
+  origin: ['http://localhost:3000','*'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
@@ -42,7 +42,7 @@ app.use(cookieParser());
 app.use(httpParamPollution);
 app.use(gzipCompression);
 app.use(httpLogger);
-app.use(originCheck);
+// app.use(originCheck); //remove for postman
 
 // Health endpoint
 app.get('/health', (_req, res) => {

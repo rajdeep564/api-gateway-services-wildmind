@@ -5,7 +5,8 @@ import { formatApiResponse } from '../utils/formatApiResponse';
 async function generate(req: Request, res: Response, next: NextFunction) {
   try {
     const { prompt, userPrompt, model, n, frameSize, style, uploadedImages, width, height } = req.body || {};
-    const result = await bflService.generate({ prompt, userPrompt, model, n, frameSize, style, uploadedImages, width, height });
+    const uid = (req as any).uid;
+    const result = await bflService.generate(uid, { prompt, userPrompt, model, n, frameSize, style, uploadedImages, width, height });
     res.json(formatApiResponse('success', 'Images generated', result));
   } catch (err) {
     next(err);
