@@ -1,4 +1,3 @@
-import axios from "axios";
 import { ApiError } from "../utils/errorHandler";
 import {
   RunwayTextToImageRequest,
@@ -6,9 +5,12 @@ import {
 } from "../types/runway";
 import { runwayRepository } from "../repository/runwayRepository";
 import RunwayML from "@runwayml/sdk";
+import { generationHistoryRepository } from "../repository/generationHistoryRepository";
+import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
+import { authRepository } from "../repository/auth/authRepository";
+//
 
-const RUNWAY_API_BASE = "https://api.dev.runwayml.com";
-const RUNWAY_VERSION = "2024-11-06";
+// (SDK handles base/version internally)
 
 function getRunwayClient(): RunwayML {
   const apiKey = process.env.RUNWAY_API_KEY as string;
@@ -17,8 +19,9 @@ function getRunwayClient(): RunwayML {
 }
 
 async function textToImage(
+  uid: string,
   payload: RunwayTextToImageRequest
-): Promise<RunwayTextToImageResponse> {
+): Promise<RunwayTextToImageResponse & { historyId?: string }> {
   const { promptText, ratio, model, seed, uploadedImages, contentModeration } =
     payload;
   if (!promptText || !ratio || !model)
@@ -60,6 +63,15 @@ async function textToImage(
         }
       : {}),
   });
+  // Create authoritative history first
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: promptText,
+    model,
+    generationType: 'text-to-image',
+    visibility: (payload as any).visibility || 'private',
+    tags: (payload as any).tags,
+    nsfw: (payload as any).nsfw,
+  });
   try {
     await runwayRepository.createTaskRecord({
       mode: "text_to_image",
@@ -70,10 +82,12 @@ async function textToImage(
       taskId: created.id,
     });
   } catch {}
-  return { taskId: created.id, status: "pending" };
+  // Store provider identifiers on history
+  await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
+  return { taskId: created.id, status: "pending", historyId };
 }
 
-async function getStatus(id: string): Promise<any> {
+async function getStatus(uid: string, id: string): Promise<any> {
   if (!id) throw new ApiError("Task ID is required", 400);
   const client = getRunwayClient();
   try {
@@ -87,6 +101,28 @@ async function getStatus(id: string): Promise<any> {
           : undefined,
       });
     } catch {}
+    // When completed, attach outputs into history and mirror
+    if (task.status === 'SUCCEEDED') {
+      // Find history by providerTaskId (requires uid-scoped search)
+      const found = await generationHistoryRepository.findByProviderTaskId(uid, 'runway', id);
+      if (found) {
+        const outputs = (task as any).output || [];
+        const images = Array.isArray(outputs) ? outputs.map((u: any, i: number) => ({ id: `${id}-${i}`, url: u, storagePath: '' })) : undefined;
+        await generationHistoryRepository.update(uid, found.id, { status: 'completed', images } as any);
+        try {
+          const creator = await authRepository.getUserById(uid);
+          const fresh = await generationHistoryRepository.get(uid, found.id);
+          if (fresh) {
+            await generationsMirrorRepository.upsertFromHistory(uid, found.id, fresh, {
+              uid,
+              username: creator?.username,
+              displayName: (creator as any)?.displayName,
+              photoURL: creator?.photoURL,
+            });
+          }
+        } catch {}
+      }
+    }
     return task;
   } catch (e: any) {
     if (e?.status === 404)
@@ -96,50 +132,68 @@ async function getStatus(id: string): Promise<any> {
 }
 
 async function videoGenerate(
+  uid: string,
   body: any
 ): Promise<{
   success: boolean;
   taskId: string;
   mode: string;
   endpoint: string;
+  historyId?: string;
 }> {
   const client = getRunwayClient();
   const { mode, imageToVideo, videoToVideo, textToVideo, videoUpscale } =
     body || {};
   if (mode === "image_to_video") {
     const created = await client.imageToVideo.create(imageToVideo);
+    const prompt = (imageToVideo && imageToVideo.prompts && imageToVideo.prompts[0]?.text) || '';
+    const { historyId } = await generationHistoryRepository.create(uid, { prompt, model: 'runway_video', generationType: 'text-to-video', visibility: (body as any).visibility || 'private', tags: (body as any).tags, nsfw: (body as any).nsfw } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
     return {
       success: true,
       taskId: created.id,
       mode,
       endpoint: "/v1/image_to_video",
+      historyId,
     };
   }
   if (mode === "text_to_video") {
     const created = await client.textToVideo.create(textToVideo);
+    const prompt = textToVideo?.promptText || '';
+    const { historyId } = await generationHistoryRepository.create(uid, { prompt, model: 'runway_video', generationType: 'text-to-video', visibility: (body as any).visibility || 'private', tags: (body as any).tags, nsfw: (body as any).nsfw } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
     return {
       success: true,
       taskId: created.id,
       mode,
       endpoint: "/v1/text_to_video",
+      historyId,
     };
   }
   if (mode === "video_to_video") {
     const created = await client.videoToVideo.create(videoToVideo);
+    const prompt = (videoToVideo && videoToVideo.prompts && videoToVideo.prompts[0]?.text) || '';
+    const { historyId } = await generationHistoryRepository.create(uid, { prompt, model: 'runway_video', generationType: 'text-to-video', visibility: (body as any).visibility || 'private', tags: (body as any).tags, nsfw: (body as any).nsfw } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
     return {
       success: true,
       taskId: created.id,
       mode,
       endpoint: "/v1/video_to_video",
+      historyId,
     };
   }
   if (mode === "video_upscale") {
     const created = await client.videoUpscale.create(videoUpscale);
+    const prompt = '';
+    const { historyId } = await generationHistoryRepository.create(uid, { prompt, model: 'runway_video_upscale', generationType: 'text-to-video', visibility: (body as any).visibility || 'private', tags: (body as any).tags, nsfw: (body as any).nsfw } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
     return {
       success: true,
       taskId: created.id,
       mode,
       endpoint: "/v1/video_upscale",
+      historyId,
     };
   }
   throw new ApiError(

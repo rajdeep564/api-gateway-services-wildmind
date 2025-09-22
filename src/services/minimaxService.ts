@@ -10,6 +10,10 @@ import {
 } from "../types/minimaxMusic";
 import { ApiError } from "../utils/errorHandler";
 import { minimaxRepository } from "../repository/minimaxRepository";
+import { generationHistoryRepository } from "../repository/generationHistoryRepository";
+import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
+import { authRepository } from "../repository/auth/authRepository";
+import { GenerationHistoryItem } from "../types/generate";
 
 const MINIMAX_API_BASE = "https://api.minimax.io/v1";
 const MINIMAX_MODEL = "image-01";
@@ -58,8 +62,9 @@ function assertMiniMaxOk(baseResp?: {
 }
 
 async function generate(
+  uid: string,
   payload: MinimaxGenerateRequest
-): Promise<MinimaxGenerateResponse> {
+): Promise<MinimaxGenerateResponse & { historyId?: string }> {
   const {
     prompt,
     aspect_ratio,
@@ -83,7 +88,15 @@ async function generate(
   const apiKey = process.env.MINIMAX_API_KEY as string;
   if (!apiKey) throw new ApiError("MiniMax API key not configured", 500);
 
-  const historyId = await minimaxRepository.createGenerationRecord(payload);
+  const legacyId = await minimaxRepository.createGenerationRecord(payload);
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt,
+    model: MINIMAX_MODEL,
+    generationType: payload.generationType || 'text-to-image',
+    visibility: (payload as any).visibility || 'private',
+    tags: (payload as any).tags,
+    nsfw: (payload as any).nsfw,
+  });
 
   const requestPayload: any = {
     model: MINIMAX_MODEL,
@@ -147,17 +160,40 @@ async function generate(
       })
     );
 
-    await minimaxRepository.updateGenerationRecord(historyId, {
+    await minimaxRepository.updateGenerationRecord(legacyId, {
       status: "completed",
       images,
     });
+    await generationHistoryRepository.update(uid, historyId, {
+      status: 'completed',
+      images,
+    } as Partial<GenerationHistoryItem>);
+    try {
+      const creator = await authRepository.getUserById(uid);
+      const fresh = await generationHistoryRepository.get(uid, historyId);
+      if (fresh) {
+        await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+          uid,
+          username: creator?.username,
+          displayName: (creator as any)?.displayName,
+          photoURL: creator?.photoURL,
+        });
+      }
+    } catch {}
     return { images, historyId, id: data.id };
   } catch (err: any) {
     const message = err?.message || "Failed to generate images with MiniMax";
-    await minimaxRepository.updateGenerationRecord(historyId, {
+    await minimaxRepository.updateGenerationRecord(legacyId, {
       status: "failed",
       error: message,
     });
+    try {
+      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+      const fresh = await generationHistoryRepository.get(uid, historyId);
+      if (fresh) {
+        await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
+      }
+    } catch {}
     throw err;
   }
 }

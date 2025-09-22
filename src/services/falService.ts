@@ -7,10 +7,15 @@ import { ApiError } from "../utils/errorHandler";
 import { falRepository } from "../repository/falRepository";
 import { fal } from "@fal-ai/client";
 import axios from "axios";
+import { generationHistoryRepository } from "../repository/generationHistoryRepository";
+import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
+import { authRepository } from "../repository/auth/authRepository";
+import { GenerationHistoryItem } from "../types/generate";
 
 async function generate(
+  uid: string,
   payload: FalGenerateRequest
-): Promise<FalGenerateResponse> {
+): Promise<FalGenerateResponse & { historyId?: string }> {
   const {
     prompt,
     userPrompt,
@@ -26,7 +31,17 @@ async function generate(
 
   fal.config({ credentials: falKey });
 
-  const historyId = await falRepository.createGenerationRecord(payload);
+  // Create history first (source of truth)
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt,
+    model,
+    generationType: (payload as any).generationType || 'text-to-image',
+    visibility: (payload as any).visibility || 'private',
+    tags: (payload as any).tags,
+    nsfw: (payload as any).nsfw,
+  });
+  // Maintain existing provider history too (legacy)
+  const legacyId = await falRepository.createGenerationRecord(payload);
 
   // Only gemini-25-flash-image supported for now
   const modelEndpoint =
@@ -61,17 +76,41 @@ async function generate(
     });
 
     const images = await Promise.all(imagePromises);
-    await falRepository.updateGenerationRecord(historyId, {
+    await falRepository.updateGenerationRecord(legacyId, {
       status: "completed",
       images,
     });
+    // Update authoritative history and mirror
+    await generationHistoryRepository.update(uid, historyId, {
+      status: 'completed',
+      images,
+    } as Partial<GenerationHistoryItem>);
+    try {
+      const creator = await authRepository.getUserById(uid);
+      const fresh = await generationHistoryRepository.get(uid, historyId);
+      if (fresh) {
+        await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+          uid,
+          username: creator?.username,
+          displayName: (creator as any)?.displayName,
+          photoURL: creator?.photoURL,
+        });
+      }
+    } catch {}
     return { images, historyId, model, status: "completed" };
   } catch (err: any) {
     const message = err?.message || "Failed to generate images with FAL API";
-    await falRepository.updateGenerationRecord(historyId, {
+    await falRepository.updateGenerationRecord(legacyId, {
       status: "failed",
       error: message,
     });
+    try {
+      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+      const fresh = await generationHistoryRepository.get(uid, historyId);
+      if (fresh) {
+        await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
+      }
+    } catch {}
     throw new ApiError(message, 500);
   }
 }

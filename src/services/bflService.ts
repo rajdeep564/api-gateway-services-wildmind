@@ -9,6 +9,10 @@ import { ALLOWED_MODELS } from "../middlewares/validators/bfl/validateBflGenerat
 import { bflRepository } from "../repository/bflRepository";
 import { bflutils } from "../utils/bflutils";
 import axios from "axios";
+import { generationHistoryRepository } from "../repository/generationHistoryRepository";
+import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
+import { authRepository } from "../repository/auth/authRepository";
+import { GenerationHistoryItem } from "../types/generate";
 
 async function pollForResults(
   pollingUrl: string,
@@ -51,8 +55,9 @@ async function pollForResults(
 }
 
 export async function generate(
+  uid: string,
   payload: BflGenerateRequest
-): Promise<BflGenerateResponse> {
+): Promise<BflGenerateResponse & { historyId?: string }> {
   const {
     prompt,
     model,
@@ -69,8 +74,17 @@ export async function generate(
   if (!ALLOWED_MODELS.includes(model))
     throw new ApiError("Unsupported model", 400);
 
-  // create generation record (stubbed DB)
-  const historyId = await bflRepository.createGenerationRecord(payload);
+  // create legacy generation record (existing repo)
+  const legacyId = await bflRepository.createGenerationRecord(payload);
+  // create authoritative history first
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt,
+    model,
+    generationType: (payload as any).generationType || 'text-to-image',
+    visibility: (payload as any).visibility || 'private',
+    tags: (payload as any).tags,
+    nsfw: (payload as any).nsfw,
+  });
 
   try {
     const imagePromises = Array.from({ length: n }, async () => {
@@ -155,18 +169,44 @@ export async function generate(
     });
 
     const images = await Promise.all(imagePromises);
-    await bflRepository.updateGenerationRecord(historyId, {
+    await bflRepository.updateGenerationRecord(legacyId, {
       status: "completed",
       images,
       frameSize,
     });
-    return { images };
+    // update authoritative history and mirror
+    await generationHistoryRepository.update(uid, historyId, {
+      status: 'completed',
+      images,
+      // persist optional fields
+      ...(frameSize ? { frameSize: frameSize as any } : {}),
+    } as Partial<GenerationHistoryItem>);
+    try {
+      const creator = await authRepository.getUserById(uid);
+      const fresh = await generationHistoryRepository.get(uid, historyId);
+      if (fresh) {
+        await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+          uid,
+          username: creator?.username,
+          displayName: (creator as any)?.displayName,
+          photoURL: creator?.photoURL,
+        });
+      }
+    } catch {}
+    return { images, historyId };
   } catch (err: any) {
     const message = err?.message || "Failed to generate images";
-    await bflRepository.updateGenerationRecord(historyId, {
+    await bflRepository.updateGenerationRecord(legacyId, {
       status: "failed",
       error: message,
     });
+    try {
+      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+      const fresh = await generationHistoryRepository.get(uid, historyId);
+      if (fresh) {
+        await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
+      }
+    } catch {}
     throw err;
   }
 }
