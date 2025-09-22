@@ -4,6 +4,48 @@ import { AppUser, ProviderId } from '../../types/authTypes';
 import { ApiError } from '../../utils/errorHandler';
 import { sendEmail } from '../../utils/mailer';
 
+function normalizeUsername(input: string): string {
+  return (input || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]/g, '')
+    .slice(0, 30);
+}
+
+async function checkUsernameAvailability(username: string): Promise<{ available: boolean; normalized: string; suggestions?: string[] }> {
+  const normalized = normalizeUsername(username);
+
+  if (!/^[a-z0-9_.-]{3,30}$/.test(normalized)) {
+    throw new ApiError('Invalid username', 400);
+  }
+
+  const existing = await authRepository.getUserByUsername(normalized);
+  const available = !existing;
+
+  let suggestions: string[] | undefined = undefined;
+  if (!available) {
+    suggestions = [];
+    const base = normalized.replace(/\d+$/, '');
+    const nowSuffix = new Date().getFullYear().toString().slice(-2);
+    const candidates: string[] = [
+      `${base}_${Math.floor(Math.random() * 90 + 10)}`,
+      `${base}${nowSuffix}`,
+      `${base}_${Math.floor(Math.random() * 900 + 100)}`,
+      `${base}-app`,
+      `${base}_${Math.floor(Math.random() * 9000 + 1000)}`
+    ]
+      .map(normalizeUsername)
+      .filter((c) => /^[a-z0-9_.-]{3,30}$/.test(c));
+
+    for (const candidate of candidates) {
+      if (suggestions.length >= 5) break;
+      const exists = await authRepository.getUserByUsername(candidate);
+      if (!exists && !suggestions.includes(candidate)) suggestions.push(candidate);
+    }
+  }
+
+  return { available, normalized, suggestions };
+}
+
 async function createSession(idToken: string): Promise<AppUser> {
   try {
     const decoded = await admin.auth().verifyIdToken(idToken, true);
@@ -431,5 +473,6 @@ export const authService = {
   resolveEmailForLogin,
   loginWithEmailPassword,
   googleSignIn,
-  setGoogleUsername
+  setGoogleUsername,
+  checkUsernameAvailability
 };
