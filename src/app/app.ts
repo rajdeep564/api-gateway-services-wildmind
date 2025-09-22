@@ -2,11 +2,10 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import routes from '../routes';
-import authRoutes from '../routes/authRoutes';
 import { errorHandler } from '../utils/errorHandler';
 import dotenv from 'dotenv';
 import { formatApiResponse } from '../utils/formatApiResponse';
-import { gzipCompression, httpParamPollution, rateLimiter, requestId, securityHeaders } from '../middlewares/security';
+import { gzipCompression, httpParamPollution, rateLimiter, requestId, securityHeaders, originCheck } from '../middlewares/security';
 import { httpLogger } from '../middlewares/logger';
 dotenv.config();
 
@@ -20,12 +19,30 @@ app.set('trust proxy', isProd ? 1 : false);
 app.use(requestId);
 app.use(securityHeaders);
 app.use(rateLimiter);
-app.use(cors());
+// CORS for frontend on localhost:3000 with credentials
+const corsOptions: cors.CorsOptions = {
+  origin: ['http://localhost:3000'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'X-Request-Id',
+    'X-Device-Id',
+    'X-Device-Name',
+    'X-Device-Info',
+  ],
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 app.use(httpParamPollution);
 app.use(gzipCompression);
 app.use(httpLogger);
+app.use(originCheck);
 
 // Health endpoint
 app.get('/health', (_req, res) => {
@@ -34,8 +51,6 @@ app.get('/health', (_req, res) => {
 
 // API routes
 app.use('/api', routes);
-app.use(authRoutes);
-
 // Global error handler (should be after all routes)
 app.use(errorHandler);
 

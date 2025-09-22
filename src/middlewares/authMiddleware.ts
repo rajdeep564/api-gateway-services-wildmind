@@ -11,8 +11,14 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     if (!token) {
       throw new ApiError('Unauthorized - No session token', 401);
     }
-    
-    const decoded = await admin.auth().verifyIdToken(token);
+    // Prefer verifying as a session cookie; fallback to ID token if needed
+    let decoded: any;
+    try {
+      decoded = await admin.auth().verifySessionCookie(token, true);
+      console.log("decoded",decoded);
+    } catch (_e) {
+      decoded = await admin.auth().verifyIdToken(token, true);
+    }
     (req as any).uid = decoded.uid;
     return next();
   } catch (error) {

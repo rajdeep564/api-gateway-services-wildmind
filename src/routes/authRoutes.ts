@@ -5,17 +5,17 @@ import { validateSession, validateOtpStart, validateOtpVerify, validateUsername,
 
 const router = Router();
 
-router.post('/api/auth/session', validateSession, authController.createSession);
-router.post('/api/auth/login', validateLogin, authController.loginWithEmailPassword);
-router.post('/api/auth/google', validateGoogleSignIn, authController.googleSignIn);
-router.post('/api/auth/google/username', validateGoogleUsername, authController.setGoogleUsername);
-router.post('/api/auth/email/start', validateOtpStart, authController.startEmailOtp);
-router.post('/api/auth/email/verify', validateOtpVerify, authController.verifyEmailOtp);
-router.post('/api/auth/email/username', validateUsername, authController.setEmailUsername);
-router.get('/api/auth/resolve-email', authController.resolveEmail);
-router.get('/api/me', requireAuth, authController.getCurrentUser);
-router.patch('/api/me', requireAuth, validateUpdateMe, authController.updateUser);
-router.post('/api/logout', authController.logout);
+router.post('/session', validateSession, authController.createSession);
+router.post('/login', validateLogin, authController.loginWithEmailPassword);
+router.post('/google', validateGoogleSignIn, authController.googleSignIn);
+router.post('/google/username', validateGoogleUsername, authController.setGoogleUsername);
+router.post('/email/start', validateOtpStart, authController.startEmailOtp);
+router.post('/email/verify', validateOtpVerify, authController.verifyEmailOtp);
+router.post('/email/username', validateUsername, authController.setEmailUsername);
+router.get('/resolve-email', authController.resolveEmail);
+router.get('/me', requireAuth, authController.getCurrentUser);
+router.patch('/me', requireAuth, validateUpdateMe, authController.updateUser);
+router.post('/logout', authController.logout);
 
 export default router;
 
