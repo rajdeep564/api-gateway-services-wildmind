@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authController } from '../controllers/auth/authController';
 import { requireAuth } from '../middlewares/authMiddleware';
-import { validateSession, validateOtpStart, validateOtpVerify, validateUsername, validateUpdateMe, validateLogin, validateGoogleSignIn, validateGoogleUsername } from '../middlewares/validateAuth';
+import { validateSession, validateOtpStart, validateOtpVerify, validateUsername, validateUpdateMe, validateLogin, validateGoogleSignIn, validateGoogleUsername, validateCheckUsername } from '../middlewares/validateAuth';
 
 const router = Router();
 
@@ -13,6 +13,7 @@ router.post('/email/start', validateOtpStart, authController.startEmailOtp);
 router.post('/email/verify', validateOtpVerify, authController.verifyEmailOtp);
 router.post('/email/username', validateUsername, authController.setEmailUsername);
 router.get('/resolve-email', authController.resolveEmail);
+router.get('/username/check', validateCheckUsername, authController.checkUsername);
 router.get('/me', requireAuth, authController.getCurrentUser);
 router.patch('/me', requireAuth, validateUpdateMe, authController.updateUser);
 router.post('/logout', authController.logout);
