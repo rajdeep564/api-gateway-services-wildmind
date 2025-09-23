@@ -11,6 +11,7 @@ import { generationHistoryRepository } from "../repository/generationHistoryRepo
 import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
 import { authRepository } from "../repository/auth/authRepository";
 import { GenerationHistoryItem } from "../types/generate";
+import { env } from "../config/env";
 
 async function generate(
   uid: string,
@@ -25,7 +26,7 @@ async function generate(
     output_format = "jpeg",
   } = payload;
 
-  const falKey = process.env.FAL_KEY as string;
+  const falKey = env.falKey as string;
   if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
   if (!prompt) throw new ApiError("Prompt is required", 400);
 

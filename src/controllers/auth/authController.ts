@@ -5,6 +5,7 @@ import { formatApiResponse } from "../../utils/formatApiResponse";
 import { ApiError } from "../../utils/errorHandler";
 import { extractDeviceInfo } from "../../utils/deviceInfo";
 import { admin } from "../../config/firebaseAdmin";
+import "../../types/http";
 
 async function checkUsername(req: Request, res: Response, next: NextFunction) {
   try {
@@ -34,13 +35,13 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
 
 async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
   try {
-    const uid = (req as any).uid as string;
+    const uid = req.uid as string;
     let user = await authService.getCurrentUser(uid);
 
     // Capture optional device headers from client
-    const deviceId = req.get('x-device-id') || undefined;
-    const deviceName = req.get('x-device-name') || undefined;
-    const deviceInfoHeader = req.get('x-device-info');
+    const deviceId = req.get("x-device-id") || undefined;
+    const deviceName = req.get("x-device-name") || undefined;
+    const deviceInfoHeader = req.get("x-device-info");
     let deviceInfoHeaderParsed: any = undefined;
     if (deviceInfoHeader) {
       try {
@@ -52,18 +53,22 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
 
     // Parse baseline device info from User-Agent/IP for observability
     const parsedDevice = extractDeviceInfo(req);
-    console.log('[ME] Device headers:', { deviceId, deviceName, deviceInfoHeaderParsed });
-    console.log('[ME] Parsed device from UA:', parsedDevice);
+    console.log("[ME] Device headers:", {
+      deviceId,
+      deviceName,
+      deviceInfoHeaderParsed,
+    });
+    console.log("[ME] Parsed device from UA:", parsedDevice);
 
     // Backfill deviceInfo on the user if missing
-    const needsBackfill = !user.deviceInfo || !user.deviceInfo.browser
+    const needsBackfill = !user.deviceInfo || !user.deviceInfo.browser;
     if (needsBackfill) {
       try {
         user = await authService.updateUser(uid, {
           deviceInfo: parsedDevice.deviceInfo,
           lastLoginIP: parsedDevice.ip,
-          userAgent: parsedDevice.userAgent
-        })
+          userAgent: parsedDevice.userAgent,
+        });
       } catch (_e) {
         // ignore backfill errors
       }
@@ -79,7 +84,7 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
 
 async function updateUser(req: Request, res: Response, next: NextFunction) {
   try {
-    const uid = (req as any).uid as string;
+    const uid = req.uid as string;
     const updates = req.body;
     const user = await authService.updateUser(uid, updates);
 
@@ -189,7 +194,9 @@ async function resolveEmail(req: Request, res: Response, next: NextFunction) {
 async function setSessionCookie(res: Response, idToken: string) {
   const isProd = process.env.NODE_ENV === "production";
   const expiresIn = 1000 * 60 * 60 * 24 * 7; // 7 days
-  const sessionCookie = await admin.auth().createSessionCookie(idToken, { expiresIn });
+  const sessionCookie = await admin
+    .auth()
+    .createSessionCookie(idToken, { expiresIn });
   res.cookie("app_session", sessionCookie, {
     httpOnly: true,
     secure: isProd,
@@ -318,5 +325,5 @@ export const authController = {
   loginWithEmailPassword,
   googleSignIn,
   setGoogleUsername,
-  checkUsername
+  checkUsername,
 };

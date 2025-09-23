@@ -8,6 +8,8 @@ export async function create(uid: string, data: {
   visibility?: Visibility | string;
   tags?: string[];
   nsfw?: boolean;
+  isPublic?: boolean;
+  createdBy?: { uid: string; username?: string; email?: string };
 }): Promise<{ historyId: string }> {
   const col = adminDb.collection('generationHistory').doc(uid).collection('items');
   const docRef = await col.add({
@@ -18,8 +20,17 @@ export async function create(uid: string, data: {
     visibility: (data.visibility as Visibility) || Visibility.Private,
     tags: data.tags || [],
     nsfw: data.nsfw ?? false,
+    isPublic: data.isPublic ?? false,
+    createdBy: data.createdBy ? {
+      uid: data.createdBy.uid,
+      username: data.createdBy.username || null,
+      email: data.createdBy.email || null,
+    } : {
+      uid,
+      username: null,
+      email: null,
+    },
     status: GenerationStatus.Generating,
-    isPublicReady: false,
     images: [],
     videos: [],
     createdAt: admin.firestore.FieldValue.serverTimestamp(),

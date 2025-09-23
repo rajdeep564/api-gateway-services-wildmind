@@ -1,13 +1,22 @@
-import { generationHistoryRepository } from '../repository/generationHistoryRepository';
-import { generationsMirrorRepository } from '../repository/generationsMirrorRepository';
-import { GenerationStatus, CreateGenerationPayload, CompleteGenerationPayload, FailGenerationPayload, GenerationHistoryItem } from '../types/generate';
-import { authRepository } from '../repository/auth/authRepository';
-import { ApiError } from '../utils/errorHandler';
+import { generationHistoryRepository } from "../repository/generationHistoryRepository";
+import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
+import {
+  GenerationStatus,
+  CreateGenerationPayload,
+  CompleteGenerationPayload,
+  FailGenerationPayload,
+  GenerationHistoryItem,
+} from "../types/generate";
+import { authRepository } from "../repository/auth/authRepository";
+import { ApiError } from "../utils/errorHandler";
 
-export async function startGeneration(uid: string, payload: CreateGenerationPayload): Promise<{ historyId: string } & { item: GenerationHistoryItem }> {
+export async function startGeneration(
+  uid: string,
+  payload: CreateGenerationPayload
+): Promise<{ historyId: string } & { item: GenerationHistoryItem }> {
   const { historyId } = await generationHistoryRepository.create(uid, payload);
   const item = await generationHistoryRepository.get(uid, historyId);
-  if (!item) throw new ApiError('Failed to read created history item', 500);
+  if (!item) throw new ApiError("Failed to read created history item", 500);
   try {
     const creator = await authRepository.getUserById(uid);
     await generationsMirrorRepository.upsertFromHistory(uid, historyId, item, {
@@ -20,15 +29,20 @@ export async function startGeneration(uid: string, payload: CreateGenerationPayl
   return { historyId, item };
 }
 
-export async function markGenerationCompleted(uid: string, historyId: string, updates: Omit<CompleteGenerationPayload, 'status'> & { status: 'completed' }): Promise<void> {
+export async function markGenerationCompleted(
+  uid: string,
+  historyId: string,
+  updates: Omit<CompleteGenerationPayload, "status"> & { status: "completed" }
+): Promise<void> {
   const existing = await generationHistoryRepository.get(uid, historyId);
-  if (!existing) throw new ApiError('History item not found', 404);
-  if (existing.status !== GenerationStatus.Generating) throw new ApiError('Invalid status transition', 400);
+  if (!existing) throw new ApiError("History item not found", 404);
+  if (existing.status !== GenerationStatus.Generating)
+    throw new ApiError("Invalid status transition", 400);
   const next: Partial<GenerationHistoryItem> = {
     status: GenerationStatus.Completed,
     images: updates.images,
     videos: updates.videos,
-    isPublicReady: updates.isPublicReady ?? existing.isPublicReady ?? false,
+    isPublic: updates.isPublic ?? existing.isPublic ?? false,
     tags: updates.tags ?? existing.tags,
     nsfw: updates.nsfw ?? existing.nsfw,
   };
@@ -37,20 +51,30 @@ export async function markGenerationCompleted(uid: string, historyId: string, up
     const creator = await authRepository.getUserById(uid);
     const fresh = await generationHistoryRepository.get(uid, historyId);
     if (fresh) {
-      await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+      await generationsMirrorRepository.upsertFromHistory(
         uid,
-        username: creator?.username,
-        displayName: (creator as any)?.displayName,
-        photoURL: creator?.photoURL,
-      });
+        historyId,
+        fresh,
+        {
+          uid,
+          username: creator?.username,
+          displayName: (creator as any)?.displayName,
+          photoURL: creator?.photoURL,
+        }
+      );
     }
   } catch {}
 }
 
-export async function markGenerationFailed(uid: string, historyId: string, payload: Omit<FailGenerationPayload, 'status'> & { status: 'failed' }): Promise<void> {
+export async function markGenerationFailed(
+  uid: string,
+  historyId: string,
+  payload: Omit<FailGenerationPayload, "status"> & { status: "failed" }
+): Promise<void> {
   const existing = await generationHistoryRepository.get(uid, historyId);
-  if (!existing) throw new ApiError('History item not found', 404);
-  if (existing.status !== GenerationStatus.Generating) throw new ApiError('Invalid status transition', 400);
+  if (!existing) throw new ApiError("History item not found", 404);
+  if (existing.status !== GenerationStatus.Generating)
+    throw new ApiError("Invalid status transition", 400);
   await generationHistoryRepository.update(uid, historyId, {
     status: GenerationStatus.Failed,
     error: payload.error,
@@ -58,16 +82,31 @@ export async function markGenerationFailed(uid: string, historyId: string, paylo
   try {
     const fresh = await generationHistoryRepository.get(uid, historyId);
     if (fresh) {
-      await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
+      await generationsMirrorRepository.updateFromHistory(
+        uid,
+        historyId,
+        fresh
+      );
     }
   } catch {}
 }
 
-export async function getUserGeneration(uid: string, historyId: string): Promise<GenerationHistoryItem | null> {
+export async function getUserGeneration(
+  uid: string,
+  historyId: string
+): Promise<GenerationHistoryItem | null> {
   return generationHistoryRepository.get(uid, historyId);
 }
 
-export async function listUserGenerations(uid: string, params: { limit: number; cursor?: string; status?: 'generating' | 'completed' | 'failed'; generationType?: string; }): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string }> {
+export async function listUserGenerations(
+  uid: string,
+  params: {
+    limit: number;
+    cursor?: string;
+    status?: "generating" | "completed" | "failed";
+    generationType?: string;
+  }
+): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string }> {
   return generationHistoryRepository.list(uid, params);
 }
 
@@ -78,5 +117,3 @@ export const generationHistoryService = {
   getUserGeneration,
   listUserGenerations,
 };
-
-

@@ -48,7 +48,8 @@ export interface GenerationHistoryItem {
   nsfw?: boolean;
   images?: ImageMedia[];
   videos?: VideoMedia[];
-  isPublicReady?: boolean;
+  // replaced by isPublic in repositories/services
+  isPublic?: boolean;
   error?: string;
   createdAt: any;
   updatedAt: any;
@@ -67,7 +68,7 @@ export interface CompleteGenerationPayload {
   status: 'completed';
   images?: ImageMedia[];
   videos?: VideoMedia[];
-  isPublicReady?: boolean;
+  isPublic?: boolean;
   tags?: string[];
   nsfw?: boolean;
 }

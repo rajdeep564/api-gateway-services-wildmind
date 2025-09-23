@@ -1,11 +1,12 @@
 import pino from "pino";
 import fs from "fs";
 import path from "path";
+import { env } from "../config/env";
 
-const isDev = process.env.NODE_ENV !== "production";
+const isDev = env.nodeEnv !== "production";
 
 export const logger = pino({
-  level: process.env.LOG_LEVEL || "info",
+  level: env.logLevel || "info",
   transport: isDev
     ? {
         target: "pino-pretty",
@@ -39,7 +40,7 @@ const requestLogPath = path.join(logsDir, "requests.log");
 const requestDestination = pino.destination({ dest: requestLogPath, sync: false });
 
 export const requestLogger = pino({
-  level: process.env.LOG_LEVEL || "info",
+  level: env.logLevel || "info",
   base: undefined,
   redact: {
     paths: [
