@@ -13,6 +13,8 @@ import { generationHistoryRepository } from "../repository/generationHistoryRepo
 import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
 import { authRepository } from "../repository/auth/authRepository";
 import { GenerationHistoryItem } from "../types/generate";
+import { uploadFromUrlToZata } from "../utils/storage/zataUpload";
+import { env } from "../config/env";
 
 async function pollForResults(
   pollingUrl: string,
@@ -54,7 +56,7 @@ async function pollForResults(
   throw new ApiError("Timeout waiting for image generation", 504);
 }
 
-export async function generate(
+async function generate(
   uid: string,
   payload: BflGenerateRequest
 ): Promise<BflGenerateResponse & { historyId?: string }> {
@@ -68,22 +70,30 @@ export async function generate(
     height,
   } = payload;
 
-  const apiKey = process.env.BFL_API_KEY as string;
+  const apiKey = env.bflApiKey as string;
   if (!apiKey) throw new ApiError("API key not configured", 500);
   if (!prompt) throw new ApiError("Prompt is required", 400);
   if (!ALLOWED_MODELS.includes(model))
     throw new ApiError("Unsupported model", 400);
 
   // create legacy generation record (existing repo)
-  const legacyId = await bflRepository.createGenerationRecord(payload);
+  const creator = await authRepository.getUserById(uid);
+  console.log("creator", creator);
+  const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+  const legacyId = await bflRepository.createGenerationRecord(
+    { ...payload, isPublic: (payload as any).isPublic === true },
+    createdBy
+  );
   // create authoritative history first
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt,
     model,
-    generationType: (payload as any).generationType || 'text-to-image',
-    visibility: (payload as any).visibility || 'private',
+    generationType: (payload as any).generationType || "text-to-image",
+    visibility: (payload as any).visibility || "private",
     tags: (payload as any).tags,
     nsfw: (payload as any).nsfw,
+    isPublic: (payload as any).isPublic === true,
+    createdBy,
   });
 
   try {
@@ -96,7 +106,9 @@ export async function generate(
       let body: any = { prompt };
       if (normalizedModel.includes("kontext")) {
         body.aspect_ratio = frameSize;
-        body.output_format = "jpeg";
+        body.output_format = (payload as any).output_format || "png";
+        if ((payload as any).prompt_upsampling !== undefined)
+          body.prompt_upsampling = (payload as any).prompt_upsampling;
         if (Array.isArray(uploadedImages) && uploadedImages.length > 0) {
           const [img1, img2, img3, img4] = uploadedImages;
           if (img1) body.input_image = img1;
@@ -118,16 +130,22 @@ export async function generate(
           body.width = convertedWidth;
           body.height = convertedHeight;
         }
-        body.output_format = "jpeg";
+        body.output_format = (payload as any).output_format || "jpeg";
+        if ((payload as any).prompt_upsampling !== undefined)
+          body.prompt_upsampling = (payload as any).prompt_upsampling;
       } else if (normalizedModel === "flux-dev") {
         const { width: convertedWidth, height: convertedHeight } =
           bflutils.getDimensions(frameSize as FrameSize);
         body.width = convertedWidth;
         body.height = convertedHeight;
-        body.output_format = "jpeg";
+        body.output_format = (payload as any).output_format || "jpeg";
+        if ((payload as any).prompt_upsampling !== undefined)
+          body.prompt_upsampling = (payload as any).prompt_upsampling;
       } else {
         body.aspect_ratio = frameSize;
-        body.output_format = "jpeg";
+        body.output_format = (payload as any).output_format || "jpeg";
+        if ((payload as any).prompt_upsampling !== undefined)
+          body.prompt_upsampling = (payload as any).prompt_upsampling;
       }
 
       const response = await axios.post(endpoint, body, {
@@ -169,15 +187,43 @@ export async function generate(
     });
 
     const images = await Promise.all(imagePromises);
+
+    // Upload provider images to Zata and keep both links
+    const uploadedImages = await Promise.all(
+      images.map(async (img, index) => {
+        try {
+          const { key, publicUrl } = await uploadFromUrlToZata({
+            sourceUrl: img.url,
+            // Username-scoped minimal layout
+            keyPrefix: `users/${
+              (await authRepository.getUserById(uid))?.username || uid
+            }/image/${historyId}`,
+            fileName: `image-${index + 1}`,
+          });
+          return {
+            id: img.id,
+            url: publicUrl,
+            storagePath: key,
+            originalUrl: img.originalUrl || img.url,
+          };
+        } catch (e: any) {
+          // Provide context in error to bubble up meaningful message
+          const msg = e?.message || "upload failed";
+          throw new ApiError(`Zata upload failed: ${msg}`, 500, {
+            sourceUrl: img.url,
+          });
+        }
+      })
+    );
     await bflRepository.updateGenerationRecord(legacyId, {
       status: "completed",
-      images,
+      images: uploadedImages,
       frameSize,
     });
     // update authoritative history and mirror
     await generationHistoryRepository.update(uid, historyId, {
-      status: 'completed',
-      images,
+      status: "completed",
+      images: uploadedImages,
       // persist optional fields
       ...(frameSize ? { frameSize: frameSize as any } : {}),
     } as Partial<GenerationHistoryItem>);
@@ -185,33 +231,309 @@ export async function generate(
       const creator = await authRepository.getUserById(uid);
       const fresh = await generationHistoryRepository.get(uid, historyId);
       if (fresh) {
-        await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+        await generationsMirrorRepository.upsertFromHistory(
           uid,
-          username: creator?.username,
-          displayName: (creator as any)?.displayName,
-          photoURL: creator?.photoURL,
-        });
+          historyId,
+          fresh,
+          {
+            uid,
+            username: creator?.username,
+            displayName: (creator as any)?.displayName,
+            photoURL: creator?.photoURL,
+          }
+        );
       }
     } catch {}
-    return { images, historyId };
+    return {
+      historyId,
+      prompt,
+      model,
+      generationType: (payload as any).generationType || "text-to-image",
+      visibility: (payload as any).visibility || "private",
+      isPublic: (payload as any).isPublic === true,
+      createdBy,
+      images: uploadedImages,
+      status: "completed",
+    } as any;
   } catch (err: any) {
     const message = err?.message || "Failed to generate images";
+    // eslint-disable-next-line no-console
+    console.error("[BFL] Generation error:", message, err?.data || "");
     await bflRepository.updateGenerationRecord(legacyId, {
       status: "failed",
       error: message,
     });
     try {
-      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+      await generationHistoryRepository.update(uid, historyId, {
+        status: "failed",
+        error: message,
+      } as any);
       const fresh = await generationHistoryRepository.get(uid, historyId);
       if (fresh) {
-        await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
+        await generationsMirrorRepository.updateFromHistory(
+          uid,
+          historyId,
+          fresh
+        );
       }
     } catch {}
     throw err;
   }
 }
 
+async function fill(uid: string, body: any) {
+  const apiKey = env.bflApiKey as string;
+  if (!apiKey) throw new ApiError("API key not configured", 500);
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+  const endpoint = `https://api.bfl.ai/v1/flux-pro-1.0-fill`;
+  const response = await axios.post(endpoint, body, {
+    headers: {
+      accept: "application/json",
+      "x-key": apiKey,
+      "Content-Type": "application/json",
+    },
+    validateStatus: () => true,
+  });
+  if (response.status < 200 || response.status >= 300)
+    throw new ApiError("Failed to start fill", response.status, response.data);
+  const { polling_url, id } = response.data || {};
+  if (!polling_url) throw new ApiError("No polling URL received", 502);
+  const imageUrl = await pollForResults(polling_url, apiKey);
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body?.prompt || "",
+    model: "flux-pro-1.0-fill",
+    generationType: "text-to-image",
+    visibility: "private",
+    isPublic: body?.isPublic === true,
+    createdBy,
+  } as any);
+  const { key, publicUrl } = await uploadFromUrlToZata({
+    sourceUrl: imageUrl,
+    keyPrefix: `users/${
+      (await authRepository.getUserById(uid))?.username || uid
+    }/image/${historyId}`,
+    fileName: "image-1",
+  });
+  await generationHistoryRepository.update(uid, historyId, {
+    status: "completed",
+    images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+  } as any);
+  try {
+    const fresh = await generationHistoryRepository.get(uid, historyId);
+    if (fresh)
+      await generationsMirrorRepository.upsertFromHistory(
+        uid,
+        historyId,
+        fresh,
+        { uid, username: (await authRepository.getUserById(uid))?.username }
+      );
+  } catch {}
+    return {
+      historyId,
+      prompt: body?.prompt || "",
+      model: "flux-pro-1.0-fill",
+      generationType: "text-to-image",
+      visibility: "private",
+    isPublic: body?.isPublic === true,
+      createdBy,
+      images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+      status: "completed",
+    } as any;
+}
+
+async function expand(uid: string, body: any) {
+  const apiKey = env.bflApiKey as string;
+  if (!apiKey) throw new ApiError("API key not configured", 500);
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+  const endpoint = `https://api.bfl.ai/v1/flux-pro-1.0-expand`;
+  const response = await axios.post(endpoint, body, {
+    headers: {
+      accept: "application/json",
+      "x-key": apiKey,
+      "Content-Type": "application/json",
+    },
+    validateStatus: () => true,
+  });
+  if (response.status < 200 || response.status >= 300)
+    throw new ApiError(
+      "Failed to start expand",
+      response.status,
+      response.data
+    );
+  const { polling_url, id } = response.data || {};
+  if (!polling_url) throw new ApiError("No polling URL received", 502);
+  const imageUrl = await pollForResults(polling_url, apiKey);
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body?.prompt || "",
+    model: "flux-pro-1.0-expand",
+    generationType: "text-to-image",
+    visibility: "private",
+    isPublic: body?.isPublic === true,
+    createdBy,
+  } as any);
+  const { key, publicUrl } = await uploadFromUrlToZata({
+    sourceUrl: imageUrl,
+    keyPrefix: `users/${
+      (await authRepository.getUserById(uid))?.username || uid
+    }/image/${historyId}`,
+    fileName: "image-1",
+  });
+  await generationHistoryRepository.update(uid, historyId, {
+    status: "completed",
+    images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+  } as any);
+  try {
+    const fresh = await generationHistoryRepository.get(uid, historyId);
+    if (fresh)
+      await generationsMirrorRepository.upsertFromHistory(
+        uid,
+        historyId,
+        fresh,
+        { uid, username: (await authRepository.getUserById(uid))?.username }
+      );
+  } catch {}
+    return {
+      historyId,
+      prompt: body?.prompt || "",
+      model: "flux-pro-1.0-expand",
+      generationType: "text-to-image",
+      visibility: "private",
+    isPublic: body?.isPublic === true,
+      createdBy,
+      images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+      status: "completed",
+    } as any;
+}
+
+async function canny(uid: string, body: any) {
+  const apiKey = env.bflApiKey as string;
+  if (!apiKey) throw new ApiError("API key not configured", 500);
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+  const endpoint = `https://api.bfl.ai/v1/flux-pro-1.0-canny`;
+  const response = await axios.post(endpoint, body, {
+    headers: {
+      accept: "application/json",
+      "x-key": apiKey,
+      "Content-Type": "application/json",
+    },
+    validateStatus: () => true,
+  });
+  if (response.status < 200 || response.status >= 300)
+    throw new ApiError("Failed to start canny", response.status, response.data);
+  const { polling_url, id } = response.data || {};
+  if (!polling_url) throw new ApiError("No polling URL received", 502);
+  const imageUrl = await pollForResults(polling_url, apiKey);
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body?.prompt || "",
+    model: "flux-pro-1.0-canny",
+    generationType: "text-to-image",
+    visibility: "private",
+    isPublic: body?.isPublic === true,
+    createdBy,
+  } as any);
+  const { key, publicUrl } = await uploadFromUrlToZata({
+    sourceUrl: imageUrl,
+    keyPrefix: `users/${
+      (await authRepository.getUserById(uid))?.username || uid
+    }/image/${historyId}`,
+    fileName: "image-1",
+  });
+  await generationHistoryRepository.update(uid, historyId, {
+    status: "completed",
+    images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+  } as any);
+  try {
+    const fresh = await generationHistoryRepository.get(uid, historyId);
+    if (fresh)
+      await generationsMirrorRepository.upsertFromHistory(
+        uid,
+        historyId,
+        fresh,
+        { uid, username: (await authRepository.getUserById(uid))?.username }
+      );
+  } catch {}
+    return {
+      historyId,
+      prompt: body?.prompt || "",
+      model: "flux-pro-1.0-canny",
+      generationType: "text-to-image",
+      visibility: "private",
+    isPublic: body?.isPublic === true,
+      createdBy,
+      images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+      status: "completed",
+    } as any;
+}
+
+async function depth(uid: string, body: any) {
+  const apiKey = env.bflApiKey as string;
+  if (!apiKey) throw new ApiError("API key not configured", 500);
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+  const endpoint = `https://api.bfl.ai/v1/flux-pro-1.0-depth`;
+  const response = await axios.post(endpoint, body, {
+    headers: {
+      accept: "application/json",
+      "x-key": apiKey,
+      "Content-Type": "application/json",
+    },
+    validateStatus: () => true,
+  });
+  if (response.status < 200 || response.status >= 300)
+    throw new ApiError("Failed to start depth", response.status, response.data);
+  const { polling_url, id } = response.data || {};
+  if (!polling_url) throw new ApiError("No polling URL received", 502);
+  const imageUrl = await pollForResults(polling_url, apiKey);
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body?.prompt || "",
+    model: "flux-pro-1.0-depth",
+    generationType: "text-to-image",
+    visibility: "private",
+    isPublic: body?.isPublic === true,
+    createdBy,
+  } as any);
+  const { key, publicUrl } = await uploadFromUrlToZata({
+    sourceUrl: imageUrl,
+    keyPrefix: `users/${
+      (await authRepository.getUserById(uid))?.username || uid
+    }/image/${historyId}`,
+    fileName: "image-1",
+  });
+  await generationHistoryRepository.update(uid, historyId, {
+    status: "completed",
+    images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+  } as any);
+  try {
+    const fresh = await generationHistoryRepository.get(uid, historyId);
+    if (fresh)
+      await generationsMirrorRepository.upsertFromHistory(
+        uid,
+        historyId,
+        fresh,
+        { uid, username: (await authRepository.getUserById(uid))?.username }
+      );
+  } catch {}
+    return {
+      historyId,
+      prompt: body?.prompt || "",
+      model: "flux-pro-1.0-depth",
+      generationType: "text-to-image",
+      visibility: "private",
+    isPublic: body?.isPublic === true,
+      createdBy,
+      images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+      status: "completed",
+    } as any;
+}
+
 export const bflService = {
   generate,
   pollForResults,
+  fill,
+  expand,
+  canny,
+  depth,
 };

@@ -5,6 +5,7 @@ import {
 } from "../types/runway";
 import { runwayRepository } from "../repository/runwayRepository";
 import RunwayML from "@runwayml/sdk";
+import { env } from "../config/env";
 import { generationHistoryRepository } from "../repository/generationHistoryRepository";
 import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
 import { authRepository } from "../repository/auth/authRepository";
@@ -13,7 +14,7 @@ import { authRepository } from "../repository/auth/authRepository";
 // (SDK handles base/version internally)
 
 function getRunwayClient(): RunwayML {
-  const apiKey = process.env.RUNWAY_API_KEY as string;
+  const apiKey = env.runwayApiKey as string;
   if (!apiKey) throw new ApiError("Runway API key not configured", 500);
   return new RunwayML({ apiKey });
 }

@@ -1,12 +1,15 @@
 import { Request, Response, NextFunction } from 'express';
+import '../types/http';
+import { env } from '../config/env';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { minimaxService } from '../services/minimaxService';
 
 // Images
+
 async function generate(req: Request, res: Response, next: NextFunction) {
   try {
     const { prompt, aspect_ratio, width, height, response_format, seed, n, prompt_optimizer, subject_reference, generationType, style } = req.body || {};
-    const uid = (req as any).uid;
+    const uid = req.uid;
     const result = await minimaxService.generate(uid, { prompt, aspect_ratio, width, height, response_format, seed, n, prompt_optimizer, subject_reference, generationType, style });
     res.json(formatApiResponse('success', 'Images generated', result));
   } catch (err) {
@@ -17,8 +20,8 @@ async function generate(req: Request, res: Response, next: NextFunction) {
 // Video
 async function videoStart(req: Request, res: Response, next: NextFunction) {
   try {
-    const apiKey = process.env.MINIMAX_API_KEY as string;
-    const groupId = process.env.MINIMAX_GROUP_ID as string;
+    const apiKey = env.minimaxApiKey as string;
+    const groupId = env.minimaxGroupId as string;
     const result = await minimaxService.generateVideo(apiKey, groupId, req.body);
     res.json(formatApiResponse('success', 'Task created', result));
   } catch (err) {
@@ -28,7 +31,7 @@ async function videoStart(req: Request, res: Response, next: NextFunction) {
 
 async function videoStatus(req: Request, res: Response, next: NextFunction) {
   try {
-    const apiKey = process.env.MINIMAX_API_KEY as string;
+    const apiKey = env.minimaxApiKey as string;
     const taskId = String(req.query.task_id || '');
     const result = await minimaxService.getVideoStatus(apiKey, taskId);
     res.json(formatApiResponse('success', 'Status', result));
@@ -39,7 +42,7 @@ async function videoStatus(req: Request, res: Response, next: NextFunction) {
 
 async function videoFile(req: Request, res: Response, next: NextFunction) {
   try {
-    const apiKey = process.env.MINIMAX_API_KEY as string;
+    const apiKey = env.minimaxApiKey as string;
     const groupId = process.env.MINIMAX_GROUP_ID as string;
     const fileId = String(req.query.file_id || '');
     console.log("groupId", groupId);

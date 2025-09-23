@@ -2,7 +2,8 @@ import { BflGenerateRequest, GeneratedImage, FrameSize } from "../types/bfl";
 import { adminDb, admin } from "../config/firebaseAdmin";
 
 async function createGenerationRecord(
-  req: BflGenerateRequest
+  req: BflGenerateRequest & { isPublic?: boolean },
+  createdBy?: { uid: string; username?: string; email?: string }
 ): Promise<string> {
   const colRef = adminDb.collection("generations");
   const docRef = await colRef.add({
@@ -13,6 +14,14 @@ async function createGenerationRecord(
     style: req.style ?? null,
     status: "generating",
     images: [],
+    isPublic: req.isPublic ?? false,
+    createdBy: createdBy
+      ? {
+          uid: createdBy.uid,
+          username: createdBy.username || null,
+          email: createdBy.email || null,
+        }
+      : null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });

@@ -1,4 +1,5 @@
 import axios from "axios";
+import { env } from "../config/env";
 import {
   MinimaxGenerateRequest,
   MinimaxGenerateResponse,
@@ -85,7 +86,7 @@ async function generate(
     throw new ApiError("Prompt exceeds 1500 characters limit", 400);
   if (n < 1 || n > 9) throw new ApiError("n must be between 1 and 9", 400);
 
-  const apiKey = process.env.MINIMAX_API_KEY as string;
+  const apiKey = env.minimaxApiKey as string;
   if (!apiKey) throw new ApiError("MiniMax API key not configured", 500);
 
   const legacyId = await minimaxRepository.createGenerationRecord(payload);
