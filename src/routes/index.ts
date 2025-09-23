@@ -44,15 +44,29 @@ router.post('/upload-media', uploadSingle('media'), async (req: any, res: any, n
       });
     }
     
-    logger.info({ zataUrl: result.publicUrl }, 'Media uploaded to Zata AI successfully');
-    
+    // Try to create a time-limited signed URL so the client can view the file even if the bucket is private
+    let signedUrl: string | undefined;
+    try {
+      const signed = await ZataService.getSignedDownloadUrl(result.key, 3600);
+      if (signed.success && signed.url) {
+        signedUrl = signed.url;
+      }
+    } catch (e) {
+      // Best-effort; fall back to public URL if signing fails
+    }
+
+    logger.info({ zataUrl: result.publicUrl, signedUrl }, 'Media uploaded to Zata AI successfully');
+
     res.json({
       responseStatus: 'success',
-      url: result.publicUrl,
+      // Prefer signed URL if available; fall back to constructed public URL
+      url: signedUrl || result.publicUrl,
       mediaType: mediaType,
       fileName: fileName,
       zataKey: result.key,
-      bucket: result.bucket
+      bucket: result.bucket,
+      publicUrl: result.publicUrl,
+      signedUrl
     });
     
   } catch (error: any) {
