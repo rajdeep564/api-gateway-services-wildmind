@@ -6,9 +6,9 @@ import { requireAuth } from '../middlewares/authMiddleware';
 const router = Router();
 
 router.post('/generate', requireAuth, validateBflGenerate, bflController.generate);
-router.post('/fill', requireAuth, validateBflFill as any, bflController.fill);
-router.post('/expand', requireAuth, validateBflExpand as any, bflController.expand);
-router.post('/canny', requireAuth, validateBflCanny as any, bflController.canny);
-router.post('/depth', requireAuth, validateBflDepth as any, bflController.depth);
+router.post('/fill', requireAuth, validateBflFill , bflController.fill);
+router.post('/expand', requireAuth, validateBflExpand , bflController.expand);
+router.post('/canny', requireAuth, validateBflCanny , bflController.canny);
+router.post('/depth', requireAuth, validateBflDepth , bflController.depth);
 
 export default router;
