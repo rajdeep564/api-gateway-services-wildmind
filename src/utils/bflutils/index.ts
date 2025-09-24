@@ -1,4 +1,5 @@
 import { FrameSize } from "../../types/bfl";
+import { creditDistributionData } from "../../data/creditDistribution";
 
 function getDimensions(ratio: FrameSize): { width: number; height: number } {
     switch (ratio) {
@@ -30,5 +31,28 @@ function getDimensions(ratio: FrameSize): { width: number; height: number } {
   }
 
 export const  bflutils = {
-    getDimensions
+    getDimensions,
+    getCreditsPerImage(model: string): number | null {
+        const normalized = model.toLowerCase();
+        const keyMap: Record<string, string> = {
+            'flux-pro-1.1-ultra': 'FLUX 1.1 [pro] Ultra',
+            'flux-pro-1.1': 'FLUX 1.1 [pro]',
+            'flux-pro': 'FLUX.1 [pro]',
+            'flux-dev': 'FLUX.1 [dev]',
+            'flux-kontext-pro': 'FLUX.1 Kontext [pro]',
+            'flux-kontext-max': 'FLUX.1 Kontext [max]',
+            // fallback for older op-specific endpoints
+            'flux-pro-1.0-fill': 'FLUX.1 [pro]',
+            'flux-pro-1.0-expand': 'FLUX.1 [pro]',
+            'flux-pro-1.0-canny': 'FLUX.1 [pro]',
+            'flux-pro-1.0-depth': 'FLUX.1 [pro]',
+        };
+        const display = keyMap[normalized];
+        if (display) {
+            const match = creditDistributionData.find(m => m.modelName === display);
+            if (match) return match.creditsPerGeneration;
+        }
+        const item = creditDistributionData.find(m => m.modelName.toLowerCase().includes(normalized));
+        return item?.creditsPerGeneration ?? null;
+    }
 }

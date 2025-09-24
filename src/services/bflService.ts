@@ -20,8 +20,10 @@ async function pollForResults(
   pollingUrl: string,
   apiKey: string
 ): Promise<string> {
-  for (let i = 0; i < 60; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
+  const intervalMs = env.bflPollIntervalMs ?? 1000; // default 1s
+  const maxLoops = env.bflPollMaxLoops ?? 180; // default ~3 minutes
+  for (let i = 0; i < maxLoops; i++) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
     const pollResponse = await axios.get(pollingUrl, {
       headers: { accept: "application/json", "x-key": apiKey },
       validateStatus: () => true,
@@ -65,7 +67,7 @@ async function generate(
     model,
     n = 1,
     frameSize = "1:1",
-    uploadedImages = [],
+    uploadedImages: inputImages = [],
     width,
     height,
   } = payload;
@@ -109,8 +111,8 @@ async function generate(
         body.output_format = (payload as any).output_format || "png";
         if ((payload as any).prompt_upsampling !== undefined)
           body.prompt_upsampling = (payload as any).prompt_upsampling;
-        if (Array.isArray(uploadedImages) && uploadedImages.length > 0) {
-          const [img1, img2, img3, img4] = uploadedImages;
+        if (Array.isArray(inputImages) && inputImages.length > 0) {
+          const [img1, img2, img3, img4] = inputImages;
           if (img1) body.input_image = img1;
           if (img2) body.input_image_2 = img2;
           if (img3) body.input_image_3 = img3;

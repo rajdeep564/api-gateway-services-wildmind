@@ -7,6 +7,13 @@ declare global {
       uid: string;
       email?: string;
       username?: string;
+      context?: {
+        creditCost?: number;
+        reason?: string;
+        idempotencyKey?: string;
+        pricingVersion?: string;
+        meta?: Record<string, any>;
+      };
     }
   }
 }
