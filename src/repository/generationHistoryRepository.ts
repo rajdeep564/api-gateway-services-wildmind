@@ -1,6 +1,23 @@
 import { adminDb, admin } from '../config/firebaseAdmin';
 import { GenerationHistoryItem, GenerationStatus, Visibility, GenerationType } from '../types/generate';
 
+function toIso(value: any): any {
+  try {
+    if (value && typeof (value as any).toDate === 'function') {
+      return (value as any).toDate().toISOString();
+    }
+    return value;
+  } catch {
+    return value;
+  }
+}
+
+function normalizeItem(id: string, data: any): GenerationHistoryItem {
+  const createdAt = toIso(data?.createdAt);
+  const updatedAt = toIso(data?.updatedAt);
+  return { id, ...data, ...(createdAt ? { createdAt } : {}), ...(updatedAt ? { updatedAt } : {}) } as GenerationHistoryItem;
+}
+
 export async function create(uid: string, data: {
   prompt: string;
   model: string;
@@ -52,7 +69,7 @@ export async function get(uid: string, historyId: string): Promise<GenerationHis
   const snap = await ref.get();
   if (!snap.exists) return null;
   const data = snap.data() as any;
-  return { id: snap.id, ...data } as GenerationHistoryItem;
+  return normalizeItem(snap.id, data);
 }
 
 export async function list(uid: string, params: {
@@ -61,19 +78,20 @@ export async function list(uid: string, params: {
   status?: 'generating' | 'completed' | 'failed';
   generationType?: GenerationType | string;
 }): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string }> {
-  let q: FirebaseFirestore.Query = adminDb.collection('generationHistory').doc(uid).collection('items')
-    .orderBy('createdAt', 'desc');
-  if (params.status) q = q.where('status', '==', params.status);
-  if (params.generationType) q = q.where('generationType', '==', params.generationType);
+  const col = adminDb.collection('generationHistory').doc(uid).collection('items');
+  let q: FirebaseFirestore.Query = col.orderBy('createdAt', 'desc');
   if (params.cursor) {
-    const cursorDoc = await adminDb.collection('generationHistory').doc(uid).collection('items').doc(params.cursor).get();
+    const cursorDoc = await col.doc(params.cursor).get();
     if (cursorDoc.exists) q = q.startAfter(cursorDoc);
   }
-  q = q.limit(params.limit);
-  const snap = await q.get();
-  const items: GenerationHistoryItem[] = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-  const nextCursor = snap.size === params.limit ? snap.docs[snap.docs.length - 1].id : undefined;
-  return { items, nextCursor };
+  const fetchCount = Math.max(params.limit * 4, params.limit);
+  const snap = await q.limit(fetchCount).get();
+  let items: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
+  if (params.status) items = items.filter(i => i.status === params.status);
+  if (params.generationType) items = items.filter(i => i.generationType === params.generationType);
+  const page = items.slice(0, params.limit);
+  const nextCursor = page.length === params.limit ? page[page.length - 1].id : undefined;
+  return { items: page, nextCursor };
 }
 
 export async function findByProviderTaskId(uid: string, provider: string, providerTaskId: string): Promise<{ id: string; item: GenerationHistoryItem } | null> {
@@ -86,7 +104,7 @@ export async function findByProviderTaskId(uid: string, provider: string, provid
   if (snap.empty) return null;
   const doc = snap.docs[0];
   const data = doc.data() as any;
-  return { id: doc.id, item: { id: doc.id, ...data } as GenerationHistoryItem };
+  return { id: doc.id, item: normalizeItem(doc.id, data) };
 }
 
 export const generationHistoryRepository = {

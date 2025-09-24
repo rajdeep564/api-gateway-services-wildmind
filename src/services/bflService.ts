@@ -191,7 +191,7 @@ async function generate(
     const images = await Promise.all(imagePromises);
 
     // Upload provider images to Zata and keep both links
-    const uploadedImages = await Promise.all(
+    const storedImages = await Promise.all(
       images.map(async (img, index) => {
         try {
           const { key, publicUrl } = await uploadFromUrlToZata({
@@ -209,23 +209,26 @@ async function generate(
             originalUrl: img.originalUrl || img.url,
           };
         } catch (e: any) {
-          // Provide context in error to bubble up meaningful message
-          const msg = e?.message || "upload failed";
-          throw new ApiError(`Zata upload failed: ${msg}`, 500, {
-            sourceUrl: img.url,
-          });
+          // Soft fallback: continue with provider URL if Zata fails
+          // eslint-disable-next-line no-console
+          console.warn("[BFL] Zata upload failed, falling back to provider URL:", e?.message || e);
+          return {
+            id: img.id,
+            url: img.url,
+            originalUrl: img.originalUrl || img.url,
+          } as any;
         }
       })
     );
     await bflRepository.updateGenerationRecord(legacyId, {
       status: "completed",
-      images: uploadedImages,
+      images: storedImages,
       frameSize,
     });
     // update authoritative history and mirror
     await generationHistoryRepository.update(uid, historyId, {
       status: "completed",
-      images: uploadedImages,
+      images: storedImages,
       // persist optional fields
       ...(frameSize ? { frameSize: frameSize as any } : {}),
     } as Partial<GenerationHistoryItem>);
@@ -254,7 +257,7 @@ async function generate(
       visibility: (payload as any).visibility || "private",
       isPublic: (payload as any).isPublic === true,
       createdBy,
-      images: uploadedImages,
+      images: storedImages,
       status: "completed",
     } as any;
   } catch (err: any) {
