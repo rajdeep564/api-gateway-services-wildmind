@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { authService } from "../../services/auth/authService";
+import { creditsService } from "../../services/creditsService";
 import { authRepository } from "../../repository/auth/authRepository";
 import { formatApiResponse } from "../../utils/formatApiResponse";
 import { ApiError } from "../../utils/errorHandler";
@@ -24,6 +25,15 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
 
     // Set session cookie
     await setSessionCookie(res, idToken);
+
+    // Initialize credits for this user (FREE plan on first use)
+    try {
+      console.log('[CREDITS][createSession] Init start', { uid: (user as any)?.uid });
+      const init = await creditsService.ensureUserInit(user.uid as any);
+      console.log('[CREDITS][createSession] Init done', init);
+    } catch (e: any) {
+      console.error('[CREDITS][createSession] Init error', { uid: (user as any)?.uid, err: e?.message });
+    }
 
     res.json(
       formatApiResponse("success", "Session created successfully", { user })
@@ -143,6 +153,15 @@ async function verifyEmailOtp(req: Request, res: Response, next: NextFunction) {
     );
     console.log(`[CONTROLLER] User created and ID token generated`);
 
+    // Initialize credits for the new user
+    try {
+      console.log('[CREDITS][verifyEmailOtp] Init start', { uid: (result.user as any)?.uid });
+      const init = await creditsService.ensureUserInit(result.user.uid as any);
+      console.log('[CREDITS][verifyEmailOtp] Init done', init);
+    } catch (e: any) {
+      console.error('[CREDITS][verifyEmailOtp] Init error', { uid: (result.user as any)?.uid, err: e?.message });
+    }
+
     // Return user data and Firebase custom token
     res.json(
       formatApiResponse("success", "OTP verified and user created", {
@@ -228,6 +247,14 @@ async function loginWithEmailPassword(
 
     console.log(`[CONTROLLER] Login successful for: ${email}`);
 
+    try {
+      console.log('[CREDITS][loginEmail] Init start', { uid: (result.user as any)?.uid });
+      const init = await creditsService.ensureUserInit(result.user.uid as any);
+      console.log('[CREDITS][loginEmail] Init done', init);
+    } catch (e: any) {
+      console.error('[CREDITS][loginEmail] Init error', { uid: (result.user as any)?.uid, err: e?.message });
+    }
+
     // Return user data and custom token (frontend will convert to ID token)
     res.json(
       formatApiResponse("success", "Login successful", {
@@ -254,6 +281,14 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
     );
 
     if (result.needsUsername) {
+      // Initialize credits even if username is pending
+      try {
+        console.log('[CREDITS][googleSignIn:needsUsername] Init start', { uid: (result.user as any)?.uid });
+        const init = await creditsService.ensureUserInit(result.user.uid as any);
+        console.log('[CREDITS][googleSignIn:needsUsername] Init done', init);
+      } catch (e: any) {
+        console.error('[CREDITS][googleSignIn:needsUsername] Init error', { uid: (result.user as any)?.uid, err: e?.message });
+      }
       // New user needs to set username
       res.json(
         formatApiResponse(
@@ -267,6 +302,13 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
       );
     } else {
       // Existing user, return custom token for session creation on client
+      try {
+        console.log('[CREDITS][googleSignIn:existing] Init start', { uid: (result.user as any)?.uid });
+        const init = await creditsService.ensureUserInit(result.user.uid as any);
+        console.log('[CREDITS][googleSignIn:existing] Init done', init);
+      } catch (e: any) {
+        console.error('[CREDITS][googleSignIn:existing] Init error', { uid: (result.user as any)?.uid, err: e?.message });
+      }
       res.json(
         formatApiResponse("success", "Google sign-in successful", {
           user: result.user,
@@ -300,6 +342,14 @@ async function setGoogleUsername(
     );
 
     console.log(`[CONTROLLER] Google username set successfully`);
+
+    try {
+      console.log('[CREDITS][setGoogleUsername] Init start', { uid: (result.user as any)?.uid });
+      const init = await creditsService.ensureUserInit(result.user.uid as any);
+      console.log('[CREDITS][setGoogleUsername] Init done', init);
+    } catch (e: any) {
+      console.error('[CREDITS][setGoogleUsername] Init error', { uid: (result.user as any)?.uid, err: e?.message });
+    }
 
     res.json(
       formatApiResponse("success", "Username set successfully", {

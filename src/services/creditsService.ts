@@ -48,8 +48,9 @@ export async function ensurePlansSeeded(): Promise<void> {
 export async function ensureUserInit(uid: string): Promise<UserCreditsDoc> {
   const userRef = adminDb.collection('users').doc(uid);
   const snap = await userRef.get();
+  const plan = await ensureFreePlan();
+
   if (!snap.exists) {
-    const plan = await ensureFreePlan();
     const doc: UserCreditsDoc = {
       uid,
       creditBalance: plan.credits,
@@ -60,11 +61,29 @@ export async function ensureUserInit(uid: string): Promise<UserCreditsDoc> {
     await userRef.set(doc, { merge: true });
     return doc;
   }
+
   const data = snap.data() as any;
+  let creditBalance = Number(data.creditBalance);
+  let planCode = (data.planCode as string) || FREE_PLAN_CODE;
+
+  // If fields are missing, backfill them atomically
+  if (!(data && typeof creditBalance === 'number' && !Number.isNaN(creditBalance))) {
+    await userRef.set(
+      {
+        creditBalance: plan.credits,
+        planCode: plan.code,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    creditBalance = plan.credits;
+    planCode = plan.code;
+  }
+
   return {
     uid,
-    creditBalance: Number(data.creditBalance || 0),
-    planCode: data.planCode || FREE_PLAN_CODE,
+    creditBalance,
+    planCode,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   };
