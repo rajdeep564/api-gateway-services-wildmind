@@ -10,9 +10,12 @@ function getDimensions(ratio: FrameSize): { width: number; height: number } {
       case "4:3":
         return { width: 1344, height: 1024 };
       case "16:9":
-        return { width: 1280, height: 720 };
+        // Ensure multiples of 32 to satisfy provider constraints
+        // 1344x768 preserves 16:9 closely and both are multiples of 32
+        return { width: 1344, height: 768 };
       case "9:16":
-        return { width: 720, height: 1280 };
+        // 768x1344 mirrors the 16:9 correction
+        return { width: 768, height: 1344 };
       case "3:2":
         return { width: 1344, height: 896 };
       case "2:3":
