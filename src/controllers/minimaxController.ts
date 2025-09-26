@@ -42,11 +42,9 @@ async function videoStatus(req: Request, res: Response, next: NextFunction) {
 
 async function videoFile(req: Request, res: Response, next: NextFunction) {
   try {
-    const apiKey = env.minimaxApiKey as string;
-    const groupId = process.env.MINIMAX_GROUP_ID as string;
     const fileId = String(req.query.file_id || '');
-    console.log("groupId", groupId);
-    const result = await minimaxService.getFile(apiKey, groupId, fileId);
+    const historyId = req.query.history_id ? String(req.query.history_id) : undefined;
+    const result = await minimaxService.processVideoFile(req.uid, fileId, historyId);
     res.json(formatApiResponse('success', 'File', result));
   } catch (err) {
     next(err);
@@ -56,8 +54,8 @@ async function videoFile(req: Request, res: Response, next: NextFunction) {
 // Music
 async function musicGenerate(req: Request, res: Response, next: NextFunction) {
   try {
-    const apiKey = process.env.MINIMAX_API_KEY as string;
-    const result = await minimaxService.generateMusic(apiKey, req.body);
+    // Preserve existing generation call? We will store as well using helper
+    const result = await minimaxService.musicGenerateAndStore(req.uid, req.body);
     res.json(formatApiResponse('success', 'Music generated', result));
   } catch (err) {
     next(err);
@@ -70,6 +68,6 @@ export const minimaxController = {
   videoStatus,
   videoFile,
   musicGenerate
-}
+};
 
 
