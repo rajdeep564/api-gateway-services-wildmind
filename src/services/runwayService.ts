@@ -10,6 +10,8 @@ import { generationHistoryRepository } from "../repository/generationHistoryRepo
 import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
 import { authRepository } from "../repository/auth/authRepository";
 import { uploadFromUrlToZata } from "../utils/storage/zataUpload";
+import { creditsRepository } from "../repository/creditsRepository";
+import { computeRunwayCostFromHistoryModel } from "../utils/pricing/runwayPricing";
 //
 
 // (SDK handles base/version internally)
@@ -133,6 +135,10 @@ async function getStatus(uid: string, id: string): Promise<any> {
             }
           }));
           await generationHistoryRepository.update(uid, found.id, { status: 'completed', images: storedImages } as any);
+          try {
+            const { cost, pricingVersion, meta } = computeRunwayCostFromHistoryModel(found.item.model);
+            await creditsRepository.writeDebitIfAbsent(uid, found.id, cost, 'runway.generate', { ...meta, historyId: found.id, provider: 'runway', pricingVersion });
+          } catch {}
         } else {
           const storedVideos = await Promise.all((outputs as any[]).map(async (u: string, i: number) => {
             try {
@@ -147,6 +153,10 @@ async function getStatus(uid: string, id: string): Promise<any> {
             }
           }));
           await generationHistoryRepository.update(uid, found.id, { status: 'completed', videos: storedVideos } as any);
+          try {
+            const { cost, pricingVersion, meta } = computeRunwayCostFromHistoryModel(found.item.model);
+            await creditsRepository.writeDebitIfAbsent(uid, found.id, cost, 'runway.video', { ...meta, historyId: found.id, provider: 'runway', pricingVersion });
+          } catch {}
         }
         try {
           const creator = await authRepository.getUserById(uid);
