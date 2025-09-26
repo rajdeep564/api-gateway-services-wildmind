@@ -7,6 +7,8 @@ import dotenv from 'dotenv';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { gzipCompression, httpParamPollution, rateLimiter, requestId, securityHeaders, originCheck } from '../middlewares/security';
 import { httpLogger } from '../middlewares/logger';
+import { adminDb, admin } from '../config/firebaseAdmin';
+import { creditsService } from '../services/creditsService';
 dotenv.config();
 
 const app = express();
@@ -55,3 +57,10 @@ app.use('/api', routes);
 app.use(errorHandler);
 
 export default app;
+
+// Minimal FREE plan seed on bootstrap (non-blocking)
+(async () => {
+  try {
+    await creditsService.ensurePlansSeeded();
+  } catch (_e) {}
+})();

@@ -35,6 +35,9 @@ export interface EnvConfig {
   smtpFrom?: string;
   // Logging
   logLevel: string;
+  // BFL polling
+  bflPollIntervalMs?: number;
+  bflPollMaxLoops?: number;
 }
 
 function normalizeBoolean(value: string | undefined, defaultTrue: boolean): boolean {
@@ -75,6 +78,8 @@ export const env: EnvConfig = {
   smtpPass: process.env.SMTP_PASS,
   smtpFrom: process.env.SMTP_FROM,
   logLevel: process.env.LOG_LEVEL || 'info',
+  bflPollIntervalMs: process.env.BFL_POLL_INTERVAL_MS ? parseInt(process.env.BFL_POLL_INTERVAL_MS, 10) : undefined,
+  bflPollMaxLoops: process.env.BFL_POLL_MAX_LOOPS ? parseInt(process.env.BFL_POLL_MAX_LOOPS, 10) : undefined,
 };
 
 

@@ -14,6 +14,8 @@ async function createTaskRecord(data: {
   promptText?: string;
   seed?: number;
   taskId: string;
+  isPublic?: boolean;
+  createdBy?: { uid: string; username?: string; email?: string };
 }): Promise<string> {
   const doc = await adminDb.collection("generations").add({
     provider: "runway",
@@ -25,6 +27,14 @@ async function createTaskRecord(data: {
     taskId: data.taskId,
     status: "pending",
     outputs: [],
+    isPublic: data.isPublic ?? false,
+    createdBy: data.createdBy
+      ? {
+          uid: data.createdBy.uid,
+          username: data.createdBy.username || null,
+          email: data.createdBy.email || null,
+        }
+      : null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });

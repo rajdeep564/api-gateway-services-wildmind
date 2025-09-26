@@ -5,7 +5,8 @@ import {
 import { adminDb, admin } from "../config/firebaseAdmin";
 
 async function createGenerationRecord(
-  req: MinimaxGenerateRequest
+  req: MinimaxGenerateRequest & { isPublic?: boolean },
+  createdBy?: { uid: string; username?: string; email?: string }
 ): Promise<string> {
   const doc = await adminDb.collection("generations").add({
     provider: "minimax",
@@ -14,6 +15,14 @@ async function createGenerationRecord(
     n: req.n ?? 1,
     status: "generating",
     images: [],
+    isPublic: req.isPublic ?? false,
+    createdBy: createdBy
+      ? {
+          uid: createdBy.uid,
+          username: createdBy.username || null,
+          email: createdBy.email || null,
+        }
+      : null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });

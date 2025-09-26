@@ -3,6 +3,8 @@ import '../types/http';
 import { env } from '../config/env';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { minimaxService } from '../services/minimaxService';
+import { creditsRepository } from '../repository/creditsRepository';
+import { logger } from '../utils/logger';
 
 // Images
 
@@ -10,8 +12,23 @@ async function generate(req: Request, res: Response, next: NextFunction) {
   try {
     const { prompt, aspect_ratio, width, height, response_format, seed, n, prompt_optimizer, subject_reference, generationType, style } = req.body || {};
     const uid = req.uid;
+    const ctx = (req as any).context || {};
+    logger.info({ uid, ctx }, '[CREDITS][MINIMAX] Enter generate with context');
     const result = await minimaxService.generate(uid, { prompt, aspect_ratio, width, height, response_format, seed, n, prompt_optimizer, subject_reference, generationType, style });
-    res.json(formatApiResponse('success', 'Images generated', result));
+    let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
+    try {
+      const requestId = (result as any).historyId || ctx.idempotencyKey;
+      logger.info({ uid, requestId, cost: ctx.creditCost }, '[CREDITS][MINIMAX] Attempt debit after success');
+      if (requestId && typeof ctx.creditCost === 'number') {
+        debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'minimax.generate', {
+          ...(ctx.meta || {}),
+          historyId: (result as any).historyId,
+          provider: 'minimax',
+          pricingVersion: ctx.pricingVersion,
+        });
+      }
+    } catch (_e) {}
+    res.json(formatApiResponse('success', 'Images generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
   } catch (err) {
     next(err);
   }
@@ -22,8 +39,9 @@ async function videoStart(req: Request, res: Response, next: NextFunction) {
   try {
     const apiKey = env.minimaxApiKey as string;
     const groupId = env.minimaxGroupId as string;
+    const ctx = (req as any).context || {};
     const result = await minimaxService.generateVideo(apiKey, groupId, req.body);
-    res.json(formatApiResponse('success', 'Task created', result));
+    res.json(formatApiResponse('success', 'Task created', { ...result, expectedDebit: ctx.creditCost }));
   } catch (err) {
     next(err);
   }
@@ -42,11 +60,9 @@ async function videoStatus(req: Request, res: Response, next: NextFunction) {
 
 async function videoFile(req: Request, res: Response, next: NextFunction) {
   try {
-    const apiKey = env.minimaxApiKey as string;
-    const groupId = process.env.MINIMAX_GROUP_ID as string;
     const fileId = String(req.query.file_id || '');
-    console.log("groupId", groupId);
-    const result = await minimaxService.getFile(apiKey, groupId, fileId);
+    const historyId = req.query.history_id ? String(req.query.history_id) : undefined;
+    const result = await minimaxService.processVideoFile(req.uid, fileId, historyId);
     res.json(formatApiResponse('success', 'File', result));
   } catch (err) {
     next(err);
@@ -56,9 +72,21 @@ async function videoFile(req: Request, res: Response, next: NextFunction) {
 // Music
 async function musicGenerate(req: Request, res: Response, next: NextFunction) {
   try {
-    const apiKey = process.env.MINIMAX_API_KEY as string;
-    const result = await minimaxService.generateMusic(apiKey, req.body);
-    res.json(formatApiResponse('success', 'Music generated', result));
+    const ctx = (req as any).context || {};
+    const result = await minimaxService.musicGenerateAndStore(req.uid, req.body);
+    // musicGenerateAndStore updates history; we'll perform debit here if historyId present
+    try {
+      const requestId = (result as any).historyId || ctx.idempotencyKey;
+      if (requestId && typeof ctx.creditCost === 'number') {
+        await creditsRepository.writeDebitIfAbsent(req.uid, requestId, ctx.creditCost, ctx.reason || 'minimax.music', {
+          ...(ctx.meta || {}),
+          historyId: (result as any).historyId,
+          provider: 'minimax',
+          pricingVersion: ctx.pricingVersion,
+        });
+      }
+    } catch (_e) {}
+    res.json(formatApiResponse('success', 'Music generated', { ...result, debitedCredits: ctx.creditCost }));
   } catch (err) {
     next(err);
   }
@@ -70,6 +98,6 @@ export const minimaxController = {
   videoStatus,
   videoFile,
   musicGenerate
-}
+};
 
 

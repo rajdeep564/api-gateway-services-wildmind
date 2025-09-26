@@ -9,6 +9,9 @@ import { env } from "../config/env";
 import { generationHistoryRepository } from "../repository/generationHistoryRepository";
 import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
 import { authRepository } from "../repository/auth/authRepository";
+import { uploadFromUrlToZata } from "../utils/storage/zataUpload";
+import { creditsRepository } from "../repository/creditsRepository";
+import { computeRunwayCostFromHistoryModel } from "../utils/pricing/runwayPricing";
 //
 
 // (SDK handles base/version internally)
@@ -65,6 +68,8 @@ async function textToImage(
       : {}),
   });
   // Create authoritative history first
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: promptText,
     model,
@@ -72,6 +77,8 @@ async function textToImage(
     visibility: (payload as any).visibility || 'private',
     tags: (payload as any).tags,
     nsfw: (payload as any).nsfw,
+    isPublic: (payload as any).isPublic === true,
+    createdBy,
   });
   try {
     await runwayRepository.createTaskRecord({
@@ -81,6 +88,8 @@ async function textToImage(
       promptText,
       seed,
       taskId: created.id,
+      isPublic: (payload as any).isPublic === true,
+      createdBy,
     });
   } catch {}
   // Store provider identifiers on history
@@ -108,8 +117,47 @@ async function getStatus(uid: string, id: string): Promise<any> {
       const found = await generationHistoryRepository.findByProviderTaskId(uid, 'runway', id);
       if (found) {
         const outputs = (task as any).output || [];
-        const images = Array.isArray(outputs) ? outputs.map((u: any, i: number) => ({ id: `${id}-${i}`, url: u, storagePath: '' })) : undefined;
-        await generationHistoryRepository.update(uid, found.id, { status: 'completed', images } as any);
+        const creator = await authRepository.getUserById(uid);
+        const username = creator?.username || uid;
+        // Upload each output to Zata (assume images for text_to_image; videos for others)
+        const isImage = (task as any)?.type === 'text_to_image' || (found.item?.generationType === 'text-to-image');
+        if (isImage) {
+          const storedImages = await Promise.all((outputs as any[]).map(async (u: string, i: number) => {
+            try {
+              const { key, publicUrl } = await uploadFromUrlToZata({
+                sourceUrl: u,
+                keyPrefix: `users/${username}/image/${found.id}`,
+                fileName: `image-${i + 1}`,
+              });
+              return { id: `${id}-${i}`, url: publicUrl, storagePath: key, originalUrl: u };
+            } catch {
+              return { id: `${id}-${i}`, url: u, originalUrl: u } as any;
+            }
+          }));
+          await generationHistoryRepository.update(uid, found.id, { status: 'completed', images: storedImages } as any);
+          try {
+            const { cost, pricingVersion, meta } = computeRunwayCostFromHistoryModel(found.item.model);
+            await creditsRepository.writeDebitIfAbsent(uid, found.id, cost, 'runway.generate', { ...meta, historyId: found.id, provider: 'runway', pricingVersion });
+          } catch {}
+        } else {
+          const storedVideos = await Promise.all((outputs as any[]).map(async (u: string, i: number) => {
+            try {
+              const { key, publicUrl } = await uploadFromUrlToZata({
+                sourceUrl: u,
+                keyPrefix: `users/${username}/video/${found.id}`,
+                fileName: `video-${i + 1}`,
+              });
+              return { id: `${id}-${i}`, url: publicUrl, storagePath: key, originalUrl: u };
+            } catch {
+              return { id: `${id}-${i}`, url: u, originalUrl: u } as any;
+            }
+          }));
+          await generationHistoryRepository.update(uid, found.id, { status: 'completed', videos: storedVideos } as any);
+          try {
+            const { cost, pricingVersion, meta } = computeRunwayCostFromHistoryModel(found.item.model);
+            await creditsRepository.writeDebitIfAbsent(uid, found.id, cost, 'runway.video', { ...meta, historyId: found.id, provider: 'runway', pricingVersion });
+          } catch {}
+        }
         try {
           const creator = await authRepository.getUserById(uid);
           const fresh = await generationHistoryRepository.get(uid, found.id);
