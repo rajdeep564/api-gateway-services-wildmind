@@ -334,67 +334,157 @@ export const creditDistributionData: ModelCreditInfo[] = [
   },
   {
     srNo: 22,
-    modelName: "veo3 5s",
-    priceToPay: 2,
+    modelName: "veo3 t2v 4s",
+    priceToPay: 1.6,
     overCharge: 0.06,
-    userCost: 2.06,
-    creditsPerGeneration: 4120,
+    userCost: 1.66,
+    creditsPerGeneration: 3320,
     plans: {
-      planA: 3,
-      planB: 6,
-      planC: 15,
-      planD: 48,
-      free: 1
+      planA: 3.722891566,
+      planB: 7.445783133,
+      planC: 18.61445783,
+      planD: 59.56626506,
+      free: 1.240963855
     }
   },
   {
     srNo: 23,
-    modelName: "veo3 Fast 5s",
-    priceToPay: 0.75,
+    modelName: "veo3 t2v 6s",
+    priceToPay: 2.4,
     overCharge: 0.06,
-    userCost: 0.81,
-    creditsPerGeneration: 1620,
+    userCost: 2.46,
+    creditsPerGeneration: 4920,
     plans: {
-      planA: 7.62962963,
-      planB: 15.25925926,
-      planC: 38.14814815,
-      planD: 122.0740741,
-      free: 2.543209877
+      planA: 2.512195122,
+      planB: 5.024390244,
+      planC: 12.56097561,
+      planD: 40.19512195,
+      free: 0.837398374
     }
   },
   {
     srNo: 24,
-    modelName: "Gen-4 Aleph 5s",
-    priceToPay: 0.75,
+    modelName: "veo3 t2v 8s",
+    priceToPay: 3.2,
     overCharge: 0.06,
-    userCost: 0.81,
-    creditsPerGeneration: 1620,
+    userCost: 3.26,
+    creditsPerGeneration: 6520,
     plans: {
-      planA: 7.62962963,
-      planB: 15.25925926,
-      planC: 38.14814815,
-      planD: 122.0740741,
-      free: 2.543209877
+      planA: 1.895705521,
+      planB: 3.791411043,
+      planC: 9.478527607,
+      planD: 30.33128834,
+      free: 0.6319018405
     }
   },
   {
     srNo: 25,
-    modelName: "Gen-4 Turbo 5s",
-    priceToPay: 0.25,
+    modelName: "veo3 i2v 8s",
+    priceToPay: 3.2,
     overCharge: 0.06,
-    userCost: 0.31,
-    creditsPerGeneration: 620,
+    userCost: 3.26,
+    creditsPerGeneration: 6520,
     plans: {
-      planA: 19.93548387,
-      planB: 39.87096774,
-      planC: 99.67741935,
-      planD: 318.9677419,
-      free: 6.64516129
+      planA: 1.895705521,
+      planB: 3.791411043,
+      planC: 9.478527607,
+      planD: 30.33128834,
+      free: 0.6319018405
     }
   },
   {
     srNo: 26,
-    modelName: "Gen-3a Turbo 5s",
+    modelName: "veo3 fast t2v 4s",
+    priceToPay: 0.6,
+    overCharge: 0.06,
+    userCost: 0.66,
+    creditsPerGeneration: 1320,
+    plans: {
+      planA: 9.363636364,
+      planB: 18.72727273,
+      planC: 46.81818182,
+      planD: 149.8181818,
+      free: 3.121212121
+    }
+  },
+  {
+    srNo: 27,
+    modelName: "veo3 fast t2v 6s",
+    priceToPay: 0.9,
+    overCharge: 0.06,
+    userCost: 0.96,
+    creditsPerGeneration: 1920,
+    plans: {
+      planA: 6.4375,
+      planB: 12.875,
+      planC: 32.1875,
+      planD: 103,
+      free: 2.145833333
+    }
+  },
+  {
+    srNo: 28,
+    modelName: "veo3 fast t2v 8s",
+    priceToPay: 1.2,
+    overCharge: 0.06,
+    userCost: 1.26,
+    creditsPerGeneration: 2520,
+    plans: {
+      planA: 4.904761905,
+      planB: 9.80952381,
+      planC: 24.52380952,
+      planD: 78.47619048,
+      free: 1.634920635
+    }
+  },
+  {
+    srNo: 29,
+    modelName: "veo3 fast i2v 8s",
+    priceToPay: 1.2,
+    overCharge: 0.06,
+    userCost: 1.26,
+    creditsPerGeneration: 2520,
+    plans: {
+      planA: 4.904761905,
+      planB: 9.80952381,
+      planC: 24.52380952,
+      planD: 78.47619048,
+      free: 1.634920635
+    }
+  },
+  {
+    srNo: 30,
+    modelName: "RW veo3 8s",
+    priceToPay: 3.2,
+    overCharge: 0.06,
+    userCost: 3.26,
+    creditsPerGeneration: 6520,
+    plans: {
+      planA: 1.895705521,
+      planB: 3.791411043,
+      planC: 9.478527607,
+      planD: 30.33128834,
+      free: 0.6319018405
+    }
+  },
+  {
+    srNo: 31,
+    modelName: "Gen-4 Aleph 10s",
+    priceToPay: 1.5,
+    overCharge: 0.06,
+    userCost: 1.56,
+    creditsPerGeneration: 3120,
+    plans: {
+      planA: 3.961538462,
+      planB: 7.923076923,
+      planC: 19.80769231,
+      planD: 63.38461538,
+      free: 1.320512821
+    }
+  },
+  {
+    srNo: 32,
+    modelName: "Gen-4  Turbo 5s",
     priceToPay: 0.25,
     overCharge: 0.06,
     userCost: 0.31,
@@ -408,7 +498,52 @@ export const creditDistributionData: ModelCreditInfo[] = [
     }
   },
   {
-    srNo: 27,
+    srNo: 33,
+    modelName: "Gen-4  Turbo 10s",
+    priceToPay: 0.5,
+    overCharge: 0.06,
+    userCost: 0.56,
+    creditsPerGeneration: 1120,
+    plans: {
+      planA: 11.03571429,
+      planB: 22.07142857,
+      planC: 55.17857143,
+      planD: 176.5714286,
+      free: 3.678571429
+    }
+  },
+  {
+    srNo: 34,
+    modelName: "Gen-3a  Turbo 5s",
+    priceToPay: 0.25,
+    overCharge: 0.06,
+    userCost: 0.31,
+    creditsPerGeneration: 620,
+    plans: {
+      planA: 19.93548387,
+      planB: 39.87096774,
+      planC: 99.67741935,
+      planD: 318.9677419,
+      free: 6.64516129
+    }
+  },
+  {
+    srNo: 35,
+    modelName: "Gen-3a  Turbo 10s",
+    priceToPay: 0.5,
+    overCharge: 0.06,
+    userCost: 0.56,
+    creditsPerGeneration: 1120,
+    plans: {
+      planA: 11.03571429,
+      planB: 22.07142857,
+      planC: 55.17857143,
+      planD: 176.5714286,
+      free: 3.678571429
+    }
+  },
+  {
+    srNo: 36,
     modelName: "ChatGPT Prompt Enhancer (4o)",
     priceToPay: 0.00875,
     overCharge: 0.00125,

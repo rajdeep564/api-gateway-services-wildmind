@@ -12,6 +12,8 @@ import { GenerationHistoryItem, GenerationType, VideoMedia } from "../types/gene
 import { env } from "../config/env";
 import { uploadFromUrlToZata } from "../utils/storage/zataUpload";
 import { falRepository } from "../repository/falRepository";
+import { creditsRepository } from "../repository/creditsRepository";
+import { computeFalVeoCostFromModel } from "../utils/pricing/falPricing";
 
 async function generate(
   uid: string,
@@ -491,6 +493,10 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
       storagePath: v.storagePath,
       originalUrl: v.originalUrl || providerUrl,
     }));
+    try {
+      const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(model);
+      await creditsRepository.writeDebitIfAbsent(uid, located.id, cost, 'fal.queue.veo', { ...meta, historyId: located.id, provider: 'fal', pricingVersion });
+    } catch {}
     return { videos: enrichedVideos, historyId: located.id, model, requestId, status: 'completed' } as any;
   }
   // Handle image outputs (T2I/I2I)
@@ -511,6 +517,10 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
       }
     }));
     await generationHistoryRepository.update(uid, located.id, { status: 'completed', images: stored } as any);
+    try {
+      const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(model);
+      await creditsRepository.writeDebitIfAbsent(uid, located.id, cost, 'fal.queue.image', { ...meta, historyId: located.id, provider: 'fal', pricingVersion });
+    } catch {}
     const fresh = await generationHistoryRepository.get(uid, located.id);
     if (fresh) {
       const creator = await authRepository.getUserById(uid);
