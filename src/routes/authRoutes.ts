@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authController } from '../controllers/auth/authController';
+import { redeemCodeController } from '../controllers/redeemCodeController';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { validateSession, validateOtpStart, validateOtpVerify, validateUsername, validateUpdateMe, validateLogin, validateGoogleSignIn, validateGoogleUsername, validateCheckUsername } from '../middlewares/validateAuth';
 
@@ -17,6 +18,7 @@ router.get('/username/check', validateCheckUsername, authController.checkUsernam
 router.get('/me', requireAuth, authController.getCurrentUser);
 router.patch('/me', requireAuth, validateUpdateMe, authController.updateUser);
 router.post('/logout', authController.logout);
+router.post('/redeem-code/apply', requireAuth, redeemCodeController.applyRedeemCode);
 
 export default router;
 

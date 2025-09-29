@@ -38,6 +38,7 @@ export interface EnvConfig {
   // BFL polling
   bflPollIntervalMs?: number;
   bflPollMaxLoops?: number;
+  reedemCodeAdminKey?: string;
 }
 
 function normalizeBoolean(value: string | undefined, defaultTrue: boolean): boolean {
@@ -80,6 +81,7 @@ export const env: EnvConfig = {
   logLevel: process.env.LOG_LEVEL || 'info',
   bflPollIntervalMs: process.env.BFL_POLL_INTERVAL_MS ? parseInt(process.env.BFL_POLL_INTERVAL_MS, 10) : undefined,
   bflPollMaxLoops: process.env.BFL_POLL_MAX_LOOPS ? parseInt(process.env.BFL_POLL_MAX_LOOPS, 10) : undefined,
+  reedemCodeAdminKey: process.env.REDEEM_CODE_ADMIN_KEY,
 };
 
 
