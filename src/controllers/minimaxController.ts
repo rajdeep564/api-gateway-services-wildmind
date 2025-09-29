@@ -7,6 +7,8 @@ import { creditsRepository } from '../repository/creditsRepository';
 import { authRepository } from '../repository/auth/authRepository';
 import { generationHistoryRepository } from '../repository/generationHistoryRepository';
 import { logger } from '../utils/logger';
+import { generationHistoryRepository } from '../repository/generationHistoryRepository';
+import { authRepository } from '../repository/auth/authRepository';
 
 // Images
 

@@ -21,6 +21,7 @@ export interface BflGenerateRequest {
   uploadedImages?: string[];
   width?: number;
   height?: number;
+  generationType?: string;
 }
 
 export interface GeneratedImage {

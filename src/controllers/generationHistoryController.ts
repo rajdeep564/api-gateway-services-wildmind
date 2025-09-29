@@ -46,8 +46,15 @@ async function get(req: Request, res: Response, next: NextFunction) {
 async function listMine(req: Request, res: Response, next: NextFunction) {
 	try {
 		const uid = (req as any).uid;
-		const { limit = 20, cursor, status, generationType } = req.query as any;
-		const result = await generationHistoryService.listUserGenerations(uid, { limit: Number(limit), cursor, status, generationType });
+		const { limit = 20, cursor, status, generationType, sortBy, sortOrder } = req.query as any;
+		const result = await generationHistoryService.listUserGenerations(uid, { 
+			limit: Number(limit), 
+			cursor, 
+			status, 
+			generationType,
+			sortBy,
+			sortOrder 
+		});
 		return res.json(formatApiResponse('success', 'OK', result));
 	} catch (err) {
 		return next(err);

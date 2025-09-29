@@ -7,6 +7,7 @@ export interface FalGenerateRequest {
   style?: string;
   uploadedImages?: string[]; // URLs or data URIs
   output_format?: "jpeg" | "png" | "webp";
+  generationType?: string;
 }
 
 export interface FalGeneratedImage {
