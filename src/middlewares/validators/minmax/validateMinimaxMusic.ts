@@ -4,6 +4,7 @@ import { ApiError } from '../../../utils/errorHandler';
 
 export const validateMinimaxMusic = [
   body('model').isString().equals('music-1.5'),
+  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
   body('prompt').isString().isLength({ min: 10, max: 300 }),
   body('lyrics').isString().isLength({ min: 10, max: 3000 }),
   body('stream').optional().isBoolean(),

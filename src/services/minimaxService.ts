@@ -433,7 +433,7 @@ async function musicGenerateAndStore(
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: (body as any)?.prompt || body?.lyrics || '',
     model: String(body?.model || 'MiniMax-Music'),
-    generationType: 'text-to-music',
+    generationType: body?.generationType || 'text-to-music',
     visibility: (body as any)?.visibility || 'private',
     isPublic: (body as any)?.isPublic === true,
     createdBy,

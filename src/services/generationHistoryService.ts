@@ -105,8 +105,10 @@ export async function listUserGenerations(
     cursor?: string;
     status?: "generating" | "completed" | "failed";
     generationType?: string;
+    sortBy?: 'createdAt' | 'updatedAt' | 'prompt';
+    sortOrder?: 'asc' | 'desc';
   }
-): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string }> {
+): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string; totalCount?: number }> {
   return generationHistoryRepository.list(uid, params);
 }
 

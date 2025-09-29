@@ -23,6 +23,7 @@ const TTI_RATIOS = new Set([
 
 export const validateRunwayTextToImage = [
   body('promptText').isString().isLength({ min: 1, max: 1000 }),
+  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
   body('ratio').isString().custom(v => TTI_RATIOS.has(v)),
   body('model').isString().isIn(['gen4_image_turbo', 'gen4_image', 'gemini_2.5_flash']),
   body('seed').optional().isInt({ min: 0, max: 4294967295 }),
@@ -38,6 +39,7 @@ const I2V_RATIOS_VEO3 = new Set(['1280:720', '720:1280']);
 
 export const validateRunwayImageToVideo = [
   body('model').isString().isIn(['gen4_turbo', 'gen3a_turbo', 'veo3']),
+  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
   body('ratio').isString().custom((v, { req }) => {
     const m = req.body.model;
     if (m === 'gen4_turbo') return I2V_RATIOS_GEN4_TURBO.has(v);
@@ -69,6 +71,7 @@ export const validateRunwayImageToVideo = [
 // Text to video (veo3 only)
 export const validateRunwayTextToVideo = [
   body('model').equals('veo3'),
+  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
   body('promptText').isString().isLength({ min: 1, max: 1000 }),
   body('ratio').isIn(['1280:720', '720:1280']),
   body('duration').equals('8').toInt(),
@@ -80,6 +83,7 @@ export const validateRunwayTextToVideo = [
 const V2V_RATIOS = new Set(['1280:720','720:1280','1104:832','960:960','832:1104','1584:672','848:480','640:480']);
 export const validateRunwayVideoToVideo = [
   body('model').equals('gen4_aleph'),
+  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
   body('videoUri').isString().notEmpty(),
   body('promptText').isString().isLength({ min: 1, max: 1000 }),
   body('ratio').isString().custom(v => V2V_RATIOS.has(v)),

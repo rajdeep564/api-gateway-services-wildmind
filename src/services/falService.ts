@@ -152,7 +152,7 @@ async function veoTextToVideo(uid: string, payload: {
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: payload.prompt,
     model: 'fal-ai/veo3',
-    generationType: GenerationType.TextToVideo,
+    generationType: 'text-to-video',
     visibility: payload.isPublic ? 'public' : 'private',
     isPublic: payload.isPublic ?? false,
     createdBy: creator ? { uid, username: creator.username, email: creator.email } : { uid },
@@ -212,7 +212,7 @@ async function veoTextToVideoFast(uid: string, payload: Parameters<typeof veoTex
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: payload.prompt,
     model: 'fal-ai/veo3/fast',
-    generationType: GenerationType.TextToVideo,
+    generationType: 'text-to-video',
     visibility: payload.isPublic ? 'public' : 'private',
     isPublic: payload.isPublic ?? false,
     createdBy: creator ? { uid, username: creator.username, email: creator.email } : { uid },
@@ -280,7 +280,7 @@ async function veoImageToVideo(uid: string, payload: {
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: payload.prompt,
     model: 'fal-ai/veo3/image-to-video',
-    generationType: GenerationType.TextToVideo,
+    generationType: 'text-to-video',
     visibility: payload.isPublic ? 'public' : 'private',
     isPublic: payload.isPublic ?? false,
     createdBy: creator ? { uid, username: creator.username, email: creator.email } : { uid },
@@ -337,7 +337,7 @@ async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoIm
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: payload.prompt,
     model: 'fal-ai/veo3/fast/image-to-video',
-    generationType: GenerationType.TextToVideo,
+    generationType: 'text-to-video',
     visibility: payload.isPublic ? 'public' : 'private',
     isPublic: payload.isPublic ?? false,
     createdBy: creator ? { uid, username: creator.username, email: creator.email } : { uid },
@@ -394,7 +394,7 @@ async function queueCreateHistory(uid: string, data: { prompt: string; model: st
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: data.prompt,
     model: data.model,
-    generationType: GenerationType.TextToVideo,
+    generationType: 'text-to-video',
     visibility: data.isPublic ? 'public' : 'private',
     isPublic: data.isPublic ?? false,
     createdBy: creator ? { uid, username: creator.username, email: creator.email } : { uid },

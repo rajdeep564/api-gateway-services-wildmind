@@ -5,7 +5,7 @@ import { formatApiResponse } from '../utils/formatApiResponse';
 export const validateCreateGeneration = [
   body('prompt').isString().trim().isLength({ min: 1, max: 4000 }),
   body('model').isString().trim().isLength({ min: 1, max: 200 }),
-  body('generationType').isIn(['text-to-image','logo','sticker','text-to-video','text-to-music','mockup','product','ad','live-chat']),
+  body('generationType').isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']),
   body('visibility').optional().isIn(['private','public','unlisted']),
   body('tags').optional().isArray({ max: 30 }),
   body('tags.*').optional().isString().isLength({ max: 40 }),
@@ -40,10 +40,13 @@ export const validateUpdateGenerationStatus = [
 ];
 
 export const validateListGenerations = [
-  query('limit').optional().toInt().isInt({ min: 1, max: 50 }),
+  query('limit').optional().toInt().isInt({ min: 1, max: 100 }),
+  query('page').optional().toInt().isInt({ min: 1 }),
   query('cursor').optional().isString(),
   query('status').optional().isIn(['generating','completed','failed']),
-  query('generationType').optional().isIn(['text-to-image','logo','sticker','text-to-video','text-to-music','mockup','product','ad','live-chat']),
+  query('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']),
+  query('sortBy').optional().isIn(['createdAt','updatedAt','prompt']),
+  query('sortOrder').optional().isIn(['asc','desc']),
 ];
 
 export function handleValidationErrors(req: Request, res: Response, next: NextFunction) {
