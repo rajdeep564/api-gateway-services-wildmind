@@ -4,8 +4,6 @@ import { env } from '../config/env';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { minimaxService } from '../services/minimaxService';
 import { creditsRepository } from '../repository/creditsRepository';
-import { authRepository } from '../repository/auth/authRepository';
-import { generationHistoryRepository } from '../repository/generationHistoryRepository';
 import { logger } from '../utils/logger';
 import { generationHistoryRepository } from '../repository/generationHistoryRepository';
 import { authRepository } from '../repository/auth/authRepository';
@@ -44,43 +42,25 @@ async function videoStart(req: Request, res: Response, next: NextFunction) {
     const apiKey = env.minimaxApiKey as string;
     const groupId = env.minimaxGroupId as string;
     const ctx = (req as any).context || {};
-    
-    // Create history entry for video generation
-    const { prompt, model, duration, resolution } = req.body;
-    const creator = await authRepository.getUserById(req.uid);
-    const createdBy = { uid: req.uid, username: creator?.username, email: (creator as any)?.email };
-    const { historyId } = await generationHistoryRepository.create(req.uid, {
-      prompt: prompt || 'Video Generation',
-      model: model || 'MiniMax-Hailuo-02',
-      generationType: 'text-to-video',
-      visibility: 'private',
-      isPublic: false,
-      createdBy,
+    const result = await minimaxService.generateVideo(apiKey, groupId, req.body);
+    // Create history now so we have a consistent idempotency/debit key and store model params for pricing
+    const uid = req.uid;
+    const body = req.body || {};
+    const creator = await authRepository.getUserById(uid);
+    const prompt = String(body?.prompt || body?.promptText || '');
+    const model = String(body?.model || 'MiniMax-Hailuo-02');
+    const generationType = body?.generationType || 'text-to-video';
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt,
+      model,
+      generationType,
+      visibility: (body as any).visibility || 'private',
+      tags: (body as any).tags,
+      nsfw: (body as any).nsfw,
+      isPublic: (body as any).isPublic === true,
+      createdBy: { uid, username: creator?.username, email: (creator as any)?.email },
     } as any);
-    
-    // Start video generation with history ID
-    const result = await minimaxService.generateVideo(apiKey, groupId, { ...req.body, historyId });
-    
-    // Update history with task ID for tracking
-    await generationHistoryRepository.update(req.uid, historyId, {
-      status: 'generating',
-      provider: 'minimax',
-      taskId: result.taskId,
-    } as any);
-    
-    // Debit credits idempotently at task start, keyed by historyId
-    try {
-      if (typeof ctx.creditCost === 'number') {
-        await creditsRepository.writeDebitIfAbsent(
-          req.uid,
-          historyId,
-          ctx.creditCost,
-          'minimax.video',
-          { ...(ctx.meta || {}), historyId, taskId: result.taskId, provider: 'minimax', pricingVersion: ctx.pricingVersion }
-        );
-      }
-    } catch (_e) {}
-
+    await generationHistoryRepository.update(uid, historyId, { provider: 'minimax', providerTaskId: (result as any).taskId, duration: (body as any)?.duration, resolution: (body as any)?.resolution } as any);
     res.json(formatApiResponse('success', 'Task created', { ...result, historyId, expectedDebit: ctx.creditCost }));
   } catch (err) {
     next(err);
@@ -139,5 +119,3 @@ export const minimaxController = {
   videoFile,
   musicGenerate
 };
-
-
