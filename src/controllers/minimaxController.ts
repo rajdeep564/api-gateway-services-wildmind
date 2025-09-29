@@ -4,6 +4,8 @@ import { env } from '../config/env';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { minimaxService } from '../services/minimaxService';
 import { creditsRepository } from '../repository/creditsRepository';
+import { authRepository } from '../repository/auth/authRepository';
+import { generationHistoryRepository } from '../repository/generationHistoryRepository';
 import { logger } from '../utils/logger';
 
 // Images
@@ -40,8 +42,44 @@ async function videoStart(req: Request, res: Response, next: NextFunction) {
     const apiKey = env.minimaxApiKey as string;
     const groupId = env.minimaxGroupId as string;
     const ctx = (req as any).context || {};
-    const result = await minimaxService.generateVideo(apiKey, groupId, req.body);
-    res.json(formatApiResponse('success', 'Task created', { ...result, expectedDebit: ctx.creditCost }));
+    
+    // Create history entry for video generation
+    const { prompt, model, duration, resolution } = req.body;
+    const creator = await authRepository.getUserById(req.uid);
+    const createdBy = { uid: req.uid, username: creator?.username, email: (creator as any)?.email };
+    const { historyId } = await generationHistoryRepository.create(req.uid, {
+      prompt: prompt || 'Video Generation',
+      model: model || 'MiniMax-Hailuo-02',
+      generationType: 'text-to-video',
+      visibility: 'private',
+      isPublic: false,
+      createdBy,
+    } as any);
+    
+    // Start video generation with history ID
+    const result = await minimaxService.generateVideo(apiKey, groupId, { ...req.body, historyId });
+    
+    // Update history with task ID for tracking
+    await generationHistoryRepository.update(req.uid, historyId, {
+      status: 'generating',
+      provider: 'minimax',
+      taskId: result.taskId,
+    } as any);
+    
+    // Debit credits idempotently at task start, keyed by historyId
+    try {
+      if (typeof ctx.creditCost === 'number') {
+        await creditsRepository.writeDebitIfAbsent(
+          req.uid,
+          historyId,
+          ctx.creditCost,
+          'minimax.video',
+          { ...(ctx.meta || {}), historyId, taskId: result.taskId, provider: 'minimax', pricingVersion: ctx.pricingVersion }
+        );
+      }
+    } catch (_e) {}
+
+    res.json(formatApiResponse('success', 'Task created', { ...result, historyId, expectedDebit: ctx.creditCost }));
   } catch (err) {
     next(err);
   }

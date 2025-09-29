@@ -388,6 +388,8 @@ async function processVideoFile(
       fileName: 'video-1',
     });
     const videoItem: any = { id: fileId, url: publicUrl, storagePath: key, originalUrl: providerUrl };
+    
+    // Update existing history entry
     await generationHistoryRepository.update(uid, historyId, {
       status: 'completed',
       videos: [videoItem],
@@ -408,7 +410,10 @@ async function processVideoFile(
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn('[MiniMax] Video Zata upload failed; using provider URL');
+    const creator = await authRepository.getUserById(uid);
     const videoItem: any = { id: fileId, url: providerUrl, originalUrl: providerUrl };
+    
+    // Update existing history entry
     await generationHistoryRepository.update(uid, historyId, {
       status: 'completed',
       videos: [videoItem],
