@@ -72,26 +72,6 @@ async function validateRedeemCode(req: Request, res: Response, next: NextFunctio
   }
 }
 
-// Generate test codes (for development)
-async function generateTestCodes(req: Request, res: Response, next: NextFunction) {
-  try {
-    // Only allow in development environment
-    if (process.env.NODE_ENV === 'production') {
-      throw new ApiError('Test code generation not allowed in production', 403);
-    }
-
-    const codes = await redeemCodeService.generateTestCodes();
-
-    return res.json(formatApiResponse('success', 'Test codes generated', {
-      studentCode: codes.studentCode,
-      businessCode: codes.businessCode,
-      note: 'These codes can be used multiple times for testing'
-    }));
-
-  } catch (error) {
-    next(error);
-  }
-}
 
 // Create redeem codes (admin function)
 async function createRedeemCodes(req: Request, res: Response, next: NextFunction) {
@@ -158,6 +138,5 @@ async function createRedeemCodes(req: Request, res: Response, next: NextFunction
 export const redeemCodeController = {
   applyRedeemCode,
   validateRedeemCode,
-  generateTestCodes,
   createRedeemCodes
 };

@@ -114,15 +114,6 @@ Applies a redeem code to upgrade user's plan.
 Cookie: app_session=<session_token>
 ```
 
-### 4. Generate Test Codes
-**POST** `/redeem-codes/generate-test`
-
-Generates test codes for development (10 uses each).
-
-#### Request Body
-```json
-{}
-```
 
 ## Common Expiry Hours Examples
 - **24 hours**: `"expiresIn": 24`
@@ -271,14 +262,13 @@ The collection includes:
 - Create Business Codes
 - Create Codes with Custom Expiry
 - Validate Redeem Code
-- Generate Test Codes
 
 ## Best Practices
 
 1. **Batch Creation**: Create codes in batches of 10-50 for better performance
 2. **Expiry Management**: Set appropriate expiry dates based on your campaign needs
 3. **Usage Limits**: Set maxUsesPerCode based on your distribution strategy
-4. **Testing**: Use the generate-test endpoint for development
+4. **Testing**: Use the create endpoint with small batches for development
 5. **Validation**: Always validate codes before applying them in production
 
 ## Security Notes

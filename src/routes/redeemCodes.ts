@@ -10,8 +10,6 @@ router.post('/apply', requireAuth, redeemCodeController.applyRedeemCode);
 // Validate redeem code (public endpoint)
 router.post('/validate', redeemCodeController.validateRedeemCode);
 
-// Generate test codes (development only)
-router.post('/generate-test', redeemCodeController.generateTestCodes);
 
 // Create redeem codes (admin function)
 router.post('/create', redeemCodeController.createRedeemCodes);

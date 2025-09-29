@@ -176,29 +176,9 @@ export async function getRedeemCodeInfo(code: string): Promise<RedeemCodeValidat
   };
 }
 
-// Generate test codes for development
-export async function generateTestCodes(): Promise<{ studentCode: string; businessCode: string }> {
-  const studentCodes = await createRedeemCodes({
-    type: 'STUDENT',
-    count: 1,
-    maxUsesPerCode: 10, // Allow multiple uses for testing
-  });
-
-  const businessCodes = await createRedeemCodes({
-    type: 'BUSINESS',
-    count: 1,
-    maxUsesPerCode: 10, // Allow multiple uses for testing
-  });
-
-  return {
-    studentCode: studentCodes[0],
-    businessCode: businessCodes[0]
-  };
-}
 
 export const redeemCodeService = {
   createRedeemCodes,
   validateAndUseRedeemCode,
-  getRedeemCodeInfo,
-  generateTestCodes
+  getRedeemCodeInfo
 };
