@@ -88,14 +88,6 @@ export async function list(uid: string, params: {
   
   let q: FirebaseFirestore.Query = col.orderBy(sortBy, sortOrder);
   
-  // Handle cursor-based pagination
-  if (params.cursor) {
-    const cursorDoc = await col.doc(params.cursor).get();
-    if (cursorDoc.exists) {
-      q = q.startAfter(cursorDoc);
-    }
-  }
-  
   // Get total count for pagination context
   let totalCount: number | undefined;
   if (params.generationType || params.status) {
@@ -110,6 +102,14 @@ export async function list(uid: string, params: {
   
   if (params.generationType) {
     q = q.where('generationType', '==', params.generationType);
+  }
+  
+  // Handle cursor-based pagination (must be applied AFTER where/orderBy)
+  if (params.cursor) {
+    const cursorDoc = await col.doc(params.cursor).get();
+    if (cursorDoc.exists) {
+      q = q.startAfter(cursorDoc);
+    }
   }
   
   const fetchCount = params.status || params.generationType ? 

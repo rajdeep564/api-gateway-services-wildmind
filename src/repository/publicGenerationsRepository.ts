@@ -28,14 +28,6 @@ export async function listPublic(params: {
   // Only show public items
   q = q.where('isPublic', '==', true);
   
-  // Handle cursor-based pagination
-  if (params.cursor) {
-    const cursorDoc = await col.doc(params.cursor).get();
-    if (cursorDoc.exists) {
-      q = q.startAfter(cursorDoc);
-    }
-  }
-  
   // Apply filters
   if (params.generationType) {
     q = q.where('generationType', '==', params.generationType);
@@ -47,6 +39,14 @@ export async function listPublic(params: {
   
   if (params.createdBy) {
     q = q.where('createdBy.uid', '==', params.createdBy);
+  }
+  
+  // Handle cursor-based pagination (AFTER filters)
+  if (params.cursor) {
+    const cursorDoc = await col.doc(params.cursor).get();
+    if (cursorDoc.exists) {
+      q = q.startAfter(cursorDoc);
+    }
   }
   
   // Get total count for pagination context
