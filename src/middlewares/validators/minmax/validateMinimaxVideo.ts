@@ -14,7 +14,7 @@ const ALLOWED_VIDEO_MODELS = [
 
 export const validateMinimaxVideoGenerate = [
   body('model').isString().isIn(ALLOWED_VIDEO_MODELS),
-  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
+  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','image-to-video','video-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
   body('prompt').optional().isString().isLength({ max: 2000 }),
   body('prompt_optimizer').optional().isBoolean(),
   body('fast_pretreatment').optional().isBoolean(),

@@ -195,8 +195,19 @@ async function videoGenerate(
     body || {};
   if (mode === "image_to_video") {
     const created = await client.imageToVideo.create(imageToVideo);
-    const prompt = (imageToVideo && imageToVideo.prompts && imageToVideo.prompts[0]?.text) || '';
-    const { historyId } = await generationHistoryRepository.create(uid, { prompt, model: 'runway_video', generationType: body.generationType || 'text-to-video', visibility: (body as any).visibility || 'private', tags: (body as any).tags, nsfw: (body as any).nsfw } as any);
+    const prompt = imageToVideo?.promptText || (imageToVideo && imageToVideo.prompts && imageToVideo.prompts[0]?.text) || '';
+    const historyModel = imageToVideo?.model || body?.model || 'runway_video';
+    const generationType = body?.generationType || 'image-to-video';
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt,
+      model: historyModel,
+      generationType,
+      visibility: (body as any)?.visibility || 'private',
+      tags: (body as any)?.tags,
+      nsfw: (body as any)?.nsfw,
+      ...(imageToVideo?.duration !== undefined ? { duration: imageToVideo.duration } : {}),
+      ...(imageToVideo?.ratio !== undefined ? { ratio: imageToVideo.ratio } : {}),
+    } as any);
     await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
     return {
       success: true,
@@ -209,7 +220,18 @@ async function videoGenerate(
   if (mode === "text_to_video") {
     const created = await client.textToVideo.create(textToVideo);
     const prompt = textToVideo?.promptText || '';
-    const { historyId } = await generationHistoryRepository.create(uid, { prompt, model: 'runway_video', generationType: body.generationType || 'text-to-video', visibility: (body as any).visibility || 'private', tags: (body as any).tags, nsfw: (body as any).nsfw } as any);
+    const historyModel = textToVideo?.model || body?.model || 'runway_video';
+    const generationType = body?.generationType || 'text-to-video';
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt,
+      model: historyModel,
+      generationType,
+      visibility: (body as any)?.visibility || 'private',
+      tags: (body as any)?.tags,
+      nsfw: (body as any)?.nsfw,
+      ...(textToVideo?.duration !== undefined ? { duration: textToVideo.duration } : {}),
+      ...(textToVideo?.ratio !== undefined ? { ratio: textToVideo.ratio } : {}),
+    } as any);
     await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
     return {
       success: true,
@@ -221,8 +243,19 @@ async function videoGenerate(
   }
   if (mode === "video_to_video") {
     const created = await client.videoToVideo.create(videoToVideo);
-    const prompt = (videoToVideo && videoToVideo.prompts && videoToVideo.prompts[0]?.text) || '';
-    const { historyId } = await generationHistoryRepository.create(uid, { prompt, model: 'runway_video', generationType: body.generationType || 'text-to-video', visibility: (body as any).visibility || 'private', tags: (body as any).tags, nsfw: (body as any).nsfw } as any);
+    const prompt = videoToVideo?.promptText || (videoToVideo && videoToVideo.prompts && videoToVideo.prompts[0]?.text) || '';
+    const historyModel = videoToVideo?.model || body?.model || 'runway_video';
+    const generationType = body?.generationType || 'video-to-video';
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt,
+      model: historyModel,
+      generationType,
+      visibility: (body as any)?.visibility || 'private',
+      tags: (body as any)?.tags,
+      nsfw: (body as any)?.nsfw,
+      ...(videoToVideo?.duration !== undefined ? { duration: videoToVideo.duration } : {}),
+      ...(videoToVideo?.ratio !== undefined ? { ratio: videoToVideo.ratio } : {}),
+    } as any);
     await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
     return {
       success: true,
@@ -235,7 +268,18 @@ async function videoGenerate(
   if (mode === "video_upscale") {
     const created = await client.videoUpscale.create(videoUpscale);
     const prompt = '';
-    const { historyId } = await generationHistoryRepository.create(uid, { prompt, model: 'runway_video_upscale', generationType: body.generationType || 'text-to-video', visibility: (body as any).visibility || 'private', tags: (body as any).tags, nsfw: (body as any).nsfw } as any);
+    const historyModel = videoUpscale?.model || body?.model || 'runway_video_upscale';
+    const generationType = body?.generationType || 'text-to-video';
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt,
+      model: historyModel,
+      generationType,
+      visibility: (body as any)?.visibility || 'private',
+      tags: (body as any)?.tags,
+      nsfw: (body as any)?.nsfw,
+      ...(videoUpscale?.duration !== undefined ? { duration: videoUpscale.duration } : {}),
+      ...(videoUpscale?.ratio !== undefined ? { ratio: videoUpscale.ratio } : {}),
+    } as any);
     await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
     return {
       success: true,
