@@ -36,7 +36,9 @@ export const rateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  // Do not rate-limit CORS preflight requests
+  skip: (req) => req.method === 'OPTIONS'
 });
 
 // Simple Origin/Referer check for state-changing methods (defense-in-depth)
