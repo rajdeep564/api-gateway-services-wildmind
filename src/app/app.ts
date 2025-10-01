@@ -21,11 +21,11 @@ app.set('trust proxy', isProd ? 1 : false);
 app.use(requestId);
 app.use(securityHeaders);
 app.use(rateLimiter);
-// CORS for frontend on localhost:3000 with credentials
+// CORS for frontend with credentials (include common localhost variants)
 const corsOptions: cors.CorsOptions = {
-  origin: ['http://localhost:3000'],
+  origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
   allowedHeaders: [
     'Content-Type',
     'Authorization',
@@ -34,12 +34,13 @@ const corsOptions: cors.CorsOptions = {
     'X-Device-Id',
     'X-Device-Name',
     'X-Device-Info',
+    'Range'
   ],
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
-app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
 app.use(httpParamPollution);
 app.use(gzipCompression);

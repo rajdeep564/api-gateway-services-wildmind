@@ -47,23 +47,42 @@ router.get('/resource/:path(*)', requireAuth, async (req: Request, res: Response
     const resourcePath = req.params.path;
     const zataUrl = `https://idr01.zata.ai/devstoragev1/${resourcePath}`;
     
-    // Fetch the resource from Zata storage
-    const response = await fetch(zataUrl);
+    // Forward Range header for media streaming
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    const response = await fetch(zataUrl, {
+      headers: {
+        ...(req.headers.range ? { range: String(req.headers.range) } : {}),
+      },
+      // abort on timeout
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
     
     if (!response.ok) {
-      return res.status(response.status).json({ error: 'Resource not found' });
+      if (response.status === 404) return res.status(404).json({ error: 'Resource not found' });
+      return res.status(response.status).json({ error: 'Upstream error' });
     }
     
     const contentType = response.headers.get('content-type') || '';
     const contentInfo = getContentInfo(contentType, zataUrl);
     
-    // Set appropriate headers
-    res.setHeader('Content-Type', contentInfo.contentType);
-    res.setHeader('Cache-Control', 'public, max-age=31536000'); // Cache for 1 year
+    // Set appropriate headers and forward key upstream headers
+    res.status(response.status);
+    const pass = ['content-type','content-length','accept-ranges','content-range','cache-control','etag','last-modified'];
+    pass.forEach((h) => {
+      const v = response.headers.get(h);
+      if (v) res.setHeader(h, v);
+    });
+    if (!response.headers.get('cache-control')) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000');
+    }
     
     // Stream the resource data
     response.body?.pipe(res);
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      return res.status(504).json({ error: 'Upstream timeout' });
+    }
     console.error('Proxy resource error:', error);
     res.status(500).json({ error: 'Failed to fetch resource' });
   }
@@ -75,11 +94,14 @@ router.get('/download/:path(*)', requireAuth, async (req: Request, res: Response
     const resourcePath = req.params.path;
     const zataUrl = `https://idr01.zata.ai/devstoragev1/${resourcePath}`;
     
-    // Fetch the resource from Zata storage
-    const response = await fetch(zataUrl);
+    // Fetch the resource from Zata storage with timeout
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    const response = await fetch(zataUrl, { signal: controller.signal }).finally(() => clearTimeout(timeout));
     
     if (!response.ok) {
-      return res.status(response.status).json({ error: 'Resource not found' });
+      if (response.status === 404) return res.status(404).json({ error: 'Resource not found' });
+      return res.status(response.status).json({ error: 'Upstream error' });
     }
     
     const contentType = response.headers.get('content-type') || '';
@@ -89,7 +111,8 @@ router.get('/download/:path(*)', requireAuth, async (req: Request, res: Response
     const filename = resourcePath.split('/').pop() || 'download';
     const finalFilename = contentInfo.extension ? filename : `${filename}.${contentInfo.extension}`;
     
-    // Set download headers
+    // Set download headers and forward key upstream headers
+    res.status(response.status);
     res.setHeader('Content-Type', contentInfo.contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${finalFilename}"`);
     res.setHeader('Cache-Control', 'no-cache');
@@ -102,7 +125,10 @@ router.get('/download/:path(*)', requireAuth, async (req: Request, res: Response
     
     // Stream the resource data
     response.body?.pipe(res);
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      return res.status(504).json({ error: 'Upstream timeout' });
+    }
     console.error('Download resource error:', error);
     res.status(500).json({ error: 'Failed to download resource' });
   }
@@ -114,23 +140,41 @@ router.get('/media/:path(*)', requireAuth, async (req: Request, res: Response) =
     const resourcePath = req.params.path;
     const zataUrl = `https://idr01.zata.ai/devstoragev1/${resourcePath}`;
     
-    // Fetch the resource from Zata storage
-    const response = await fetch(zataUrl);
+    // Fetch the resource with Range support and timeout
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    const response = await fetch(zataUrl, {
+      headers: {
+        ...(req.headers.range ? { range: String(req.headers.range) } : {}),
+      },
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
     
     if (!response.ok) {
-      return res.status(response.status).json({ error: 'Resource not found' });
+      if (response.status === 404) return res.status(404).json({ error: 'Resource not found' });
+      return res.status(response.status).json({ error: 'Upstream error' });
     }
     
     const contentType = response.headers.get('content-type') || '';
     const contentInfo = getContentInfo(contentType, zataUrl);
     
-    // Set appropriate headers for all media types
-    res.setHeader('Content-Type', contentInfo.contentType);
-    res.setHeader('Cache-Control', 'public, max-age=31536000'); // Cache for 1 year
+    // Set appropriate headers for all media types, forward key headers
+    res.status(response.status);
+    const pass = ['content-type','content-length','accept-ranges','content-range','cache-control','etag','last-modified'];
+    pass.forEach((h) => {
+      const v = response.headers.get(h);
+      if (v) res.setHeader(h, v);
+    });
+    if (!response.headers.get('cache-control')) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000');
+    }
     
     // Stream the resource data (works for images, videos, audio, etc.)
     response.body?.pipe(res);
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      return res.status(504).json({ error: 'Upstream timeout' });
+    }
     console.error('Proxy resource error:', error);
     res.status(500).json({ error: 'Failed to fetch resource' });
   }
