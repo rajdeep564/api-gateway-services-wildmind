@@ -77,21 +77,53 @@ export async function list(uid: string, params: {
   cursor?: string;
   status?: 'generating' | 'completed' | 'failed';
   generationType?: GenerationType | string;
-}): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string }> {
+  sortBy?: 'createdAt' | 'updatedAt' | 'prompt';
+  sortOrder?: 'asc' | 'desc';
+}): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string; totalCount?: number }> {
   const col = adminDb.collection('generationHistory').doc(uid).collection('items');
-  let q: FirebaseFirestore.Query = col.orderBy('createdAt', 'desc');
+  
+  // Default sorting
+  const sortBy = params.sortBy || 'createdAt';
+  const sortOrder = params.sortOrder || 'desc';
+  
+  let q: FirebaseFirestore.Query = col.orderBy(sortBy, sortOrder);
+  
+  // Handle cursor-based pagination
   if (params.cursor) {
     const cursorDoc = await col.doc(params.cursor).get();
-    if (cursorDoc.exists) q = q.startAfter(cursorDoc);
+    if (cursorDoc.exists) {
+      q = q.startAfter(cursorDoc);
+    }
   }
-  const fetchCount = Math.max(params.limit * 4, params.limit);
+  
+  // Get total count for pagination context
+  let totalCount: number | undefined;
+  if (params.generationType || params.status) {
+    const countQuery = await col.get();
+    totalCount = countQuery.docs.length;
+  }
+  
+  // Apply filters
+  if (params.status) {
+    q = q.where('status', '==', params.status);
+  }
+  
+  if (params.generationType) {
+    q = q.where('generationType', '==', params.generationType);
+  }
+  
+  const fetchCount = params.status || params.generationType ? 
+    Math.max(params.limit * 2, params.limit) : 
+    Math.max(params.limit * 4, params.limit);
+    
   const snap = await q.limit(fetchCount).get();
-  let items: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
-  if (params.status) items = items.filter(i => i.status === params.status);
-  if (params.generationType) items = items.filter(i => i.generationType === params.generationType);
+  
+  const items: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
+  
   const page = items.slice(0, params.limit);
   const nextCursor = page.length === params.limit ? page[page.length - 1].id : undefined;
-  return { items: page, nextCursor };
+  
+  return { items: page, nextCursor, totalCount };
 }
 
 export async function findByProviderTaskId(uid: string, provider: string, providerTaskId: string): Promise<{ id: string; item: GenerationHistoryItem } | null> {

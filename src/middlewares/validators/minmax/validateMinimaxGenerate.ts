@@ -6,6 +6,7 @@ const validAspectRatios = ['1:1', '16:9', '4:3', '3:2', '2:3', '3:4', '9:16', '2
 
 export const validateMinimaxGenerate = [
   body('prompt').isString().notEmpty(),
+  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
   body('n').optional().isInt({ min: 1, max: 9 }),
   body('aspect_ratio').optional().isIn(validAspectRatios),
   body('width').optional().isInt({ min: 512, max: 2048 }),

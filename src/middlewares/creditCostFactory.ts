@@ -8,7 +8,7 @@ type CostComputer = (req: Request) => Promise<{ cost: number; pricingVersion: st
 export function makeCreditCost(provider: string, operation: string, computeCost: CostComputer) {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const uid = req.uid;
+      const uid = (req as any).uid;
       if (!uid) throw new ApiError('Unauthorized', 401);
 
       const { cost, pricingVersion, meta } = await computeCost(req);

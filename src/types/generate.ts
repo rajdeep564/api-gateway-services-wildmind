@@ -1,14 +1,25 @@
-export enum GenerationType {
-  TextToImage = 'text-to-image',
-  Logo = 'logo',
-  Sticker = 'sticker',
-  TextToVideo = 'text-to-video',
-  TextToMusic = 'text-to-music',
-  Mockup = 'mockup',
-  Product = 'product',
-  Ad = 'ad',
-  LiveChat = 'live-chat'
-}
+export type GenerationType =
+  | 'text-to-image'
+  | 'logo'
+  | 'sticker-generation'
+  | 'text-to-video'
+  | 'text-to-music'
+  | 'mockup-generation'
+  | 'product-generation'
+  | 'ad-generation'
+  | 'live-chat';
+
+export const GenerationTypes = {
+  TextToImage: 'text-to-image' as const,
+  Logo: 'logo' as const,
+  Sticker: 'sticker-generation' as const,
+  TextToVideo: 'text-to-video' as const,
+  TextToMusic: 'text-to-music' as const,
+  Mockup: 'mockup-generation' as const,
+  Product: 'product-generation' as const,
+  Ad: 'ad-generation' as const,
+  LiveChat: 'live-chat' as const,
+} as const;
 
 export enum GenerationStatus {
   Generating = 'generating',

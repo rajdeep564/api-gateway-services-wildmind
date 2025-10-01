@@ -16,6 +16,8 @@ import { generationsMirrorRepository } from "../repository/generationsMirrorRepo
 import { authRepository } from "../repository/auth/authRepository";
 import { GenerationHistoryItem } from "../types/generate";
 import { uploadFromUrlToZata, uploadBufferToZata } from "../utils/storage/zataUpload";
+import { creditsRepository } from "../repository/creditsRepository";
+import { computeMinimaxVideoCostFromParams } from "../utils/pricing/minimaxPricing";
 
 const MINIMAX_API_BASE = "https://api.minimax.io/v1";
 const MINIMAX_MODEL = "image-01";
@@ -393,6 +395,15 @@ async function processVideoFile(
       videos: [videoItem],
       provider: 'minimax',
     } as any);
+    // Attempt debit using stored params on history (model/duration/resolution)
+    try {
+      const freshForCost = await generationHistoryRepository.get(uid, historyId);
+      const model = (freshForCost as any)?.model || 'MiniMax-Hailuo-02';
+      const duration = (freshForCost as any)?.duration;
+      const resolution = (freshForCost as any)?.resolution;
+      const { cost, pricingVersion, meta } = await computeMinimaxVideoCostFromParams(model, duration, resolution);
+      await creditsRepository.writeDebitIfAbsent(uid, historyId, cost, 'minimax.video', { ...meta, historyId, provider: 'minimax', pricingVersion });
+    } catch {}
     try {
       const fresh = await generationHistoryRepository.get(uid, historyId);
       if (fresh) {
@@ -414,6 +425,13 @@ async function processVideoFile(
       videos: [videoItem],
       provider: 'minimax',
     } as any);
+    // Attempt debit even if we used provider URL
+    try {
+      const freshForCost = await generationHistoryRepository.get(uid, historyId);
+      const model = (freshForCost as any)?.model || 'MiniMax-Hailuo-02';
+      const { cost, pricingVersion, meta } = await computeMinimaxVideoCostFromParams(model, (freshForCost as any)?.duration, (freshForCost as any)?.resolution);
+      await creditsRepository.writeDebitIfAbsent(uid, historyId, cost, 'minimax.video', { ...meta, historyId, provider: 'minimax', pricingVersion });
+    } catch {}
     try {
       const fresh = await generationHistoryRepository.get(uid, historyId);
       if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
@@ -433,7 +451,7 @@ async function musicGenerateAndStore(
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: (body as any)?.prompt || body?.lyrics || '',
     model: String(body?.model || 'MiniMax-Music'),
-    generationType: 'text-to-music',
+    generationType: body?.generationType || 'text-to-music',
     visibility: (body as any)?.visibility || 'private',
     isPublic: (body as any)?.isPublic === true,
     createdBy,

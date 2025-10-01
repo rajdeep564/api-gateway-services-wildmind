@@ -308,7 +308,7 @@ async function fill(uid: string, body: any) {
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body?.prompt || "",
     model: "flux-pro-1.0-fill",
-    generationType: "text-to-image",
+    generationType: body?.generationType || "text-to-image",
     visibility: "private",
     isPublic: body?.isPublic === true,
     createdBy,
@@ -334,14 +334,14 @@ async function fill(uid: string, body: any) {
         { uid, username: (await authRepository.getUserById(uid))?.username }
       );
   } catch {}
-    return {
-      historyId,
-      prompt: body?.prompt || "",
-      model: "flux-pro-1.0-fill",
-      generationType: "text-to-image",
-      visibility: "private",
+  return {
+    historyId,
+    prompt: body?.prompt || "",
+    model: "flux-pro-1.0-fill",
+    generationType: body?.generationType || "text-to-image",
+    visibility: "private",
     isPublic: body?.isPublic === true,
-      createdBy,
+    createdBy,
       images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
       status: "completed",
     } as any;
@@ -373,7 +373,7 @@ async function expand(uid: string, body: any) {
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body?.prompt || "",
     model: "flux-pro-1.0-expand",
-    generationType: "text-to-image",
+    generationType: body?.generationType || "text-to-image",
     visibility: "private",
     isPublic: body?.isPublic === true,
     createdBy,
@@ -399,11 +399,11 @@ async function expand(uid: string, body: any) {
         { uid, username: (await authRepository.getUserById(uid))?.username }
       );
   } catch {}
-    return {
-      historyId,
-      prompt: body?.prompt || "",
-      model: "flux-pro-1.0-expand",
-      generationType: "text-to-image",
+  return {
+    historyId,
+    prompt: body?.prompt || "",
+    model: "flux-pro-1.0-expand",
+    generationType: body?.generationType || "text-to-image",
       visibility: "private",
     isPublic: body?.isPublic === true,
       createdBy,
@@ -434,7 +434,7 @@ async function canny(uid: string, body: any) {
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body?.prompt || "",
     model: "flux-pro-1.0-canny",
-    generationType: "text-to-image",
+    generationType: body?.generationType || "text-to-image",
     visibility: "private",
     isPublic: body?.isPublic === true,
     createdBy,
@@ -460,11 +460,11 @@ async function canny(uid: string, body: any) {
         { uid, username: (await authRepository.getUserById(uid))?.username }
       );
   } catch {}
-    return {
-      historyId,
-      prompt: body?.prompt || "",
-      model: "flux-pro-1.0-canny",
-      generationType: "text-to-image",
+  return {
+    historyId,
+    prompt: body?.prompt || "",
+    model: "flux-pro-1.0-canny",
+    generationType: body?.generationType || "text-to-image",
       visibility: "private",
     isPublic: body?.isPublic === true,
       createdBy,
@@ -495,7 +495,7 @@ async function depth(uid: string, body: any) {
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body?.prompt || "",
     model: "flux-pro-1.0-depth",
-    generationType: "text-to-image",
+    generationType: body?.generationType || "text-to-image",
     visibility: "private",
     isPublic: body?.isPublic === true,
     createdBy,
@@ -521,11 +521,11 @@ async function depth(uid: string, body: any) {
         { uid, username: (await authRepository.getUserById(uid))?.username }
       );
   } catch {}
-    return {
-      historyId,
-      prompt: body?.prompt || "",
-      model: "flux-pro-1.0-depth",
-      generationType: "text-to-image",
+  return {
+    historyId,
+    prompt: body?.prompt || "",
+    model: "flux-pro-1.0-depth",
+    generationType: body?.generationType || "text-to-image",
       visibility: "private",
     isPublic: body?.isPublic === true,
       createdBy,

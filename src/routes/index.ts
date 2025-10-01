@@ -6,6 +6,8 @@ import runwayRoutes from './runway';
 import authRoutes from './authRoutes';
 import creditsRoutes from './credits';
 import generationsRoutes from './generations';
+import publicGenerationsRoutes from './publicGenerations';
+import redeemCodeRoutes from './redeemCodes';
 
 const router = Router();
 
@@ -16,5 +18,7 @@ router.use('/minimax', minimaxRoutes);
 router.use('/runway', runwayRoutes);
 router.use('/generations', generationsRoutes);
 router.use('/credits', creditsRoutes);
+router.use('/feed', publicGenerationsRoutes);
+router.use('/redeem-codes', redeemCodeRoutes);
 
 export default router;
