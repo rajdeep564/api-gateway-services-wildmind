@@ -70,6 +70,11 @@ async function generate(
     uploadedImages: inputImages = [],
     width,
     height,
+    generationType,
+    tags,
+    nsfw,
+    visibility,
+    isPublic,
   } = payload;
 
   const apiKey = env.bflApiKey as string;

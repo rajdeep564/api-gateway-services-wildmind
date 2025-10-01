@@ -26,6 +26,11 @@ async function generate(
     n = 1,
     uploadedImages = [],
     output_format = "jpeg",
+    generationType,
+    tags,
+    nsfw,
+    visibility,
+    isPublic,
   } = payload;
 
   const falKey = env.falKey as string;

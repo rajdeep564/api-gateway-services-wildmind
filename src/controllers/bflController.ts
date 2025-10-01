@@ -8,11 +8,11 @@ import { logger } from '../utils/logger';
 
 async function generate(req: Request, res: Response, next: NextFunction) {
   try {
-    const { prompt, userPrompt, model, n, frameSize, style, uploadedImages, width, height } = req.body || {};
+    const { prompt, userPrompt, model, n, frameSize, style, uploadedImages, width, height , generationType , tags , nsfw , visibility , isPublic } = req.body || {};
     const uid = req.uid;
     const ctx = (req as any).context || {};
     logger.info({ uid, ctx }, '[CREDITS] Enter generate controller with context');
-    const result = await bflService.generate(uid, { prompt, userPrompt, model, n, frameSize, style, uploadedImages, width, height });
+    const result = await bflService.generate(uid, { prompt, userPrompt, model, n, frameSize, style, uploadedImages, width, height , generationType , tags , nsfw , visibility , isPublic });
     let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
     try {
       const requestId = (result as any).historyId || ctx.idempotencyKey;
