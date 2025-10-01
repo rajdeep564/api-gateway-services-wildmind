@@ -101,7 +101,19 @@ export async function list(uid: string, params: {
   }
   
   if (params.generationType) {
-    q = q.where('generationType', '==', params.generationType);
+    if (Array.isArray(params.generationType as any)) {
+      // Firestore doesn't support IN with array of strings directly on composite; split into OR by client side
+      // We'll fetch without filter here and filter client-side after fetchCount; better to add mirror if needed
+      // As a compromise, we can use 'in' for up to 10 values
+      const types = params.generationType as any as string[];
+      if (types.length <= 10) {
+        q = q.where('generationType', 'in', types);
+      } else {
+        // fallback: no where and filter after fetch
+      }
+    } else {
+      q = q.where('generationType', '==', params.generationType);
+    }
   }
   
   // Handle cursor-based pagination (must be applied AFTER where/orderBy)
@@ -118,7 +130,11 @@ export async function list(uid: string, params: {
     
   const snap = await q.limit(fetchCount).get();
   
-  const items: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
+  let items: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
+  if (Array.isArray(params.generationType as any) && (params.generationType as any).length > 10) {
+    const set = new Set((params.generationType as any as string[]));
+    items = items.filter(it => set.has((it as any).generationType));
+  }
   
   const page = items.slice(0, params.limit);
   const nextCursor = page.length === params.limit ? page[page.length - 1].id : undefined;
