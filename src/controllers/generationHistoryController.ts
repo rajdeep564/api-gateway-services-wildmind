@@ -46,7 +46,7 @@ async function get(req: Request, res: Response, next: NextFunction) {
 async function listMine(req: Request, res: Response, next: NextFunction) {
 	try {
 		const uid = (req as any).uid;
-		const { limit = 20, cursor, status, generationType, sortBy, sortOrder, mode } = req.query as any;
+		const { limit = 20, cursor, status, generationType, sortBy, sortOrder, mode, dateStart, dateEnd } = req.query as any;
 		// Support grouped mode for convenience (e.g., mode=video)
 		let generationTypeFilter: string | string[] | undefined = generationType;
 		if (typeof mode === 'string' && mode.toLowerCase() === 'video') {
@@ -57,8 +57,10 @@ async function listMine(req: Request, res: Response, next: NextFunction) {
 			cursor, 
 			status, 
 			generationType: generationTypeFilter as any,
-			sortBy,
-			sortOrder 
+			sortBy: sortBy || 'createdAt',
+			sortOrder: sortOrder || 'desc',
+			dateStart,
+			dateEnd
 		});
 		return res.json(formatApiResponse('success', 'OK', result));
 	} catch (err) {
