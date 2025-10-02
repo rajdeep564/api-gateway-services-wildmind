@@ -10,7 +10,7 @@ import { generationsMirrorRepository } from "../repository/generationsMirrorRepo
 import { authRepository } from "../repository/auth/authRepository";
 import { GenerationHistoryItem, GenerationType, VideoMedia } from "../types/generate";
 import { env } from "../config/env";
-import { uploadFromUrlToZata } from "../utils/storage/zataUpload";
+import { uploadFromUrlToZata, uploadDataUriToZata } from "../utils/storage/zataUpload";
 import { falRepository } from "../repository/falRepository";
 import { creditsRepository } from "../repository/creditsRepository";
 import { computeFalVeoCostFromModel } from "../utils/pricing/falPricing";
@@ -53,6 +53,23 @@ async function generate(
     isPublic: (payload as any).isPublic === true,
     createdBy,
   });
+  // Persist any user-uploaded input images to Zata
+  try {
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    const inputPersisted: any[] = [];
+    let idx = 0;
+    for (const src of (uploadedImages || [])) {
+      if (!src || typeof src !== 'string') continue;
+      try {
+        const stored = /^data:/i.test(src)
+          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
+          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+      } catch {}
+    }
+    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+  } catch {}
   // Create public generations record for FAL (like BFL)
   const legacyId = await falRepository.createGenerationRecord({ prompt, model, n, isPublic: (payload as any).isPublic === true }, createdBy);
 
