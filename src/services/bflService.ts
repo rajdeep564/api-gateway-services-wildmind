@@ -13,7 +13,7 @@ import { generationHistoryRepository } from "../repository/generationHistoryRepo
 import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
 import { authRepository } from "../repository/auth/authRepository";
 import { GenerationHistoryItem } from "../types/generate";
-import { uploadFromUrlToZata } from "../utils/storage/zataUpload";
+import { uploadFromUrlToZata, uploadDataUriToZata } from "../utils/storage/zataUpload";
 import { env } from "../config/env";
 
 async function pollForResults(
@@ -102,6 +102,26 @@ async function generate(
     isPublic: (payload as any).isPublic === true,
     createdBy,
   });
+
+  // Persist user uploaded input images (if any)
+  try {
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    const inputPersisted: any[] = [];
+    let idx = 0;
+    for (const src of (inputImages || [])) {
+      if (!src || typeof src !== 'string') continue;
+      try {
+        const stored = /^data:/i.test(src)
+          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
+          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+      } catch {}
+    }
+    if (inputPersisted.length > 0) {
+      await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+    }
+  } catch {}
 
   try {
     const imagePromises = Array.from({ length: n }, async () => {

@@ -9,7 +9,7 @@ import { env } from "../config/env";
 import { generationHistoryRepository } from "../repository/generationHistoryRepository";
 import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
 import { authRepository } from "../repository/auth/authRepository";
-import { uploadFromUrlToZata } from "../utils/storage/zataUpload";
+import { uploadFromUrlToZata, uploadDataUriToZata } from "../utils/storage/zataUpload";
 import { creditsRepository } from "../repository/creditsRepository";
 import { computeRunwayCostFromHistoryModel } from "../utils/pricing/runwayPricing";
 //
@@ -209,6 +209,35 @@ async function videoGenerate(
       ...(imageToVideo?.ratio !== undefined ? { ratio: imageToVideo.ratio } : {}),
     } as any);
     await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
+
+    // Persist input images
+    try {
+      const creator = await authRepository.getUserById(uid);
+      const username = (creator?.username || uid) as string;
+      const keyPrefix = `users/${username}/input/${historyId}`;
+      const srcs: string[] = [];
+      if (imageToVideo && (imageToVideo as any).promptImage) {
+        const p = (imageToVideo as any).promptImage;
+        if (typeof p === 'string') srcs.push(p);
+        else if (Array.isArray(p)) {
+          for (const obj of p) {
+            if (obj && typeof obj.uri === 'string') srcs.push(obj.uri);
+          }
+        }
+      }
+      const imgs: any[] = [];
+      let i = 0;
+      for (const src of srcs) {
+        try {
+          const stored = /^data:/i.test(src)
+            ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++i}` })
+            : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++i}` });
+          imgs.push({ id: `${created.id}-in-${i}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+        } catch {}
+      }
+      if (imgs.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: imgs } as any);
+    } catch {}
+
     return {
       success: true,
       taskId: created.id,
@@ -257,6 +286,42 @@ async function videoGenerate(
       ...(videoToVideo?.ratio !== undefined ? { ratio: videoToVideo.ratio } : {}),
     } as any);
     await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
+
+    // Persist input video and references
+    try {
+      const creator = await authRepository.getUserById(uid);
+      const username = (creator?.username || uid) as string;
+      const base = `users/${username}/input/${historyId}`;
+      const videos: any[] = [];
+      const refs: any[] = [];
+      if (videoToVideo && (videoToVideo as any).videoUri) {
+        const v = (videoToVideo as any).videoUri;
+        try {
+          const stored = /^data:/i.test(v)
+            ? await uploadDataUriToZata({ dataUri: v, keyPrefix: base, fileName: 'input-video-1' })
+            : await uploadFromUrlToZata({ sourceUrl: v, keyPrefix: base, fileName: 'input-video-1' });
+          videos.push({ id: `${created.id}-vin-1`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: v });
+        } catch {}
+      }
+      if (videoToVideo && Array.isArray((videoToVideo as any).references)) {
+        let i = 0;
+        for (const r of (videoToVideo as any).references) {
+          const uri = r?.uri;
+          if (!uri || typeof uri !== 'string') continue;
+          try {
+            const stored = /^data:/i.test(uri)
+              ? await uploadDataUriToZata({ dataUri: uri, keyPrefix: base, fileName: `input-ref-${++i}` })
+              : await uploadFromUrlToZata({ sourceUrl: uri, keyPrefix: base, fileName: `input-ref-${++i}` });
+            refs.push({ id: `${created.id}-iin-${i}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: uri });
+          } catch {}
+        }
+      }
+      const updates: any = {};
+      if (videos.length > 0) updates.inputVideos = videos;
+      if (refs.length > 0) updates.inputImages = refs;
+      if (Object.keys(updates).length > 0) await generationHistoryRepository.update(uid, historyId, updates);
+    } catch {}
+
     return {
       success: true,
       taskId: created.id,

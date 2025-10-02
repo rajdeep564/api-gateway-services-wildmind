@@ -74,3 +74,23 @@ export async function getZataSignedGetUrl(key: string, expiresInSeconds: number 
   const url = await getSignedUrl(s3 as any, cmd as any, { expiresIn: expiresInSeconds });
   return url as any;
 }
+
+export async function uploadDataUriToZata(params: {
+  dataUri: string;
+  keyPrefix: string;
+  fileName?: string;
+}): Promise<{ key: string; publicUrl: string; etag?: string; contentType?: string }> {
+  const { dataUri, keyPrefix, fileName } = params;
+  // data:[mime];base64,xxxxx
+  const match = /^data:([^;]+);base64,(.*)$/.exec(dataUri);
+  if (!match) throw new Error('Invalid data URI');
+  const contentType = match[1];
+  const base64 = match[2];
+  const buffer = Buffer.from(base64, 'base64');
+  const ext = guessExtensionFromContentType(contentType);
+  const baseName = fileName || `${Date.now()}`;
+  const normalizedPrefix = keyPrefix.replace(/\/$/, '');
+  const key = `${normalizedPrefix}/${baseName}.${ext}`;
+  const { publicUrl, etag } = await uploadBufferToZata(key, buffer, contentType || 'application/octet-stream');
+  return { key, publicUrl, etag, contentType };
+}
