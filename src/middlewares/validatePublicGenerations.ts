@@ -3,7 +3,12 @@ import { Request, Response, NextFunction } from 'express';
 import { formatApiResponse } from '../utils/formatApiResponse';
 
 export const validatePublicListGenerations = [
-  query('limit').optional().toInt().isInt({ min: 1, max: 100 }),
+  // limit can be an integer >=1 or the string 'all'
+  query('limit').optional().customSanitizer(v => (String(v).toLowerCase() === 'all' ? 'all' : v)).custom(v => {
+    if (v === 'all') return true;
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) && n >= 1;
+  }).withMessage('limit must be a positive integer or "all"'),
   query('page').optional().toInt().isInt({ min: 1 }),
   query('cursor').optional().isString(),
   query('generationType').optional().isIn([

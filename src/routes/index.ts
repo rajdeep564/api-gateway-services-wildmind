@@ -9,6 +9,7 @@ import generationsRoutes from './generations';
 import publicGenerationsRoutes from './publicGenerations';
 import redeemCodeRoutes from './redeemCodes';
 import proxyRoutes from './proxy';
+import stickerRoutes from './stickers';
 
 const router = Router();
 
@@ -22,5 +23,6 @@ router.use('/credits', creditsRoutes);
 router.use('/feed', publicGenerationsRoutes);
 router.use('/redeem-codes', redeemCodeRoutes);
 router.use('/proxy', proxyRoutes);
+router.use('/stickers', stickerRoutes);
 
 export default router;

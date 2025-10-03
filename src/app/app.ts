@@ -21,37 +21,29 @@ app.set('trust proxy', isProd ? 1 : false);
 app.use(requestId);
 app.use(securityHeaders);
 app.use(rateLimiter);
-// CORS for frontend with credentials. Strict in prod, permissive in dev
-const defaultAllowed = new Set<string>(
-  isProd
-    ? ['https://wildmindai.com', 'https://www.wildmindai.com']
-    : ['http://localhost:3000', 'http://127.0.0.1:3000']
-);
-// Support CSV env (e.g., https://your-app.vercel.app,https://xyz.ngrok-free.app)
-if (process.env.ALLOWED_ORIGINS) {
-  for (const o of String(process.env.ALLOWED_ORIGINS).split(',').map(s => s.trim()).filter(Boolean)) {
-    defaultAllowed.add(o);
-  }
-}
-const isAllowedOrigin = (origin?: string): boolean => {
-  if (!origin) return true; // non-browser clients
-  if (defaultAllowed.has(origin)) return true;
-  try {
-    const url = new URL(origin);
-    if (!isProd) {
-      // Allow any *.vercel.app, and ngrok tunnels in non-prod
-      if (url.hostname.endsWith('.vercel.app')) return true;
-      if (url.hostname.endsWith('.ngrok-free.app') || url.hostname.endsWith('.ngrok.io')) return true;
-    }
-  } catch {}
-  return false;
-};
+// CORS for frontend with credentials (dev + prod)
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  process.env.FRONTEND_ORIGIN || ''
+].filter(Boolean);
+
 const corsOptions: cors.CorsOptions = {
-  origin(origin, callback) {
-    if (isAllowedOrigin(origin || undefined)) {
-      return callback(null, true);
-    }
-    return callback(new Error('Not allowed by CORS'));
+  origin: (origin, callback) => {
+    // Allow server-to-server (no Origin header) and health checks
+    if (!origin) return callback(null, true);
+    try {
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      // Allow subdomains of the configured prod origin (e.g., preview/app)
+      if (process.env.FRONTEND_ORIGIN) {
+        const allowHost = new URL(process.env.FRONTEND_ORIGIN).hostname;
+        const reqHost = new URL(origin).hostname;
+        if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) {
+          return callback(null, true);
+        }
+      }
+    } catch {}
+    return callback(new Error('CORS blocked: origin not allowed'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
@@ -66,6 +58,7 @@ const corsOptions: cors.CorsOptions = {
     'ngrok-skip-browser-warning',
     'Range'
   ],
+  optionsSuccessStatus: 204,
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
