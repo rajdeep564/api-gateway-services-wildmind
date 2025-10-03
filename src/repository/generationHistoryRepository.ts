@@ -48,6 +48,7 @@ export async function create(uid: string, data: {
       email: null,
     },
     status: GenerationStatus.Generating,
+    isDeleted: false,
     images: [],
     videos: [],
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -182,38 +183,8 @@ export async function list(uid: string, params: {
   }
   
   let items: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
-  
-  // In-memory filters when needed (date range or fallback for missing index)
-  if (filterByDateInMemory && wantsDateFilter) {
-    try {
-      const startMs = Date.parse(params.dateStart as string);
-      const endMs = Date.parse(params.dateEnd as string);
-      items = items.filter(it => {
-        const ms = Date.parse((it as any).createdAt || (it as any).timestamp || '');
-        return !isNaN(ms) && ms >= startMs && ms <= endMs;
-      });
-    } catch {}
-  }
-  // In-memory type and status filtering if fallback path
-  if (filterByDateInMemory || wantsDateFilter) {
-    if (params.generationType) {
-      if (Array.isArray(params.generationType as any)) {
-        const set = new Set(params.generationType as any as string[]);
-        items = items.filter(it => set.has((it as any).generationType));
-      } else {
-        items = items.filter(it => (it as any).generationType === params.generationType);
-      }
-    }
-    if (params.status) {
-      items = items.filter(it => (it as any).status === params.status);
-    }
-    // Sort in-memory to honor sortOrder when we bypassed server index
-    items.sort((a, b) => {
-      const ams = Date.parse((a as any).createdAt || (a as any).timestamp || '');
-      const bms = Date.parse((b as any).createdAt || (b as any).timestamp || '');
-      return (params.sortOrder === 'asc' ? ams - bms : bms - ams);
-    });
-  }
+  // Exclude soft-deleted; treat missing field as not deleted for backwards compatibility
+  items = items.filter((it: any) => it.isDeleted !== true);
   if (Array.isArray(params.generationType as any) && (params.generationType as any).length > 10) {
     const set = new Set((params.generationType as any as string[]));
     items = items.filter(it => set.has((it as any).generationType));
