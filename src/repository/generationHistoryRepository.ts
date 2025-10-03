@@ -48,6 +48,7 @@ export async function create(uid: string, data: {
       email: null,
     },
     status: GenerationStatus.Generating,
+    isDeleted: false,
     images: [],
     videos: [],
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -131,6 +132,8 @@ export async function list(uid: string, params: {
   const snap = await q.limit(fetchCount).get();
   
   let items: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
+  // Exclude soft-deleted; treat missing field as not deleted for backwards compatibility
+  items = items.filter((it: any) => it.isDeleted !== true);
   if (Array.isArray(params.generationType as any) && (params.generationType as any).length > 10) {
     const set = new Set((params.generationType as any as string[]));
     items = items.filter(it => set.has((it as any).generationType));

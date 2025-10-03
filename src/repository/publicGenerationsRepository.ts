@@ -2,9 +2,24 @@ import { adminDb } from '../config/firebaseAdmin';
 import { GenerationHistoryItem } from '../types/generate';
 
 function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
-  const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, createdBy, isPublic, createdAt, updatedAt } = data;
+  const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, createdBy, isPublic, createdAt, updatedAt, isDeleted } = data;
   return {
-    id, uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, createdBy, isPublic, createdAt, updatedAt: updatedAt || createdAt
+    id,
+    uid,
+    prompt,
+    model,
+    generationType,
+    status,
+    visibility,
+    tags,
+    nsfw,
+    images,
+    videos,
+    createdBy,
+    isPublic,
+    isDeleted,
+    createdAt,
+    updatedAt: updatedAt || createdAt
   } as GenerationHistoryItem;
 }
 
@@ -25,7 +40,7 @@ export async function listPublic(params: {
   
   let q: FirebaseFirestore.Query = col.orderBy(sortBy, sortOrder);
   
-  // Only show public items
+  // Only show public; we will exclude deleted after fetch so old docs without the flag still appear
   q = q.where('isPublic', '==', true);
   
   // Apply filters
@@ -59,7 +74,9 @@ export async function listPublic(params: {
   const fetchCount = Math.max(params.limit * 2, params.limit);
   const snap = await q.limit(fetchCount).get();
   
-  const items: GenerationHistoryItem[] = snap.docs.map(d => normalizePublicItem(d.id, d.data() as any));
+  let items: GenerationHistoryItem[] = snap.docs.map(d => normalizePublicItem(d.id, d.data() as any));
+  // Exclude soft-deleted; treat missing as not deleted for old docs
+  items = items.filter((it: any) => it.isDeleted !== true);
   const page = items.slice(0, params.limit);
   const nextCursor = page.length === params.limit ? page[page.length - 1].id : undefined;
   

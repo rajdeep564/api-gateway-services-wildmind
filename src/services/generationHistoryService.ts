@@ -113,10 +113,21 @@ export async function listUserGenerations(
   return generationHistoryRepository.list(uid, params as any);
 }
 
+export async function softDelete(uid: string, historyId: string): Promise<void> {
+  
+  const existing = await generationHistoryRepository.get(uid, historyId);
+  if (!existing) throw new ApiError('History item not found', 404);
+  await generationHistoryRepository.update(uid, historyId, { isDeleted: true, isPublic: false } as any);
+  try {
+    await generationsMirrorRepository.updateFromHistory(uid, historyId, { isDeleted: true, isPublic: false } as any);
+  } catch {}
+}
+
 export const generationHistoryService = {
   startGeneration,
   markGenerationCompleted,
   markGenerationFailed,
   getUserGeneration,
   listUserGenerations,
+  softDelete,
 };

@@ -61,6 +61,8 @@ export interface GenerationHistoryItem {
   videos?: VideoMedia[];
   // replaced by isPublic in repositories/services
   isPublic?: boolean;
+  // soft delete flag; when true item should be hidden everywhere
+  isDeleted?: boolean;
   error?: string;
   createdAt: any;
   updatedAt: any;
