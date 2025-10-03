@@ -21,11 +21,40 @@ app.set('trust proxy', isProd ? 1 : false);
 app.use(requestId);
 app.use(securityHeaders);
 app.use(rateLimiter);
-// CORS for frontend on localhost:3000 with credentials
+// CORS for frontend with credentials. Strict in prod, permissive in dev
+const defaultAllowed = new Set<string>(
+  isProd
+    ? ['https://wildmindai.com', 'https://www.wildmindai.com']
+    : ['http://localhost:3000', 'http://127.0.0.1:3000']
+);
+// Support CSV env (e.g., https://your-app.vercel.app,https://xyz.ngrok-free.app)
+if (process.env.ALLOWED_ORIGINS) {
+  for (const o of String(process.env.ALLOWED_ORIGINS).split(',').map(s => s.trim()).filter(Boolean)) {
+    defaultAllowed.add(o);
+  }
+}
+const isAllowedOrigin = (origin?: string): boolean => {
+  if (!origin) return true; // non-browser clients
+  if (defaultAllowed.has(origin)) return true;
+  try {
+    const url = new URL(origin);
+    if (!isProd) {
+      // Allow any *.vercel.app, and ngrok tunnels in non-prod
+      if (url.hostname.endsWith('.vercel.app')) return true;
+      if (url.hostname.endsWith('.ngrok-free.app') || url.hostname.endsWith('.ngrok.io')) return true;
+    }
+  } catch {}
+  return false;
+};
 const corsOptions: cors.CorsOptions = {
-  origin: ['http://localhost:3000','*'],
+  origin(origin, callback) {
+    if (isAllowedOrigin(origin || undefined)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
   allowedHeaders: [
     'Content-Type',
     'Authorization',
@@ -34,17 +63,21 @@ const corsOptions: cors.CorsOptions = {
     'X-Device-Id',
     'X-Device-Name',
     'X-Device-Info',
+    'ngrok-skip-browser-warning',
+    'Range'
   ],
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
-app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
 app.use(httpParamPollution);
 app.use(gzipCompression);
 app.use(httpLogger);
-// app.use(originCheck); //remove for postman
+if (isProd) {
+  app.use(originCheck);
+}
 
 // Health endpoint
 app.get('/health', (_req, res) => {

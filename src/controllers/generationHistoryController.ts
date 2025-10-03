@@ -46,14 +46,21 @@ async function get(req: Request, res: Response, next: NextFunction) {
 async function listMine(req: Request, res: Response, next: NextFunction) {
 	try {
 		const uid = (req as any).uid;
-		const { limit = 20, cursor, status, generationType, sortBy, sortOrder } = req.query as any;
+		const { limit = 20, cursor, status, generationType, sortBy, sortOrder, mode, dateStart, dateEnd } = req.query as any;
+		// Support grouped mode for convenience (e.g., mode=video)
+		let generationTypeFilter: string | string[] | undefined = generationType;
+		if (typeof mode === 'string' && mode.toLowerCase() === 'video') {
+			generationTypeFilter = ['text-to-video', 'image-to-video', 'video-to-video'];
+		}
 		const result = await generationHistoryService.listUserGenerations(uid, { 
 			limit: Number(limit), 
 			cursor, 
 			status, 
-			generationType,
-			sortBy,
-			sortOrder 
+			generationType: generationTypeFilter as any,
+			sortBy: sortBy || 'createdAt',
+			sortOrder: sortOrder || 'desc',
+			dateStart,
+			dateEnd
 		});
 		return res.json(formatApiResponse('success', 'OK', result));
 	} catch (err) {

@@ -22,6 +22,10 @@ export interface BflGenerateRequest {
   width?: number;
   height?: number;
   generationType?: string;
+  tags?: string[];
+  nsfw?: boolean;
+  visibility?: string;
+  isPublic?: boolean;
 }
 
 export interface GeneratedImage {

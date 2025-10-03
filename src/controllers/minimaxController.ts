@@ -60,7 +60,10 @@ async function videoStart(req: Request, res: Response, next: NextFunction) {
       isPublic: (body as any).isPublic === true,
       createdBy: { uid, username: creator?.username, email: (creator as any)?.email },
     } as any);
-    await generationHistoryRepository.update(uid, historyId, { provider: 'minimax', providerTaskId: (result as any).taskId, duration: (body as any)?.duration, resolution: (body as any)?.resolution } as any);
+    const updates: any = { provider: 'minimax', providerTaskId: (result as any).taskId };
+    if (typeof (body as any)?.duration !== 'undefined') updates.duration = (body as any).duration;
+    if (typeof (body as any)?.resolution !== 'undefined') updates.resolution = (body as any).resolution;
+    await generationHistoryRepository.update(uid, historyId, updates);
     res.json(formatApiResponse('success', 'Task created', { ...result, historyId, expectedDebit: ctx.creditCost }));
   } catch (err) {
     next(err);
@@ -119,5 +122,3 @@ export const minimaxController = {
   videoFile,
   musicGenerate
 };
-
-

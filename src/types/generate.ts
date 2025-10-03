@@ -47,6 +47,13 @@ export interface VideoMedia {
   thumbUrl?: string;
 }
 
+export interface AudioMedia {
+  id: string;
+  url: string;
+  storagePath?: string;
+  originalUrl?: string;
+}
+
 export interface GenerationHistoryItem {
   id: string;
   uid: string;
@@ -59,8 +66,12 @@ export interface GenerationHistoryItem {
   nsfw?: boolean;
   images?: ImageMedia[];
   videos?: VideoMedia[];
+  audios?: AudioMedia[];
+  frameSize?: string;
+  style?: string;
   // replaced by isPublic in repositories/services
   isPublic?: boolean;
+  createdBy?: { uid: string; username?: string; displayName?: string; photoURL?: string; email?: string };
   error?: string;
   createdAt: any;
   updatedAt: any;

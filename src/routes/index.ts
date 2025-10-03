@@ -8,6 +8,7 @@ import creditsRoutes from './credits';
 import generationsRoutes from './generations';
 import publicGenerationsRoutes from './publicGenerations';
 import redeemCodeRoutes from './redeemCodes';
+import proxyRoutes from './proxy';
 
 const router = Router();
 
@@ -20,5 +21,6 @@ router.use('/generations', generationsRoutes);
 router.use('/credits', creditsRoutes);
 router.use('/feed', publicGenerationsRoutes);
 router.use('/redeem-codes', redeemCodeRoutes);
+router.use('/proxy', proxyRoutes);
 
 export default router;

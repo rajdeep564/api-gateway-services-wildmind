@@ -104,12 +104,15 @@ export async function listUserGenerations(
     limit: number;
     cursor?: string;
     status?: "generating" | "completed" | "failed";
-    generationType?: string;
+    generationType?: string | string[];
     sortBy?: 'createdAt' | 'updatedAt' | 'prompt';
     sortOrder?: 'asc' | 'desc';
+    dateStart?: string;
+    dateEnd?: string;
   }
 ): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string; totalCount?: number }> {
-  return generationHistoryRepository.list(uid, params);
+  // Delegate to repository; it handles optional in-memory date-range fallback when indexes are missing
+  return generationHistoryRepository.list(uid, params as any);
 }
 
 export const generationHistoryService = {

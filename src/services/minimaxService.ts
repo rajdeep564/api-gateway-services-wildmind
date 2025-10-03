@@ -110,6 +110,37 @@ async function generate(
     createdBy,
   });
 
+  // Persist subject_reference (if provided) as inputImages
+  try {
+    const keyPrefix = `users/${creator?.username || uid}/input/${historyId}`;
+    const inputPersisted: any[] = [];
+    let idx = 0;
+    if (Array.isArray(subject_reference)) {
+      for (const ref of subject_reference as any[]) {
+        const file = ref?.image_file || (Array.isArray(ref?.image) ? ref.image[0] : undefined);
+        if (!file || typeof file !== 'string') continue;
+        try {
+          if (/^data:/i.test(file)) {
+            // Inline data URIs need to be converted to Buffer; uploadBufferToZata requires content-type
+            const match = /^data:([^;]+);base64,(.*)$/.exec(file);
+            if (match) {
+              const contentType = match[1];
+              const base64 = match[2];
+              const buffer = Buffer.from(base64, 'base64');
+              const name = `input-${++idx}.${contentType.includes('png') ? 'png' : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'bin'}`;
+              const { key, publicUrl } = await uploadBufferToZata(`${keyPrefix}/${name}`, buffer, contentType);
+              inputPersisted.push({ id: `in-${idx}`, url: publicUrl, storagePath: key, originalUrl: file });
+            }
+          } else {
+            const stored = await uploadFromUrlToZata({ sourceUrl: file, keyPrefix, fileName: `input-${++idx}` });
+            inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: file });
+          }
+        } catch {}
+      }
+    }
+    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+  } catch {}
+
   const requestPayload: any = {
     model: MINIMAX_MODEL,
     prompt,
@@ -390,6 +421,8 @@ async function processVideoFile(
       fileName: 'video-1',
     });
     const videoItem: any = { id: fileId, url: publicUrl, storagePath: key, originalUrl: providerUrl };
+    
+    // Update existing history entry
     await generationHistoryRepository.update(uid, historyId, {
       status: 'completed',
       videos: [videoItem],
@@ -419,7 +452,10 @@ async function processVideoFile(
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn('[MiniMax] Video Zata upload failed; using provider URL');
+    const creator = await authRepository.getUserById(uid);
     const videoItem: any = { id: fileId, url: providerUrl, originalUrl: providerUrl };
+    
+    // Update existing history entry
     await generationHistoryRepository.update(uid, historyId, {
       status: 'completed',
       videos: [videoItem],

@@ -9,7 +9,7 @@ import { env } from "../config/env";
 import { generationHistoryRepository } from "../repository/generationHistoryRepository";
 import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
 import { authRepository } from "../repository/auth/authRepository";
-import { uploadFromUrlToZata } from "../utils/storage/zataUpload";
+import { uploadFromUrlToZata, uploadDataUriToZata } from "../utils/storage/zataUpload";
 import { creditsRepository } from "../repository/creditsRepository";
 import { computeRunwayCostFromHistoryModel } from "../utils/pricing/runwayPricing";
 //
@@ -195,9 +195,49 @@ async function videoGenerate(
     body || {};
   if (mode === "image_to_video") {
     const created = await client.imageToVideo.create(imageToVideo);
-    const prompt = (imageToVideo && imageToVideo.prompts && imageToVideo.prompts[0]?.text) || '';
-    const { historyId } = await generationHistoryRepository.create(uid, { prompt, model: 'runway_video', generationType: body.generationType || 'text-to-video', visibility: (body as any).visibility || 'private', tags: (body as any).tags, nsfw: (body as any).nsfw } as any);
+    const prompt = imageToVideo?.promptText || (imageToVideo && imageToVideo.prompts && imageToVideo.prompts[0]?.text) || '';
+    const historyModel = imageToVideo?.model || body?.model || 'runway_video';
+    const generationType = body?.generationType || 'image-to-video';
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt,
+      model: historyModel,
+      generationType,
+      visibility: (body as any)?.visibility || 'private',
+      tags: (body as any)?.tags,
+      nsfw: (body as any)?.nsfw,
+      ...(imageToVideo?.duration !== undefined ? { duration: imageToVideo.duration } : {}),
+      ...(imageToVideo?.ratio !== undefined ? { ratio: imageToVideo.ratio } : {}),
+    } as any);
     await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
+
+    // Persist input images
+    try {
+      const creator = await authRepository.getUserById(uid);
+      const username = (creator?.username || uid) as string;
+      const keyPrefix = `users/${username}/input/${historyId}`;
+      const srcs: string[] = [];
+      if (imageToVideo && (imageToVideo as any).promptImage) {
+        const p = (imageToVideo as any).promptImage;
+        if (typeof p === 'string') srcs.push(p);
+        else if (Array.isArray(p)) {
+          for (const obj of p) {
+            if (obj && typeof obj.uri === 'string') srcs.push(obj.uri);
+          }
+        }
+      }
+      const imgs: any[] = [];
+      let i = 0;
+      for (const src of srcs) {
+        try {
+          const stored = /^data:/i.test(src)
+            ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++i}` })
+            : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++i}` });
+          imgs.push({ id: `${created.id}-in-${i}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+        } catch {}
+      }
+      if (imgs.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: imgs } as any);
+    } catch {}
+
     return {
       success: true,
       taskId: created.id,
@@ -209,7 +249,18 @@ async function videoGenerate(
   if (mode === "text_to_video") {
     const created = await client.textToVideo.create(textToVideo);
     const prompt = textToVideo?.promptText || '';
-    const { historyId } = await generationHistoryRepository.create(uid, { prompt, model: 'runway_video', generationType: body.generationType || 'text-to-video', visibility: (body as any).visibility || 'private', tags: (body as any).tags, nsfw: (body as any).nsfw } as any);
+    const historyModel = textToVideo?.model || body?.model || 'runway_video';
+    const generationType = body?.generationType || 'text-to-video';
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt,
+      model: historyModel,
+      generationType,
+      visibility: (body as any)?.visibility || 'private',
+      tags: (body as any)?.tags,
+      nsfw: (body as any)?.nsfw,
+      ...(textToVideo?.duration !== undefined ? { duration: textToVideo.duration } : {}),
+      ...(textToVideo?.ratio !== undefined ? { ratio: textToVideo.ratio } : {}),
+    } as any);
     await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
     return {
       success: true,
@@ -221,9 +272,56 @@ async function videoGenerate(
   }
   if (mode === "video_to_video") {
     const created = await client.videoToVideo.create(videoToVideo);
-    const prompt = (videoToVideo && videoToVideo.prompts && videoToVideo.prompts[0]?.text) || '';
-    const { historyId } = await generationHistoryRepository.create(uid, { prompt, model: 'runway_video', generationType: body.generationType || 'text-to-video', visibility: (body as any).visibility || 'private', tags: (body as any).tags, nsfw: (body as any).nsfw } as any);
+    const prompt = videoToVideo?.promptText || (videoToVideo && videoToVideo.prompts && videoToVideo.prompts[0]?.text) || '';
+    const historyModel = videoToVideo?.model || body?.model || 'runway_video';
+    const generationType = body?.generationType || 'video-to-video';
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt,
+      model: historyModel,
+      generationType,
+      visibility: (body as any)?.visibility || 'private',
+      tags: (body as any)?.tags,
+      nsfw: (body as any)?.nsfw,
+      ...(videoToVideo?.duration !== undefined ? { duration: videoToVideo.duration } : {}),
+      ...(videoToVideo?.ratio !== undefined ? { ratio: videoToVideo.ratio } : {}),
+    } as any);
     await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
+
+    // Persist input video and references
+    try {
+      const creator = await authRepository.getUserById(uid);
+      const username = (creator?.username || uid) as string;
+      const base = `users/${username}/input/${historyId}`;
+      const videos: any[] = [];
+      const refs: any[] = [];
+      if (videoToVideo && (videoToVideo as any).videoUri) {
+        const v = (videoToVideo as any).videoUri;
+        try {
+          const stored = /^data:/i.test(v)
+            ? await uploadDataUriToZata({ dataUri: v, keyPrefix: base, fileName: 'input-video-1' })
+            : await uploadFromUrlToZata({ sourceUrl: v, keyPrefix: base, fileName: 'input-video-1' });
+          videos.push({ id: `${created.id}-vin-1`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: v });
+        } catch {}
+      }
+      if (videoToVideo && Array.isArray((videoToVideo as any).references)) {
+        let i = 0;
+        for (const r of (videoToVideo as any).references) {
+          const uri = r?.uri;
+          if (!uri || typeof uri !== 'string') continue;
+          try {
+            const stored = /^data:/i.test(uri)
+              ? await uploadDataUriToZata({ dataUri: uri, keyPrefix: base, fileName: `input-ref-${++i}` })
+              : await uploadFromUrlToZata({ sourceUrl: uri, keyPrefix: base, fileName: `input-ref-${++i}` });
+            refs.push({ id: `${created.id}-iin-${i}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: uri });
+          } catch {}
+        }
+      }
+      const updates: any = {};
+      if (videos.length > 0) updates.inputVideos = videos;
+      if (refs.length > 0) updates.inputImages = refs;
+      if (Object.keys(updates).length > 0) await generationHistoryRepository.update(uid, historyId, updates);
+    } catch {}
+
     return {
       success: true,
       taskId: created.id,
@@ -235,7 +333,18 @@ async function videoGenerate(
   if (mode === "video_upscale") {
     const created = await client.videoUpscale.create(videoUpscale);
     const prompt = '';
-    const { historyId } = await generationHistoryRepository.create(uid, { prompt, model: 'runway_video_upscale', generationType: body.generationType || 'text-to-video', visibility: (body as any).visibility || 'private', tags: (body as any).tags, nsfw: (body as any).nsfw } as any);
+    const historyModel = videoUpscale?.model || body?.model || 'runway_video_upscale';
+    const generationType = body?.generationType || 'text-to-video';
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt,
+      model: historyModel,
+      generationType,
+      visibility: (body as any)?.visibility || 'private',
+      tags: (body as any)?.tags,
+      nsfw: (body as any)?.nsfw,
+      ...(videoUpscale?.duration !== undefined ? { duration: videoUpscale.duration } : {}),
+      ...(videoUpscale?.ratio !== undefined ? { ratio: videoUpscale.ratio } : {}),
+    } as any);
     await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
     return {
       success: true,

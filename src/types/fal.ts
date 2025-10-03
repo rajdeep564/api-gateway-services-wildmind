@@ -8,6 +8,10 @@ export interface FalGenerateRequest {
   uploadedImages?: string[]; // URLs or data URIs
   output_format?: "jpeg" | "png" | "webp";
   generationType?: string;
+  tags?: string[];
+  nsfw?: boolean;
+  visibility?: string;
+  isPublic?: boolean;
 }
 
 export interface FalGeneratedImage {
