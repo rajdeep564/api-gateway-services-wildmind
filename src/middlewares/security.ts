@@ -18,7 +18,14 @@ export const securityHeaders = helmet({
     directives: {
       "default-src": ["'self'"],
       "img-src": ["'self'", 'data:', 'https:'],
-      "connect-src": ["'self'", 'https://api.bfl.ai', 'http://localhost:5000'],
+      "connect-src": [
+        "'self'",
+        'https://api.bfl.ai',
+        'http://localhost:5000',
+        // Allow ngrok tunnels in dev/proxy scenarios
+        'https://*.ngrok-free.app',
+        'https://*.ngrok.io',
+      ],
     }
   },
   // Relax COOP/COEP in development to avoid popup warnings and cross-origin issues
@@ -48,7 +55,12 @@ export const originCheck = (req: Request, res: Response, next: NextFunction) => 
     return next();
   }
 
-  const allowedOrigins = new Set<string>(['http://localhost:3000']);
+  const isProd = process.env.NODE_ENV === 'production';
+  const allowedOrigins = new Set<string>(
+    isProd
+      ? ['https://wildmindai.com', 'https://www.wildmindai.com']
+      : ['http://localhost:3000']
+  );
   const origin = req.headers.origin as string | undefined;
   const referer = req.headers.referer as string | undefined;
 

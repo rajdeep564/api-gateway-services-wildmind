@@ -116,6 +116,13 @@ router.get('/download/:path(*)', requireAuth, async (req: Request, res: Response
     res.setHeader('Content-Type', contentInfo.contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${finalFilename}"`);
     res.setHeader('Cache-Control', 'no-cache');
+    // Enable cross-origin download when credentials are used by echoing Origin
+    const origin = req.headers.origin as string | undefined;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
     
     // Get content length if available
     const contentLength = response.headers.get('content-length');

@@ -212,16 +212,19 @@ async function resolveEmail(req: Request, res: Response, next: NextFunction) {
 
 async function setSessionCookie(res: Response, idToken: string) {
   const isProd = process.env.NODE_ENV === "production";
+  const cookieDomain = process.env.COOKIE_DOMAIN; // e.g., .wildmindai.com when API runs on api.wildmindai.com
   const expiresIn = 1000 * 60 * 60 * 24 * 7; // 7 days
   const sessionCookie = await admin
     .auth()
     .createSessionCookie(idToken, { expiresIn });
   res.cookie("app_session", sessionCookie, {
     httpOnly: true,
-    secure: isProd,
-    sameSite: "lax",
+    // Cookies must be Secure when SameSite=None per Chrome requirements
+    secure: true,
+    sameSite: isProd ? "none" : "lax",
     maxAge: expiresIn,
     path: "/",
+    ...(cookieDomain ? { domain: cookieDomain } : {}),
   });
 }
 
