@@ -68,7 +68,7 @@ router.get('/resource/:path(*)', requireAuth, async (req: Request, res: Response
     
     // Set appropriate headers and forward key upstream headers
     res.status(response.status);
-    const pass = ['content-type','content-length','accept-ranges','content-range','cache-control','etag','last-modified'];
+    const pass = ['content-type','content-length','accept-ranges','content-range','cache-control','etag','last-modified','access-control-allow-origin','access-control-allow-credentials'];
     pass.forEach((h) => {
       const v = response.headers.get(h);
       if (v) res.setHeader(h, v);
@@ -116,6 +116,13 @@ router.get('/download/:path(*)', requireAuth, async (req: Request, res: Response
     res.setHeader('Content-Type', contentInfo.contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${finalFilename}"`);
     res.setHeader('Cache-Control', 'no-cache');
+    // allow browser to accept streamed download with cookies
+    const origin = req.headers.origin as string | undefined;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
     
     // Get content length if available
     const contentLength = response.headers.get('content-length');
@@ -160,7 +167,7 @@ router.get('/media/:path(*)', requireAuth, async (req: Request, res: Response) =
     
     // Set appropriate headers for all media types, forward key headers
     res.status(response.status);
-    const pass = ['content-type','content-length','accept-ranges','content-range','cache-control','etag','last-modified'];
+    const pass = ['content-type','content-length','accept-ranges','content-range','cache-control','etag','last-modified','access-control-allow-origin','access-control-allow-credentials'];
     pass.forEach((h) => {
       const v = response.headers.get(h);
       if (v) res.setHeader(h, v);

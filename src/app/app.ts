@@ -21,9 +21,30 @@ app.set('trust proxy', isProd ? 1 : false);
 app.use(requestId);
 app.use(securityHeaders);
 app.use(rateLimiter);
-// CORS for frontend with credentials (include common localhost variants)
+// CORS for frontend with credentials (dev + prod)
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  process.env.FRONTEND_ORIGIN || ''
+].filter(Boolean);
+
 const corsOptions: cors.CorsOptions = {
-  origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+  origin: (origin, callback) => {
+    // Allow server-to-server (no Origin header) and health checks
+    if (!origin) return callback(null, true);
+    try {
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      // Allow subdomains of the configured prod origin (e.g., preview/app)
+      if (process.env.FRONTEND_ORIGIN) {
+        const allowHost = new URL(process.env.FRONTEND_ORIGIN).hostname;
+        const reqHost = new URL(origin).hostname;
+        if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) {
+          return callback(null, true);
+        }
+      }
+    } catch {}
+    return callback(new Error('CORS blocked: origin not allowed'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
   allowedHeaders: [
@@ -34,8 +55,10 @@ const corsOptions: cors.CorsOptions = {
     'X-Device-Id',
     'X-Device-Name',
     'X-Device-Info',
+    'ngrok-skip-browser-warning',
     'Range'
   ],
+  optionsSuccessStatus: 204,
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));

@@ -18,7 +18,7 @@ export const securityHeaders = helmet({
     directives: {
       "default-src": ["'self'"],
       "img-src": ["'self'", 'data:', 'https:'],
-      "connect-src": ["'self'", 'https://api.bfl.ai', 'http://localhost:5000'],
+      "connect-src": ["'self'", 'https://api.bfl.ai', 'http://localhost:5000', 'http://127.0.0.1:5000'],
     }
   },
   // Relax COOP/COEP in development to avoid popup warnings and cross-origin issues

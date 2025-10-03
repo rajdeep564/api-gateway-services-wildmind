@@ -54,13 +54,43 @@ async function getUserGenerations(uid: string, params: FilterParams) {
 }
 
 async function getPublicGenerations(params: FilterParams) {
-  const limit = params.limit || 20;
-  
+  const isAll = (params as any).limit === undefined || typeof (params as any).limit === 'string';
   let cursor = params.cursor;
   if (params.page && !cursor) {
     cursor = undefined;
   }
-  
+
+  if (isAll) {
+    const pageSize = 1000; // safety page size for Firestore
+    const aggregated: any[] = [];
+    let guard = 0;
+    let next = cursor;
+    // Page through all public generations
+    while (guard < 200) {
+      const page = await publicGenerationsRepository.listPublic({
+        limit: pageSize,
+        cursor: next,
+        generationType: params.generationType,
+        status: params.status,
+        sortBy: params.sortBy,
+        sortOrder: params.sortOrder,
+        createdBy: params.createdBy,
+      });
+      aggregated.push(...page.items);
+      if (!page.nextCursor) break;
+      next = page.nextCursor;
+      guard += 1;
+    }
+    const meta: PaginationMeta = {
+      limit: aggregated.length,
+      nextCursor: undefined,
+      totalCount: aggregated.length,
+      hasMore: false,
+    };
+    return { items: aggregated, meta };
+  }
+
+  const limit = params.limit || 20;
   const result = await publicGenerationsRepository.listPublic({
     limit,
     cursor,
@@ -70,18 +100,13 @@ async function getPublicGenerations(params: FilterParams) {
     sortOrder: params.sortOrder,
     createdBy: params.createdBy,
   });
-  
   const meta: PaginationMeta = {
     limit,
     nextCursor: result.nextCursor,
     totalCount: result.totalCount,
     hasMore: !!result.nextCursor,
   };
-  
-  return {
-    items: result.items,
-    meta,
-  };
+  return { items: result.items, meta };
 }
 
 async function validateAndTransformParams(queryParams: any): Promise<FilterParams> {
