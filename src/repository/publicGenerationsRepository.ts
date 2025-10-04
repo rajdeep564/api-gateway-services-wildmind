@@ -43,12 +43,13 @@ export async function listPublic(params: {
   // Only show public; we will exclude deleted after fetch so old docs without the flag still appear
   q = q.where('isPublic', '==', true);
   
-  // Only show completed generations (filter out generating/failed)
-  q = q.where('status', '==', params.status || 'completed');
-  
   // Apply filters
   if (params.generationType) {
     q = q.where('generationType', '==', params.generationType);
+  }
+  
+  if (params.status) {
+    q = q.where('status', '==', params.status);
   }
   
   if (params.createdBy) {
@@ -73,16 +74,13 @@ export async function listPublic(params: {
   const fetchCount = Math.max(params.limit * 2, params.limit);
   const snap = await q.limit(fetchCount).get();
   
-  const items: GenerationHistoryItem[] = snap.docs.map(d => normalizePublicItem(d.id, d.data() as any));
+  let items: GenerationHistoryItem[] = snap.docs.map(d => normalizePublicItem(d.id, d.data() as any));
+  // Exclude soft-deleted; treat missing as not deleted for old docs
+  items = items.filter((it: any) => it.isDeleted !== true);
   const page = items.slice(0, params.limit);
   const nextCursor = page.length === params.limit ? page[page.length - 1].id : undefined;
   
-  // Get total count for pagination context (optional, can be expensive)
-  let totalCount: number | undefined;
-  
-  console.log(`[publicGenerationsRepository] Returning ${items.length} public items, hasMore: ${hasMore}, nextCursor: ${nextCursor}`);
-  
-  return { items, nextCursor, totalCount };
+  return { items: page, nextCursor, totalCount };
 }
 
 export async function getPublicById(generationId: string): Promise<GenerationHistoryItem | null> {
