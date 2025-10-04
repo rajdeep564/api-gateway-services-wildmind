@@ -85,6 +85,7 @@ export interface CreateGenerationPayload {
   visibility?: Visibility | string;
   tags?: string[];
   nsfw?: boolean;
+  frameSize?: string;
 }
 
 export interface CompleteGenerationPayload {

@@ -23,7 +23,12 @@ async function generate(
     prompt,
     userPrompt,
     model,
-    n = 1,
+    // Support both old (n) and new (num_images)
+    n,
+    num_images,
+    // New schema: aspect_ratio (fallback to frameSize)
+    aspect_ratio,
+    frameSize,
     uploadedImages = [],
     output_format = "jpeg",
     generationType,
@@ -31,7 +36,10 @@ async function generate(
     nsfw,
     visibility,
     isPublic,
-  } = payload;
+  } = payload as any;
+
+  const imagesRequested = Number.isFinite(num_images) && (num_images as number) > 0 ? (num_images as number) : (Number.isFinite(n) && (n as number) > 0 ? (n as number) : 1);
+  const resolvedAspect = (aspect_ratio || frameSize || '1:1') as any;
 
   const falKey = env.falKey as string;
   if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
@@ -51,7 +59,9 @@ async function generate(
     tags: (payload as any).tags,
     nsfw: (payload as any).nsfw,
     isPublic: (payload as any).isPublic === true,
+    frameSize: resolvedAspect,
     createdBy,
+    
   });
   // Persist any user-uploaded input images to Zata
   try {
@@ -71,7 +81,7 @@ async function generate(
     if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
   } catch {}
   // Create public generations record for FAL (like BFL)
-  const legacyId = await falRepository.createGenerationRecord({ prompt, model, n, isPublic: (payload as any).isPublic === true }, createdBy);
+  const legacyId = await falRepository.createGenerationRecord({ prompt, model, n: imagesRequested, isPublic: (payload as any).isPublic === true }, createdBy);
 
   // Only gemini-25-flash-image supported for now
   const modelEndpoint =
@@ -80,13 +90,18 @@ async function generate(
       : "fal-ai/gemini-25-flash-image";
 
   try {
-    const imagePromises = Array.from({ length: n }, async (_, index) => {
+    const imagePromises = Array.from({ length: imagesRequested }, async (_, index) => {
       const input: any = { prompt, output_format, num_images: 1 };
+      // Always send resolved aspect ratio
+      if (resolvedAspect) input.aspect_ratio = resolvedAspect;
       if (modelEndpoint.endsWith("/edit")) {
         input.image_urls = uploadedImages.slice(0, 4);
       }
 
-      const result = await fal.subscribe(modelEndpoint, ({ input, logs: true } as unknown) as any);
+      // Debug log for final body
+      try { console.log('[falService.generate] request', { modelEndpoint, input }); } catch {}
+
+      const result = await fal.subscribe(modelEndpoint as any, ({ input, logs: true } as unknown) as any);
 
       let imageUrl = "";
       if (result?.data?.images?.length > 0) {
@@ -124,6 +139,7 @@ async function generate(
     await generationHistoryRepository.update(uid, historyId, {
       status: 'completed',
       images: storedImages,
+      frameSize: resolvedAspect,
     } as Partial<GenerationHistoryItem>);
     try {
       const fresh = await generationHistoryRepository.get(uid, historyId);
@@ -181,20 +197,17 @@ async function veoTextToVideo(uid: string, payload: {
   });
 
   try {
-    const result = await fal.subscribe('fal-ai/veo3', ({
-      input: {
-        prompt: payload.prompt,
-        aspect_ratio: payload.aspect_ratio ?? '16:9',
-        duration: payload.duration ?? '8s',
-        negative_prompt: payload.negative_prompt,
-        enhance_prompt: payload.enhance_prompt ?? true,
-        seed: payload.seed,
-        auto_fix: payload.auto_fix ?? true,
-        resolution: payload.resolution ?? '720p',
-        generate_audio: payload.generate_audio ?? true,
-      },
-      logs: true,
-    } as unknown) as any);
+    const result = await fal.subscribe('fal-ai/veo3' as any, ({ input: {
+      prompt: payload.prompt,
+      aspect_ratio: payload.aspect_ratio ?? '16:9',
+      duration: payload.duration ?? '8s',
+      negative_prompt: payload.negative_prompt,
+      enhance_prompt: payload.enhance_prompt ?? true,
+      seed: payload.seed,
+      auto_fix: payload.auto_fix ?? true,
+      resolution: payload.resolution ?? '720p',
+      generate_audio: payload.generate_audio ?? true,
+    }, logs: true } as unknown) as any);
 
     const videoUrl: string | undefined = (result as any)?.data?.video?.url;
     if (!videoUrl) throw new ApiError('No video URL returned from FAL API', 502);
@@ -241,20 +254,17 @@ async function veoTextToVideoFast(uid: string, payload: Parameters<typeof veoTex
   });
 
   try {
-    const result = await fal.subscribe('fal-ai/veo3/fast', ({
-      input: {
-        prompt: payload.prompt,
-        aspect_ratio: payload.aspect_ratio ?? '16:9',
-        duration: payload.duration ?? '8s',
-        negative_prompt: payload.negative_prompt,
-        enhance_prompt: payload.enhance_prompt ?? true,
-        seed: payload.seed,
-        auto_fix: payload.auto_fix ?? true,
-        resolution: payload.resolution ?? '720p',
-        generate_audio: payload.generate_audio ?? true,
-      },
-      logs: true,
-    } as unknown) as any);
+    const result = await fal.subscribe('fal-ai/veo3/fast' as any, ({ input: {
+      prompt: payload.prompt,
+      aspect_ratio: payload.aspect_ratio ?? '16:9',
+      duration: payload.duration ?? '8s',
+      negative_prompt: payload.negative_prompt,
+      enhance_prompt: payload.enhance_prompt ?? true,
+      seed: payload.seed,
+      auto_fix: payload.auto_fix ?? true,
+      resolution: payload.resolution ?? '720p',
+      generate_audio: payload.generate_audio ?? true,
+    }, logs: true } as unknown) as any);
     const videoUrl: string | undefined = (result as any)?.data?.video?.url;
     if (!videoUrl) throw new ApiError('No video URL returned from FAL API', 502);
     const videos: VideoMedia[] = [
@@ -309,17 +319,14 @@ async function veoImageToVideo(uid: string, payload: {
   });
 
   try {
-    const result = await fal.subscribe('fal-ai/veo3/image-to-video', ({
-      input: {
-        prompt: payload.prompt,
-        image_url: payload.image_url,
-        aspect_ratio: payload.aspect_ratio ?? 'auto',
-        duration: payload.duration ?? '8s',
-        generate_audio: payload.generate_audio ?? true,
-        resolution: payload.resolution ?? '720p',
-      },
-      logs: true,
-    } as unknown) as any);
+    const result = await fal.subscribe('fal-ai/veo3/image-to-video' as any, ({ input: {
+      prompt: payload.prompt,
+      image_url: payload.image_url,
+      aspect_ratio: payload.aspect_ratio ?? 'auto',
+      duration: payload.duration ?? '8s',
+      generate_audio: payload.generate_audio ?? true,
+      resolution: payload.resolution ?? '720p',
+    }, logs: true } as unknown) as any);
     const videoUrl: string | undefined = (result as any)?.data?.video?.url;
     if (!videoUrl) throw new ApiError('No video URL returned from FAL API', 502);
     const videos: VideoMedia[] = [
@@ -366,17 +373,14 @@ async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoIm
   });
 
   try {
-    const result = await fal.subscribe('fal-ai/veo3/fast/image-to-video', ({
-      input: {
-        prompt: payload.prompt,
-        image_url: payload.image_url,
-        aspect_ratio: payload.aspect_ratio ?? 'auto',
-        duration: payload.duration ?? '8s',
-        generate_audio: payload.generate_audio ?? true,
-        resolution: payload.resolution ?? '720p',
-      },
-      logs: true,
-    } as unknown) as any);
+    const result = await fal.subscribe('fal-ai/veo3/fast/image-to-video' as any, ({ input: {
+      prompt: payload.prompt,
+      image_url: payload.image_url,
+      aspect_ratio: payload.aspect_ratio ?? 'auto',
+      duration: payload.duration ?? '8s',
+      generate_audio: payload.generate_audio ?? true,
+      resolution: payload.resolution ?? '720p',
+    }, logs: true } as unknown) as any);
     const videoUrl: string | undefined = (result as any)?.data?.video?.url;
     if (!videoUrl) throw new ApiError('No video URL returned from FAL API', 502);
     const videos: VideoMedia[] = [
