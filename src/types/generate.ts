@@ -71,7 +71,8 @@ export interface GenerationHistoryItem {
   style?: string;
   // replaced by isPublic in repositories/services
   isPublic?: boolean;
-  createdBy?: { uid: string; username?: string; displayName?: string; photoURL?: string; email?: string };
+  // soft delete flag; when true item should be hidden everywhere
+  isDeleted?: boolean;
   error?: string;
   createdAt: any;
   updatedAt: any;

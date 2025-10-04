@@ -68,9 +68,21 @@ async function listMine(req: Request, res: Response, next: NextFunction) {
 	}
 }
 
+async function softDelete(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid;
+    const { historyId } = req.params as any;
+    await generationHistoryService.softDelete(uid, historyId);
+    return res.json(formatApiResponse('success', 'Deleted', {}));
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export const generationHistoryController = {
 	create,
 	updateStatus,
 	get,
-	listMine,
+  listMine,
+  softDelete,
 };
