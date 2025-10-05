@@ -8,11 +8,11 @@ import { logger } from '../utils/logger';
 
 async function generate(req: Request, res: Response, next: NextFunction) {
   try {
-    const { prompt, userPrompt, model, n, frameSize, style, uploadedImages, output_format , generationType , tags , nsfw , visibility , isPublic } = req.body || {};
+    const { prompt, userPrompt, model, n, frameSize, style, uploadedImages, output_format , generationType , tags , nsfw , visibility , isPublic , aspect_ratio } = req.body || {};
     const uid = req.uid;
     const ctx = (req as any).context || {};
     logger.info({ uid, ctx }, '[CREDITS][FAL] Enter generate with context');
-    const result = await falService.generate(uid, { prompt, userPrompt, model, n, frameSize, style, uploadedImages, output_format , generationType , tags , nsfw , visibility , isPublic });
+    const result = await falService.generate(uid, { prompt, userPrompt, model, n, frameSize, style, uploadedImages, output_format , generationType , tags , nsfw , visibility , isPublic , aspect_ratio });
     let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
     try {
       const requestId = (result as any).historyId || ctx.idempotencyKey;

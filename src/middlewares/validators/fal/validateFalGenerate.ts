@@ -3,7 +3,8 @@ import { body, validationResult } from 'express-validator';
 import { ApiError } from '../../../utils/errorHandler';
 
 export const ALLOWED_FAL_MODELS = [
-  'gemini-25-flash-image'
+  'gemini-25-flash-image',
+  'seedream-v4'
 ];
 
 export const validateFalGenerate = [
