@@ -83,17 +83,38 @@ async function generate(
   // Create public generations record for FAL (like BFL)
   const legacyId = await falRepository.createGenerationRecord({ prompt, model, n: imagesRequested, isPublic: (payload as any).isPublic === true }, createdBy);
 
-  // Only gemini-25-flash-image supported for now
-  const modelEndpoint =
-    uploadedImages.length > 0
-      ? "fal-ai/gemini-25-flash-image/edit"
-      : "fal-ai/gemini-25-flash-image";
+  // Map our model key to FAL endpoints
+  let modelEndpoint: string;
+  if ((model || '').toLowerCase().includes('seedream')) {
+    modelEndpoint = 'fal-ai/bytedance/seedream/v4/text-to-image';
+  } else {
+    modelEndpoint = uploadedImages.length > 0
+      ? 'fal-ai/gemini-25-flash-image/edit'
+      : 'fal-ai/gemini-25-flash-image';
+  }
 
   try {
     const imagePromises = Array.from({ length: imagesRequested }, async (_, index) => {
       const input: any = { prompt, output_format, num_images: 1 };
-      // Always send resolved aspect ratio
-      if (resolvedAspect) input.aspect_ratio = resolvedAspect;
+      // Seedream expects image_size instead of aspect_ratio; allow explicit image_size override
+      if (modelEndpoint.includes('seedream')) {
+        const explicit = (payload as any).image_size;
+        if (explicit) {
+          input.image_size = explicit;
+        } else {
+          // Map common aspect ratios to Seedream enums
+          const map: Record<string, string> = {
+            '1:1': 'square',
+            '4:3': 'landscape_4_3',
+            '3:4': 'portrait_4_3',
+            '16:9': 'landscape_16_9',
+            '9:16': 'portrait_16_9',
+          };
+          input.image_size = map[String(resolvedAspect)] || 'square';
+        }
+      } else if (resolvedAspect) {
+        input.aspect_ratio = resolvedAspect;
+      }
       if (modelEndpoint.endsWith("/edit")) {
         input.image_urls = uploadedImages.slice(0, 4);
       }

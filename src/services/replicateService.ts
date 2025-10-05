@@ -18,6 +18,7 @@ const DEFAULT_VERSION_BY_MODEL: Record<string, string> = {
   'philz1337x/clarity-upscaler': 'dfad41707589d68ecdccd1dfa600d55a208f9310748e44bfe35b4a6291453d5e',
   '851-labs/background-remover': 'a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc',
   'lucataco/remove-bg': '95fcc2a26d3899cd6c2691c900465aaeff466285a65c14638cc5f36f34befaf1',
+  'nightmareai/real-esrgan': 'f121d640bd286e1fdc67f9799164c1d5be36ff74576ee11c803ae5b665dd46aa',
 };
 
 function composeModelSpec(modelBase: string, maybeVersion?: string): string {
@@ -60,7 +61,7 @@ export async function removeBackground(uid: string, body: {
   background_type?: string;
   isPublic?: boolean;
 }) {
-  const key = (process.env.REPLICATE_API_TOKEN as string) || ((env as any).replicateApiKey as string);
+  const key = ((env as any).replicateApiKey as string) || (process.env.REPLICATE_API_TOKEN as string);
   if (!key) {
     // eslint-disable-next-line no-console
     console.error('[replicateService.removeBackground] Missing REPLICATE_API_TOKEN');
@@ -151,7 +152,7 @@ export async function removeBackground(uid: string, body: {
 }
 
 export async function upscale(uid: string, body: any) {
-  const key = (process.env.REPLICATE_API_TOKEN as string) || ((env as any).replicateApiKey as string);
+  const key = ((env as any).replicateApiKey as string) || (process.env.REPLICATE_API_TOKEN as string);
   if (!key) {
     // eslint-disable-next-line no-console
     console.error('[replicateService.upscale] Missing REPLICATE_API_TOKEN');
@@ -203,6 +204,10 @@ export async function upscale(uid: string, body: any) {
       if (input.steps != null) input.steps = Math.max(1, Math.min(100, Number(input.steps)));
       if (!input.resolution) input.resolution = '1024';
     }
+    if (modelBase === 'nightmareai/real-esrgan') {
+      // The model expects `image` and optional `scale` (2, 4)
+      if (input.scale != null) input.scale = clamp(input.scale, 1, 4);
+    }
     const modelSpec = composeModelSpec(modelBase, body.version);
     // eslint-disable-next-line no-console
     console.log('[replicateService.upscale] run', { modelSpec, inputKeys: Object.keys(input) });
@@ -238,7 +243,7 @@ export async function upscale(uid: string, body: any) {
 }
 
 export async function generateImage(uid: string, body: any) {
-  const key = (process.env.REPLICATE_API_TOKEN as string) || ((env as any).replicateApiKey as string);
+  const key = ((env as any).replicateApiKey as string) || (process.env.REPLICATE_API_TOKEN as string);
   if (!key) {
     // eslint-disable-next-line no-console
     console.error('[replicateService.generateImage] Missing REPLICATE_API_TOKEN');
