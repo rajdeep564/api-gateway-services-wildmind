@@ -19,6 +19,7 @@ const DEFAULT_VERSION_BY_MODEL: Record<string, string> = {
   '851-labs/background-remover': 'a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc',
   'lucataco/remove-bg': '95fcc2a26d3899cd6c2691c900465aaeff466285a65c14638cc5f36f34befaf1',
   'nightmareai/real-esrgan': 'f121d640bd286e1fdc67f9799164c1d5be36ff74576ee11c803ae5b665dd46aa',
+  'mv-lab/swin2sr': 'a01b0512004918ca55d02e554914a9eca63909fa83a29ff0f115c78a7045574f',
 };
 
 function composeModelSpec(modelBase: string, maybeVersion?: string): string {
@@ -204,7 +205,7 @@ export async function upscale(uid: string, body: any) {
       if (input.steps != null) input.steps = Math.max(1, Math.min(100, Number(input.steps)));
       if (!input.resolution) input.resolution = '1024';
     }
-    if (modelBase === 'nightmareai/real-esrgan') {
+    if (modelBase === 'nightmareai/real-esrgan' || modelBase === 'mv-lab/swin2sr') {
       // The model expects `image` and optional `scale` (2, 4)
       if (input.scale != null) input.scale = clamp(input.scale, 1, 4);
     }
