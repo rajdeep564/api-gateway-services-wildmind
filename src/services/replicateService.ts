@@ -53,6 +53,44 @@ function extractFirstUrl(output: any): string {
   }
 }
 
+async function resolveItemUrl(item: any): Promise<string> {
+  try {
+    if (!item) return '';
+    if (typeof item === 'string') return item;
+    // Replicate SDK file-like item: item.url() may be sync or async
+    const maybeUrlFn = (item as any).url;
+    if (typeof maybeUrlFn === 'function') {
+      const result = maybeUrlFn.call(item);
+      if (result && typeof (result as any).then === 'function') {
+        const awaited = await result;
+        return typeof awaited === 'string' ? awaited : '';
+      }
+      return typeof result === 'string' ? result : '';
+    }
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+async function resolveOutputUrls(output: any): Promise<string[]> {
+  try {
+    if (!output) return [];
+    if (Array.isArray(output)) {
+      const urls: string[] = [];
+      for (const it of output) {
+        const u = await resolveItemUrl(it);
+        if (u) urls.push(u);
+      }
+      return urls;
+    }
+    const single = await resolveItemUrl(output);
+    return single ? [single] : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function removeBackground(uid: string, body: {
   image: string;
   model?: string;
@@ -111,7 +149,9 @@ export async function removeBackground(uid: string, body: {
     const output: any = await replicate.run(modelSpec as any, { input });
     // eslint-disable-next-line no-console
     console.log('[replicateService.removeBackground] output', typeof output, Array.isArray(output) ? output.length : 'n/a');
-    outputUrl = extractFirstUrl(output);
+    // Resolve possible file-like outputs
+    const urls = await resolveOutputUrls(output);
+    outputUrl = urls[0] || '';
     if (!outputUrl) throw new Error('No output URL returned by Replicate');
   } catch (e: any) {
     // eslint-disable-next-line no-console
@@ -163,7 +203,7 @@ export async function upscale(uid: string, body: any) {
 
   const replicate = new Replicate({ auth: key });
 
-  const modelBase = body.model && body.model.length > 0 ? body.model : 'philz1337x/clarity-upscaler';
+  const modelBase = (body.model && body.model.length > 0 ? String(body.model) : 'philz1337x/clarity-upscaler').trim();
   const creator = await authRepository.getUserById(uid);
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: '[Upscale]',
@@ -276,7 +316,7 @@ export async function generateImage(uid: string, body: any) {
   if (!body?.prompt) throw new ApiError('prompt is required', 400);
 
   const replicate = new Replicate({ auth: key });
-  const modelBase = body.model && body.model.length > 0 ? body.model : 'bytedance/seedream-4';
+  const modelBase = (body.model && body.model.length > 0 ? String(body.model) : 'bytedance/seedream-4').trim();
   const creator = await authRepository.getUserById(uid);
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
@@ -346,17 +386,48 @@ export async function generateImage(uid: string, body: any) {
     const modelSpec = composeModelSpec(modelBase, body.version);
     // eslint-disable-next-line no-console
     console.log('[replicateService.generateImage] run', { modelSpec, hasImage: !!rest.image, inputKeys: Object.keys(input) });
+    if (modelBase === 'bytedance/seedream-4') {
+      try {
+        // Deep print for Seedream I2I debugging
+        const dump = {
+          prompt: input.prompt,
+          size: input.size,
+          aspect_ratio: input.aspect_ratio,
+          sequential_image_generation: input.sequential_image_generation,
+          max_images: input.max_images,
+          image_input_count: Array.isArray(input.image_input) ? input.image_input.length : 0,
+          image_input_sample: Array.isArray(input.image_input) ? input.image_input.slice(0, 2) : [],
+        };
+        // eslint-disable-next-line no-console
+        console.debug('[seedream] input dump', JSON.stringify(dump, null, 2));
+      } catch {}
+    }
     const output: any = await replicate.run(modelSpec as any, { input });
     // eslint-disable-next-line no-console
     console.log('[replicateService.generateImage] output', typeof output, Array.isArray(output) ? output.length : 'n/a');
-    // Seedream returns an array of urls per schema; handle multiple
-    if (Array.isArray(output)) {
-      outputUrls = output.filter((x: any) => typeof x === 'string');
-    } else {
-      const maybe = extractFirstUrl(output);
-      if (maybe) outputUrls = [maybe];
+    console.log('[replicateService.generateImage] output', output);
+    if (modelBase === 'bytedance/seedream-4') {
+      try {
+        if (Array.isArray(output)) {
+          const first = output[0];
+          const firstInfo = first ? (typeof first === 'string' ? first : (typeof first?.url === 'function' ? '[function url()]' : Object.keys(first||{}))) : null;
+          // eslint-disable-next-line no-console
+          console.debug('[seedream] output array[0] info', firstInfo);
+        } else if (output && typeof output === 'object') {
+          // eslint-disable-next-line no-console
+          console.debug('[seedream] output object keys', Object.keys(output));
+        }
+      } catch {}
     }
-    if (!outputUrls.length) throw new Error('No output URL returned by Replicate');
+    // Seedream returns an array of urls per schema; handle multiple
+    outputUrls = await resolveOutputUrls(output);
+    if (!outputUrls.length) {
+      try {
+        // eslint-disable-next-line no-console
+        console.error('[replicateService.generateImage] no urls – raw output dump (truncated)', JSON.stringify(output, null, 2).slice(0, 2000));
+      } catch {}
+      throw new Error('No output URL returned by Replicate');
+    }
   } catch (e: any) {
     // eslint-disable-next-line no-console
     console.error('[replicateService.generateImage] error', e?.message || e);
