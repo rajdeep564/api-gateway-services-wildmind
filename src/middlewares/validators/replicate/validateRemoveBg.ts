@@ -27,7 +27,7 @@ export function validateUpscale(req: Request, _res: Response, next: NextFunction
 }
 
 export function validateReplicateGenerate(req: Request, _res: Response, next: NextFunction) {
-  const { prompt, model, size, width, height, aspect_ratio, max_images, image_input, sequential_image_generation } = req.body || {};
+  const { prompt, model, size, width, height, aspect_ratio, max_images, image_input, sequential_image_generation, image } = req.body || {};
   if (!prompt || typeof prompt !== 'string') return next(new ApiError('prompt is required', 400));
   if (model && typeof model !== 'string') return next(new ApiError('model must be string', 400));
   // Seedream-specific validations (soft)
@@ -42,6 +42,14 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
     if (image_input.length > 10) return next(new ApiError('image_input supports up to 10 images', 400));
     for (const u of image_input) {
       if (typeof u !== 'string') return next(new ApiError('image_input must contain url strings', 400));
+    }
+  }
+  // Enforce total images cap when sequential generation is 'auto': input_count + max_images <= 15
+  if (String(sequential_image_generation) === 'auto') {
+    const inputCount = Array.isArray(image_input) ? image_input.length : (typeof image === 'string' ? 1 : 0);
+    const requested = typeof max_images === 'number' ? max_images : 1;
+    if (inputCount + requested > 15) {
+      return next(new ApiError('input images + max_images must be  15', 400));
     }
   }
   next();

@@ -1,6 +1,7 @@
 // Use dynamic import signature to avoid type requirement during build-time
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const Replicate = require('replicate');
+import util from 'util';
 import { ApiError } from '../utils/errorHandler';
 import { env } from '../config/env';
 import { generationHistoryRepository } from '../repository/generationHistoryRepository';
@@ -33,6 +34,20 @@ function clamp(n: any, min: number, max: number): number {
   return Math.max(min, Math.min(max, x));
 }
 
+async function downloadToDataUri(sourceUrl: string): Promise<{ dataUri: string; ext: string } | null> {
+  try {
+    const res = await fetch(sourceUrl as any);
+    if (!res.ok) return null;
+    const contentType = res.headers.get('content-type') || 'image/png';
+    const ext = contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : (contentType.includes('webp') ? 'webp' : 'png');
+    const ab = await res.arrayBuffer();
+    const b64 = Buffer.from(new Uint8Array(ab)).toString('base64');
+    return { dataUri: `data:${contentType};base64,${b64}`, ext };
+  } catch {
+    return null;
+  }
+}
+
 function extractFirstUrl(output: any): string {
   try {
     if (!output) return '';
@@ -50,6 +65,45 @@ function extractFirstUrl(output: any): string {
     return '';
   } catch {
     return '';
+  }
+}
+
+async function resolveItemUrl(item: any): Promise<string> {
+  try {
+    if (!item) return '';
+    if (typeof item === 'string') return item;
+    // Replicate SDK file-like item: item.url() may be sync or async
+    const maybeUrlFn = (item as any).url;
+    if (typeof maybeUrlFn === 'function') {
+      const result = maybeUrlFn.call(item);
+      if (result && typeof (result as any).then === 'function') {
+        const awaited = await result;
+        // Some SDKs may return URL objects or objects with toString()
+        return typeof awaited === 'string' ? awaited : String(awaited);
+      }
+      return typeof result === 'string' ? result : String(result);
+    }
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+async function resolveOutputUrls(output: any): Promise<string[]> {
+  try {
+    if (!output) return [];
+    if (Array.isArray(output)) {
+      const urls: string[] = [];
+      for (const it of output) {
+        const u = await resolveItemUrl(it);
+        if (u) urls.push(u);
+      }
+      return urls;
+    }
+    const single = await resolveItemUrl(output);
+    return single ? [single] : [];
+  } catch {
+    return [];
   }
 }
 
@@ -85,16 +139,8 @@ export async function removeBackground(uid: string, body: {
 
   // Prepare input based on model
   const modelBase = body.model && body.model.length > 0 ? body.model : DEFAULT_BG_MODEL_A.split(':')[0];
-  // If we receive a data URI, persist to Zata and use the public URL for Replicate
-  let imageForProvider = body.image;
-  if (typeof imageForProvider === 'string' && imageForProvider.startsWith('data:')) {
-    try {
-      const username = creator?.username || uid;
-      const stored = await uploadDataUriToZata({ dataUri: imageForProvider, keyPrefix: `users/${username}/input/${historyId}`, fileName: 'source' });
-      imageForProvider = stored.publicUrl;
-    } catch {}
-  }
-  const input: Record<string, any> = { image: imageForProvider };
+  // Use input image directly (URL or data URI); only upload outputs to Zata
+  const input: Record<string, any> = { image: body.image };
   if (modelBase.startsWith('851-labs/background-remover')) {
     if (body.format) input.format = body.format;
     if (typeof body.reverse === 'boolean') input.reverse = body.reverse;
@@ -111,7 +157,9 @@ export async function removeBackground(uid: string, body: {
     const output: any = await replicate.run(modelSpec as any, { input });
     // eslint-disable-next-line no-console
     console.log('[replicateService.removeBackground] output', typeof output, Array.isArray(output) ? output.length : 'n/a');
-    outputUrl = extractFirstUrl(output);
+    // Resolve possible file-like outputs
+    const urls = await resolveOutputUrls(output);
+    outputUrl = urls[0] || '';
     if (!outputUrl) throw new Error('No output URL returned by Replicate');
   } catch (e: any) {
     // eslint-disable-next-line no-console
@@ -163,7 +211,7 @@ export async function upscale(uid: string, body: any) {
 
   const replicate = new Replicate({ auth: key });
 
-  const modelBase = body.model && body.model.length > 0 ? body.model : 'philz1337x/clarity-upscaler';
+  const modelBase = (body.model && body.model.length > 0 ? String(body.model) : 'philz1337x/clarity-upscaler').trim();
   const creator = await authRepository.getUserById(uid);
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: '[Upscale]',
@@ -245,8 +293,15 @@ export async function upscale(uid: string, body: any) {
     let idx = 1;
     for (const out of outputUrls) {
       try {
-        const uploaded = await uploadFromUrlToZata({ sourceUrl: out, keyPrefix: `users/${username}/image/${historyId}`, fileName: `image-${idx}` });
-        uploadedImages.push({ id: `replicate-${Date.now()}-${idx}`, url: uploaded.publicUrl, storagePath: uploaded.key, originalUrl: out });
+        // Prefer downloading and re-uploading to ensure we store first-party resource URLs
+        const dl = await downloadToDataUri(out);
+        if (dl) {
+          const uploaded = await uploadDataUriToZata({ dataUri: dl.dataUri, keyPrefix: `users/${username}/image/${historyId}`, fileName: `image-${idx}.${dl.ext}` });
+          uploadedImages.push({ id: `replicate-${Date.now()}-${idx}`, url: uploaded.publicUrl, storagePath: uploaded.key, originalUrl: out });
+        } else {
+          const uploaded = await uploadFromUrlToZata({ sourceUrl: out, keyPrefix: `users/${username}/image/${historyId}`, fileName: `image-${idx}` });
+          uploadedImages.push({ id: `replicate-${Date.now()}-${idx}`, url: uploaded.publicUrl, storagePath: uploaded.key, originalUrl: out });
+        }
       } catch {
         uploadedImages.push({ id: `replicate-${Date.now()}-${idx}`, url: out, originalUrl: out });
       }
@@ -276,7 +331,7 @@ export async function generateImage(uid: string, body: any) {
   if (!body?.prompt) throw new ApiError('prompt is required', 400);
 
   const replicate = new Replicate({ auth: key });
-  const modelBase = body.model && body.model.length > 0 ? body.model : 'bytedance/seedream-4';
+  const modelBase = (body.model && body.model.length > 0 ? String(body.model) : 'bytedance/seedream-4').trim();
   const creator = await authRepository.getUserById(uid);
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
@@ -288,13 +343,7 @@ export async function generateImage(uid: string, body: any) {
   } as any);
   const legacyId = await replicateRepository.createGenerationRecord({ prompt: body.prompt, model: modelBase, isPublic: body.isPublic === true }, creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid });
 
-  if (body.image && typeof body.image === 'string' && body.image.startsWith('data:')) {
-    try {
-      const username = creator?.username || uid;
-      const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${username}/input/${historyId}`, fileName: 'source' });
-      body.image = stored.publicUrl;
-    } catch {}
-  }
+  // Do not upload input data URIs to Zata; pass directly to provider
   let outputUrls: string[] = [];
   try {
     const { model: _m, isPublic: _p, ...rest } = body || {};
@@ -317,23 +366,19 @@ export async function generateImage(uid: string, body: any) {
       // multi-image input: ensure URLs; upload data URIs to Zata
       let images: string[] = Array.isArray(rest.image_input) ? rest.image_input.slice(0, 10) : [];
       if (Array.isArray(images) && images.length > 0) {
-        const normalized: string[] = [];
-        for (let i = 0; i < images.length; i++) {
-          const itm = images[i];
-          if (typeof itm === 'string' && itm.startsWith('data:')) {
-            try {
-              const username = creator?.username || uid;
-              const up = await uploadDataUriToZata({ dataUri: itm, keyPrefix: `users/${username}/input/${historyId}`, fileName: `ref-${i+1}` });
-              normalized.push(up.publicUrl);
-            } catch { /* skip */ }
-          } else if (typeof itm === 'string') {
-            normalized.push(itm);
-          }
-        }
-        input.image_input = normalized;
+        // pass image_input directly (URLs or data URIs) without uploading
+        input.image_input = images;
       }
       // also support legacy single image
       if (!input.image_input && rest.image) input.image_input = [rest.image];
+      // Enforce total images cap when auto: input_count + max_images <= 15
+      if (input.sequential_image_generation === 'auto') {
+        const inputCount = Array.isArray(input.image_input) ? input.image_input.length : 0;
+        const requested = typeof input.max_images === 'number' ? input.max_images : 1;
+        if (inputCount + requested > 15) {
+          input.max_images = Math.max(1, 15 - inputCount);
+        }
+      }
     }
     if (modelBase === 'fermatresearch/magic-image-refiner') {
       if (input.hdr != null) input.hdr = clamp(input.hdr, 0, 1);
@@ -346,17 +391,103 @@ export async function generateImage(uid: string, body: any) {
     const modelSpec = composeModelSpec(modelBase, body.version);
     // eslint-disable-next-line no-console
     console.log('[replicateService.generateImage] run', { modelSpec, hasImage: !!rest.image, inputKeys: Object.keys(input) });
+    if (modelBase === 'bytedance/seedream-4') {
+      try {
+        const preDump = {
+          incoming_image_input_count: Array.isArray(rest.image_input) ? rest.image_input.length : 0,
+          incoming_first_is_data_uri: Array.isArray(rest.image_input) ? (typeof rest.image_input[0] === 'string' && rest.image_input[0]?.startsWith('data:')) : false,
+        };
+        console.debug('[seedream] incoming image_input summary', JSON.stringify(preDump));
+      } catch {}
+    }
+    if (modelBase === 'bytedance/seedream-4') {
+      try {
+        // Deep print for Seedream I2I debugging
+        const dump = {
+          prompt: input.prompt,
+          size: input.size,
+          aspect_ratio: input.aspect_ratio,
+          sequential_image_generation: input.sequential_image_generation,
+          max_images: input.max_images,
+          image_input_count: Array.isArray(input.image_input) ? input.image_input.length : 0,
+          image_input_sample: Array.isArray(input.image_input) ? input.image_input.slice(0, 2) : [],
+          model: modelBase,
+          isPublic: body.isPublic === true,
+        };
+        // eslint-disable-next-line no-console
+        console.debug('[seedream] input dump', JSON.stringify(dump, null, 2));
+      } catch {}
+    }
     const output: any = await replicate.run(modelSpec as any, { input });
     // eslint-disable-next-line no-console
     console.log('[replicateService.generateImage] output', typeof output, Array.isArray(output) ? output.length : 'n/a');
-    // Seedream returns an array of urls per schema; handle multiple
-    if (Array.isArray(output)) {
-      outputUrls = output.filter((x: any) => typeof x === 'string');
-    } else {
-      const maybe = extractFirstUrl(output);
-      if (maybe) outputUrls = [maybe];
+    console.log('[replicateService.generateImage] output', output);
+    if (modelBase === 'bytedance/seedream-4') {
+      try {
+        if (Array.isArray(output)) {
+          const first = output[0];
+          const firstInfo = first ? (typeof first === 'string' ? first : (typeof first?.url === 'function' ? '[function url()]' : Object.keys(first||{}))) : null;
+          // eslint-disable-next-line no-console
+          console.debug('[seedream] output array[0] info', firstInfo);
+          // Deep inspect entire array with safe depth
+          console.debug('[seedream] output full inspect', util.inspect(output, { depth: 4, maxArrayLength: 50 }));
+          // Attempt to resolve urls for each item with logging
+          for (let i = 0; i < output.length; i++) {
+            try {
+              const val = output[i];
+              const url = await resolveItemUrl(val);
+              console.debug(`[seedream] output[${i}] typeof=${typeof val} hasUrlFn=${typeof (val?.url) === 'function'} resolvedUrl=${url || '<none>'}`);
+            } catch (e) {
+              console.debug(`[seedream] output[${i}] resolve error`, (e as any)?.message || e);
+            }
+          }
+        } else if (output && typeof output === 'object') {
+          // eslint-disable-next-line no-console
+          console.debug('[seedream] output object keys', Object.keys(output));
+          console.debug('[seedream] output full inspect', util.inspect(output, { depth: 4 }));
+        }
+      } catch {}
     }
-    if (!outputUrls.length) throw new Error('No output URL returned by Replicate');
+    // Seedream returns an array of urls per schema; handle multiple
+    outputUrls = await resolveOutputUrls(output);
+    if (!outputUrls.length && Array.isArray(output)) {
+      // Fallback: Replicate returned file-like streams; read and upload to Zata directly
+      // eslint-disable-next-line no-console
+      console.warn('[replicateService.generateImage] no URL strings; attempting stream->buffer->Zata fallback');
+      const username = creator?.username || uid;
+      const uploadedUrls: string[] = [];
+      for (let i = 0; i < output.length; i++) {
+        const item = output[i];
+        try {
+          let arrayBuffer: ArrayBuffer | null = null;
+          if (item && typeof item.arrayBuffer === 'function') {
+            arrayBuffer = await item.arrayBuffer();
+          } else if (typeof Response !== 'undefined') {
+            // Wrap in Response to consume web ReadableStream
+            const resp = new Response(item as any);
+            arrayBuffer = await resp.arrayBuffer();
+          }
+          if (arrayBuffer) {
+            const buffer = Buffer.from(new Uint8Array(arrayBuffer));
+            const b64 = buffer.toString('base64');
+            const dataUri = `data:image/png;base64,${b64}`; // best-effort default; Replicate images are typically PNG/JPG
+            const uploaded = await uploadDataUriToZata({ dataUri, keyPrefix: `users/${username}/image/${historyId}`, fileName: `image-${i+1}.png` });
+            uploadedUrls.push(uploaded.publicUrl);
+          }
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error('[replicateService.generateImage] stream fallback upload failed', (e as any)?.message || e);
+        }
+      }
+      if (uploadedUrls.length) outputUrls = uploadedUrls;
+    }
+    if (!outputUrls.length) {
+      try {
+        // eslint-disable-next-line no-console
+        console.error('[replicateService.generateImage] no urls – raw output dump (truncated)', JSON.stringify(output, null, 2).slice(0, 2000));
+      } catch {}
+      throw new Error('No output URL returned by Replicate');
+    }
   } catch (e: any) {
     // eslint-disable-next-line no-console
     console.error('[replicateService.generateImage] error', e?.message || e);
