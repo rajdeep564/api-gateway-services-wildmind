@@ -25,6 +25,7 @@ export async function create(uid: string, data: {
   visibility?: Visibility | string;
   tags?: string[];
   nsfw?: boolean;
+  frameSize?: string;
   isPublic?: boolean;
   createdBy?: { uid: string; username?: string; email?: string };
 }): Promise<{ historyId: string }> {
@@ -37,6 +38,7 @@ export async function create(uid: string, data: {
     visibility: (data.visibility as Visibility) || Visibility.Private,
     tags: data.tags || [],
     nsfw: data.nsfw ?? false,
+    frameSize: data.frameSize || null,
     isPublic: data.isPublic ?? false,
     createdBy: data.createdBy ? {
       uid: data.createdBy.uid,

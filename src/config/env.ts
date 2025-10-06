@@ -25,6 +25,7 @@ export interface EnvConfig {
   runwayApiKey?: string;
   minimaxApiKey?: string;
   minimaxGroupId?: string;
+  replicateApiKey?: string;
   // Mail
   emailUser?: string;
   emailAppPassword?: string;
@@ -71,6 +72,8 @@ export const env: EnvConfig = {
   runwayApiKey: process.env.RUNWAY_API_KEY,
   minimaxApiKey: process.env.MINIMAX_API_KEY,
   minimaxGroupId: process.env.MINIMAX_GROUP_ID,
+  // Accept multiple env names for Replicate for robustness
+  replicateApiKey: process.env.REPLICATE_API_KEY || process.env.REPLICATE_API_TOKEN || (process.env as any).RAPLICATE_API_KEY,
   emailUser: process.env.EMAIL_USER,
   emailAppPassword: process.env.EMAIL_APP_PASSWORD,
   smtpHost: process.env.SMTP_HOST,
