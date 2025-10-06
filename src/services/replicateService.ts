@@ -184,7 +184,7 @@ export async function upscale(uid: string, body: any) {
       body.image = stored.publicUrl;
     } catch {}
   }
-  let outputUrl = '';
+  let outputUrls: string[] = [];
   try {
     const { model: _m, isPublic: _p, ...rest } = body || {};
     const input: any = { image: body.image, ...rest };
@@ -205,9 +205,17 @@ export async function upscale(uid: string, body: any) {
       if (input.steps != null) input.steps = Math.max(1, Math.min(100, Number(input.steps)));
       if (!input.resolution) input.resolution = '1024';
     }
-    if (modelBase === 'nightmareai/real-esrgan' || modelBase === 'mv-lab/swin2sr') {
-      // The model expects `image` and optional `scale` (2, 4)
-      if (input.scale != null) input.scale = clamp(input.scale, 1, 4);
+    if (modelBase === 'nightmareai/real-esrgan') {
+      // real-esrgan supports scale 0-10 (default 4) and face_enhance boolean
+      if (input.scale != null) input.scale = Math.max(0, Math.min(10, Number(input.scale)));
+      if (input.face_enhance != null) input.face_enhance = Boolean(input.face_enhance);
+    }
+    if (modelBase === 'mv-lab/swin2sr') {
+      // Swin2SR expects `task` enum and image. If provided, allow pass-through of task
+      if (input.task) {
+        const allowed = new Set(['classical_sr','real_sr','compressed_sr']);
+        if (!allowed.has(String(input.task))) input.task = 'real_sr';
+      }
     }
     const modelSpec = composeModelSpec(modelBase, body.version);
     // eslint-disable-next-line no-console
@@ -215,8 +223,13 @@ export async function upscale(uid: string, body: any) {
     const output: any = await replicate.run(modelSpec as any, { input });
     // eslint-disable-next-line no-console
     console.log('[replicateService.upscale] output', typeof output, Array.isArray(output) ? output.length : 'n/a');
-    outputUrl = extractFirstUrl(output);
-    if (!outputUrl) throw new Error('No output URL returned by Replicate');
+    if (Array.isArray(output)) {
+      outputUrls = output.filter((x: any) => typeof x === 'string');
+    } else {
+      const one = extractFirstUrl(output);
+      if (one) outputUrls = [one];
+    }
+    if (!outputUrls.length) throw new Error('No output URL returned by Replicate');
   } catch (e: any) {
     // eslint-disable-next-line no-console
     console.error('[replicateService.upscale] error', e?.message || e);
@@ -225,22 +238,32 @@ export async function upscale(uid: string, body: any) {
     throw new ApiError('Replicate generation failed', 502, e);
   }
 
-  let storedUrl = outputUrl;
-  let storagePath = '';
+  // Upload possibly multiple output URLs
+  const uploadedImages: Array<{ id: string; url: string; storagePath?: string; originalUrl: string }> = [];
   try {
     const username = creator?.username || uid;
-    const uploaded = await uploadFromUrlToZata({ sourceUrl: outputUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'image-1' });
-    storedUrl = uploaded.publicUrl;
-    storagePath = uploaded.key;
-  } catch {}
+    let idx = 1;
+    for (const out of outputUrls) {
+      try {
+        const uploaded = await uploadFromUrlToZata({ sourceUrl: out, keyPrefix: `users/${username}/image/${historyId}`, fileName: `image-${idx}` });
+        uploadedImages.push({ id: `replicate-${Date.now()}-${idx}`, url: uploaded.publicUrl, storagePath: uploaded.key, originalUrl: out });
+      } catch {
+        uploadedImages.push({ id: `replicate-${Date.now()}-${idx}`, url: out, originalUrl: out });
+      }
+      idx++;
+    }
+  } catch {
+    // Fallback: store raw urls
+    uploadedImages.push(...outputUrls.map((out, i) => ({ id: `replicate-${Date.now()}-${i+1}`, url: out, originalUrl: out })));
+  }
 
-  await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: [{ id: `replicate-${Date.now()}`, url: storedUrl, storagePath, originalUrl: outputUrl } as any] } as any);
-  try { await replicateRepository.updateGenerationRecord(legacyId, { status: 'completed', images: [{ id: `replicate-${Date.now()}`, url: storedUrl, storagePath, originalUrl: outputUrl }] }); } catch {}
+  await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: uploadedImages as any } as any);
+  try { await replicateRepository.updateGenerationRecord(legacyId, { status: 'completed', images: uploadedImages }); } catch {}
   try {
     const fresh = await generationHistoryRepository.get(uid, historyId);
     if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, { uid, username: creator?.username, displayName: (creator as any)?.displayName, photoURL: creator?.photoURL });
   } catch {}
-  return { images: [{ id: `replicate-${Date.now()}`, url: storedUrl, storagePath, originalUrl: outputUrl }], historyId, model: modelBase, status: 'completed' } as any;
+  return { images: uploadedImages, historyId, model: modelBase, status: 'completed' } as any;
 }
 
 export async function generateImage(uid: string, body: any) {
@@ -272,13 +295,45 @@ export async function generateImage(uid: string, body: any) {
       body.image = stored.publicUrl;
     } catch {}
   }
-  let outputUrl = '';
+  let outputUrls: string[] = [];
   try {
     const { model: _m, isPublic: _p, ...rest } = body || {};
-    const input: any = { prompt: body.prompt, ...rest };
-    // Sanitize inputs
+    const input: any = { prompt: body.prompt };
+    // Seedream schema mapping
     if (modelBase === 'bytedance/seedream-4') {
-      // seedream standard prompt-based: nothing special here
+      // size handling
+      const size = rest.size || '2K';
+      if (['1K','2K','4K','custom'].includes(String(size))) input.size = size;
+      if (input.size === 'custom') {
+        if (rest.width) input.width = clamp(rest.width, 1024, 4096);
+        if (rest.height) input.height = clamp(rest.height, 1024, 4096);
+      }
+      // aspect ratio (ignored if size=custom)
+      if (rest.aspect_ratio) input.aspect_ratio = String(rest.aspect_ratio);
+      // sequential image generation
+      if (rest.sequential_image_generation) input.sequential_image_generation = String(rest.sequential_image_generation);
+      // max_images
+      if (rest.max_images != null) input.max_images = Math.max(1, Math.min(15, Number(rest.max_images)));
+      // multi-image input: ensure URLs; upload data URIs to Zata
+      let images: string[] = Array.isArray(rest.image_input) ? rest.image_input.slice(0, 10) : [];
+      if (Array.isArray(images) && images.length > 0) {
+        const normalized: string[] = [];
+        for (let i = 0; i < images.length; i++) {
+          const itm = images[i];
+          if (typeof itm === 'string' && itm.startsWith('data:')) {
+            try {
+              const username = creator?.username || uid;
+              const up = await uploadDataUriToZata({ dataUri: itm, keyPrefix: `users/${username}/input/${historyId}`, fileName: `ref-${i+1}` });
+              normalized.push(up.publicUrl);
+            } catch { /* skip */ }
+          } else if (typeof itm === 'string') {
+            normalized.push(itm);
+          }
+        }
+        input.image_input = normalized;
+      }
+      // also support legacy single image
+      if (!input.image_input && rest.image) input.image_input = [rest.image];
     }
     if (modelBase === 'fermatresearch/magic-image-refiner') {
       if (input.hdr != null) input.hdr = clamp(input.hdr, 0, 1);
@@ -294,8 +349,14 @@ export async function generateImage(uid: string, body: any) {
     const output: any = await replicate.run(modelSpec as any, { input });
     // eslint-disable-next-line no-console
     console.log('[replicateService.generateImage] output', typeof output, Array.isArray(output) ? output.length : 'n/a');
-    outputUrl = extractFirstUrl(output);
-    if (!outputUrl) throw new Error('No output URL returned by Replicate');
+    // Seedream returns an array of urls per schema; handle multiple
+    if (Array.isArray(output)) {
+      outputUrls = output.filter((x: any) => typeof x === 'string');
+    } else {
+      const maybe = extractFirstUrl(output);
+      if (maybe) outputUrls = [maybe];
+    }
+    if (!outputUrls.length) throw new Error('No output URL returned by Replicate');
   } catch (e: any) {
     // eslint-disable-next-line no-console
     console.error('[replicateService.generateImage] error', e?.message || e);
@@ -304,22 +365,32 @@ export async function generateImage(uid: string, body: any) {
     throw new ApiError('Replicate generation failed', 502, e);
   }
 
-  let storedUrl = outputUrl;
-  let storagePath = '';
+  // Upload possibly multiple output URLs
+  const uploadedImages: Array<{ id: string; url: string; storagePath?: string; originalUrl: string }> = [];
   try {
     const username = creator?.username || uid;
-    const uploaded = await uploadFromUrlToZata({ sourceUrl: outputUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'image-1' });
-    storedUrl = uploaded.publicUrl;
-    storagePath = uploaded.key;
-  } catch {}
+    let idx = 1;
+    for (const out of outputUrls) {
+      try {
+        const uploaded = await uploadFromUrlToZata({ sourceUrl: out, keyPrefix: `users/${username}/image/${historyId}`, fileName: `image-${idx}` });
+        uploadedImages.push({ id: `replicate-${Date.now()}-${idx}`, url: uploaded.publicUrl, storagePath: uploaded.key, originalUrl: out });
+      } catch {
+        uploadedImages.push({ id: `replicate-${Date.now()}-${idx}`, url: out, originalUrl: out });
+      }
+      idx++;
+    }
+  } catch {
+    // Fallback: store raw urls
+    uploadedImages.push(...outputUrls.map((out, i) => ({ id: `replicate-${Date.now()}-${i+1}`, url: out, originalUrl: out })));
+  }
 
-  await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: [{ id: `replicate-${Date.now()}`, url: storedUrl, storagePath, originalUrl: outputUrl } as any] } as any);
-  try { await replicateRepository.updateGenerationRecord(legacyId, { status: 'completed', images: [{ id: `replicate-${Date.now()}`, url: storedUrl, storagePath, originalUrl: outputUrl }] }); } catch {}
+  await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: uploadedImages as any } as any);
+  try { await replicateRepository.updateGenerationRecord(legacyId, { status: 'completed', images: uploadedImages }); } catch {}
   try {
     const fresh = await generationHistoryRepository.get(uid, historyId);
     if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, { uid, username: creator?.username, displayName: (creator as any)?.displayName, photoURL: creator?.photoURL });
   } catch {}
-  return { images: [{ id: `replicate-${Date.now()}`, url: storedUrl, storagePath, originalUrl: outputUrl }], historyId, model: modelBase, status: 'completed' } as any;
+  return { images: uploadedImages, historyId, model: modelBase, status: 'completed' } as any;
 }
 
 export const replicateService = { removeBackground, upscale, generateImage };

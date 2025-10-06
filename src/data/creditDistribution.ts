@@ -612,6 +612,25 @@ export const creditDistributionData: ModelCreditInfo[] = [
     creditsPerGeneration: 31,
     plans: { planA: 398.7096774, planB: 797.4193548, planC: 2064.516129, planD: 6379.354839, free: 132.9032258 }
   }
+  ,
+  {
+    srNo: 43,
+    modelName: "replicate/nightmareai/real-esrgan",
+    priceToPay: 0.0012,
+    overCharge: 0.015,
+    userCost: 0.0162,
+    creditsPerGeneration: 32.4,
+    plans: { planA: 381.4814815, planB: 762.962963, planC: 1975.308642, planD: 6103.703704, free: 127.1604938 }
+  },
+  {
+    srNo: 44,
+    modelName: "replicate/mv-lab/swin2sr",
+    priceToPay: 0.0065,
+    overCharge: 0.015,
+    userCost: 0.0215,
+    creditsPerGeneration: 43,
+    plans: { planA: 287.4418605, planB: 574.8837209, planC: 1488.372093, planD: 4599.069767, free: 95.81395349 }
+  }
 ];
 
 // Helper functions for easy access
