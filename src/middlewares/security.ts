@@ -48,24 +48,46 @@ export const originCheck = (req: Request, res: Response, next: NextFunction) => 
     return next();
   }
 
-  const isProd = process.env.NODE_ENV === 'production';
-  const allowedOrigins = new Set<string>(
-    isProd
-      ? ['https://wildmindai.com', 'https://www.wildmindai.com']
-      : ['http://localhost:3000']
-  );
-  const origin = req.headers.origin as string | undefined;
-  const referer = req.headers.referer as string | undefined;
+  const path = req.path || req.url;
+  // Allow auth flows (OAuth callbacks may have no/foreign origin)
+  if (path.startsWith('/api/auth/')) return next();
 
-  if (origin && allowedOrigins.has(origin)) return next();
-  if (referer) {
+  const isProd = process.env.NODE_ENV === 'production';
+  const defaults = isProd
+    ? ['https://wildmindai.com', 'https://www.wildmindai.com']
+    : ['http://localhost:3000'];
+  const extra = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_ORIGIN || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  const all = [...defaults, ...extra];
+  const allowedHosts = new Set<string>();
+  for (const o of all) {
     try {
-      const url = new URL(referer);
-      if (allowedOrigins.has(`${url.protocol}//${url.host}`)) return next();
-    } catch {
-      // fall through
-    }
+      const u = new URL(o);
+      allowedHosts.add(u.host);
+    } catch {}
   }
+
+  const origin = (req.headers.origin as string | undefined) || undefined;
+  const referer = (req.headers.referer as string | undefined) || undefined;
+
+  // Allow if no Origin/Referer (server-to-server, OAuth redirects)
+  if (!origin && !referer) return next();
+
+  try {
+    if (origin) {
+      const oh = new URL(origin as string).host;
+      if (allowedHosts.has(oh)) return next();
+    }
+  } catch {}
+
+  try {
+    if (referer) {
+      const rh = new URL(referer as string).host;
+      if (allowedHosts.has(rh)) return next();
+    }
+  } catch {}
 
   return res.status(403).json({ status: 'error', message: 'Forbidden origin' });
 };
