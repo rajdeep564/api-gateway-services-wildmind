@@ -51,22 +51,34 @@ const corsOptions: any = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'X-Requested-With',
-    'X-Request-Id',
-    'X-Device-Id',
-    'X-Device-Name',
-    'X-Device-Info',
-    'ngrok-skip-browser-warning',
-    'Range'
-  ],
+  // Let CORS reflect Access-Control-Request-Headers dynamically to avoid misses (e.g., DNT, sec-ch-ua)
   optionsSuccessStatus: 204,
   exposedHeaders: ['Content-Length', 'Content-Range']
 };
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+app.use((req, res, next) => {
+  const reqOrigin = req.headers.origin as string | undefined;
+  const isAllowed = reqOrigin && allowedOrigins.includes(reqOrigin);
+  cors({
+    origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean | string | RegExp | (string | RegExp)[]) => void) => cb(null, isAllowed ? reqOrigin! : false),
+    credentials: true,
+    methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS','HEAD'],
+    // Reflect request headers to avoid missing custom headers on mobile
+    allowedHeaders: req.header('access-control-request-headers') || undefined,
+    exposedHeaders: ['Content-Length','Content-Range'],
+    optionsSuccessStatus: 204,
+  })(req, res, next);
+});
+app.options('*', (req, res, next) => {
+  const reqOrigin = req.headers.origin as string | undefined;
+  const isAllowed = reqOrigin && allowedOrigins.includes(reqOrigin);
+  cors({
+    origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean | string | RegExp | (string | RegExp)[]) => void) => cb(null, isAllowed ? reqOrigin! : false),
+    credentials: true,
+    allowedHeaders: req.header('access-control-request-headers') || undefined,
+    methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS','HEAD'],
+    optionsSuccessStatus: 204,
+  })(req, res, next);
+});
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
