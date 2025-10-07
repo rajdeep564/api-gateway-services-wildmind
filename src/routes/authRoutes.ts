@@ -6,6 +6,25 @@ import { validateSession, validateOtpStart, validateOtpVerify, validateUsername,
 
 const router = Router();
 
+// Fast CORS preflight for Google auth (Vercel sometimes misses global CORS)
+router.options('/google', (req, res) => {
+  const origin = (req.headers.origin as string) || '';
+  const allowed = [
+    'https://www.wildmindai.com',
+    'https://wildmindai.com',
+    process.env.FRONTEND_ORIGIN || ''
+  ].filter(Boolean);
+  if (origin && allowed.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  const reqHeaders = req.header('access-control-request-headers');
+  if (reqHeaders) res.setHeader('Access-Control-Allow-Headers', reqHeaders);
+  return res.sendStatus(204);
+});
+
 router.post('/session', validateSession, authController.createSession);
 router.post('/login', validateLogin, authController.loginWithEmailPassword);
 router.post('/google', validateGoogleSignIn, authController.googleSignIn);
