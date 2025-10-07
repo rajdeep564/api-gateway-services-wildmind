@@ -70,6 +70,16 @@ app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
+// Allow proxies to forward cookies on cross-site requests
+app.use((req, res, next) => {
+  const origin = req.headers.origin as string | undefined;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Vary', 'Origin');
+  }
+  next();
+});
 app.use(httpParamPollution);
 app.use(gzipCompression);
 app.use(httpLogger);
