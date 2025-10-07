@@ -29,7 +29,7 @@ const allowedOrigins = [
 ].filter(Boolean);
 
 const corsOptions: cors.CorsOptions = {
-  origin: (origin, callback) => {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // Allow server-to-server (no Origin header) and health checks
     if (!origin) return callback(null, true);
     try {

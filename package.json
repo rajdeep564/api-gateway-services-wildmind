@@ -37,15 +37,16 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@runwayml/sdk": "^2.10.0",
     "@types/adm-zip": "^0.5.7",
     "@types/compression": "^1.8.1",
     "@types/cookie-parser": "^1.4.7",
     "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
     "@types/hpp": "^0.2.6",
     "@types/node": "^20.10.6",
+    "@types/node-fetch": "^2.6.4",
     "@types/nodemailer": "^7.0.1",
+    "@runwayml/sdk": "^2.10.0",
+    "@types/express": "^4.17.21",
     "@types/uuid": "^10.0.0",
     "nodemon": "^3.1.10",
     "pino-pretty": "^13.1.1",
