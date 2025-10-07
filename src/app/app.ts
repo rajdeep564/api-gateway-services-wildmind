@@ -22,10 +22,14 @@ app.use(requestId);
 app.use(securityHeaders);
 app.use(rateLimiter);
 // CORS for frontend with credentials (dev + prod)
+const isProdEnv = process.env.NODE_ENV === 'production';
 const allowedOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
-  process.env.FRONTEND_ORIGIN || ''
+  // Common prod hosts for frontend
+  ...(isProdEnv ? ['https://www.wildmindai.com', 'https://wildmindai.com'] : []),
+  process.env.FRONTEND_ORIGIN || '',
+  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : [])
 ].filter(Boolean);
 
 const corsOptions: any = {
@@ -59,6 +63,7 @@ const corsOptions: any = {
     'Range'
   ],
   optionsSuccessStatus: 204,
+  exposedHeaders: ['Content-Length', 'Content-Range']
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
