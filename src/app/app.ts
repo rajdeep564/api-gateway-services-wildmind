@@ -28,7 +28,7 @@ const allowedOrigins = [
   process.env.FRONTEND_ORIGIN || ''
 ].filter(Boolean);
 
-const corsOptions: cors.CorsOptions = {
+const corsOptions: any = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // Allow server-to-server (no Origin header) and health checks
     if (!origin) return callback(null, true);

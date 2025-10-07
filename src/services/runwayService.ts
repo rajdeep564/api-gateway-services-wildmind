@@ -16,7 +16,7 @@ import { computeRunwayCostFromHistoryModel } from "../utils/pricing/runwayPricin
 
 // (SDK handles base/version internally)
 
-function getRunwayClient(): RunwayML {
+function getRunwayClient(): any {
   const apiKey = env.runwayApiKey as string;
   if (!apiKey) throw new ApiError("Runway API key not configured", 500);
   return new RunwayML({ apiKey });
