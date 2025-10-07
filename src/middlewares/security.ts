@@ -27,9 +27,9 @@ export const securityHeaders = helmet({
       ],
     }
   },
-  // Relax COOP/COEP in development to avoid popup warnings and cross-origin issues
-  crossOriginOpenerPolicy: isDev ? false : undefined,
-  crossOriginEmbedderPolicy: isDev ? false : undefined,
+  // Disable COOP/COEP to avoid auth popup issues across domains
+  crossOriginOpenerPolicy: false,
+  crossOriginEmbedderPolicy: false,
   referrerPolicy: { policy: 'no-referrer' },
   frameguard: { action: 'deny' },
   hsts: { maxAge: 15552000, includeSubDomains: true, preload: true },
