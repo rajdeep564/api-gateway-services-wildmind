@@ -84,6 +84,14 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
       }
     }
 
+    // Derive public-generation policy flags from plan (computed, not persisted)
+    try {
+      const planRaw = String((user as any)?.plan || '').toUpperCase();
+      const canToggle = /(^|\b)PLAN\s*C\b/.test(planRaw) || /(^|\b)PLAN\s*D\b/.test(planRaw) || planRaw === 'C' || planRaw === 'D';
+      (user as any).canTogglePublicGenerations = canToggle;
+      (user as any).forcePublicGenerations = !canToggle;
+    } catch {}
+
     res.json(
       formatApiResponse("success", "User retrieved successfully", { user })
     );
