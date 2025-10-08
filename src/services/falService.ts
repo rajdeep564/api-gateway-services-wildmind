@@ -321,7 +321,7 @@ async function veoImageToVideo(uid: string, payload: {
   prompt: string;
   image_url: string;
   aspect_ratio?: 'auto' | '16:9' | '9:16';
-  duration?: '8s';
+  duration?: '4s' | '6s' | '8s';
   generate_audio?: boolean;
   resolution?: '720p' | '1080p';
   isPublic?: boolean;
