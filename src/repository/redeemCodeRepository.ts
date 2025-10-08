@@ -5,7 +5,7 @@ import { ApiError } from '../utils/errorHandler';
 export async function createRedeemCode(
   code: string,
   type: RedeemCodeType,
-  planCode: 'PLAN_A' | 'PLAN_B',
+  planCode: 'PLAN_A' | 'PLAN_C',
   maxUses: number = 1,
   validUntil?: Date,
   createdBy?: string

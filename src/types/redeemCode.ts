@@ -4,7 +4,7 @@ export type RedeemCodeStatus = 'ACTIVE' | 'USED' | 'EXPIRED' | 'DISABLED';
 export interface RedeemCodeDoc {
   code: string;
   type: RedeemCodeType;
-  planCode: 'PLAN_A' | 'PLAN_B'; // PLAN_A for students, PLAN_B for business
+  planCode: 'PLAN_A' | 'PLAN_C'; // PLAN_A for students, PLAN_B for business
   status: RedeemCodeStatus;
   maxUses: number;
   currentUses: number;
@@ -35,7 +35,7 @@ export interface CreateRedeemCodeRequest {
 
 export interface RedeemCodeValidationResult {
   valid: boolean;
-  planCode?: 'PLAN_A' | 'PLAN_B';
+  planCode?: 'PLAN_A' | 'PLAN_C';
   creditsToGrant?: number;
   remainingTime?: string | null;
   expiresAt?: string | null;

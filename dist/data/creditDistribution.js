@@ -1,0 +1,641 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PRICING_VERSION = exports.PLAN_CREDITS = exports.getCreditCostForPlan = exports.getModelsByProvider = exports.getModelByName = exports.creditDistributionData = void 0;
+exports.creditDistributionData = [
+    {
+        srNo: 1,
+        modelName: "FLUX.1 Kontext [pro]",
+        priceToPay: 0.04,
+        overCharge: 0.015,
+        userCost: 0.055,
+        creditsPerGeneration: 110,
+        plans: {
+            planA: 112.3636364,
+            planB: 224.7272727,
+            planC: 561.8181818,
+            planD: 1797.818182,
+            free: 37.45454545
+        }
+    },
+    {
+        srNo: 2,
+        modelName: "FLUX.1 Kontext [max]",
+        priceToPay: 0.08,
+        overCharge: 0.015,
+        userCost: 0.095,
+        creditsPerGeneration: 190,
+        plans: {
+            planA: 65.05263158,
+            planB: 130.1052632,
+            planC: 325.2631579,
+            planD: 1040.842105,
+            free: 21.68421053
+        }
+    },
+    {
+        srNo: 3,
+        modelName: "FLUX 1.1 [pro] Ultra",
+        priceToPay: 0.06,
+        overCharge: 0.015,
+        userCost: 0.075,
+        creditsPerGeneration: 150,
+        plans: {
+            planA: 82.4,
+            planB: 164.8,
+            planC: 412,
+            planD: 1318.4,
+            free: 27.46666667
+        }
+    },
+    {
+        srNo: 4,
+        modelName: "FLUX 1.1 [pro]",
+        priceToPay: 0.04,
+        overCharge: 0.015,
+        userCost: 0.055,
+        creditsPerGeneration: 110,
+        plans: {
+            planA: 112.3636364,
+            planB: 224.7272727,
+            planC: 561.8181818,
+            planD: 1797.818182,
+            free: 37.45454545
+        }
+    },
+    {
+        srNo: 5,
+        modelName: "FLUX.1 [dev]",
+        priceToPay: 0.03,
+        overCharge: 0.015,
+        userCost: 0.045,
+        creditsPerGeneration: 90,
+        plans: {
+            planA: 137.3333333,
+            planB: 274.6666667,
+            planC: 686.6666667,
+            planD: 2197.333333,
+            free: 45.77777778
+        }
+    },
+    {
+        srNo: 6,
+        modelName: "FLUX.1 [pro]",
+        priceToPay: 0.05,
+        overCharge: 0.015,
+        userCost: 0.065,
+        creditsPerGeneration: 130,
+        plans: {
+            planA: 95.07692308,
+            planB: 190.1538462,
+            planC: 475.3846154,
+            planD: 1521.230769,
+            free: 31.69230769
+        }
+    },
+    {
+        srNo: 7,
+        modelName: "Runway Gen 4 Image 720p",
+        priceToPay: 0.05,
+        overCharge: 0.015,
+        userCost: 0.065,
+        creditsPerGeneration: 130,
+        plans: {
+            planA: 95.07692308,
+            planB: 190.1538462,
+            planC: 475.3846154,
+            planD: 1521.230769,
+            free: 31.69230769
+        }
+    },
+    {
+        srNo: 8,
+        modelName: "Runway Gen 4 Image 1080p",
+        priceToPay: 0.08,
+        overCharge: 0.015,
+        userCost: 0.095,
+        creditsPerGeneration: 190,
+        plans: {
+            planA: 65.05263158,
+            planB: 130.1052632,
+            planC: 325.2631579,
+            planD: 1040.842105,
+            free: 21.68421053
+        }
+    },
+    {
+        srNo: 9,
+        modelName: "Runway Gen 4 Image Turbo",
+        priceToPay: 0.02,
+        overCharge: 0.015,
+        userCost: 0.035,
+        creditsPerGeneration: 70,
+        plans: {
+            planA: 176.5714286,
+            planB: 353.1428571,
+            planC: 882.8571429,
+            planD: 2825.142857,
+            free: 58.85714286
+        }
+    },
+    {
+        srNo: 10,
+        modelName: "Minimax Image-01",
+        priceToPay: 0.0035,
+        overCharge: 0.015,
+        userCost: 0.0185,
+        creditsPerGeneration: 37,
+        plans: {
+            planA: 334.0540541,
+            planB: 668.1081081,
+            planC: 1670.27027,
+            planD: 5344.864865,
+            free: 111.3513514
+        }
+    },
+    {
+        srNo: 11,
+        modelName: "Google nano banana (T2I)",
+        priceToPay: 0.039,
+        overCharge: 0.015,
+        userCost: 0.054,
+        creditsPerGeneration: 108,
+        plans: {
+            planA: 114.4444444,
+            planB: 228.8888889,
+            planC: 572.2222222,
+            planD: 1831.111111,
+            free: 38.14814815
+        }
+    },
+    {
+        srNo: 12,
+        modelName: "Google nano banana (I2I)",
+        priceToPay: 0.039,
+        overCharge: 0.015,
+        userCost: 0.054,
+        creditsPerGeneration: 108,
+        plans: {
+            planA: 114.4444444,
+            planB: 228.8888889,
+            planC: 572.2222222,
+            planD: 1831.111111,
+            free: 38.14814815
+        }
+    },
+    {
+        srNo: 13,
+        modelName: "Music 1.5 (Up to 90s)",
+        priceToPay: 0.03,
+        overCharge: 0.015,
+        userCost: 0.045,
+        creditsPerGeneration: 90,
+        plans: {
+            planA: 137.3333333,
+            planB: 274.6666667,
+            planC: 686.6666667,
+            planD: 2197.333333,
+            free: 45.77777778
+        }
+    },
+    {
+        srNo: 14,
+        modelName: "Minimax-Hailuo-02 512P 6s",
+        priceToPay: 0.1,
+        overCharge: 0.06,
+        userCost: 0.16,
+        creditsPerGeneration: 320,
+        plans: {
+            planA: 38.625,
+            planB: 77.25,
+            planC: 193.125,
+            planD: 618,
+            free: 12.875
+        }
+    },
+    {
+        srNo: 15,
+        modelName: "Minimax-Hailuo-02 512P 10s",
+        priceToPay: 0.15,
+        overCharge: 0.06,
+        userCost: 0.21,
+        creditsPerGeneration: 420,
+        plans: {
+            planA: 29.42857143,
+            planB: 58.85714286,
+            planC: 147.1428571,
+            planD: 470.8571429,
+            free: 9.80952381
+        }
+    },
+    {
+        srNo: 16,
+        modelName: "Minimax-Hailuo-02 768P 6s",
+        priceToPay: 0.28,
+        overCharge: 0.06,
+        userCost: 0.34,
+        creditsPerGeneration: 680,
+        plans: {
+            planA: 18.17647059,
+            planB: 36.35294118,
+            planC: 90.88235294,
+            planD: 290.8235294,
+            free: 6.058823529
+        }
+    },
+    {
+        srNo: 17,
+        modelName: "Minimax-Hailuo-02 768P 10s",
+        priceToPay: 0.56,
+        overCharge: 0.06,
+        userCost: 0.62,
+        creditsPerGeneration: 1240,
+        plans: {
+            planA: 9.967741935,
+            planB: 19.93548387,
+            planC: 49.83870968,
+            planD: 159.483871,
+            free: 3.322580645
+        }
+    },
+    {
+        srNo: 18,
+        modelName: "Minimax-Hailuo-02 1080P 6s",
+        priceToPay: 0.49,
+        overCharge: 0.06,
+        userCost: 0.55,
+        creditsPerGeneration: 1100,
+        plans: {
+            planA: 11.23636364,
+            planB: 22.47272727,
+            planC: 56.18181818,
+            planD: 179.7818182,
+            free: 3.745454545
+        }
+    },
+    {
+        srNo: 19,
+        modelName: "T2V-01-Director",
+        priceToPay: 0.43,
+        overCharge: 0.06,
+        userCost: 0.49,
+        creditsPerGeneration: 980,
+        plans: {
+            planA: 12.6122449,
+            planB: 25.2244898,
+            planC: 63.06122449,
+            planD: 201.7959184,
+            free: 4.204081633
+        }
+    },
+    {
+        srNo: 20,
+        modelName: "I2V-01-Director",
+        priceToPay: 0.43,
+        overCharge: 0.06,
+        userCost: 0.49,
+        creditsPerGeneration: 980,
+        plans: {
+            planA: 12.6122449,
+            planB: 25.2244898,
+            planC: 63.06122449,
+            planD: 201.7959184,
+            free: 4.204081633
+        }
+    },
+    {
+        srNo: 21,
+        modelName: "S2V-01",
+        priceToPay: 0.65,
+        overCharge: 0.06,
+        userCost: 0.71,
+        creditsPerGeneration: 1420,
+        plans: {
+            planA: 8.704225352,
+            planB: 17.4084507,
+            planC: 43.52112676,
+            planD: 139.2676056,
+            free: 2.901408451
+        }
+    },
+    {
+        srNo: 22,
+        modelName: "veo3 t2v 4s",
+        priceToPay: 1.6,
+        overCharge: 0.06,
+        userCost: 1.66,
+        creditsPerGeneration: 3320,
+        plans: {
+            planA: 3.722891566,
+            planB: 7.445783133,
+            planC: 18.61445783,
+            planD: 59.56626506,
+            free: 1.240963855
+        }
+    },
+    {
+        srNo: 23,
+        modelName: "veo3 t2v 6s",
+        priceToPay: 2.4,
+        overCharge: 0.06,
+        userCost: 2.46,
+        creditsPerGeneration: 4920,
+        plans: {
+            planA: 2.512195122,
+            planB: 5.024390244,
+            planC: 12.56097561,
+            planD: 40.19512195,
+            free: 0.837398374
+        }
+    },
+    {
+        srNo: 24,
+        modelName: "veo3 t2v 8s",
+        priceToPay: 3.2,
+        overCharge: 0.06,
+        userCost: 3.26,
+        creditsPerGeneration: 6520,
+        plans: {
+            planA: 1.895705521,
+            planB: 3.791411043,
+            planC: 9.478527607,
+            planD: 30.33128834,
+            free: 0.6319018405
+        }
+    },
+    {
+        srNo: 25,
+        modelName: "veo3 i2v 8s",
+        priceToPay: 3.2,
+        overCharge: 0.06,
+        userCost: 3.26,
+        creditsPerGeneration: 6520,
+        plans: {
+            planA: 1.895705521,
+            planB: 3.791411043,
+            planC: 9.478527607,
+            planD: 30.33128834,
+            free: 0.6319018405
+        }
+    },
+    {
+        srNo: 26,
+        modelName: "veo3 fast t2v 4s",
+        priceToPay: 0.6,
+        overCharge: 0.06,
+        userCost: 0.66,
+        creditsPerGeneration: 1320,
+        plans: {
+            planA: 9.363636364,
+            planB: 18.72727273,
+            planC: 46.81818182,
+            planD: 149.8181818,
+            free: 3.121212121
+        }
+    },
+    {
+        srNo: 27,
+        modelName: "veo3 fast t2v 6s",
+        priceToPay: 0.9,
+        overCharge: 0.06,
+        userCost: 0.96,
+        creditsPerGeneration: 1920,
+        plans: {
+            planA: 6.4375,
+            planB: 12.875,
+            planC: 32.1875,
+            planD: 103,
+            free: 2.145833333
+        }
+    },
+    {
+        srNo: 28,
+        modelName: "veo3 fast t2v 8s",
+        priceToPay: 1.2,
+        overCharge: 0.06,
+        userCost: 1.26,
+        creditsPerGeneration: 2520,
+        plans: {
+            planA: 4.904761905,
+            planB: 9.80952381,
+            planC: 24.52380952,
+            planD: 78.47619048,
+            free: 1.634920635
+        }
+    },
+    {
+        srNo: 29,
+        modelName: "veo3 fast i2v 8s",
+        priceToPay: 1.2,
+        overCharge: 0.06,
+        userCost: 1.26,
+        creditsPerGeneration: 2520,
+        plans: {
+            planA: 4.904761905,
+            planB: 9.80952381,
+            planC: 24.52380952,
+            planD: 78.47619048,
+            free: 1.634920635
+        }
+    },
+    {
+        srNo: 30,
+        modelName: "RW veo3 8s",
+        priceToPay: 3.2,
+        overCharge: 0.06,
+        userCost: 3.26,
+        creditsPerGeneration: 6520,
+        plans: {
+            planA: 1.895705521,
+            planB: 3.791411043,
+            planC: 9.478527607,
+            planD: 30.33128834,
+            free: 0.6319018405
+        }
+    },
+    {
+        srNo: 31,
+        modelName: "Gen-4 Aleph 10s",
+        priceToPay: 1.5,
+        overCharge: 0.06,
+        userCost: 1.56,
+        creditsPerGeneration: 3120,
+        plans: {
+            planA: 3.961538462,
+            planB: 7.923076923,
+            planC: 19.80769231,
+            planD: 63.38461538,
+            free: 1.320512821
+        }
+    },
+    {
+        srNo: 32,
+        modelName: "Gen-4  Turbo 5s",
+        priceToPay: 0.25,
+        overCharge: 0.06,
+        userCost: 0.31,
+        creditsPerGeneration: 620,
+        plans: {
+            planA: 19.93548387,
+            planB: 39.87096774,
+            planC: 99.67741935,
+            planD: 318.9677419,
+            free: 6.64516129
+        }
+    },
+    {
+        srNo: 33,
+        modelName: "Gen-4  Turbo 10s",
+        priceToPay: 0.5,
+        overCharge: 0.06,
+        userCost: 0.56,
+        creditsPerGeneration: 1120,
+        plans: {
+            planA: 11.03571429,
+            planB: 22.07142857,
+            planC: 55.17857143,
+            planD: 176.5714286,
+            free: 3.678571429
+        }
+    },
+    {
+        srNo: 34,
+        modelName: "Gen-3a  Turbo 5s",
+        priceToPay: 0.25,
+        overCharge: 0.06,
+        userCost: 0.31,
+        creditsPerGeneration: 620,
+        plans: {
+            planA: 19.93548387,
+            planB: 39.87096774,
+            planC: 99.67741935,
+            planD: 318.9677419,
+            free: 6.64516129
+        }
+    },
+    {
+        srNo: 35,
+        modelName: "Gen-3a  Turbo 10s",
+        priceToPay: 0.5,
+        overCharge: 0.06,
+        userCost: 0.56,
+        creditsPerGeneration: 1120,
+        plans: {
+            planA: 11.03571429,
+            planB: 22.07142857,
+            planC: 55.17857143,
+            planD: 176.5714286,
+            free: 3.678571429
+        }
+    },
+    {
+        srNo: 36,
+        modelName: "ChatGPT Prompt Enhancer (4o)",
+        priceToPay: 0.00875,
+        overCharge: 0.00125,
+        userCost: 0.01,
+        creditsPerGeneration: 1,
+        plans: {
+            planA: 618,
+            planB: 1236,
+            planC: 3200,
+            planD: 9888,
+            free: 206
+        }
+    },
+    // Replicate models from sheet
+    {
+        srNo: 37,
+        modelName: "replicate/bytedance/seedream-4",
+        priceToPay: 0.03,
+        overCharge: 0.015,
+        userCost: 0.045,
+        creditsPerGeneration: 90,
+        plans: { planA: 137.3333333, planB: 274.6666667, planC: 711.1111111, planD: 2197.333333, free: 45.77777778 }
+    },
+    {
+        srNo: 38,
+        modelName: "replicate/ideogram-ai/ideogram-v3-turbo",
+        priceToPay: 0.03,
+        overCharge: 0.015,
+        userCost: 0.045,
+        creditsPerGeneration: 90,
+        plans: { planA: 137.3333333, planB: 274.6666667, planC: 711.1111111, planD: 2197.333333, free: 45.77777778 }
+    },
+    {
+        srNo: 39,
+        modelName: "replicate/fermatresearch/magic-image-refiner",
+        priceToPay: 0.027,
+        overCharge: 0.015,
+        userCost: 0.042,
+        creditsPerGeneration: 84,
+        plans: { planA: 147.1428571, planB: 294.2857143, planC: 761.9047619, planD: 2354.285714, free: 49.04761905 }
+    },
+    {
+        srNo: 40,
+        modelName: "replicate/philz1337x/clarity-upscaler",
+        priceToPay: 0.016,
+        overCharge: 0.015,
+        userCost: 0.031,
+        creditsPerGeneration: 62,
+        plans: { planA: 199.3548387, planB: 398.7096774, planC: 1032.258065, planD: 3189.677419, free: 66.4516129 }
+    },
+    {
+        srNo: 41,
+        modelName: "replicate/ lucataco/remove-bg",
+        priceToPay: 0.00049,
+        overCharge: 0.01501,
+        userCost: 0.0155,
+        creditsPerGeneration: 31,
+        plans: { planA: 398.7096774, planB: 797.4193548, planC: 2064.516129, planD: 6379.354839, free: 132.9032258 }
+    },
+    {
+        srNo: 42,
+        modelName: "replicate/851-labs/background-remover",
+        priceToPay: 0.00031,
+        overCharge: 0.01519,
+        userCost: 0.0155,
+        creditsPerGeneration: 31,
+        plans: { planA: 398.7096774, planB: 797.4193548, planC: 2064.516129, planD: 6379.354839, free: 132.9032258 }
+    },
+    {
+        srNo: 43,
+        modelName: "replicate/nightmareai/real-esrgan",
+        priceToPay: 0.0012,
+        overCharge: 0.015,
+        userCost: 0.0162,
+        creditsPerGeneration: 32.4,
+        plans: { planA: 381.4814815, planB: 762.962963, planC: 1975.308642, planD: 6103.703704, free: 127.1604938 }
+    },
+    {
+        srNo: 44,
+        modelName: "replicate/mv-lab/swin2sr",
+        priceToPay: 0.0065,
+        overCharge: 0.015,
+        userCost: 0.0215,
+        creditsPerGeneration: 43,
+        plans: { planA: 287.4418605, planB: 574.8837209, planC: 1488.372093, planD: 4599.069767, free: 95.81395349 }
+    }
+];
+// Helper functions for easy access
+const getModelByName = (modelName) => {
+    return exports.creditDistributionData.find(model => model.modelName === modelName);
+};
+exports.getModelByName = getModelByName;
+const getModelsByProvider = (provider) => {
+    return exports.creditDistributionData.filter(model => model.modelName.toLowerCase().includes(provider.toLowerCase()));
+};
+exports.getModelsByProvider = getModelsByProvider;
+const getCreditCostForPlan = (modelName, plan) => {
+    const model = (0, exports.getModelByName)(modelName);
+    return model?.plans[plan];
+};
+exports.getCreditCostForPlan = getCreditCostForPlan;
+// Plan constants for reference
+exports.PLAN_CREDITS = {
+    PLAN_A: 12360,
+    PLAN_B: 24720,
+    PLAN_C: 61800,
+    PLAN_D: 197760,
+    FREE: 4120
+};
+exports.PRICING_VERSION = 'bfl-v1';

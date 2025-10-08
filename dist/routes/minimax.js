@@ -1,0 +1,17 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const minimaxController_1 = require("../controllers/minimaxController");
+const validateMinimaxGenerate_1 = require("../middlewares/validators/minmax/validateMinimaxGenerate");
+const validateMinimaxMusic_1 = require("../middlewares/validators/minmax/validateMinimaxMusic");
+const validateMinimaxVideo_1 = require("../middlewares/validators/minmax/validateMinimaxVideo");
+const authMiddleware_1 = require("../middlewares/authMiddleware");
+const creditCostFactory_1 = require("../middlewares/creditCostFactory");
+const minimaxPricing_1 = require("../utils/pricing/minimaxPricing");
+const router = (0, express_1.Router)();
+router.post('/generate', authMiddleware_1.requireAuth, validateMinimaxGenerate_1.validateMinimaxGenerate, (0, creditCostFactory_1.makeCreditCost)('minimax', 'generate', minimaxPricing_1.computeMinimaxImageCost), minimaxController_1.minimaxController.generate);
+router.post('/video', authMiddleware_1.requireAuth, validateMinimaxVideo_1.validateMinimaxVideoGenerate, (0, creditCostFactory_1.makeCreditCost)('minimax', 'video', minimaxPricing_1.computeMinimaxVideoCost), minimaxController_1.minimaxController.videoStart);
+router.get('/video/status', authMiddleware_1.requireAuth, validateMinimaxVideo_1.validateMinimaxStatusQuery, minimaxController_1.minimaxController.videoStatus);
+router.get('/video/file', authMiddleware_1.requireAuth, validateMinimaxVideo_1.validateMinimaxFileQuery, minimaxController_1.minimaxController.videoFile);
+router.post('/music', authMiddleware_1.requireAuth, validateMinimaxMusic_1.validateMinimaxMusic, (0, creditCostFactory_1.makeCreditCost)('minimax', 'music', minimaxPricing_1.computeMinimaxMusicCost), minimaxController_1.minimaxController.musicGenerate);
+exports.default = router;

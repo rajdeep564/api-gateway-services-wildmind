@@ -37,7 +37,6 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@runwayml/sdk": "^2.10.0",
     "@types/adm-zip": "^0.5.7",
     "@types/compression": "^1.8.1",
     "@types/cookie-parser": "^1.4.7",
