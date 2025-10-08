@@ -5,7 +5,7 @@ import routes from '../routes';
 import { errorHandler } from '../utils/errorHandler';
 import dotenv from 'dotenv';
 import { formatApiResponse } from '../utils/formatApiResponse';
-import { gzipCompression, httpParamPollution, rateLimiter, requestId, securityHeaders, originCheck } from '../middlewares/security';
+import { gzipCompression, httpParamPollution, requestId, securityHeaders, originCheck } from '../middlewares/security';
 import { httpLogger } from '../middlewares/logger';
 import { adminDb, admin } from '../config/firebaseAdmin';
 import { creditsService } from '../services/creditsService';
@@ -20,7 +20,6 @@ app.set('trust proxy', isProd ? 1 : false);
 // Security and common middlewares (SOC2 oriented)
 app.use(requestId);
 app.use(securityHeaders);
-app.use(rateLimiter);
 // CORS for frontend with credentials (dev + prod)
 const isProdEnv = process.env.NODE_ENV === 'production';
 const allowedOrigins = [
@@ -51,47 +50,25 @@ const corsOptions: any = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
-  // Let CORS reflect Access-Control-Request-Headers dynamically to avoid misses (e.g., DNT, sec-ch-ua)
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'X-Request-Id',
+    'X-Device-Id',
+    'X-Device-Name',
+    'X-Device-Info',
+    'ngrok-skip-browser-warning',
+    'Range'
+  ],
   optionsSuccessStatus: 204,
   exposedHeaders: ['Content-Length', 'Content-Range']
 };
-app.use((req, res, next) => {
-  const reqOrigin = req.headers.origin as string | undefined;
-  const isAllowed = reqOrigin && allowedOrigins.includes(reqOrigin);
-  cors({
-    origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean | string | RegExp | (string | RegExp)[]) => void) => cb(null, isAllowed ? reqOrigin! : false),
-    credentials: true,
-    methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS','HEAD'],
-    // Reflect request headers to avoid missing custom headers on mobile
-    allowedHeaders: req.header('access-control-request-headers') || undefined,
-    exposedHeaders: ['Content-Length','Content-Range'],
-    optionsSuccessStatus: 204,
-  })(req, res, next);
-});
-app.options('*', (req, res, next) => {
-  const reqOrigin = req.headers.origin as string | undefined;
-  const isAllowed = reqOrigin && allowedOrigins.includes(reqOrigin);
-  cors({
-    origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean | string | RegExp | (string | RegExp)[]) => void) => cb(null, isAllowed ? reqOrigin! : false),
-    credentials: true,
-    allowedHeaders: req.header('access-control-request-headers') || undefined,
-    methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS','HEAD'],
-    optionsSuccessStatus: 204,
-  })(req, res, next);
-});
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
-// Allow proxies to forward cookies on cross-site requests
-app.use((req, res, next) => {
-  const origin = req.headers.origin as string | undefined;
-  if (origin && allowedOrigins.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin);
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Vary', 'Origin');
-  }
-  next();
-});
 app.use(httpParamPollution);
 app.use(gzipCompression);
 app.use(httpLogger);

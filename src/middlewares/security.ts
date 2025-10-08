@@ -1,7 +1,6 @@
 import helmet from 'helmet';
 import compression from 'compression';
 import hpp from 'hpp';
-import rateLimit from 'express-rate-limit';
 import { v4 as uuidv4 } from 'uuid';
 import { Request, Response, NextFunction } from 'express';
 
@@ -37,15 +36,6 @@ export const securityHeaders = helmet({
 
 export const httpParamPollution = hpp();
 export const gzipCompression = compression();
-
-export const rateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 300,
-  standardHeaders: true,
-  legacyHeaders: false,
-  // Do not rate-limit CORS preflight requests
-  skip: (req) => req.method === 'OPTIONS'
-});
 
 // Simple Origin/Referer check for state-changing methods (defense-in-depth)
 export const originCheck = (req: Request, res: Response, next: NextFunction) => {

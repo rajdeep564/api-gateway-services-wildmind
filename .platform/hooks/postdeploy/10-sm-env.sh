@@ -6,7 +6,7 @@ cd "$APP_DIR"
 
 : "${SERVICE_ACCOUNT_PATH:?SERVICE_ACCOUNT_PATH not set}"
 
-REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
+REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-south-1}}"
 VAL="$(aws ssm get-parameter --name "$SERVICE_ACCOUNT_PATH" --with-decryption --query 'Parameter.Value' --output text --region "$REGION")"
 
 # Base64 to avoid newline/quote issues in .env
