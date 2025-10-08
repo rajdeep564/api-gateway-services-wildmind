@@ -64,7 +64,7 @@ async function validateRedeemCode(req: Request, res: Response, next: NextFunctio
       remainingTime: result.remainingTime,
       expiresAt: result.expiresAt,
       planName: result.planCode === 'PLAN_A' ? 'Student Plan' : 
-                result.planCode === 'PLAN_B' ? 'Business Plan' : undefined
+                result.planCode === 'PLAN_C' ? 'Business Plan' : undefined
     }));
 
   } catch (error) {
