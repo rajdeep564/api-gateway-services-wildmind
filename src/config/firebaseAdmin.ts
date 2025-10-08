@@ -1,25 +1,36 @@
 import admin from 'firebase-admin';
-import fs from 'fs';
-import path from 'path';
+
+function getServiceAccountFromEnv(): admin.ServiceAccount | null {
+  const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (json) {
+    try {
+      return JSON.parse(json);
+    } catch {
+      // ignore
+    }
+  }
+  const b64 = process.env.FIREBASE_SERVICE_ACCOUNT_B64;
+  if (b64) {
+    try {
+      const decoded = Buffer.from(b64, 'base64').toString('utf8');
+      return JSON.parse(decoded);
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
 
 if (!admin.apps.length) {
-  // 1) Try local JSON in src/config/credentials/service-account.json
-  const localJsonPath = path.resolve(__dirname, './credentials/service-account.json');
-  if (fs.existsSync(localJsonPath)) {
-    const raw = fs.readFileSync(localJsonPath, 'utf8');
-    const svc = JSON.parse(raw);
-    admin.initializeApp({ credential: admin.credential.cert(svc as admin.ServiceAccount) });
-  } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    // 2) Try env JSON string
-    const svc = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    admin.initializeApp({ credential: admin.credential.cert(svc as admin.ServiceAccount) });
+  const svc = getServiceAccountFromEnv();
+  if (svc) {
+    admin.initializeApp({ credential: admin.credential.cert(svc) });
   } else {
-    // 3) Fallback to GOOGLE_APPLICATION_CREDENTIALS / default creds
+    // Fallback to GOOGLE_APPLICATION_CREDENTIALS or metadata if present in environment
     admin.initializeApp();
   }
 }
 
 export const adminDb = admin.firestore();
 export { admin };
-
 

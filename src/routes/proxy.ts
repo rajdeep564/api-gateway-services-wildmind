@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Request, Response } from 'express';
 import fetch from 'node-fetch';
-import { requireAuth } from '../middlewares/authMiddleware';
+import { ZATA_ENDPOINT, ZATA_BUCKET } from '../utils/storage/zataClient';
 
 const router = Router();
 
@@ -41,11 +41,18 @@ const getContentInfo = (contentType: string, url: string) => {
   };
 };
 
-// Proxy endpoint for Zata resources to avoid CORS issues
-router.get('/resource/:path(*)', requireAuth, async (req: Request, res: Response) => {
+function buildZataUrl(resourcePath: string): string {
+  const endpoint = (ZATA_ENDPOINT || 'https://idr01.zata.ai').replace(/\/$/, '');
+  const bucket = (ZATA_BUCKET || 'devstoragev1').replace(/^\//, '');
+  // resourcePath is already URL-encoded by frontend routing, keep as-is
+  return `${endpoint}/${bucket}/${resourcePath}`;
+}
+
+// Proxy endpoint for Zata resources to avoid CORS issues (no auth for public viewing)
+router.get('/resource/:path(*)', async (req: Request, res: Response) => {
   try {
     const resourcePath = req.params.path;
-    const zataUrl = `https://idr01.zata.ai/devstoragev1/${resourcePath}`;
+    const zataUrl = buildZataUrl(resourcePath);
     
     // Forward Range header for media streaming
     const controller = new AbortController();
@@ -76,6 +83,12 @@ router.get('/resource/:path(*)', requireAuth, async (req: Request, res: Response
     if (!response.headers.get('cache-control')) {
       res.setHeader('Cache-Control', 'public, max-age=31536000');
     }
+    const origin = req.headers.origin as string | undefined;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
     
     // Stream the resource data
     response.body?.pipe(res);
@@ -88,11 +101,11 @@ router.get('/resource/:path(*)', requireAuth, async (req: Request, res: Response
   }
 });
 
-// Download endpoint for Zata resources with proper download headers
-router.get('/download/:path(*)', requireAuth, async (req: Request, res: Response) => {
+// Download endpoint for Zata resources with proper download headers (no auth; files are already public)
+router.get('/download/:path(*)', async (req: Request, res: Response) => {
   try {
     const resourcePath = req.params.path;
-    const zataUrl = `https://idr01.zata.ai/devstoragev1/${resourcePath}`;
+    const zataUrl = buildZataUrl(resourcePath);
     
     // Fetch the resource from Zata storage with timeout
     const controller = new AbortController();
@@ -142,10 +155,10 @@ router.get('/download/:path(*)', requireAuth, async (req: Request, res: Response
 });
 
 // Generic media endpoint for all file types (images, videos, audio, documents)
-router.get('/media/:path(*)', requireAuth, async (req: Request, res: Response) => {
+router.get('/media/:path(*)', async (req: Request, res: Response) => {
   try {
     const resourcePath = req.params.path;
-    const zataUrl = `https://idr01.zata.ai/devstoragev1/${resourcePath}`;
+    const zataUrl = buildZataUrl(resourcePath);
     
     // Fetch the resource with Range support and timeout
     const controller = new AbortController();
@@ -174,6 +187,12 @@ router.get('/media/:path(*)', requireAuth, async (req: Request, res: Response) =
     });
     if (!response.headers.get('cache-control')) {
       res.setHeader('Cache-Control', 'public, max-age=31536000');
+    }
+    const origin = req.headers.origin as string | undefined;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
     }
     
     // Stream the resource data (works for images, videos, audio, etc.)

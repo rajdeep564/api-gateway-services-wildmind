@@ -4,7 +4,6 @@ import {
   RunwayTextToImageResponse,
 } from "../types/runway";
 import { runwayRepository } from "../repository/runwayRepository";
-import RunwayML from "@runwayml/sdk";
 import { env } from "../config/env";
 import { generationHistoryRepository } from "../repository/generationHistoryRepository";
 import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
@@ -16,10 +15,21 @@ import { computeRunwayCostFromHistoryModel } from "../utils/pricing/runwayPricin
 
 // (SDK handles base/version internally)
 
-function getRunwayClient(): RunwayML {
+let RunwayMLCtor: any | null = null;
+function getRunwayClient(): any {
   const apiKey = env.runwayApiKey as string;
   if (!apiKey) throw new ApiError("Runway API key not configured", 500);
-  return new RunwayML({ apiKey });
+  if (!RunwayMLCtor) {
+    try {
+      // Defer module resolution to runtime so missing SDK doesn't crash boot
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const mod = require("@runwayml/sdk");
+      RunwayMLCtor = mod?.default || mod;
+    } catch (_e) {
+      throw new ApiError("Runway SDK not installed on server", 500);
+    }
+  }
+  return new RunwayMLCtor({ apiKey });
 }
 
 async function textToImage(
