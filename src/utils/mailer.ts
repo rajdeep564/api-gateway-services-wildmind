@@ -1,7 +1,7 @@
 import nodemailer from 'nodemailer';
 import { env } from '../config/env';
 
-let transporter: nodemailer.Transporter | null = null;
+let transporter: any | null = null;
 
 function getTransporter() {
   if (transporter) return transporter;

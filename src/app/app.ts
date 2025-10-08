@@ -5,7 +5,7 @@ import routes from '../routes';
 import { errorHandler } from '../utils/errorHandler';
 import dotenv from 'dotenv';
 import { formatApiResponse } from '../utils/formatApiResponse';
-import { gzipCompression, httpParamPollution, rateLimiter, requestId, securityHeaders, originCheck } from '../middlewares/security';
+import { gzipCompression, httpParamPollution, requestId, securityHeaders, originCheck } from '../middlewares/security';
 import { httpLogger } from '../middlewares/logger';
 import { adminDb, admin } from '../config/firebaseAdmin';
 import { creditsService } from '../services/creditsService';
@@ -20,18 +20,19 @@ app.set('trust proxy', isProd ? 1 : false);
 // Security and common middlewares (SOC2 oriented)
 app.use(requestId);
 app.use(securityHeaders);
-app.use(rateLimiter);
 // CORS for frontend with credentials (dev + prod)
+const isProdEnv = process.env.NODE_ENV === 'production';
 const allowedOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
-  'https://wildmindai.com',
-  'https://www.wildmindai.com',
-  process.env.FRONTEND_ORIGIN || ''
+  // Common prod hosts for frontend
+  ...(isProdEnv ? ['https://www.wildmindai.com', 'https://wildmindai.com'] : []),
+  process.env.FRONTEND_ORIGIN || '',
+  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : [])
 ].filter(Boolean);
 
-const corsOptions: cors.CorsOptions = {
-  origin: (origin, callback) => {
+const corsOptions: any = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // Allow server-to-server (no Origin header) and health checks
     if (!origin) return callback(null, true);
     try {
@@ -61,6 +62,7 @@ const corsOptions: cors.CorsOptions = {
     'Range'
   ],
   optionsSuccessStatus: 204,
+  exposedHeaders: ['Content-Length', 'Content-Range']
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
