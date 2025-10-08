@@ -63,7 +63,8 @@ async function generate(
     createdBy,
     
   });
-  // Persist any user-uploaded input images to Zata
+  // Persist any user-uploaded input images to Zata and get public URLs
+  let publicImageUrls: string[] = [];
   try {
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
@@ -76,6 +77,7 @@ async function generate(
           ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
           : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
         inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+        publicImageUrls.push(stored.publicUrl);
       } catch {}
     }
     if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
@@ -116,7 +118,8 @@ async function generate(
         input.aspect_ratio = resolvedAspect;
       }
       if (modelEndpoint.endsWith("/edit")) {
-        input.image_urls = uploadedImages.slice(0, 4);
+        // Use public URLs for edit endpoint, fallback to original uploadedImages if no public URLs available
+        input.image_urls = publicImageUrls.length > 0 ? publicImageUrls.slice(0, 4) : uploadedImages.slice(0, 4);
       }
 
       // Debug log for final body
