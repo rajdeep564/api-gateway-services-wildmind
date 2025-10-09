@@ -237,7 +237,21 @@ async function setSessionCookie(res: Response, idToken: string) {
 }
 
 function clearSessionCookie(res: Response) {
-  res.clearCookie("app_session", { path: "/" });
+  const cookieDomain = process.env.COOKIE_DOMAIN; // e.g. .wildmindai.com
+  const expired = 'Thu, 01 Jan 1970 00:00:00 GMT';
+
+  const variants: string[] = [];
+  // SameSite=None; Secure variants
+  variants.push(`app_session=; Path=/; Max-Age=0; Expires=${expired}; SameSite=None; Secure`);
+  if (cookieDomain) variants.push(`app_session=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=None; Secure`);
+  // SameSite=Lax variants (older cookies)
+  variants.push(`app_session=; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
+  if (cookieDomain) variants.push(`app_session=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
+  // Also clear auth_hint if present
+  variants.push(`auth_hint=; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
+  if (cookieDomain) variants.push(`auth_hint=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
+
+  res.setHeader('Set-Cookie', variants);
 }
 
 async function loginWithEmailPassword(

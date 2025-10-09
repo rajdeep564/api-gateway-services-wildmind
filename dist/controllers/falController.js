@@ -8,11 +8,11 @@ const creditsRepository_1 = require("../repository/creditsRepository");
 const logger_1 = require("../utils/logger");
 async function generate(req, res, next) {
     try {
-        const { prompt, userPrompt, model, n, frameSize, style, uploadedImages, output_format, generationType, tags, nsfw, visibility, isPublic, aspect_ratio } = req.body || {};
+        const { prompt, userPrompt, model, n, frameSize, style, uploadedImages, output_format, generationType, tags, nsfw, visibility, isPublic, aspect_ratio, num_images } = req.body || {};
         const uid = req.uid;
         const ctx = req.context || {};
         logger_1.logger.info({ uid, ctx }, '[CREDITS][FAL] Enter generate with context');
-        const result = await falService_1.falService.generate(uid, { prompt, userPrompt, model, n, frameSize, style, uploadedImages, output_format, generationType, tags, nsfw, visibility, isPublic, aspect_ratio });
+        const result = await falService_1.falService.generate(uid, { num_images, prompt, userPrompt, model, n, frameSize, style, uploadedImages, output_format, generationType, tags, nsfw, visibility, isPublic, aspect_ratio });
         let debitOutcome;
         try {
             const requestId = result.historyId || ctx.idempotencyKey;

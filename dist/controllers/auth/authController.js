@@ -79,6 +79,14 @@ async function getCurrentUser(req, res, next) {
                 // ignore backfill errors
             }
         }
+        // Derive public-generation policy flags from plan (computed, not persisted)
+        try {
+            const planRaw = String(user?.plan || '').toUpperCase();
+            const canToggle = /(^|\b)PLAN\s*C\b/.test(planRaw) || /(^|\b)PLAN\s*D\b/.test(planRaw) || planRaw === 'C' || planRaw === 'D';
+            user.canTogglePublicGenerations = canToggle;
+            user.forcePublicGenerations = !canToggle;
+        }
+        catch { }
         res.json((0, formatApiResponse_1.formatApiResponse)("success", "User retrieved successfully", { user }));
     }
     catch (error) {
@@ -198,7 +206,22 @@ async function setSessionCookie(res, idToken) {
     });
 }
 function clearSessionCookie(res) {
-    res.clearCookie("app_session", { path: "/" });
+    const cookieDomain = process.env.COOKIE_DOMAIN; // e.g. .wildmindai.com
+    const expired = 'Thu, 01 Jan 1970 00:00:00 GMT';
+    const variants = [];
+    // SameSite=None; Secure variants
+    variants.push(`app_session=; Path=/; Max-Age=0; Expires=${expired}; SameSite=None; Secure`);
+    if (cookieDomain)
+        variants.push(`app_session=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=None; Secure`);
+    // SameSite=Lax variants (older cookies)
+    variants.push(`app_session=; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
+    if (cookieDomain)
+        variants.push(`app_session=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
+    // Also clear auth_hint if present
+    variants.push(`auth_hint=; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
+    if (cookieDomain)
+        variants.push(`auth_hint=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
+    res.setHeader('Set-Cookie', variants);
 }
 async function loginWithEmailPassword(req, res, next) {
     try {

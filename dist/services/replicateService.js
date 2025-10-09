@@ -280,6 +280,20 @@ async function upscale(uid, body) {
             if (!input.resolution)
                 input.resolution = '1024';
         }
+        if (modelBase === 'leonardoai/lucid-origin') {
+            if (rest.aspect_ratio)
+                input.aspect_ratio = String(rest.aspect_ratio);
+            if (rest.style)
+                input.style = String(rest.style);
+            if (rest.contrast)
+                input.contrast = String(rest.contrast);
+            if (rest.num_images != null && Number.isInteger(rest.num_images))
+                input.num_images = Math.max(1, Math.min(8, Number(rest.num_images)));
+            if (typeof rest.prompt_enhance === 'boolean')
+                input.prompt_enhance = rest.prompt_enhance;
+            if (rest.generation_mode)
+                input.generation_mode = String(rest.generation_mode);
+        }
         if (modelBase === 'nightmareai/real-esrgan') {
             // real-esrgan supports scale 0-10 (default 4) and face_enhance boolean
             if (input.scale != null)
@@ -428,6 +442,21 @@ async function generateImage(uid, body) {
                 }
             }
         }
+        // Leonardo Phoenix 1.0 mapping
+        if (modelBase === 'leonardoai/phoenix-1.0') {
+            if (rest.aspect_ratio)
+                input.aspect_ratio = String(rest.aspect_ratio);
+            if (rest.style)
+                input.style = String(rest.style);
+            if (rest.contrast)
+                input.contrast = String(rest.contrast);
+            if (rest.num_images != null)
+                input.num_images = Math.max(1, Math.min(8, Number(rest.num_images)));
+            if (typeof rest.prompt_enhance === 'boolean')
+                input.prompt_enhance = rest.prompt_enhance;
+            if (rest.generation_mode)
+                input.generation_mode = String(rest.generation_mode);
+        }
         if (modelBase === 'fermatresearch/magic-image-refiner') {
             if (input.hdr != null)
                 input.hdr = clamp(input.hdr, 0, 1);
@@ -441,6 +470,29 @@ async function generateImage(uid, body) {
                 input.steps = Math.max(1, Math.min(100, Number(input.steps)));
             if (!input.resolution)
                 input.resolution = '1024';
+        }
+        // Ideogram v3 (Turbo/Quality) mapping
+        if (modelBase === 'ideogram-ai/ideogram-v3-quality' || modelBase === 'ideogram-ai/ideogram-v3-turbo') {
+            // Map supported fields from provided schema
+            if (rest.aspect_ratio)
+                input.aspect_ratio = String(rest.aspect_ratio);
+            if (rest.resolution)
+                input.resolution = String(rest.resolution);
+            if (rest.magic_prompt_option)
+                input.magic_prompt_option = String(rest.magic_prompt_option);
+            if (rest.style_type)
+                input.style_type = String(rest.style_type);
+            if (rest.style_preset)
+                input.style_preset = String(rest.style_preset);
+            if (rest.image)
+                input.image = String(rest.image);
+            if (rest.mask)
+                input.mask = String(rest.mask);
+            if (rest.seed != null && Number.isInteger(rest.seed))
+                input.seed = rest.seed;
+            if (Array.isArray(rest.style_reference_images) && rest.style_reference_images.length)
+                input.style_reference_images = rest.style_reference_images.slice(0, 10).map(String);
+            // No additional clamping required; validator enforces enumerations and limits
         }
         const modelSpec = composeModelSpec(modelBase, body.version);
         // eslint-disable-next-line no-console
