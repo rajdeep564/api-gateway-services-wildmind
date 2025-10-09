@@ -20,6 +20,7 @@ async function generate(
   payload: FalGenerateRequest
 ): Promise<FalGenerateResponse & { historyId?: string }> {
   const {
+
     prompt,
     userPrompt,
     model,
@@ -61,6 +62,7 @@ async function generate(
     isPublic: (payload as any).isPublic === true,
     frameSize: resolvedAspect,
     createdBy,
+    
     
   });
   // Persist any user-uploaded input images to Zata
