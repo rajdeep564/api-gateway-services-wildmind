@@ -631,6 +631,53 @@ export const creditDistributionData: ModelCreditInfo[] = [
     creditsPerGeneration: 43,
     plans: { planA: 287.4418605, planB: 574.8837209, planC: 1488.372093, planD: 4599.069767, free: 95.81395349 }
   }
+  ,
+  // New Replicate models pricing
+  {
+    srNo: 45,
+    modelName: "Ideogram 3 Quality",
+    priceToPay: 0.09,
+    overCharge: 0.015,
+    userCost: 0.105,
+    creditsPerGeneration: 210,
+    plans: {
+      planA: 58.85714286,
+      planB: 117.7142857,
+      planC: 294.2857143,
+      planD: 941.7142857,
+      free: 19.61904762
+    }
+  },
+  {
+    srNo: 46,
+    modelName: "Lucid Origin",
+    priceToPay: 0.0765,
+    overCharge: 0.015,
+    userCost: 0.0915,
+    creditsPerGeneration: 183,
+    plans: {
+      planA: 67.54098361,
+      planB: 135.0819672,
+      planC: 337.704918,
+      planD: 1080.655738,
+      free: 22.5136612
+    }
+  },
+  {
+    srNo: 47,
+    modelName: "Phoenix 1.0",
+    priceToPay: 0.075,
+    overCharge: 0.015,
+    userCost: 0.09,
+    creditsPerGeneration: 180,
+    plans: {
+      planA: 68.66666667,
+      planB: 137.3333333,
+      planC: 343.3333333,
+      planD: 1098.666667,
+      free: 22.88888889
+    }
+  }
 ];
 
 // Helper functions for easy access

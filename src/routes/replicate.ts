@@ -4,7 +4,9 @@ import { makeCreditCost } from '../middlewares/creditCostFactory';
 import { creditsRepository } from '../repository/creditsRepository';
 import { replicateController } from '../controllers/replicateController';
 import { computeReplicateBgRemoveCost, computeReplicateImageGenCost, computeReplicateUpscaleCost } from '../utils/pricing/replicatePricing';
-import { validateRemoveBg, validateReplicateGenerate, validateUpscale } from '../middlewares/validators/replicate/validateRemoveBg';
+import { validateRemoveBg } from '../middlewares/validators/replicate/validateRemoveBg';
+import { validateUpscale } from '../middlewares/validators/replicate/validateUpscale';
+import { validateReplicateGenerate } from '../middlewares/validators/replicate/validateImageGenerate';
 
 const router = Router();
 

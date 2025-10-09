@@ -20,7 +20,7 @@ async function createRedeemCodes(request) {
     if (count <= 0 || count > 1000) {
         throw new errorHandler_1.ApiError('Count must be between 1 and 1000', 400);
     }
-    const planCode = type === 'STUDENT' ? 'PLAN_A' : 'PLAN_B';
+    const planCode = type === 'STUDENT' ? 'PLAN_A' : 'PLAN_C';
     // Calculate expiry date from hours
     const expiryHours = expiresIn || 48; // Default to 48 hours if not specified
     const validUntilDate = new Date(Date.now() + expiryHours * 60 * 60 * 1000);
