@@ -122,7 +122,11 @@ export async function softDelete(uid: string, historyId: string): Promise<void> 
   await generationHistoryRepository.update(uid, historyId, { isDeleted: true, isPublic: false } as any);
   try {
     await generationsMirrorRepository.updateFromHistory(uid, historyId, { isDeleted: true, isPublic: false } as any);
-  } catch {}
+  } catch (e) {
+    try {
+      await generationsMirrorRepository.remove(historyId);
+    } catch {}
+  }
 }
 
 export const generationHistoryService = {
