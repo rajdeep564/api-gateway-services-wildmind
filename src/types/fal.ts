@@ -13,6 +13,10 @@ export interface FalGenerateRequest {
   style?: string;
   uploadedImages?: string[]; // URLs or data URIs
   output_format?: "jpeg" | "png" | "webp";
+  // Imagen 4 specific optional inputs
+  resolution?: '1K' | '2K';
+  seed?: number;
+  negative_prompt?: string;
   generationType?: string;
   tags?: string[];
   nsfw?: boolean;

@@ -9,12 +9,21 @@ function findCredits(modelName: string): number | null {
 }
 
 export async function computeFalImageCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
-  const { uploadedImages = [], n = 1 } = req.body || {};
-  // Map Gemini image to our Google rows
-  const display = Array.isArray(uploadedImages) && uploadedImages.length > 0
-    ? 'Google nano banana (I2I)'
-    : 'Google nano banana (T2I)';
-  const base = findCredits(display);
+  const { uploadedImages = [], n = 1, model } = req.body || {};
+  // Prefer explicit Imagen 4 variants if selected by client; fallback to Google Nano Banana rows
+  let display: string | null = null;
+  const m = (model || '').toLowerCase();
+  if (m.includes('imagen-4')) {
+    if (m.includes('ultra')) display = 'Imagen 4 Ultra';
+    else if (m.includes('fast')) display = 'Imagen 4 Fast';
+    else display = 'Imagen 4';
+  } else {
+    // Map Gemini image to our Google rows (choose I2I when uploadedImages provided)
+    display = Array.isArray(uploadedImages) && uploadedImages.length > 0
+      ? 'Google nano banana (I2I)'
+      : 'Google nano banana (T2I)';
+  }
+  const base = display ? findCredits(display) : null;
   if (base == null) throw new Error('Unsupported FAL image model');
   const count = Math.max(1, Math.min(10, Number(n)));
   const cost = Math.ceil(base * count);
