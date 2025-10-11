@@ -3,7 +3,7 @@ export interface CreditDistributionPlan {
   planB: number; // 24,720 credits
   planC: number; // 61,800 credits
   planD: number; // 197,760 credits
-  free: number;  // 4,120 credits
+  free: number; // 4,120 credits
 }
 
 export interface ModelCreditInfo {
@@ -29,8 +29,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 224.7272727,
       planC: 561.8181818,
       planD: 1797.818182,
-      free: 37.45454545
-    }
+      free: 37.45454545,
+    },
   },
   {
     srNo: 2,
@@ -44,8 +44,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 130.1052632,
       planC: 325.2631579,
       planD: 1040.842105,
-      free: 21.68421053
-    }
+      free: 21.68421053,
+    },
   },
   {
     srNo: 3,
@@ -59,8 +59,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 164.8,
       planC: 412,
       planD: 1318.4,
-      free: 27.46666667
-    }
+      free: 27.46666667,
+    },
   },
   {
     srNo: 4,
@@ -74,8 +74,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 224.7272727,
       planC: 561.8181818,
       planD: 1797.818182,
-      free: 37.45454545
-    }
+      free: 37.45454545,
+    },
   },
   {
     srNo: 5,
@@ -89,8 +89,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 274.6666667,
       planC: 686.6666667,
       planD: 2197.333333,
-      free: 45.77777778
-    }
+      free: 45.77777778,
+    },
   },
   {
     srNo: 6,
@@ -104,8 +104,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 190.1538462,
       planC: 475.3846154,
       planD: 1521.230769,
-      free: 31.69230769
-    }
+      free: 31.69230769,
+    },
   },
   {
     srNo: 7,
@@ -119,8 +119,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 190.1538462,
       planC: 475.3846154,
       planD: 1521.230769,
-      free: 31.69230769
-    }
+      free: 31.69230769,
+    },
   },
   {
     srNo: 8,
@@ -134,8 +134,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 130.1052632,
       planC: 325.2631579,
       planD: 1040.842105,
-      free: 21.68421053
-    }
+      free: 21.68421053,
+    },
   },
   {
     srNo: 9,
@@ -149,8 +149,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 353.1428571,
       planC: 882.8571429,
       planD: 2825.142857,
-      free: 58.85714286
-    }
+      free: 58.85714286,
+    },
   },
   {
     srNo: 10,
@@ -164,8 +164,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 668.1081081,
       planC: 1670.27027,
       planD: 5344.864865,
-      free: 111.3513514
-    }
+      free: 111.3513514,
+    },
   },
   {
     srNo: 11,
@@ -179,8 +179,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 228.8888889,
       planC: 572.2222222,
       planD: 1831.111111,
-      free: 38.14814815
-    }
+      free: 38.14814815,
+    },
   },
   {
     srNo: 12,
@@ -194,8 +194,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 228.8888889,
       planC: 572.2222222,
       planD: 1831.111111,
-      free: 38.14814815
-    }
+      free: 38.14814815,
+    },
   },
   {
     srNo: 13,
@@ -209,8 +209,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 274.6666667,
       planC: 686.6666667,
       planD: 2197.333333,
-      free: 45.77777778
-    }
+      free: 45.77777778,
+    },
   },
   {
     srNo: 14,
@@ -224,8 +224,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 77.25,
       planC: 193.125,
       planD: 618,
-      free: 12.875
-    }
+      free: 12.875,
+    },
   },
   {
     srNo: 15,
@@ -239,8 +239,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 58.85714286,
       planC: 147.1428571,
       planD: 470.8571429,
-      free: 9.80952381
-    }
+      free: 9.80952381,
+    },
   },
   {
     srNo: 16,
@@ -254,8 +254,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 36.35294118,
       planC: 90.88235294,
       planD: 290.8235294,
-      free: 6.058823529
-    }
+      free: 6.058823529,
+    },
   },
   {
     srNo: 17,
@@ -269,8 +269,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 19.93548387,
       planC: 49.83870968,
       planD: 159.483871,
-      free: 3.322580645
-    }
+      free: 3.322580645,
+    },
   },
   {
     srNo: 18,
@@ -284,8 +284,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 22.47272727,
       planC: 56.18181818,
       planD: 179.7818182,
-      free: 3.745454545
-    }
+      free: 3.745454545,
+    },
   },
   {
     srNo: 19,
@@ -299,8 +299,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 25.2244898,
       planC: 63.06122449,
       planD: 201.7959184,
-      free: 4.204081633
-    }
+      free: 4.204081633,
+    },
   },
   {
     srNo: 20,
@@ -314,8 +314,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 25.2244898,
       planC: 63.06122449,
       planD: 201.7959184,
-      free: 4.204081633
-    }
+      free: 4.204081633,
+    },
   },
   {
     srNo: 21,
@@ -329,8 +329,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 17.4084507,
       planC: 43.52112676,
       planD: 139.2676056,
-      free: 2.901408451
-    }
+      free: 2.901408451,
+    },
   },
   {
     srNo: 22,
@@ -344,8 +344,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 7.445783133,
       planC: 18.61445783,
       planD: 59.56626506,
-      free: 1.240963855
-    }
+      free: 1.240963855,
+    },
   },
   {
     srNo: 23,
@@ -359,8 +359,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 5.024390244,
       planC: 12.56097561,
       planD: 40.19512195,
-      free: 0.837398374
-    }
+      free: 0.837398374,
+    },
   },
   {
     srNo: 24,
@@ -374,8 +374,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 3.791411043,
       planC: 9.478527607,
       planD: 30.33128834,
-      free: 0.6319018405
-    }
+      free: 0.6319018405,
+    },
   },
   {
     srNo: 25,
@@ -389,8 +389,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 3.791411043,
       planC: 9.478527607,
       planD: 30.33128834,
-      free: 0.6319018405
-    }
+      free: 0.6319018405,
+    },
   },
   {
     srNo: 26,
@@ -404,8 +404,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 18.72727273,
       planC: 46.81818182,
       planD: 149.8181818,
-      free: 3.121212121
-    }
+      free: 3.121212121,
+    },
   },
   {
     srNo: 27,
@@ -419,8 +419,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 12.875,
       planC: 32.1875,
       planD: 103,
-      free: 2.145833333
-    }
+      free: 2.145833333,
+    },
   },
   {
     srNo: 28,
@@ -434,8 +434,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 9.80952381,
       planC: 24.52380952,
       planD: 78.47619048,
-      free: 1.634920635
-    }
+      free: 1.634920635,
+    },
   },
   {
     srNo: 29,
@@ -449,8 +449,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 9.80952381,
       planC: 24.52380952,
       planD: 78.47619048,
-      free: 1.634920635
-    }
+      free: 1.634920635,
+    },
   },
   {
     srNo: 30,
@@ -464,8 +464,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 3.791411043,
       planC: 9.478527607,
       planD: 30.33128834,
-      free: 0.6319018405
-    }
+      free: 0.6319018405,
+    },
   },
   {
     srNo: 31,
@@ -479,8 +479,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 7.923076923,
       planC: 19.80769231,
       planD: 63.38461538,
-      free: 1.320512821
-    }
+      free: 1.320512821,
+    },
   },
   {
     srNo: 32,
@@ -494,8 +494,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 39.87096774,
       planC: 99.67741935,
       planD: 318.9677419,
-      free: 6.64516129
-    }
+      free: 6.64516129,
+    },
   },
   {
     srNo: 33,
@@ -509,8 +509,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 22.07142857,
       planC: 55.17857143,
       planD: 176.5714286,
-      free: 3.678571429
-    }
+      free: 3.678571429,
+    },
   },
   {
     srNo: 34,
@@ -524,8 +524,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 39.87096774,
       planC: 99.67741935,
       planD: 318.9677419,
-      free: 6.64516129
-    }
+      free: 6.64516129,
+    },
   },
   {
     srNo: 35,
@@ -539,8 +539,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 22.07142857,
       planC: 55.17857143,
       planD: 176.5714286,
-      free: 3.678571429
-    }
+      free: 3.678571429,
+    },
   },
   {
     srNo: 36,
@@ -554,8 +554,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 1236,
       planC: 3200,
       planD: 9888,
-      free: 206
-    }
+      free: 206,
+    },
   },
   // Replicate models from sheet
   {
@@ -565,7 +565,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.015,
     userCost: 0.045,
     creditsPerGeneration: 90,
-    plans: { planA: 137.3333333, planB: 274.6666667, planC: 711.1111111, planD: 2197.333333, free: 45.77777778 }
+    plans: {
+      planA: 137.3333333,
+      planB: 274.6666667,
+      planC: 711.1111111,
+      planD: 2197.333333,
+      free: 45.77777778,
+    },
   },
   {
     srNo: 38,
@@ -574,7 +580,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.015,
     userCost: 0.045,
     creditsPerGeneration: 90,
-    plans: { planA: 137.3333333, planB: 274.6666667, planC: 711.1111111, planD: 2197.333333, free: 45.77777778 }
+    plans: {
+      planA: 137.3333333,
+      planB: 274.6666667,
+      planC: 711.1111111,
+      planD: 2197.333333,
+      free: 45.77777778,
+    },
   },
   {
     srNo: 39,
@@ -583,7 +595,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.015,
     userCost: 0.042,
     creditsPerGeneration: 84,
-    plans: { planA: 147.1428571, planB: 294.2857143, planC: 761.9047619, planD: 2354.285714, free: 49.04761905 }
+    plans: {
+      planA: 147.1428571,
+      planB: 294.2857143,
+      planC: 761.9047619,
+      planD: 2354.285714,
+      free: 49.04761905,
+    },
   },
   {
     srNo: 40,
@@ -592,7 +610,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.015,
     userCost: 0.031,
     creditsPerGeneration: 62,
-    plans: { planA: 199.3548387, planB: 398.7096774, planC: 1032.258065, planD: 3189.677419, free: 66.4516129 }
+    plans: {
+      planA: 199.3548387,
+      planB: 398.7096774,
+      planC: 1032.258065,
+      planD: 3189.677419,
+      free: 66.4516129,
+    },
   },
   {
     srNo: 41,
@@ -601,7 +625,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01501,
     userCost: 0.0155,
     creditsPerGeneration: 31,
-    plans: { planA: 398.7096774, planB: 797.4193548, planC: 2064.516129, planD: 6379.354839, free: 132.9032258 }
+    plans: {
+      planA: 398.7096774,
+      planB: 797.4193548,
+      planC: 2064.516129,
+      planD: 6379.354839,
+      free: 132.9032258,
+    },
   },
   {
     srNo: 42,
@@ -610,9 +640,14 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01519,
     userCost: 0.0155,
     creditsPerGeneration: 31,
-    plans: { planA: 398.7096774, planB: 797.4193548, planC: 2064.516129, planD: 6379.354839, free: 132.9032258 }
-  }
-  ,
+    plans: {
+      planA: 398.7096774,
+      planB: 797.4193548,
+      planC: 2064.516129,
+      planD: 6379.354839,
+      free: 132.9032258,
+    },
+  },
   {
     srNo: 43,
     modelName: "replicate/nightmareai/real-esrgan",
@@ -620,7 +655,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.015,
     userCost: 0.0162,
     creditsPerGeneration: 32.4,
-    plans: { planA: 381.4814815, planB: 762.962963, planC: 1975.308642, planD: 6103.703704, free: 127.1604938 }
+    plans: {
+      planA: 381.4814815,
+      planB: 762.962963,
+      planC: 1975.308642,
+      planD: 6103.703704,
+      free: 127.1604938,
+    },
   },
   {
     srNo: 44,
@@ -629,9 +670,14 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.015,
     userCost: 0.0215,
     creditsPerGeneration: 43,
-    plans: { planA: 287.4418605, planB: 574.8837209, planC: 1488.372093, planD: 4599.069767, free: 95.81395349 }
-  }
-  ,
+    plans: {
+      planA: 287.4418605,
+      planB: 574.8837209,
+      planC: 1488.372093,
+      planD: 4599.069767,
+      free: 95.81395349,
+    },
+  },
   // New Replicate models pricing
   {
     srNo: 45,
@@ -645,8 +691,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 117.7142857,
       planC: 294.2857143,
       planD: 941.7142857,
-      free: 19.61904762
-    }
+      free: 19.61904762,
+    },
   },
   {
     srNo: 46,
@@ -660,8 +706,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 135.0819672,
       planC: 337.704918,
       planD: 1080.655738,
-      free: 22.5136612
-    }
+      free: 22.5136612,
+    },
   },
   {
     srNo: 47,
@@ -675,23 +721,330 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 137.3333333,
       planC: 343.3333333,
       planD: 1098.666667,
-      free: 22.88888889
-    }
-  }
+      free: 22.88888889,
+    },
+  },
+  // Wan 2.5 Standard (T2V/I2V) - from sheet
+  {
+    srNo: 48,
+    modelName: "Wan 2.5 T2V 5s 480p",
+    priceToPay: 0.25,
+    overCharge: 0.06,
+    userCost: 0.31,
+    creditsPerGeneration: 620,
+    plans: {
+      planA: 19.93548387,
+      planB: 39.87096774,
+      planC: 99.67741935,
+      planD: 318.9677419,
+      free: 6.64516129,
+    },
+  },
+  {
+    srNo: 49,
+    modelName: "Wan 2.5 I2V 5s 480p",
+    priceToPay: 0.25,
+    overCharge: 0.06,
+    userCost: 0.31,
+    creditsPerGeneration: 620,
+    plans: {
+      planA: 19.93548387,
+      planB: 39.87096774,
+      planC: 99.67741935,
+      planD: 318.9677419,
+      free: 6.64516129,
+    },
+  },
+  {
+    srNo: 50,
+    modelName: "Wan 2.5 T2V 5s 720p",
+    priceToPay: 0.5,
+    overCharge: 0.06,
+    userCost: 0.56,
+    creditsPerGeneration: 1120,
+    plans: {
+      planA: 11.03571429,
+      planB: 22.07142857,
+      planC: 55.17857143,
+      planD: 176.5714286,
+      free: 3.678571429,
+    },
+  },
+  {
+    srNo: 51,
+    modelName: "Wan 2.5 I2V 5s 720p",
+    priceToPay: 0.5,
+    overCharge: 0.06,
+    userCost: 0.56,
+    creditsPerGeneration: 1120,
+    plans: {
+      planA: 11.03571429,
+      planB: 22.07142857,
+      planC: 55.17857143,
+      planD: 176.5714286,
+      free: 3.678571429,
+    },
+  },
+  {
+    srNo: 52,
+    modelName: "Wan 2.5 T2V 5s 1080p",
+    priceToPay: 0.75,
+    overCharge: 0.06,
+    userCost: 0.81,
+    creditsPerGeneration: 1620,
+    plans: {
+      planA: 7.62962963,
+      planB: 15.25925926,
+      planC: 38.14814815,
+      planD: 122.0740741,
+      free: 2.543209877,
+    },
+  },
+  {
+    srNo: 53,
+    modelName: "Wan 2.5 I2V 5s 1080p",
+    priceToPay: 0.75,
+    overCharge: 0.06,
+    userCost: 0.81,
+    creditsPerGeneration: 1620,
+    plans: {
+      planA: 7.62962963,
+      planB: 15.25925926,
+      planC: 38.14814815,
+      planD: 122.0740741,
+      free: 2.543209877,
+    },
+  },
+  {
+    srNo: 54,
+    modelName: "Wan 2.5 T2V 10s 480p",
+    priceToPay: 0.5,
+    overCharge: 0.06,
+    userCost: 0.56,
+    creditsPerGeneration: 1120,
+    plans: {
+      planA: 11.03571429,
+      planB: 22.07142857,
+      planC: 55.17857143,
+      planD: 176.5714286,
+      free: 3.678571429,
+    },
+  },
+  {
+    srNo: 55,
+    modelName: "Wan 2.5 I2V 10s 480p",
+    priceToPay: 0.5,
+    overCharge: 0.06,
+    userCost: 0.56,
+    creditsPerGeneration: 1120,
+    plans: {
+      planA: 11.03571429,
+      planB: 22.07142857,
+      planC: 55.17857143,
+      planD: 176.5714286,
+      free: 3.678571429,
+    },
+  },
+  {
+    srNo: 56,
+    modelName: "Wan 2.5 T2V 10s 720p",
+    priceToPay: 1,
+    overCharge: 0.06,
+    userCost: 1.06,
+    creditsPerGeneration: 2120,
+    plans: {
+      planA: 5.830188679,
+      planB: 11.66037736,
+      planC: 29.1509434,
+      planD: 93.28301887,
+      free: 1.943396226,
+    },
+  },
+  {
+    srNo: 57,
+    modelName: "Wan 2.5 I2V 10s 720p",
+    priceToPay: 1,
+    overCharge: 0.06,
+    userCost: 1.06,
+    creditsPerGeneration: 2120,
+    plans: {
+      planA: 5.830188679,
+      planB: 11.66037736,
+      planC: 29.1509434,
+      planD: 93.28301887,
+      free: 1.943396226,
+    },
+  },
+  {
+    srNo: 58,
+    modelName: "Wan 2.5 T2V 10s 1080p",
+    priceToPay: 1.5,
+    overCharge: 0.06,
+    userCost: 1.56,
+    creditsPerGeneration: 3120,
+    plans: {
+      planA: 3.961538462,
+      planB: 7.923076923,
+      planC: 19.80769231,
+      planD: 63.38461538,
+      free: 1.320512821,
+    },
+  },
+  {
+    srNo: 59,
+    modelName: "Wan 2.5 I2V 10s 1080p",
+    priceToPay: 1.5,
+    overCharge: 0.06,
+    userCost: 1.56,
+    creditsPerGeneration: 3120,
+    plans: {
+      planA: 3.961538462,
+      planB: 7.923076923,
+      planC: 19.80769231,
+      planD: 63.38461538,
+      free: 1.320512821,
+    },
+  },
+  // Wan 2.5 Fast (T2V/I2V) - from sheet
+  {
+    srNo: 60,
+    modelName: "Wan 2.5 Fast T2V 5s 720p",
+    priceToPay: 0.34,
+    overCharge: 0.06,
+    userCost: 0.4,
+    creditsPerGeneration: 800,
+    plans: {
+      planA: 15.45,
+      planB: 30.9,
+      planC: 77.25,
+      planD: 247.2,
+      free: 5.15,
+    },
+  },
+  {
+    srNo: 61,
+    modelName: "Wan 2.5 Fast I2V 5s 720p",
+    priceToPay: 0.34,
+    overCharge: 0.06,
+    userCost: 0.4,
+    creditsPerGeneration: 800,
+    plans: {
+      planA: 15.45,
+      planB: 30.9,
+      planC: 77.25,
+      planD: 247.2,
+      free: 5.15,
+    },
+  },
+  {
+    srNo: 62,
+    modelName: "Wan 2.5 Fast T2V 5s 1080p",
+    priceToPay: 0.51,
+    overCharge: 0.06,
+    userCost: 0.57,
+    creditsPerGeneration: 1140,
+    plans: {
+      planA: 10.84210526,
+      planB: 21.68421053,
+      planC: 54.21052632,
+      planD: 173.4736842,
+      free: 3.614035088,
+    },
+  },
+  {
+    srNo: 63,
+    modelName: "Wan 2.5 Fast I2V 5s 1080p",
+    priceToPay: 0.51,
+    overCharge: 0.06,
+    userCost: 0.57,
+    creditsPerGeneration: 1140,
+    plans: {
+      planA: 10.84210526,
+      planB: 21.68421053,
+      planC: 54.21052632,
+      planD: 173.4736842,
+      free: 3.614035088,
+    },
+  },
+  {
+    srNo: 64,
+    modelName: "Wan 2.5 Fast T2V 10s 720p",
+    priceToPay: 0.68,
+    overCharge: 0.06,
+    userCost: 0.74,
+    creditsPerGeneration: 1480,
+    plans: {
+      planA: 8.351351351,
+      planB: 16.7027027,
+      planC: 41.75675676,
+      planD: 133.6216216,
+      free: 2.783783784,
+    },
+  },
+  {
+    srNo: 65,
+    modelName: "Wan 2.5 Fast I2V 10s 720p",
+    priceToPay: 0.68,
+    overCharge: 0.06,
+    userCost: 0.74,
+    creditsPerGeneration: 1480,
+    plans: {
+      planA: 8.351351351,
+      planB: 16.7027027,
+      planC: 41.75675676,
+      planD: 133.6216216,
+      free: 2.783783784,
+    },
+  },
+  {
+    srNo: 66,
+    modelName: "Wan 2.5 Fast T2V 10s 1080p",
+    priceToPay: 1.02,
+    overCharge: 0.06,
+    userCost: 1.08,
+    creditsPerGeneration: 2160,
+    plans: {
+      planA: 5.722222222,
+      planB: 11.44444444,
+      planC: 28.61111111,
+      planD: 91.55555556,
+      free: 1.907407407,
+    },
+  },
+  {
+    srNo: 67,
+    modelName: "Wan 2.5 Fast I2V 10s 1080p",
+    priceToPay: 1.02,
+    overCharge: 0.06,
+    userCost: 1.08,
+    creditsPerGeneration: 2160,
+    plans: {
+      planA: 5.722222222,
+      planB: 11.44444444,
+      planC: 28.61111111,
+      planD: 91.55555556,
+      free: 1.907407407,
+    },
+  },
 ];
 
 // Helper functions for easy access
-export const getModelByName = (modelName: string): ModelCreditInfo | undefined => {
-  return creditDistributionData.find(model => model.modelName === modelName);
+export const getModelByName = (
+  modelName: string
+): ModelCreditInfo | undefined => {
+  return creditDistributionData.find((model) => model.modelName === modelName);
 };
 
 export const getModelsByProvider = (provider: string): ModelCreditInfo[] => {
-  return creditDistributionData.filter(model => 
+  return creditDistributionData.filter((model) =>
     model.modelName.toLowerCase().includes(provider.toLowerCase())
   );
 };
 
-export const getCreditCostForPlan = (modelName: string, plan: keyof CreditDistributionPlan): number | undefined => {
+export const getCreditCostForPlan = (
+  modelName: string,
+  plan: keyof CreditDistributionPlan
+): number | undefined => {
   const model = getModelByName(modelName);
   return model?.plans[plan];
 };
@@ -702,7 +1055,7 @@ export const PLAN_CREDITS = {
   PLAN_B: 24720,
   PLAN_C: 61800,
   PLAN_D: 197760,
-  FREE: 4120
+  FREE: 4120,
 } as const;
 
-export const PRICING_VERSION = 'bfl-v1';
+export const PRICING_VERSION = "bfl-v1";
