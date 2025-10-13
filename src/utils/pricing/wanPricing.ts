@@ -39,7 +39,7 @@ function resolveWanDisplay(kind: 't2v' | 'i2v', duration?: any, resolution?: any
 }
 
 export async function computeWanVideoCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
-  const { mode, kind, type, duration, resolution, speed } = (req.body || {}) as Record<string, any>;
+  const { mode, kind, type, duration, resolution, speed, model } = (req.body || {}) as Record<string, any>;
   // Accept either `mode` or `kind` or `type` as selector; prefer explicit t2v/i2v
   const raw = (mode || kind || type || '').toString().trim().toLowerCase();
   const isT2v = raw === 't2v' || raw === 'text-to-video' || raw === 'text_to_video' || raw === 'text2video';
@@ -49,7 +49,13 @@ export async function computeWanVideoCost(req: Request): Promise<{ cost: number;
     throw new Error('Wan 2.5 pricing: mode is required and must be one of t2v|i2v');
   }
 
-  const isFast = typeof speed === 'string' && speed.toLowerCase().includes('fast');
+  const isFast = (() => {
+    const s = (speed ?? '').toString().toLowerCase();
+    const m = (model ?? '').toString().toLowerCase();
+    const speedFast = s === 'fast' || s === 'true' || s.includes('fast') || speed === true;
+    const modelFast = m.includes('fast');
+    return speedFast || modelFast;
+  })();
   const display = resolveWanDisplay(selected, duration, resolution, isFast);
   const base = findCreditsExact(display);
   if (base == null) {
