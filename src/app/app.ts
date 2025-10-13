@@ -23,6 +23,8 @@ app.use(securityHeaders);
 // CORS for frontend with credentials (dev + prod)
 const isProdEnv = process.env.NODE_ENV === 'production';
 const allowedOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
   // Common prod hosts for frontend
   ...(isProdEnv ? ['https://www.wildmindai.com', 'https://wildmindai.com'] : []),
   process.env.FRONTEND_ORIGIN || '',
