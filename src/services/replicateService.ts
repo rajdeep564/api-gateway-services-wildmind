@@ -253,6 +253,14 @@ export async function upscale(uid: string, body: any) {
       if (input.steps != null) input.steps = Math.max(1, Math.min(100, Number(input.steps)));
       if (!input.resolution) input.resolution = '1024';
     }
+    if (modelBase === 'leonardoai/lucid-origin') {
+      if (rest.aspect_ratio) input.aspect_ratio = String(rest.aspect_ratio);
+      if (rest.style) input.style = String(rest.style);
+      if (rest.contrast) input.contrast = String(rest.contrast);
+      if (rest.num_images != null && Number.isInteger(rest.num_images)) input.num_images = Math.max(1, Math.min(8, Number(rest.num_images)));
+      if (typeof rest.prompt_enhance === 'boolean') input.prompt_enhance = rest.prompt_enhance;
+      if (rest.generation_mode) input.generation_mode = String(rest.generation_mode);
+    }
     if (modelBase === 'nightmareai/real-esrgan') {
       // real-esrgan supports scale 0-10 (default 4) and face_enhance boolean
       if (input.scale != null) input.scale = Math.max(0, Math.min(10, Number(input.scale)));
@@ -346,8 +354,8 @@ export async function generateImage(uid: string, body: any) {
   // Do not upload input data URIs to Zata; pass directly to provider
   let outputUrls: string[] = [];
   try {
-    const { model: _m, isPublic: _p, ...rest } = body || {};
-    const input: any = { prompt: body.prompt };
+  const { model: _m, isPublic: _p, ...rest } = body || {};
+  const input: any = { prompt: body.prompt };
     // Seedream schema mapping
     if (modelBase === 'bytedance/seedream-4') {
       // size handling
@@ -380,6 +388,15 @@ export async function generateImage(uid: string, body: any) {
         }
       }
     }
+      // Leonardo Phoenix 1.0 mapping
+      if (modelBase === 'leonardoai/phoenix-1.0') {
+        if (rest.aspect_ratio) input.aspect_ratio = String(rest.aspect_ratio);
+        if (rest.style) input.style = String(rest.style);
+        if (rest.contrast) input.contrast = String(rest.contrast);
+        if (rest.num_images != null) input.num_images = Math.max(1, Math.min(8, Number(rest.num_images)));
+        if (typeof rest.prompt_enhance === 'boolean') input.prompt_enhance = rest.prompt_enhance;
+        if (rest.generation_mode) input.generation_mode = String(rest.generation_mode);
+      }
     if (modelBase === 'fermatresearch/magic-image-refiner') {
       if (input.hdr != null) input.hdr = clamp(input.hdr, 0, 1);
       if (input.creativity != null) input.creativity = clamp(input.creativity, 0, 1);
@@ -388,7 +405,21 @@ export async function generateImage(uid: string, body: any) {
       if (input.steps != null) input.steps = Math.max(1, Math.min(100, Number(input.steps)));
       if (!input.resolution) input.resolution = '1024';
     }
-    const modelSpec = composeModelSpec(modelBase, body.version);
+    // Ideogram v3 (Turbo/Quality) mapping
+    if (modelBase === 'ideogram-ai/ideogram-v3-quality' || modelBase === 'ideogram-ai/ideogram-v3-turbo') {
+      // Map supported fields from provided schema
+      if (rest.aspect_ratio) input.aspect_ratio = String(rest.aspect_ratio);
+      if (rest.resolution) input.resolution = String(rest.resolution);
+      if (rest.magic_prompt_option) input.magic_prompt_option = String(rest.magic_prompt_option);
+      if (rest.style_type) input.style_type = String(rest.style_type);
+      if (rest.style_preset) input.style_preset = String(rest.style_preset);
+      if (rest.image) input.image = String(rest.image);
+      if (rest.mask) input.mask = String(rest.mask);
+      if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
+      if (Array.isArray(rest.style_reference_images) && rest.style_reference_images.length) input.style_reference_images = rest.style_reference_images.slice(0, 10).map(String);
+      // No additional clamping required; validator enforces enumerations and limits
+    }
+  const modelSpec = composeModelSpec(modelBase, body.version);
     // eslint-disable-next-line no-console
     console.log('[replicateService.generateImage] run', { modelSpec, hasImage: !!rest.image, inputKeys: Object.keys(input) });
     if (modelBase === 'bytedance/seedream-4') {
@@ -524,4 +555,194 @@ export async function generateImage(uid: string, body: any) {
   return { images: uploadedImages, historyId, model: modelBase, status: 'completed' } as any;
 }
 
-export const replicateService = { removeBackground, upscale, generateImage };
+export const replicateService = { removeBackground, upscale, generateImage, wanI2V, wanT2V };
+// Wan 2.5 Image-to-Video via Replicate
+export async function wanI2V(uid: string, body: any) {
+  const key = ((env as any).replicateApiKey as string) || (process.env.REPLICATE_API_TOKEN as string);
+  if (!key) {
+    // eslint-disable-next-line no-console
+    console.error('[replicateService.wanI2V] Missing REPLICATE_API_TOKEN');
+    throw new ApiError('Replicate API key not configured', 500);
+  }
+  if (!body?.image) throw new ApiError('image is required', 400);
+  if (!body?.prompt) throw new ApiError('prompt is required', 400);
+
+  const replicate = new Replicate({ auth: key });
+  const modelBase = 'wan-video/wan-2.5-i2v';
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid } as any;
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt,
+    model: modelBase,
+    generationType: 'text-to-video',
+    visibility: body.isPublic ? 'public' : 'private',
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    // Save params for potential delayed debit
+    duration: ((): any => {
+      const s = String(body?.duration ?? '5').toLowerCase();
+      const m = s.match(/(5|10)/);
+      return m ? Number(m[1]) : 5;
+    })(),
+    resolution: ((): any => {
+      const s = String(body?.resolution ?? '720p').toLowerCase();
+      const m = s.match(/(480|720|1080)/);
+      return m ? `${m[1]}p` : '720p';
+    })(),
+  } as any);
+  const legacyId = await replicateRepository.createGenerationRecord({ prompt: body.prompt, model: modelBase, isPublic: body.isPublic === true }, createdBy);
+
+  // Prepare input mapping
+  const parseDurationSec = (d: any): number => {
+    const s = String(d ?? '5').toLowerCase();
+    const m = s.match(/(5|10)/);
+    return m ? Number(m[1]) : 5;
+  };
+  const normalizeRes = (r: any): string => {
+    const s = String(r ?? '720p').toLowerCase();
+    const m = s.match(/(480|720|1080)/);
+    return m ? `${m[1]}p` : '720p';
+  };
+
+  const input: any = {
+    image: body.image,
+    prompt: body.prompt,
+    duration: parseDurationSec(body.duration),
+    resolution: normalizeRes(body.resolution),
+  };
+  if (body.seed != null && Number.isInteger(Number(body.seed))) input.seed = Number(body.seed);
+  if (body.audio != null && typeof body.audio === 'string') input.audio = body.audio;
+  if (body.negative_prompt != null && typeof body.negative_prompt === 'string') input.negative_prompt = body.negative_prompt;
+  if (body.enable_prompt_expansion != null) input.enable_prompt_expansion = Boolean(body.enable_prompt_expansion);
+
+  let outputUrl = '';
+  try {
+    const version = (body as any).version as string | undefined;
+    const modelSpec = composeModelSpec(modelBase, version);
+    // eslint-disable-next-line no-console
+    console.log('[replicateService.wanI2V] run', { modelSpec, inputKeys: Object.keys(input) });
+    const output: any = await replicate.run(modelSpec as any, { input });
+    // eslint-disable-next-line no-console
+    console.log('[replicateService.wanI2V] output', typeof output, Array.isArray(output) ? output.length : 'n/a');
+    const urls = await resolveOutputUrls(output);
+    outputUrl = urls[0] || '';
+    if (!outputUrl) throw new Error('No output URL returned by Replicate');
+  } catch (e: any) {
+    // eslint-disable-next-line no-console
+    console.error('[replicateService.wanI2V] error', e?.message || e);
+    try { await replicateRepository.updateGenerationRecord(legacyId, { status: 'failed', error: e?.message || 'Replicate failed' }); } catch {}
+    await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: e?.message || 'Replicate failed' } as any);
+    throw new ApiError('Replicate generation failed', 502, e);
+  }
+
+  // Upload video to Zata
+  let storedUrl = outputUrl;
+  let storagePath = '';
+  try {
+    const username = creator?.username || uid;
+    const uploaded = await uploadFromUrlToZata({ sourceUrl: outputUrl, keyPrefix: `users/${username}/video/${historyId}`, fileName: 'video-1' });
+    storedUrl = uploaded.publicUrl;
+    storagePath = uploaded.key;
+  } catch {
+    // fallback keep provider URL
+  }
+
+  const videoItem: any = { id: `replicate-${Date.now()}`, url: storedUrl, storagePath, originalUrl: outputUrl };
+  await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: [videoItem] } as any);
+  try { await replicateRepository.updateGenerationRecord(legacyId, { status: 'completed', videos: [videoItem] }); } catch {}
+  try {
+    const fresh = await generationHistoryRepository.get(uid, historyId);
+    if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, { uid, username: creator?.username, displayName: (creator as any)?.displayName, photoURL: creator?.photoURL });
+  } catch {}
+  return { videos: [videoItem], historyId, model: modelBase, status: 'completed' } as any;
+}
+
+export const _wan = { wanI2V };
+Object.assign(replicateService, { wanI2V });
+
+// Wan 2.5 Text-to-Video via Replicate
+export async function wanT2V(uid: string, body: any) {
+  const key = ((env as any).replicateApiKey as string) || (process.env.REPLICATE_API_TOKEN as string);
+  if (!key) {
+    // eslint-disable-next-line no-console
+    console.error('[replicateService.wanT2V] Missing REPLICATE_API_TOKEN');
+    throw new ApiError('Replicate API key not configured', 500);
+  }
+  if (!body?.prompt) throw new ApiError('prompt is required', 400);
+
+  const replicate = new Replicate({ auth: key });
+  const modelBase = 'wan-video/wan-2.5-t2v';
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid } as any;
+  const durationSec = ((): number => {
+    const s = String(body?.duration ?? '5').toLowerCase();
+    const m = s.match(/(5|10)/);
+    return m ? Number(m[1]) : 5;
+  })();
+  // Derive resolution from size if provided
+  const size = String(body?.size ?? '1280*720');
+  const res = size.includes('*480') || size.startsWith('480*') ? '480p' : (size.includes('*1080') || size.startsWith('1080*') ? '1080p' : '720p');
+
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt,
+    model: modelBase,
+    generationType: 'text-to-video',
+    visibility: body.isPublic ? 'public' : 'private',
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    duration: durationSec,
+    resolution: res,
+  } as any);
+  const legacyId = await replicateRepository.createGenerationRecord({ prompt: body.prompt, model: modelBase, isPublic: body.isPublic === true }, createdBy);
+
+  const input: any = {
+    prompt: body.prompt,
+    duration: durationSec,
+    size,
+  };
+  if (body.seed != null && Number.isInteger(Number(body.seed))) input.seed = Number(body.seed);
+  if (body.audio != null && typeof body.audio === 'string') input.audio = body.audio;
+  if (body.negative_prompt != null && typeof body.negative_prompt === 'string') input.negative_prompt = body.negative_prompt;
+  if (body.enable_prompt_expansion != null) input.enable_prompt_expansion = Boolean(body.enable_prompt_expansion);
+
+  let outputUrl = '';
+  try {
+    const version = (body as any).version as string | undefined;
+    const modelSpec = composeModelSpec(modelBase, version);
+    // eslint-disable-next-line no-console
+    console.log('[replicateService.wanT2V] run', { modelSpec, inputKeys: Object.keys(input) });
+    const output: any = await replicate.run(modelSpec as any, { input });
+    // eslint-disable-next-line no-console
+    console.log('[replicateService.wanT2V] output', typeof output, Array.isArray(output) ? output.length : 'n/a');
+    const urls = await resolveOutputUrls(output);
+    outputUrl = urls[0] || '';
+    if (!outputUrl) throw new Error('No output URL returned by Replicate');
+  } catch (e: any) {
+    // eslint-disable-next-line no-console
+    console.error('[replicateService.wanT2V] error', e?.message || e);
+    try { await replicateRepository.updateGenerationRecord(legacyId, { status: 'failed', error: e?.message || 'Replicate failed' }); } catch {}
+    await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: e?.message || 'Replicate failed' } as any);
+    throw new ApiError('Replicate generation failed', 502, e);
+  }
+
+  // Upload video to Zata
+  let storedUrl = outputUrl;
+  let storagePath = '';
+  try {
+    const username = creator?.username || uid;
+    const uploaded = await uploadFromUrlToZata({ sourceUrl: outputUrl, keyPrefix: `users/${username}/video/${historyId}`, fileName: 'video-1' });
+    storedUrl = uploaded.publicUrl;
+    storagePath = uploaded.key;
+  } catch {
+    // fallback keep provider URL
+  }
+  const videoItem: any = { id: `replicate-${Date.now()}`, url: storedUrl, storagePath, originalUrl: outputUrl };
+  await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: [videoItem] } as any);
+  try { await replicateRepository.updateGenerationRecord(legacyId, { status: 'completed', videos: [videoItem] }); } catch {}
+  try {
+    const fresh = await generationHistoryRepository.get(uid, historyId);
+    if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, { uid, username: creator?.username, displayName: (creator as any)?.displayName, photoURL: creator?.photoURL });
+  } catch {}
+  return { videos: [videoItem], historyId, model: modelBase, status: 'completed' } as any;
+}
+Object.assign(replicateService, { wanT2V });

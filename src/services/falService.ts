@@ -40,6 +40,7 @@ async function generate(
   } = payload as any;
 
   const imagesRequested = Number.isFinite(num_images) && (num_images as number) > 0 ? (num_images as number) : (Number.isFinite(n) && (n as number) > 0 ? (n as number) : 1);
+  const imagesRequestedClamped = Math.max(1, Math.min(4, imagesRequested));
   const resolvedAspect = (aspect_ratio || frameSize || '1:1') as any;
 
   const falKey = env.falKey as string;
@@ -65,7 +66,8 @@ async function generate(
     
     
   });
-  // Persist any user-uploaded input images to Zata
+  // Persist any user-uploaded input images to Zata and get public URLs
+  let publicImageUrls: string[] = [];
   try {
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
@@ -78,6 +80,7 @@ async function generate(
           ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
           : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
         inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+        publicImageUrls.push(stored.publicUrl);
       } catch {}
     }
     if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
@@ -87,9 +90,16 @@ async function generate(
 
   // Map our model key to FAL endpoints
   let modelEndpoint: string;
-  if ((model || '').toLowerCase().includes('seedream')) {
+  const modelLower = (model || '').toLowerCase();
+  if (modelLower.includes('imagen-4')) {
+    // Imagen 4 family
+    if (modelLower.includes('ultra')) modelEndpoint = 'fal-ai/imagen4/preview/ultra';
+    else if (modelLower.includes('fast')) modelEndpoint = 'fal-ai/imagen4/preview/fast';
+    else modelEndpoint = 'fal-ai/imagen4/preview'; // standard
+  } else if (modelLower.includes('seedream')) {
     modelEndpoint = 'fal-ai/bytedance/seedream/v4/text-to-image';
   } else {
+    // Default to Google Nano Banana (Gemini)
     modelEndpoint = uploadedImages.length > 0
       ? 'fal-ai/gemini-25-flash-image/edit'
       : 'fal-ai/gemini-25-flash-image';
@@ -97,7 +107,7 @@ async function generate(
 
   try {
     const imagePromises = Array.from({ length: imagesRequested }, async (_, index) => {
-      const input: any = { prompt, output_format, num_images: 1 };
+  const input: any = { prompt, output_format, num_images: 1 };
       // Seedream expects image_size instead of aspect_ratio; allow explicit image_size override
       if (modelEndpoint.includes('seedream')) {
         const explicit = (payload as any).image_size;
@@ -117,8 +127,15 @@ async function generate(
       } else if (resolvedAspect) {
         input.aspect_ratio = resolvedAspect;
       }
+      // Imagen 4 supports resolution and seed/negative_prompt
+      if (modelEndpoint.startsWith('fal-ai/imagen4/')) {
+        if ((payload as any).resolution) input.resolution = (payload as any).resolution; // '1K' | '2K'
+        if ((payload as any).seed != null) input.seed = (payload as any).seed;
+        if ((payload as any).negative_prompt) input.negative_prompt = (payload as any).negative_prompt;
+      }
       if (modelEndpoint.endsWith("/edit")) {
-        input.image_urls = uploadedImages.slice(0, 4);
+        // Use public URLs for edit endpoint, fallback to original uploadedImages if no public URLs available
+        input.image_urls = publicImageUrls.length > 0 ? publicImageUrls.slice(0, 4) : uploadedImages.slice(0, 4);
       }
 
       // Debug log for final body
@@ -320,7 +337,7 @@ async function veoImageToVideo(uid: string, payload: {
   prompt: string;
   image_url: string;
   aspect_ratio?: 'auto' | '16:9' | '9:16';
-  duration?: '8s';
+  duration?: '4s' | '6s' | '8s';
   generate_audio?: boolean;
   resolution?: '720p' | '1080p';
   isPublic?: boolean;

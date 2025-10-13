@@ -2,7 +2,7 @@ import { adminDb } from '../config/firebaseAdmin';
 import { GenerationHistoryItem } from '../types/generate';
 
 function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
-  const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, createdBy, isPublic, createdAt, updatedAt, isDeleted } = data;
+  const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, createdBy, isPublic, createdAt, updatedAt, isDeleted, aspectRatio, frameSize, aspect_ratio } = data;
   return {
     id,
     uid,
@@ -19,7 +19,9 @@ function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
     isPublic,
     isDeleted,
     createdAt,
-    updatedAt: updatedAt || createdAt
+    updatedAt: updatedAt || createdAt,
+    aspectRatio: aspectRatio || frameSize || aspect_ratio,
+    frameSize: frameSize || aspect_ratio || aspectRatio
   } as GenerationHistoryItem;
 }
 

@@ -68,6 +68,8 @@ export interface GenerationHistoryItem {
   videos?: VideoMedia[];
   audios?: AudioMedia[];
   frameSize?: string;
+  aspectRatio?: string;
+  aspect_ratio?: string;
   style?: string;
   // replaced by isPublic in repositories/services
   isPublic?: boolean;

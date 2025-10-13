@@ -30,9 +30,15 @@ export async function updateFromHistory(uid: string, historyId: string, updates:
   } as any, { merge: true });
 }
 
+export async function remove(historyId: string): Promise<void> {
+  const ref = adminDb.collection('generations').doc(historyId);
+  await ref.delete();
+}
+
 export const generationsMirrorRepository = {
   upsertFromHistory,
   updateFromHistory,
+  remove,
 };
 
 
