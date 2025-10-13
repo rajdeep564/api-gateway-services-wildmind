@@ -593,7 +593,14 @@ export async function wanI2V(uid: string, body: any) {
   if (!body?.prompt) throw new ApiError('prompt is required', 400);
 
   const replicate = new Replicate({ auth: key });
-  const modelBase = 'wan-video/wan-2.5-i2v';
+  const isFast = ((): boolean => {
+    const s = (body?.speed ?? '').toString().toLowerCase();
+    const m = (body?.model ?? '').toString().toLowerCase();
+    const speedFast = s === 'fast' || s === 'true' || s.includes('fast') || body?.speed === true;
+    const modelFast = m.includes('fast');
+    return speedFast || modelFast;
+  })();
+  const modelBase = isFast ? 'wan-video/wan-2.5-i2v-fast' : 'wan-video/wan-2.5-i2v';
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid } as any;
   const { historyId } = await generationHistoryRepository.create(uid, {
@@ -696,7 +703,14 @@ export async function wanT2V(uid: string, body: any) {
   if (!body?.prompt) throw new ApiError('prompt is required', 400);
 
   const replicate = new Replicate({ auth: key });
-  const modelBase = 'wan-video/wan-2.5-t2v';
+  const isFast = ((): boolean => {
+    const s = (body?.speed ?? '').toString().toLowerCase();
+    const m = (body?.model ?? '').toString().toLowerCase();
+    const speedFast = s === 'fast' || s === 'true' || s.includes('fast') || body?.speed === true;
+    const modelFast = m.includes('fast');
+    return speedFast || modelFast;
+  })();
+  const modelBase = isFast ? 'wan-video/wan-2.5-t2v-fast' : 'wan-video/wan-2.5-t2v';
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid } as any;
   const durationSec = ((): number => {
