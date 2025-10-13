@@ -94,7 +94,8 @@ async function generate(
   if (modelLower.includes('imagen-4')) {
     // Imagen 4 family
     if (modelLower.includes('ultra')) modelEndpoint = 'fal-ai/imagen4/preview/ultra';
-    else modelEndpoint = 'fal-ai/imagen4/preview'; // standard and fast share endpoint; pricing differs via our middleware
+    else if (modelLower.includes('fast')) modelEndpoint = 'fal-ai/imagen4/preview/fast';
+    else modelEndpoint = 'fal-ai/imagen4/preview'; // standard
   } else if (modelLower.includes('seedream')) {
     modelEndpoint = 'fal-ai/bytedance/seedream/v4/text-to-image';
   } else {
