@@ -9,6 +9,8 @@ import { generationsMirrorRepository } from '../repository/generationsMirrorRepo
 import { authRepository } from '../repository/auth/authRepository';
 import { uploadFromUrlToZata, uploadDataUriToZata } from '../utils/storage/zataUpload';
 import { replicateRepository } from '../repository/replicateRepository';
+import { creditsRepository } from '../repository/creditsRepository';
+import { computeWanVideoCost } from '../utils/pricing/wanPricing';
 
 const DEFAULT_BG_MODEL_A = '851-labs/background-remover:a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc';
 const DEFAULT_BG_MODEL_B = 'lucataco/remove-bg:95fcc2a26d3899cd6c2691c900465aaeff466285a65c14638cc5f36f34befaf1';
@@ -760,3 +762,208 @@ export async function wanT2V(uid: string, body: any) {
   return { videos: [videoItem], historyId, model: modelBase, status: 'completed' } as any;
 }
 Object.assign(replicateService, { wanT2V });
+
+// ============ Queue-style API for Replicate WAN 2.5 ============
+
+type SubmitReturn = { requestId: string; historyId: string; model: string; status: 'submitted' };
+
+async function resolveWanModelFast(body: any): Promise<boolean> {
+  const s = (body?.speed ?? '').toString().toLowerCase();
+  const m = (body?.model ?? '').toString().toLowerCase();
+  const speedFast = s === 'fast' || s === 'true' || s.includes('fast') || body?.speed === true;
+  const modelFast = m.includes('fast');
+  return speedFast || modelFast;
+}
+
+function ensureReplicate(): any {
+  const key = ((env as any).replicateApiKey as string) || (process.env.REPLICATE_API_TOKEN as string);
+  if (!key) {
+    // eslint-disable-next-line no-console
+    console.error('[replicateQueue] Missing REPLICATE_API_TOKEN');
+    throw new ApiError('Replicate API key not configured', 500);
+  }
+  return new Replicate({ auth: key });
+}
+
+async function getLatestModelVersion(replicate: any, modelBase: string): Promise<string | null> {
+  try {
+    // Prefer model slug with latest version lookup; fallback to using model slug directly in predictions.create
+    const [owner, name] = modelBase.split('/');
+    if (!owner || !name) return null;
+    const model = await replicate.models.get(`${owner}/${name}`);
+    const latestVersion = (model as any)?.latest_version?.id || (Array.isArray((model as any)?.versions) ? (model as any).versions[0]?.id : null);
+    return latestVersion || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function wanT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  if (!body?.prompt) throw new ApiError('prompt is required', 400);
+  const replicate = ensureReplicate();
+  const isFast = await resolveWanModelFast(body);
+  const modelBase = isFast ? 'wan-video/wan-2.5-t2v-fast' : 'wan-video/wan-2.5-t2v';
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid } as any;
+  const durationSec = ((): number => {
+    const s = String(body?.duration ?? '5').toLowerCase();
+    const m = s.match(/(5|10)/);
+    return m ? Number(m[1]) : 5;
+  })();
+  const size = String(body?.size ?? '1280*720');
+  const res = size.includes('*480') || size.startsWith('480*') ? '480p' : (size.includes('*1080') || size.startsWith('1080*') ? '1080p' : '720p');
+
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt,
+    model: modelBase,
+    generationType: 'text-to-video',
+    visibility: body.isPublic ? 'public' : 'private',
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    duration: durationSec as any,
+    resolution: res as any,
+  } as any);
+
+  // Build input
+  const input: any = {
+    prompt: body.prompt,
+    duration: durationSec,
+    size,
+  };
+  if (body.seed != null && Number.isInteger(Number(body.seed))) input.seed = Number(body.seed);
+  if (body.audio != null && typeof body.audio === 'string') input.audio = body.audio;
+  if (body.negative_prompt != null && typeof body.negative_prompt === 'string') input.negative_prompt = body.negative_prompt;
+  if (body.enable_prompt_expansion != null) input.enable_prompt_expansion = Boolean(body.enable_prompt_expansion);
+
+  // Create prediction (non-blocking)
+  let predictionId = '';
+  try {
+    const version = await getLatestModelVersion(replicate, modelBase);
+    // eslint-disable-next-line no-console
+    console.log('[replicateQueue.wanT2vSubmit] create', { modelBase, hasVersion: !!version });
+    const pred = await replicate.predictions.create(version ? { version, input } : { model: modelBase, input });
+    predictionId = (pred as any)?.id || '';
+    if (!predictionId) throw new Error('Missing prediction id');
+  } catch (e: any) {
+    // eslint-disable-next-line no-console
+    console.error('[replicateQueue.wanT2vSubmit] error', e?.message || e);
+    await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: e?.message || 'Replicate submit failed' } as any);
+    throw new ApiError('Failed to submit WAN T2V job', 502, e);
+  }
+
+  await generationHistoryRepository.update(uid, historyId, { provider: 'replicate', providerTaskId: predictionId } as any);
+  return { requestId: predictionId, historyId, model: modelBase, status: 'submitted' };
+}
+
+export async function wanI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  if (!body?.image) throw new ApiError('image is required', 400);
+  if (!body?.prompt) throw new ApiError('prompt is required', 400);
+  const replicate = ensureReplicate();
+  const isFast = await resolveWanModelFast(body);
+  const modelBase = isFast ? 'wan-video/wan-2.5-i2v-fast' : 'wan-video/wan-2.5-i2v';
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid } as any;
+  const durationSec = ((): number => {
+    const s = String(body?.duration ?? '5').toLowerCase();
+    const m = s.match(/(5|10)/);
+    return m ? Number(m[1]) : 5;
+  })();
+  const res = ((): string => {
+    const s = String(body?.resolution ?? '720p').toLowerCase();
+    const m = s.match(/(480|720|1080)/);
+    return m ? `${m[1]}p` : '720p';
+  })();
+
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt,
+    model: modelBase,
+    generationType: 'text-to-video',
+    visibility: body.isPublic ? 'public' : 'private',
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    duration: durationSec as any,
+    resolution: res as any,
+  } as any);
+
+  const input: any = {
+    image: body.image,
+    prompt: body.prompt,
+    duration: durationSec,
+    resolution: res,
+  };
+  if (body.seed != null && Number.isInteger(Number(body.seed))) input.seed = Number(body.seed);
+  if (body.audio != null && typeof body.audio === 'string') input.audio = body.audio;
+  if (body.negative_prompt != null && typeof body.negative_prompt === 'string') input.negative_prompt = body.negative_prompt;
+  if (body.enable_prompt_expansion != null) input.enable_prompt_expansion = Boolean(body.enable_prompt_expansion);
+
+  let predictionId = '';
+  try {
+    const version = await getLatestModelVersion(replicate, modelBase);
+    // eslint-disable-next-line no-console
+    console.log('[replicateQueue.wanI2vSubmit] create', { modelBase, hasVersion: !!version });
+    const pred = await replicate.predictions.create(version ? { version, input } : { model: modelBase, input });
+    predictionId = (pred as any)?.id || '';
+    if (!predictionId) throw new Error('Missing prediction id');
+  } catch (e: any) {
+    // eslint-disable-next-line no-console
+    console.error('[replicateQueue.wanI2vSubmit] error', e?.message || e);
+    await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: e?.message || 'Replicate submit failed' } as any);
+    throw new ApiError('Failed to submit WAN I2V job', 502, e);
+  }
+
+  await generationHistoryRepository.update(uid, historyId, { provider: 'replicate', providerTaskId: predictionId } as any);
+  return { requestId: predictionId, historyId, model: modelBase, status: 'submitted' };
+}
+
+export async function replicateQueueStatus(_uid: string, requestId: string): Promise<any> {
+  const replicate = ensureReplicate();
+  try {
+    const status = await replicate.predictions.get(requestId);
+    return status;
+  } catch (e: any) {
+    throw new ApiError(e?.message || 'Failed to fetch Replicate status', 502);
+  }
+}
+
+export async function replicateQueueResult(uid: string, requestId: string): Promise<any> {
+  const replicate = ensureReplicate();
+  try {
+    const result = await replicate.predictions.get(requestId);
+    const located = await generationHistoryRepository.findByProviderTaskId(uid, 'replicate', requestId);
+    if (!located) return result;
+    const historyId = located.id;
+    // If completed and output present, persist video and finalize history
+    const out = (result as any)?.output;
+    const urls = await resolveOutputUrls(out);
+    const outputUrl = urls[0] || '';
+    if (!outputUrl) return result;
+    let storedUrl = outputUrl;
+    let storagePath = '';
+    try {
+      const creator = await authRepository.getUserById(uid);
+      const username = creator?.username || uid;
+      const uploaded = await uploadFromUrlToZata({ sourceUrl: outputUrl, keyPrefix: `users/${username}/video/${historyId}`, fileName: 'video-1' });
+      storedUrl = uploaded.publicUrl;
+      storagePath = uploaded.key;
+    } catch {}
+    const videoItem: any = { id: requestId, url: storedUrl, storagePath, originalUrl: outputUrl };
+    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: [videoItem] } as any);
+    try {
+      const fresh = await generationHistoryRepository.get(uid, historyId);
+      if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, { uid, username: (await authRepository.getUserById(uid))?.username });
+    } catch {}
+    // Compute and write debit (use stored history fields for duration/resolution and model to infer fast)
+    try {
+      const fresh = await generationHistoryRepository.get(uid, historyId);
+      const modeGuess = (fresh as any)?.prompt && (fresh as any)?.model?.includes('i2v') ? 'i2v' : 't2v';
+      const fakeReq = { body: { mode: modeGuess, duration: (fresh as any)?.duration, resolution: (fresh as any)?.resolution, model: (fresh as any)?.model } } as any;
+      const { cost, pricingVersion, meta } = await computeWanVideoCost(fakeReq);
+      await creditsRepository.writeDebitIfAbsent(uid, historyId, cost, `replicate.queue.wan-${modeGuess}`, { ...meta, historyId, provider: 'replicate', pricingVersion });
+    } catch {}
+    return { videos: [videoItem], historyId, model: (located.item as any)?.model, requestId, status: 'completed' } as any;
+  } catch (e: any) {
+    throw new ApiError(e?.message || 'Failed to fetch Replicate result', 502);
+  }
+}
+
+Object.assign(replicateService, { wanT2vSubmit, wanI2vSubmit, replicateQueueStatus, replicateQueueResult });

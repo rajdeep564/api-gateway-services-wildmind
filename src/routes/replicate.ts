@@ -127,4 +127,13 @@ router.post(
   }
 );
 
+// ============ Queue-style endpoints for Replicate WAN 2.5 ============
+router.post('/wan-2-5-t2v/submit', requireAuth, validateWan25T2V, replicateController.wanT2vSubmit as any);
+
+router.post('/wan-2-5-i2v/submit', requireAuth, validateWan25I2V, replicateController.wanI2vSubmit as any);
+
+router.get('/queue/status', requireAuth, replicateController.queueStatus as any);
+
+router.get('/queue/result', requireAuth, replicateController.queueResult as any);
+
 
