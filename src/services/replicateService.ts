@@ -154,7 +154,7 @@ export async function removeBackground(uid: string, body: {
   try {
     // eslint-disable-next-line no-console
     console.log('[replicateService.removeBackground] run', { modelSpec, input });
-    const output: any = await replicate.run(modelSpec as any, { input });
+    let output: any = await replicate.run(modelSpec as any, { input });
     // eslint-disable-next-line no-console
     console.log('[replicateService.removeBackground] output', typeof output, Array.isArray(output) ? output.length : 'n/a');
     // Resolve possible file-like outputs
@@ -371,6 +371,10 @@ export async function generateImage(uid: string, body: any) {
       if (rest.sequential_image_generation) input.sequential_image_generation = String(rest.sequential_image_generation);
       // max_images
       if (rest.max_images != null) input.max_images = Math.max(1, Math.min(15, Number(rest.max_images)));
+      // If user requests multiple images, Seedream requires sequential generation to be 'auto'
+      if ((input.max_images ?? 1) > 1 && input.sequential_image_generation !== 'auto') {
+        input.sequential_image_generation = 'auto';
+      }
       // multi-image input: ensure URLs; upload data URIs to Zata
       let images: string[] = Array.isArray(rest.image_input) ? rest.image_input.slice(0, 10) : [];
       if (Array.isArray(images) && images.length > 0) {
@@ -481,6 +485,27 @@ export async function generateImage(uid: string, body: any) {
     }
     // Seedream returns an array of urls per schema; handle multiple
     outputUrls = await resolveOutputUrls(output);
+    // If fewer images returned than requested, fall back to sequential reruns
+    if (modelBase === 'bytedance/seedream-4') {
+      const requested = typeof input.max_images === 'number' ? input.max_images : 1;
+      if (requested > 1 && outputUrls.length < requested) {
+        // eslint-disable-next-line no-console
+        console.warn(`[seedream] provider returned ${outputUrls.length}/${requested}; running additional ${requested - outputUrls.length} times sequentially`);
+        const runsNeeded = Math.max(0, Math.min(15, requested - outputUrls.length));
+        for (let i = 0; i < runsNeeded; i++) {
+          try {
+            const rerunInput = { ...input, max_images: 1, sequential_image_generation: 'disabled' };
+            const more: any = await replicate.run(modelSpec as any, { input: rerunInput });
+            const moreUrls = await resolveOutputUrls(more);
+            if (moreUrls && moreUrls.length) outputUrls.push(...moreUrls.slice(0, 1));
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.error('[seedream] sequential fallback run failed', (e as any)?.message || e);
+          }
+          if (outputUrls.length >= requested) break;
+        }
+      }
+    }
     if (!outputUrls.length && Array.isArray(output)) {
       // Fallback: Replicate returned file-like streams; read and upload to Zata directly
       // eslint-disable-next-line no-console
