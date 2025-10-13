@@ -5,7 +5,7 @@ exports.listPublic = listPublic;
 exports.getPublicById = getPublicById;
 const firebaseAdmin_1 = require("../config/firebaseAdmin");
 function normalizePublicItem(id, data) {
-    const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, createdBy, isPublic, createdAt, updatedAt, isDeleted } = data;
+    const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, createdBy, isPublic, createdAt, updatedAt, isDeleted, aspectRatio, frameSize, aspect_ratio } = data;
     return {
         id,
         uid,
@@ -22,7 +22,9 @@ function normalizePublicItem(id, data) {
         isPublic,
         isDeleted,
         createdAt,
-        updatedAt: updatedAt || createdAt
+        updatedAt: updatedAt || createdAt,
+        aspectRatio: aspectRatio || frameSize || aspect_ratio,
+        frameSize: frameSize || aspect_ratio || aspectRatio
     };
 }
 async function listPublic(params) {

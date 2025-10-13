@@ -18,6 +18,7 @@ async function generate(uid, payload) {
     // New schema: aspect_ratio (fallback to frameSize)
     aspect_ratio, frameSize, uploadedImages = [], output_format = "jpeg", generationType, tags, nsfw, visibility, isPublic, } = payload;
     const imagesRequested = Number.isFinite(num_images) && num_images > 0 ? num_images : (Number.isFinite(n) && n > 0 ? n : 1);
+    const imagesRequestedClamped = Math.max(1, Math.min(4, imagesRequested));
     const resolvedAspect = (aspect_ratio || frameSize || '1:1');
     const falKey = env_1.env.falKey;
     if (!falKey)
@@ -67,10 +68,21 @@ async function generate(uid, payload) {
     const legacyId = await falRepository_1.falRepository.createGenerationRecord({ prompt, model, n: imagesRequested, isPublic: payload.isPublic === true }, createdBy);
     // Map our model key to FAL endpoints
     let modelEndpoint;
-    if ((model || '').toLowerCase().includes('seedream')) {
+    const modelLower = (model || '').toLowerCase();
+    if (modelLower.includes('imagen-4')) {
+        // Imagen 4 family
+        if (modelLower.includes('ultra'))
+            modelEndpoint = 'fal-ai/imagen4/preview/ultra';
+        else if (modelLower.includes('fast'))
+            modelEndpoint = 'fal-ai/imagen4/preview/fast';
+        else
+            modelEndpoint = 'fal-ai/imagen4/preview'; // standard
+    }
+    else if (modelLower.includes('seedream')) {
         modelEndpoint = 'fal-ai/bytedance/seedream/v4/text-to-image';
     }
     else {
+        // Default to Google Nano Banana (Gemini)
         modelEndpoint = uploadedImages.length > 0
             ? 'fal-ai/gemini-25-flash-image/edit'
             : 'fal-ai/gemini-25-flash-image';
@@ -98,6 +110,15 @@ async function generate(uid, payload) {
             }
             else if (resolvedAspect) {
                 input.aspect_ratio = resolvedAspect;
+            }
+            // Imagen 4 supports resolution and seed/negative_prompt
+            if (modelEndpoint.startsWith('fal-ai/imagen4/')) {
+                if (payload.resolution)
+                    input.resolution = payload.resolution; // '1K' | '2K'
+                if (payload.seed != null)
+                    input.seed = payload.seed;
+                if (payload.negative_prompt)
+                    input.negative_prompt = payload.negative_prompt;
             }
             if (modelEndpoint.endsWith("/edit")) {
                 // Use public URLs for edit endpoint, fallback to original uploadedImages if no public URLs available

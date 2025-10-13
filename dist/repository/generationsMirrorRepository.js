@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.generationsMirrorRepository = void 0;
 exports.upsertFromHistory = upsertFromHistory;
 exports.updateFromHistory = updateFromHistory;
+exports.remove = remove;
 const firebaseAdmin_1 = require("../config/firebaseAdmin");
 async function upsertFromHistory(uid, historyId, historyDoc, createdBy) {
     const ref = firebaseAdmin_1.adminDb.collection('generations').doc(historyId);
@@ -24,7 +25,12 @@ async function updateFromHistory(uid, historyId, updates) {
         updatedAt: firebaseAdmin_1.admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 }
+async function remove(historyId) {
+    const ref = firebaseAdmin_1.adminDb.collection('generations').doc(historyId);
+    await ref.delete();
+}
 exports.generationsMirrorRepository = {
     upsertFromHistory,
     updateFromHistory,
+    remove,
 };

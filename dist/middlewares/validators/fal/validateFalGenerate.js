@@ -5,15 +5,24 @@ const express_validator_1 = require("express-validator");
 const errorHandler_1 = require("../../../utils/errorHandler");
 exports.ALLOWED_FAL_MODELS = [
     'gemini-25-flash-image',
-    'seedream-v4'
+    'seedream-v4',
+    // Imagen 4 image generation variants (frontend model keys)
+    'imagen-4-ultra',
+    'imagen-4',
+    'imagen-4-fast'
 ];
 exports.validateFalGenerate = [
     (0, express_validator_1.body)('prompt').isString().notEmpty(),
     (0, express_validator_1.body)('generationType').optional().isIn(['text-to-image', 'logo', 'sticker-generation', 'text-to-video', 'text-to-music', 'mockup-generation', 'product-generation', 'ad-generation', 'live-chat']).withMessage('invalid generationType'),
     (0, express_validator_1.body)('model').isString().isIn(exports.ALLOWED_FAL_MODELS),
+    (0, express_validator_1.body)('aspect_ratio').optional().isIn(['1:1', '16:9', '9:16', '3:4', '4:3']),
     (0, express_validator_1.body)('n').optional().isInt({ min: 1, max: 10 }),
+    (0, express_validator_1.body)('num_images').optional().isInt({ min: 1, max: 4 }),
     (0, express_validator_1.body)('uploadedImages').optional().isArray(),
     (0, express_validator_1.body)('output_format').optional().isIn(['jpeg', 'png', 'webp']),
+    (0, express_validator_1.body)('resolution').optional().isIn(['1K', '2K']),
+    (0, express_validator_1.body)('seed').optional().isInt(),
+    (0, express_validator_1.body)('negative_prompt').optional().isString(),
     (req, _res, next) => {
         const errors = (0, express_validator_1.validationResult)(req);
         if (!errors.isEmpty())

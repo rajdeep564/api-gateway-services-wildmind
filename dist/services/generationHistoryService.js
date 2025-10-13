@@ -91,7 +91,12 @@ async function softDelete(uid, historyId) {
     try {
         await generationsMirrorRepository_1.generationsMirrorRepository.updateFromHistory(uid, historyId, { isDeleted: true, isPublic: false });
     }
-    catch { }
+    catch (e) {
+        try {
+            await generationsMirrorRepository_1.generationsMirrorRepository.remove(historyId);
+        }
+        catch { }
+    }
 }
 exports.generationHistoryService = {
     startGeneration,

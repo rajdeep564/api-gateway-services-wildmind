@@ -38,4 +38,28 @@ async function generateImage(req, res, next) {
         return;
     }
 }
-exports.replicateController = { removeBackground, upscale, generateImage };
+async function wanI2V(req, res, next) {
+    try {
+        const uid = req.uid;
+        const data = await replicateService_1.replicateService.wanI2V(uid, req.body || {});
+        res.locals = { ...res.locals, success: true };
+        res.json({ responseStatus: 'success', message: 'OK', data });
+    }
+    catch (e) {
+        next(e);
+        return;
+    }
+}
+async function wanT2V(req, res, next) {
+    try {
+        const uid = req.uid;
+        const data = await replicateService_1.replicateService.wanT2V(uid, req.body || {});
+        res.locals = { ...res.locals, success: true };
+        res.json({ responseStatus: 'success', message: 'OK', data });
+    }
+    catch (e) {
+        next(e);
+        return;
+    }
+}
+exports.replicateController = { removeBackground, upscale, generateImage, wanI2V, wanT2V };

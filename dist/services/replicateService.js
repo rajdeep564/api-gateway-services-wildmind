@@ -3,10 +3,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.replicateService = void 0;
+exports._wan = exports.replicateService = void 0;
 exports.removeBackground = removeBackground;
 exports.upscale = upscale;
 exports.generateImage = generateImage;
+exports.wanI2V = wanI2V;
+exports.wanT2V = wanT2V;
 // Use dynamic import signature to avoid type requirement during build-time
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const Replicate = require('replicate');
@@ -647,4 +649,214 @@ async function generateImage(uid, body) {
     catch { }
     return { images: uploadedImages, historyId, model: modelBase, status: 'completed' };
 }
-exports.replicateService = { removeBackground, upscale, generateImage };
+exports.replicateService = { removeBackground, upscale, generateImage, wanI2V, wanT2V };
+// Wan 2.5 Image-to-Video via Replicate
+async function wanI2V(uid, body) {
+    const key = env_1.env.replicateApiKey || process.env.REPLICATE_API_TOKEN;
+    if (!key) {
+        // eslint-disable-next-line no-console
+        console.error('[replicateService.wanI2V] Missing REPLICATE_API_TOKEN');
+        throw new errorHandler_1.ApiError('Replicate API key not configured', 500);
+    }
+    if (!body?.image)
+        throw new errorHandler_1.ApiError('image is required', 400);
+    if (!body?.prompt)
+        throw new errorHandler_1.ApiError('prompt is required', 400);
+    const replicate = new Replicate({ auth: key });
+    const modelBase = 'wan-video/wan-2.5-i2v';
+    const creator = await authRepository_1.authRepository.getUserById(uid);
+    const createdBy = creator ? { uid, username: creator.username, email: creator?.email } : { uid };
+    const { historyId } = await generationHistoryRepository_1.generationHistoryRepository.create(uid, {
+        prompt: body.prompt,
+        model: modelBase,
+        generationType: 'text-to-video',
+        visibility: body.isPublic ? 'public' : 'private',
+        isPublic: body.isPublic ?? false,
+        createdBy,
+        // Save params for potential delayed debit
+        duration: (() => {
+            const s = String(body?.duration ?? '5').toLowerCase();
+            const m = s.match(/(5|10)/);
+            return m ? Number(m[1]) : 5;
+        })(),
+        resolution: (() => {
+            const s = String(body?.resolution ?? '720p').toLowerCase();
+            const m = s.match(/(480|720|1080)/);
+            return m ? `${m[1]}p` : '720p';
+        })(),
+    });
+    const legacyId = await replicateRepository_1.replicateRepository.createGenerationRecord({ prompt: body.prompt, model: modelBase, isPublic: body.isPublic === true }, createdBy);
+    // Prepare input mapping
+    const parseDurationSec = (d) => {
+        const s = String(d ?? '5').toLowerCase();
+        const m = s.match(/(5|10)/);
+        return m ? Number(m[1]) : 5;
+    };
+    const normalizeRes = (r) => {
+        const s = String(r ?? '720p').toLowerCase();
+        const m = s.match(/(480|720|1080)/);
+        return m ? `${m[1]}p` : '720p';
+    };
+    const input = {
+        image: body.image,
+        prompt: body.prompt,
+        duration: parseDurationSec(body.duration),
+        resolution: normalizeRes(body.resolution),
+    };
+    if (body.seed != null && Number.isInteger(Number(body.seed)))
+        input.seed = Number(body.seed);
+    if (body.audio != null && typeof body.audio === 'string')
+        input.audio = body.audio;
+    if (body.negative_prompt != null && typeof body.negative_prompt === 'string')
+        input.negative_prompt = body.negative_prompt;
+    if (body.enable_prompt_expansion != null)
+        input.enable_prompt_expansion = Boolean(body.enable_prompt_expansion);
+    let outputUrl = '';
+    try {
+        const version = body.version;
+        const modelSpec = composeModelSpec(modelBase, version);
+        // eslint-disable-next-line no-console
+        console.log('[replicateService.wanI2V] run', { modelSpec, inputKeys: Object.keys(input) });
+        const output = await replicate.run(modelSpec, { input });
+        // eslint-disable-next-line no-console
+        console.log('[replicateService.wanI2V] output', typeof output, Array.isArray(output) ? output.length : 'n/a');
+        const urls = await resolveOutputUrls(output);
+        outputUrl = urls[0] || '';
+        if (!outputUrl)
+            throw new Error('No output URL returned by Replicate');
+    }
+    catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[replicateService.wanI2V] error', e?.message || e);
+        try {
+            await replicateRepository_1.replicateRepository.updateGenerationRecord(legacyId, { status: 'failed', error: e?.message || 'Replicate failed' });
+        }
+        catch { }
+        await generationHistoryRepository_1.generationHistoryRepository.update(uid, historyId, { status: 'failed', error: e?.message || 'Replicate failed' });
+        throw new errorHandler_1.ApiError('Replicate generation failed', 502, e);
+    }
+    // Upload video to Zata
+    let storedUrl = outputUrl;
+    let storagePath = '';
+    try {
+        const username = creator?.username || uid;
+        const uploaded = await (0, zataUpload_1.uploadFromUrlToZata)({ sourceUrl: outputUrl, keyPrefix: `users/${username}/video/${historyId}`, fileName: 'video-1' });
+        storedUrl = uploaded.publicUrl;
+        storagePath = uploaded.key;
+    }
+    catch {
+        // fallback keep provider URL
+    }
+    const videoItem = { id: `replicate-${Date.now()}`, url: storedUrl, storagePath, originalUrl: outputUrl };
+    await generationHistoryRepository_1.generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: [videoItem] });
+    try {
+        await replicateRepository_1.replicateRepository.updateGenerationRecord(legacyId, { status: 'completed', videos: [videoItem] });
+    }
+    catch { }
+    try {
+        const fresh = await generationHistoryRepository_1.generationHistoryRepository.get(uid, historyId);
+        if (fresh)
+            await generationsMirrorRepository_1.generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, { uid, username: creator?.username, displayName: creator?.displayName, photoURL: creator?.photoURL });
+    }
+    catch { }
+    return { videos: [videoItem], historyId, model: modelBase, status: 'completed' };
+}
+exports._wan = { wanI2V };
+Object.assign(exports.replicateService, { wanI2V });
+// Wan 2.5 Text-to-Video via Replicate
+async function wanT2V(uid, body) {
+    const key = env_1.env.replicateApiKey || process.env.REPLICATE_API_TOKEN;
+    if (!key) {
+        // eslint-disable-next-line no-console
+        console.error('[replicateService.wanT2V] Missing REPLICATE_API_TOKEN');
+        throw new errorHandler_1.ApiError('Replicate API key not configured', 500);
+    }
+    if (!body?.prompt)
+        throw new errorHandler_1.ApiError('prompt is required', 400);
+    const replicate = new Replicate({ auth: key });
+    const modelBase = 'wan-video/wan-2.5-t2v';
+    const creator = await authRepository_1.authRepository.getUserById(uid);
+    const createdBy = creator ? { uid, username: creator.username, email: creator?.email } : { uid };
+    const durationSec = (() => {
+        const s = String(body?.duration ?? '5').toLowerCase();
+        const m = s.match(/(5|10)/);
+        return m ? Number(m[1]) : 5;
+    })();
+    // Derive resolution from size if provided
+    const size = String(body?.size ?? '1280*720');
+    const res = size.includes('*480') || size.startsWith('480*') ? '480p' : (size.includes('*1080') || size.startsWith('1080*') ? '1080p' : '720p');
+    const { historyId } = await generationHistoryRepository_1.generationHistoryRepository.create(uid, {
+        prompt: body.prompt,
+        model: modelBase,
+        generationType: 'text-to-video',
+        visibility: body.isPublic ? 'public' : 'private',
+        isPublic: body.isPublic ?? false,
+        createdBy,
+        duration: durationSec,
+        resolution: res,
+    });
+    const legacyId = await replicateRepository_1.replicateRepository.createGenerationRecord({ prompt: body.prompt, model: modelBase, isPublic: body.isPublic === true }, createdBy);
+    const input = {
+        prompt: body.prompt,
+        duration: durationSec,
+        size,
+    };
+    if (body.seed != null && Number.isInteger(Number(body.seed)))
+        input.seed = Number(body.seed);
+    if (body.audio != null && typeof body.audio === 'string')
+        input.audio = body.audio;
+    if (body.negative_prompt != null && typeof body.negative_prompt === 'string')
+        input.negative_prompt = body.negative_prompt;
+    if (body.enable_prompt_expansion != null)
+        input.enable_prompt_expansion = Boolean(body.enable_prompt_expansion);
+    let outputUrl = '';
+    try {
+        const version = body.version;
+        const modelSpec = composeModelSpec(modelBase, version);
+        // eslint-disable-next-line no-console
+        console.log('[replicateService.wanT2V] run', { modelSpec, inputKeys: Object.keys(input) });
+        const output = await replicate.run(modelSpec, { input });
+        // eslint-disable-next-line no-console
+        console.log('[replicateService.wanT2V] output', typeof output, Array.isArray(output) ? output.length : 'n/a');
+        const urls = await resolveOutputUrls(output);
+        outputUrl = urls[0] || '';
+        if (!outputUrl)
+            throw new Error('No output URL returned by Replicate');
+    }
+    catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[replicateService.wanT2V] error', e?.message || e);
+        try {
+            await replicateRepository_1.replicateRepository.updateGenerationRecord(legacyId, { status: 'failed', error: e?.message || 'Replicate failed' });
+        }
+        catch { }
+        await generationHistoryRepository_1.generationHistoryRepository.update(uid, historyId, { status: 'failed', error: e?.message || 'Replicate failed' });
+        throw new errorHandler_1.ApiError('Replicate generation failed', 502, e);
+    }
+    // Upload video to Zata
+    let storedUrl = outputUrl;
+    let storagePath = '';
+    try {
+        const username = creator?.username || uid;
+        const uploaded = await (0, zataUpload_1.uploadFromUrlToZata)({ sourceUrl: outputUrl, keyPrefix: `users/${username}/video/${historyId}`, fileName: 'video-1' });
+        storedUrl = uploaded.publicUrl;
+        storagePath = uploaded.key;
+    }
+    catch {
+        // fallback keep provider URL
+    }
+    const videoItem = { id: `replicate-${Date.now()}`, url: storedUrl, storagePath, originalUrl: outputUrl };
+    await generationHistoryRepository_1.generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: [videoItem] });
+    try {
+        await replicateRepository_1.replicateRepository.updateGenerationRecord(legacyId, { status: 'completed', videos: [videoItem] });
+    }
+    catch { }
+    try {
+        const fresh = await generationHistoryRepository_1.generationHistoryRepository.get(uid, historyId);
+        if (fresh)
+            await generationsMirrorRepository_1.generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, { uid, username: creator?.username, displayName: creator?.displayName, photoURL: creator?.photoURL });
+    }
+    catch { }
+    return { videos: [videoItem], historyId, model: modelBase, status: 'completed' };
+}
+Object.assign(exports.replicateService, { wanT2V });
