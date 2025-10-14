@@ -37,31 +37,7 @@ router.post(
   }
 );
 
-// Wan 2.5 Text-to-Video (Replicate)
-router.post(
-  '/wan-2-5-t2v',
-  requireAuth,
-  validateWan25T2V,
-  makeCreditCost('replicate', 'wan-t2v', computeWanVideoCost),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const result = await replicateController.wanT2V(req, res, next);
-      if ((res as any).locals?.success) {
-        try {
-          const ctx = (req as any).context || {};
-          const uid = (req as any).uid;
-          const idempotencyKey = ctx.idempotencyKey || `replicate-wan-t2v-${Date.now()}`;
-          await creditsRepository.writeDebitIfAbsent(uid, idempotencyKey, ctx.creditCost, 'replicate.wan-t2v', { pricingVersion: ctx.pricingVersion, ...(ctx.meta || {}) });
-        } catch {}
-      }
-      return result as any;
-    } catch (e) { next(e); }
-  }
-);
-
-export default router;
-
-// Upscale
+// Upscale (Replicate)
 router.post(
   '/upscale',
   requireAuth,
@@ -81,6 +57,16 @@ router.post(
       return result as any;
     } catch (e) { next(e); }
   }
+);
+
+// ============ Queue-style endpoints for Replicate WAN 2.5 ============
+// Pre-authorize credits at submit time; actual debit is performed in queue result handler
+router.post(
+  '/wan-2-5-t2v/submit',
+  requireAuth,
+  validateWan25T2V,
+  makeCreditCost('replicate', 'wan-t2v', computeWanVideoCost),
+  replicateController.wanT2vSubmit as any
 );
 
 // Image generate (seedream/ideogram/magic-refiner)
@@ -105,35 +91,16 @@ router.post(
   }
 );
 
-// Wan 2.5 Image-to-Video (Replicate)
 router.post(
-  '/wan-2-5-i2v',
+  '/wan-2-5-i2v/submit',
   requireAuth,
   validateWan25I2V,
   makeCreditCost('replicate', 'wan-i2v', computeWanVideoCost),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const result = await replicateController.wanI2V(req, res, next);
-      if ((res as any).locals?.success) {
-        try {
-          const ctx = (req as any).context || {};
-          const uid = (req as any).uid;
-          const idempotencyKey = ctx.idempotencyKey || `replicate-wan-i2v-${Date.now()}`;
-          await creditsRepository.writeDebitIfAbsent(uid, idempotencyKey, ctx.creditCost, 'replicate.wan-i2v', { pricingVersion: ctx.pricingVersion, ...(ctx.meta || {}) });
-        } catch {}
-      }
-      return result as any;
-    } catch (e) { next(e); }
-  }
+  replicateController.wanI2vSubmit as any
 );
 
-// ============ Queue-style endpoints for Replicate WAN 2.5 ============
-router.post('/wan-2-5-t2v/submit', requireAuth, validateWan25T2V, replicateController.wanT2vSubmit as any);
-
-router.post('/wan-2-5-i2v/submit', requireAuth, validateWan25I2V, replicateController.wanI2vSubmit as any);
-
 router.get('/queue/status', requireAuth, replicateController.queueStatus as any);
-
 router.get('/queue/result', requireAuth, replicateController.queueResult as any);
 
+export default router;
 
