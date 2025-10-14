@@ -5,11 +5,14 @@ import { creditsRepository } from '../repository/creditsRepository';
 import { replicateController } from '../controllers/replicateController';
 import { computeReplicateBgRemoveCost, computeReplicateImageGenCost, computeReplicateUpscaleCost } from '../utils/pricing/replicatePricing';
 import { computeWanVideoCost } from '../utils/pricing/wanPricing';
+import { computeKlingVideoCost } from '../utils/pricing/klingPricing';
 import { validateRemoveBg } from '../middlewares/validators/replicate/validateRemoveBg';
 import { validateUpscale } from '../middlewares/validators/replicate/validateUpscale';
 import { validateReplicateGenerate } from '../middlewares/validators/replicate/validateImageGenerate';
 import { validateWan25I2V } from '../middlewares/validators/replicate/validateWan25I2V';
 import { validateWan25T2V } from '../middlewares/validators/replicate/validateWan25T2V';
+import { validateKlingT2V } from '../middlewares/validators/replicate/validateKlingT2V';
+import { validateKlingI2V } from '../middlewares/validators/replicate/validateKlingI2V';
 
 const router = Router();
 
@@ -97,6 +100,23 @@ router.post(
   validateWan25I2V,
   makeCreditCost('replicate', 'wan-i2v', computeWanVideoCost),
   replicateController.wanI2vSubmit as any
+);
+
+// ============ Queue-style endpoints for Replicate Kling models ============
+router.post(
+  '/kling-t2v/submit',
+  requireAuth,
+  validateKlingT2V,
+  makeCreditCost('replicate', 'kling-t2v', computeKlingVideoCost),
+  (replicateController as any).klingT2vSubmit
+);
+
+router.post(
+  '/kling-i2v/submit',
+  requireAuth,
+  validateKlingI2V,
+  makeCreditCost('replicate', 'kling-i2v', computeKlingVideoCost),
+  (replicateController as any).klingI2vSubmit
 );
 
 router.get('/queue/status', requireAuth, replicateController.queueStatus as any);

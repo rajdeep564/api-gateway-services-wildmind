@@ -977,13 +977,21 @@ export async function replicateQueueResult(uid: string, requestId: string): Prom
       const fresh = await generationHistoryRepository.get(uid, historyId);
       if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, { uid, username: (await authRepository.getUserById(uid))?.username });
     } catch {}
-    // Compute and write debit (use stored history fields for duration/resolution and model to infer fast)
+    // Compute and write debit (use stored history fields)
     try {
       const fresh = await generationHistoryRepository.get(uid, historyId);
-      const modeGuess = (fresh as any)?.prompt && (fresh as any)?.model?.includes('i2v') ? 'i2v' : 't2v';
-      const fakeReq = { body: { mode: modeGuess, duration: (fresh as any)?.duration, resolution: (fresh as any)?.resolution, model: (fresh as any)?.model } } as any;
-      const { cost, pricingVersion, meta } = await computeWanVideoCost(fakeReq);
-      await creditsRepository.writeDebitIfAbsent(uid, historyId, cost, `replicate.queue.wan-${modeGuess}`, { ...meta, historyId, provider: 'replicate', pricingVersion });
+      const model = (fresh as any)?.model?.toString().toLowerCase() || '';
+      const modeGuess = (fresh as any)?.prompt && model.includes('i2v') ? 'i2v' : 't2v';
+      if (model.includes('wan-2.5')) {
+        const fakeReq = { body: { mode: modeGuess, duration: (fresh as any)?.duration, resolution: (fresh as any)?.resolution, model: (fresh as any)?.model } } as any;
+        const { cost, pricingVersion, meta } = await computeWanVideoCost(fakeReq);
+        await creditsRepository.writeDebitIfAbsent(uid, historyId, cost, `replicate.queue.wan-${modeGuess}`, { ...meta, historyId, provider: 'replicate', pricingVersion });
+      } else if (model.includes('kling-v2.')) {
+        const { computeKlingVideoCost } = await import('../utils/pricing/klingPricing');
+        const fakeReq = { body: { kind: modeGuess, duration: (fresh as any)?.duration, resolution: (fresh as any)?.resolution, model: (fresh as any)?.model, kling_mode: (fresh as any)?.kling_mode } } as any;
+        const { cost, pricingVersion, meta } = await computeKlingVideoCost(fakeReq as any);
+        await creditsRepository.writeDebitIfAbsent(uid, historyId, cost, `replicate.queue.kling-${modeGuess}`, { ...meta, historyId, provider: 'replicate', pricingVersion });
+      }
     } catch {}
     return { videos: [videoItem], historyId, model: (located.item as any)?.model, requestId, status: 'completed' } as any;
   } catch (e: any) {
@@ -992,3 +1000,114 @@ export async function replicateQueueResult(uid: string, requestId: string): Prom
 }
 
 Object.assign(replicateService, { wanT2vSubmit, wanI2vSubmit, replicateQueueStatus, replicateQueueResult });
+
+// ============ Queue-style API for Replicate Kling ============
+
+export async function klingT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  if (!body?.prompt) throw new ApiError('prompt is required', 400);
+  const replicate = ensureReplicate();
+  const modelBase = (body.model && String(body.model).length > 0 ? String(body.model) : 'kwaivgi/kling-v2.5-turbo-pro');
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid } as any;
+  const durationSec = ((): number => {
+    const s = String(body?.duration ?? '5').toLowerCase();
+    const m = s.match(/(5|10)/);
+    return m ? Number(m[1]) : 5;
+  })();
+  const aspect = ((): string => {
+    const a = String(body?.aspect_ratio ?? '16:9');
+    return ['16:9','9:16','1:1'].includes(a) ? a : '16:9';
+  })();
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt,
+    model: modelBase,
+    generationType: 'text-to-video',
+    visibility: body.isPublic ? 'public' : 'private',
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    duration: durationSec as any,
+    // Kling v2.1 supports standard(720p) and pro(1080p). Default others to 720p for pricing/meta.
+    resolution: ((): any => {
+      const isV21 = modelBase.includes('kling-v2.1');
+      const m = String(body?.mode || '').toLowerCase();
+      if (isV21 && m === 'pro') return '1080p';
+      return '720p';
+    })(),
+  } as any);
+
+  const input: any = { prompt: body.prompt, duration: durationSec, aspect_ratio: aspect };
+  if (body.guidance_scale != null) input.guidance_scale = Math.max(0, Math.min(1, Number(body.guidance_scale)));
+  if (body.negative_prompt != null) input.negative_prompt = String(body.negative_prompt);
+  if (modelBase.includes('kling-v2.1') && body.mode) input.mode = String(body.mode).toLowerCase();
+
+  let predictionId = '';
+  try {
+    const version = await getLatestModelVersion(replicate, modelBase);
+    const pred = await replicate.predictions.create(version ? { version, input } : { model: modelBase, input });
+    predictionId = (pred as any)?.id || '';
+    if (!predictionId) throw new Error('Missing prediction id');
+  } catch (e: any) {
+    await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: e?.message || 'Replicate submit failed' } as any);
+    throw new ApiError('Failed to submit Kling T2V job', 502, e);
+  }
+  await generationHistoryRepository.update(uid, historyId, { provider: 'replicate', providerTaskId: predictionId } as any);
+  return { requestId: predictionId, historyId, model: modelBase, status: 'submitted' };
+}
+
+export async function klingI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  if (!body?.prompt) throw new ApiError('prompt is required', 400);
+  const hasImg = !!(body?.image || body?.start_image);
+  if (!hasImg) throw new ApiError('image or start_image is required', 400);
+  const replicate = ensureReplicate();
+  const modelBase = (body.model && String(body.model).length > 0 ? String(body.model) : (body.start_image ? 'kwaivgi/kling-v2.1' : 'kwaivgi/kling-v2.5-turbo-pro'));
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid } as any;
+  const durationSec = ((): number => {
+    const s = String(body?.duration ?? '5').toLowerCase();
+    const m = s.match(/(5|10)/);
+    return m ? Number(m[1]) : 5;
+  })();
+  const aspect = ((): string => {
+    const a = String(body?.aspect_ratio ?? '16:9');
+    return ['16:9','9:16','1:1'].includes(a) ? a : '16:9';
+  })();
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt,
+    model: modelBase,
+    generationType: 'text-to-video',
+    visibility: body.isPublic ? 'public' : 'private',
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    duration: durationSec as any,
+    resolution: ((): any => {
+      const isV21 = modelBase.includes('kling-v2.1');
+      const m = String(body?.mode || '').toLowerCase();
+      if (isV21 && m === 'pro') return '1080p';
+      return '720p';
+    })(),
+  } as any);
+
+  const input: any = { prompt: body.prompt, duration: durationSec };
+  if (body.image) input.image = String(body.image);
+  if (body.start_image) input.start_image = String(body.start_image);
+  if (body.end_image) input.end_image = String(body.end_image);
+  if (body.aspect_ratio) input.aspect_ratio = aspect;
+  if (body.guidance_scale != null) input.guidance_scale = Math.max(0, Math.min(1, Number(body.guidance_scale)));
+  if (body.negative_prompt != null) input.negative_prompt = String(body.negative_prompt);
+  if (modelBase.includes('kling-v2.1') && body.mode) input.mode = String(body.mode).toLowerCase();
+
+  let predictionId = '';
+  try {
+    const version = await getLatestModelVersion(replicate, modelBase);
+    const pred = await replicate.predictions.create(version ? { version, input } : { model: modelBase, input });
+    predictionId = (pred as any)?.id || '';
+    if (!predictionId) throw new Error('Missing prediction id');
+  } catch (e: any) {
+    await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: e?.message || 'Replicate submit failed' } as any);
+    throw new ApiError('Failed to submit Kling I2V job', 502, e);
+  }
+  await generationHistoryRepository.update(uid, historyId, { provider: 'replicate', providerTaskId: predictionId } as any);
+  return { requestId: predictionId, historyId, model: modelBase, status: 'submitted' };
+}
+
+Object.assign(replicateService, { klingT2vSubmit, klingI2vSubmit });

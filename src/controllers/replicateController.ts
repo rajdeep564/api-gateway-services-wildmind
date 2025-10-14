@@ -102,4 +102,23 @@ export async function queueResult(req: Request, res: Response, next: NextFunctio
 
 Object.assign(replicateController, { wanT2vSubmit, wanI2vSubmit, queueStatus, queueResult });
 
+// Kling queue handlers
+export async function klingT2vSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).klingT2vSubmit(uid, req.body || {});
+    res.json(formatApiResponse('success', 'Submitted', result));
+  } catch (e) { next(e); }
+}
+
+export async function klingI2vSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).klingI2vSubmit(uid, req.body || {});
+    res.json(formatApiResponse('success', 'Submitted', result));
+  } catch (e) { next(e); }
+}
+
+Object.assign(replicateController, { klingT2vSubmit, klingI2vSubmit });
+
 
