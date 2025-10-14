@@ -14,6 +14,12 @@ function getTransporter() {
       host: 'smtp.gmail.com',
       port: 465,
       secure: true,
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 100,
+      connectionTimeout: 5000,
+      greetingTimeout: 5000,
+      socketTimeout: 10000,
       auth: { user: gmailUser, pass: gmailPass }
     });
     return transporter;
@@ -29,6 +35,12 @@ function getTransporter() {
       host,
       port,
       secure: port === 465,
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 100,
+      connectionTimeout: 5000,
+      greetingTimeout: 5000,
+      socketTimeout: 10000,
       auth: { user, pass }
     });
   }

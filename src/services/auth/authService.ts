@@ -90,14 +90,17 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
   await authRepository.saveOtp(email, code, ttlSeconds);
   console.log(`[AUTH] OTP saved to memory store`);
   
-  try {
-    await sendEmail(email, 'Your verification code', `Your OTP code is: ${code}`);
-    console.log(`[AUTH] OTP email sent successfully to ${email}`);
-  } catch (emailError: any) {
-    console.log(`[AUTH] Email send failed: ${emailError.message}`);
-    throw emailError;
-  }
-  
+  // Fire-and-forget email send to reduce API latency; log result asynchronously
+  (async () => {
+    try {
+      await sendEmail(email, 'Your verification code', `Your OTP code is: ${code}`);
+      console.log(`[AUTH] OTP email dispatched (async) to ${email}`);
+    } catch (emailError: any) {
+      console.log(`[AUTH] Async email send failed: ${emailError.message}`);
+    }
+  })();
+
+  // Respond immediately without awaiting email delivery
   return { sent: true, ttl: ttlSeconds };
 }
 
