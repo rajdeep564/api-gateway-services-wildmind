@@ -1,6 +1,5 @@
 import nodemailer from 'nodemailer';
 import { env } from '../config/env';
-import fetch from 'node-fetch';
 
 let transporter: any | null = null;
 
