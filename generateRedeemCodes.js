@@ -1,13 +1,27 @@
 const admin = require('firebase-admin');
 const path = require('path');
 
-// Initialize Firebase Admin
-const serviceAccount = require('./src/config/credentials/service-account.json');
+function getServiceAccountFromEnv() {
+  const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (json) {
+    try { return JSON.parse(json); } catch { /* ignore */ }
+  }
+  const b64 = process.env.FIREBASE_SERVICE_ACCOUNT_B64;
+  if (b64) {
+    try {
+      const decoded = Buffer.from(b64, 'base64').toString('utf8');
+      return JSON.parse(decoded);
+    } catch { /* ignore */ }
+  }
+  return null;
+}
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-  databaseURL: `https://${serviceAccount.project_id}-default-rtdb.firebaseio.com`
-});
+const svc = getServiceAccountFromEnv();
+if (svc) {
+  admin.initializeApp({ credential: admin.credential.cert(svc) });
+} else {
+  admin.initializeApp(); // relies on GOOGLE_APPLICATION_CREDENTIALS or metadata
+}
 
 const db = admin.firestore();
 

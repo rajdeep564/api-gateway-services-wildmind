@@ -9,6 +9,10 @@ interface CreatedBy {
 }
 
 export async function upsertFromHistory(uid: string, historyId: string, historyDoc: GenerationHistoryItem, createdBy: CreatedBy): Promise<void> {
+  try {
+    // eslint-disable-next-line no-console
+    console.log('[Mirror][Upsert]', { historyId, uid, isPublic: (historyDoc as any)?.isPublic, visibility: (historyDoc as any)?.visibility, generationType: (historyDoc as any)?.generationType });
+  } catch {}
   const ref = adminDb.collection('generations').doc(historyId);
   await ref.set({
     ...historyDoc,
@@ -21,6 +25,10 @@ export async function upsertFromHistory(uid: string, historyId: string, historyD
 }
 
 export async function updateFromHistory(uid: string, historyId: string, updates: Partial<GenerationHistoryItem>): Promise<void> {
+  try {
+    // eslint-disable-next-line no-console
+    console.log('[Mirror][Update]', { historyId, uid, isPublic: (updates as any)?.isPublic, visibility: (updates as any)?.visibility, generationType: (updates as any)?.generationType });
+  } catch {}
   const ref = adminDb.collection('generations').doc(historyId);
   await ref.set({
     ...updates,
@@ -30,9 +38,15 @@ export async function updateFromHistory(uid: string, historyId: string, updates:
   } as any, { merge: true });
 }
 
+export async function remove(historyId: string): Promise<void> {
+  const ref = adminDb.collection('generations').doc(historyId);
+  await ref.delete();
+}
+
 export const generationsMirrorRepository = {
   upsertFromHistory,
   updateFromHistory,
+  remove,
 };
 
 

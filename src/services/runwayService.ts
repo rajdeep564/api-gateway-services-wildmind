@@ -4,7 +4,6 @@ import {
   RunwayTextToImageResponse,
 } from "../types/runway";
 import { runwayRepository } from "../repository/runwayRepository";
-import RunwayML from "@runwayml/sdk";
 import { env } from "../config/env";
 import { generationHistoryRepository } from "../repository/generationHistoryRepository";
 import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
@@ -16,10 +15,21 @@ import { computeRunwayCostFromHistoryModel } from "../utils/pricing/runwayPricin
 
 // (SDK handles base/version internally)
 
-function getRunwayClient(): RunwayML {
+let RunwayMLCtor: any | null = null;
+function getRunwayClient(): any {
   const apiKey = env.runwayApiKey as string;
   if (!apiKey) throw new ApiError("Runway API key not configured", 500);
-  return new RunwayML({ apiKey });
+  if (!RunwayMLCtor) {
+    try {
+      // Defer module resolution to runtime so missing SDK doesn't crash boot
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const mod = require("@runwayml/sdk");
+      RunwayMLCtor = mod?.default || mod;
+    } catch (_e) {
+      throw new ApiError("Runway SDK not installed on server", 500);
+    }
+  }
+  return new RunwayMLCtor({ apiKey });
 }
 
 async function textToImage(
@@ -202,9 +212,10 @@ async function videoGenerate(
       prompt,
       model: historyModel,
       generationType,
-      visibility: (body as any)?.visibility || 'private',
+      visibility: (body as any)?.visibility || (((body as any)?.isPublic === true) ? 'public' : 'private'),
       tags: (body as any)?.tags,
       nsfw: (body as any)?.nsfw,
+      isPublic: (body as any)?.isPublic === true,
       ...(imageToVideo?.duration !== undefined ? { duration: imageToVideo.duration } : {}),
       ...(imageToVideo?.ratio !== undefined ? { ratio: imageToVideo.ratio } : {}),
     } as any);
@@ -255,9 +266,10 @@ async function videoGenerate(
       prompt,
       model: historyModel,
       generationType,
-      visibility: (body as any)?.visibility || 'private',
+      visibility: (body as any)?.visibility || (((body as any)?.isPublic === true) ? 'public' : 'private'),
       tags: (body as any)?.tags,
       nsfw: (body as any)?.nsfw,
+      isPublic: (body as any)?.isPublic === true,
       ...(textToVideo?.duration !== undefined ? { duration: textToVideo.duration } : {}),
       ...(textToVideo?.ratio !== undefined ? { ratio: textToVideo.ratio } : {}),
     } as any);
@@ -279,9 +291,10 @@ async function videoGenerate(
       prompt,
       model: historyModel,
       generationType,
-      visibility: (body as any)?.visibility || 'private',
+      visibility: (body as any)?.visibility || (((body as any)?.isPublic === true) ? 'public' : 'private'),
       tags: (body as any)?.tags,
       nsfw: (body as any)?.nsfw,
+      isPublic: (body as any)?.isPublic === true,
       ...(videoToVideo?.duration !== undefined ? { duration: videoToVideo.duration } : {}),
       ...(videoToVideo?.ratio !== undefined ? { ratio: videoToVideo.ratio } : {}),
     } as any);
@@ -339,9 +352,10 @@ async function videoGenerate(
       prompt,
       model: historyModel,
       generationType,
-      visibility: (body as any)?.visibility || 'private',
+      visibility: (body as any)?.visibility || (((body as any)?.isPublic === true) ? 'public' : 'private'),
       tags: (body as any)?.tags,
       nsfw: (body as any)?.nsfw,
+      isPublic: (body as any)?.isPublic === true,
       ...(videoUpscale?.duration !== undefined ? { duration: videoUpscale.duration } : {}),
       ...(videoUpscale?.ratio !== undefined ? { ratio: videoUpscale.ratio } : {}),
     } as any);

@@ -6,9 +6,14 @@ export const REPLICATE_PRICING_VERSION = 'replicate-v1';
 const COST_BACKGROUND_REMOVER = 31; // credits per generation (sheet free column scaled)
 const COST_REMOVE_BG = 31;
 const COST_CLARITY_UPSCALER = 62;
+const COST_REAL_ESRGAN = 32.4;
+const COST_SWIN2SR = 43;
 const COST_SEEDREAM4 = 90;
 const COST_IDEOGRAM_V3_TURBO = 90;
 const COST_MAGIC_IMAGE_REFINER = 84;
+const COST_IDEOGRAM_3_QUALITY = 210;
+const COST_LUCID_ORIGIN = 183;
+const COST_PHOENIX_1_0 = 180;
 
 export async function computeReplicateBgRemoveCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { model } = req.body || {};
@@ -20,7 +25,12 @@ export async function computeReplicateBgRemoveCost(req: Request): Promise<{ cost
 export async function computeReplicateUpscaleCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { model } = req.body || {};
   const normalized = String(model || '').toLowerCase();
-  let cost = COST_CLARITY_UPSCALER;
+  let cost: number;
+  if (normalized.includes('philz1337x/clarity-upscaler')) cost = COST_CLARITY_UPSCALER;
+  else if (normalized.includes('fermatresearch/magic-image-refiner')) cost = COST_MAGIC_IMAGE_REFINER;
+  else if (normalized.includes('nightmareai/real-esrgan')) cost = COST_REAL_ESRGAN;
+  else if (normalized.includes('mv-lab/swin2sr')) cost = COST_SWIN2SR;
+  else cost = COST_CLARITY_UPSCALER;
   return { cost: Math.ceil(cost), pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: normalized } };
 }
 
@@ -28,8 +38,25 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   const { model } = req.body || {};
   const normalized = String(model || '').toLowerCase();
   let cost = COST_SEEDREAM4;
-  if (normalized.includes('ideogram-ai/ideogram-v3-turbo')) cost = COST_IDEOGRAM_V3_TURBO;
+  // Ideogram Turbo matches
+  if (
+    normalized.includes('ideogram-ai/ideogram-v3-turbo') ||
+    (normalized.includes('ideogram') && normalized.includes('turbo'))
+  ) {
+    cost = COST_IDEOGRAM_V3_TURBO;
+  }
   if (normalized.includes('fermatresearch/magic-image-refiner')) cost = COST_MAGIC_IMAGE_REFINER;
+  // Ideogram 3 Quality matches
+  if (
+    normalized.includes('ideogram-ai/ideogram-v3-quality') ||
+    normalized.includes('ideogram 3 quality') ||
+    normalized.includes('ideogram-3-quality') ||
+    (normalized.includes('ideogram') && normalized.includes('quality'))
+  ) {
+    cost = COST_IDEOGRAM_3_QUALITY;
+  }
+  if (normalized.includes('leonardoai/lucid-origin') || normalized.includes('lucid origin') || normalized.includes('lucid-origin')) cost = COST_LUCID_ORIGIN;
+  if (normalized.includes('phoenix 1.0') || normalized.includes('phoenix-1.0')) cost = COST_PHOENIX_1_0;
   return { cost: Math.ceil(cost), pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: normalized } };
 }
 

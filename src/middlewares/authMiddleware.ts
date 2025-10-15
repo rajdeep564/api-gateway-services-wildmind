@@ -7,10 +7,15 @@ const COOKIE_NAME = 'app_session';
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   try {
     console.log("cookies",req.cookies);
-    const token = req.cookies?.[COOKIE_NAME];
+    let token = req.cookies?.[COOKIE_NAME];
+    // Fallback to Authorization: Bearer <token>
     if (!token) {
-      throw new ApiError('Unauthorized - No session token', 401);
+      const authHeader = req.headers.authorization || req.headers.Authorization as string | undefined;
+      if (authHeader && /^Bearer\s+/i.test(authHeader)) {
+        token = authHeader.replace(/^Bearer\s+/i, '').trim();
+      }
     }
+    if (!token) throw new ApiError('Unauthorized - No session token', 401);
     // Prefer verifying as a session cookie; fallback to ID token if needed
     let decoded: any;
     try {

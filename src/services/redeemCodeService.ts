@@ -20,7 +20,7 @@ export async function createRedeemCodes(request: CreateRedeemCodeRequest): Promi
     throw new ApiError('Count must be between 1 and 1000', 400);
   }
 
-  const planCode = type === 'STUDENT' ? 'PLAN_A' : 'PLAN_B';
+  const planCode = type === 'STUDENT' ? 'PLAN_A' : 'PLAN_C';
   
   // Calculate expiry date from hours
   const expiryHours = expiresIn || 48; // Default to 48 hours if not specified

@@ -34,6 +34,7 @@ export interface EnvConfig {
   smtpUser?: string;
   smtpPass?: string;
   smtpFrom?: string;
+  resendApiKey?: string;
   // Logging
   logLevel: string;
   // BFL polling
@@ -81,6 +82,7 @@ export const env: EnvConfig = {
   smtpUser: process.env.SMTP_USER,
   smtpPass: process.env.SMTP_PASS,
   smtpFrom: process.env.SMTP_FROM,
+  resendApiKey: process.env.RESEND_API_KEY,
   logLevel: process.env.LOG_LEVEL || 'info',
   bflPollIntervalMs: process.env.BFL_POLL_INTERVAL_MS ? parseInt(process.env.BFL_POLL_INTERVAL_MS, 10) : undefined,
   bflPollMaxLoops: process.env.BFL_POLL_MAX_LOOPS ? parseInt(process.env.BFL_POLL_MAX_LOOPS, 10) : undefined,

@@ -4,16 +4,25 @@ import { ApiError } from '../../../utils/errorHandler';
 
 export const ALLOWED_FAL_MODELS = [
   'gemini-25-flash-image',
-  'seedream-v4'
+  'seedream-v4',
+  // Imagen 4 image generation variants (frontend model keys)
+  'imagen-4-ultra',
+  'imagen-4',
+  'imagen-4-fast'
 ];
 
 export const validateFalGenerate = [
   body('prompt').isString().notEmpty(),
   body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
   body('model').isString().isIn(ALLOWED_FAL_MODELS),
+  body('aspect_ratio').optional().isIn(['1:1','16:9','9:16','3:4','4:3']),
   body('n').optional().isInt({ min: 1, max: 10 }),
+  body('num_images').optional().isInt({ min: 1, max: 4 }),
   body('uploadedImages').optional().isArray(),
   body('output_format').optional().isIn(['jpeg', 'png', 'webp']),
+  body('resolution').optional().isIn(['1K','2K']),
+  body('seed').optional().isInt(),
+  body('negative_prompt').optional().isString(),
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));

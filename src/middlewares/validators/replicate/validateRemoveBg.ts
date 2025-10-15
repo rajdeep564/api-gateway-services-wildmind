@@ -11,20 +11,6 @@ export function validateRemoveBg(req: Request, _res: Response, next: NextFunctio
   if (model && typeof model !== 'string') return next(new ApiError('model must be string', 400));
   next();
 }
-
-export function validateUpscale(req: Request, _res: Response, next: NextFunction) {
-  const { image, model } = req.body || {};
-  if (!image || typeof image !== 'string') return next(new ApiError('image is required (url)', 400));
-  if (model && typeof model !== 'string') return next(new ApiError('model must be string', 400));
-  next();
-}
-
-export function validateReplicateGenerate(req: Request, _res: Response, next: NextFunction) {
-  const { prompt, model, image } = req.body || {};
-  if (!prompt || typeof prompt !== 'string') return next(new ApiError('prompt is required', 400));
-  if (model && typeof model !== 'string') return next(new ApiError('model must be string', 400));
-  if (image && typeof image !== 'string') return next(new ApiError('image must be url string', 400));
-  next();
-}
+ 
 
 
