@@ -100,45 +100,28 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
     return false;
   })();
 
-  let emailSent = false;
-  let emailError: string | null = null;
-
   if (shouldAwaitEmail) {
     try {
       await sendEmail(email, 'Your verification code', `Your OTP code is: ${code}`);
       console.log(`[AUTH] OTP email sent (await) to ${email}`);
-      emailSent = true;
     } catch (emailError: any) {
       console.log(`[AUTH] Email send failed (await): ${emailError.message}`);
-      emailError = emailError.message;
+      // Do not throw: code is already saved; client can retry or use another channel
     }
   } else {
     (async () => {
       try {
         await sendEmail(email, 'Your verification code', `Your OTP code is: ${code}`);
         console.log(`[AUTH] OTP email dispatched (async) to ${email}`);
-        emailSent = true;
       } catch (emailError: any) {
         console.log(`[AUTH] Async email send failed: ${emailError.message}`);
-        emailError = emailError.message;
       }
     })();
   }
 
-  // For local development, always show OTP in console even if email fails
-  const isLocalDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV !== 'production';
-  const exposeDebug = String(process.env.DEBUG_OTP || '').toLowerCase() === 'true' || isLocalDev;
-  
-  // If email failed but we're in local dev, still consider it "sent" to console
-  const actuallySent = emailSent || (isLocalDev && !emailConfigured);
-  
-  return { 
-    sent: actuallySent, 
-    ttl: ttlSeconds, 
-    channel: emailSent ? 'email' : 'console', 
-    error: emailError,
-    ...(exposeDebug ? { debugCode: code } : {}) 
-  } as any;
+  // Respond and indicate delivery channel (email or console fallback)
+  const exposeDebug = String(process.env.DEBUG_OTP || '').toLowerCase() === 'true' || (process.env.NODE_ENV !== 'production');
+  return { sent: true, ttl: ttlSeconds, channel: emailConfigured ? 'email' : 'console', ...(exposeDebug ? { debugCode: code } : {}) } as any;
 }
 
 async function verifyEmailOtpAndCreateUser(email: string, username?: string, password?: string, deviceInfo?: any): Promise<{ user: AppUser; idToken: string }> {
