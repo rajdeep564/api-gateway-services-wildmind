@@ -6,10 +6,17 @@ let transporter: any | null = null;
 function getTransporter() {
   if (transporter) return transporter;
 
-  // Preferred: Gmail App Password flow
+  // Check if we have Resend API key - prefer this over SMTP for cloud deployments
+  if (env.resendApiKey && env.smtpFrom) {
+    console.log('[MAIL] Using Resend API as primary email service');
+    return null; // Will use API instead of SMTP
+  }
+
+  // Preferred: Gmail App Password flow (fallback for local development)
   const gmailUser = env.emailUser;
   const gmailPass = env.emailAppPassword;
   if (gmailUser && gmailPass) {
+    console.log('[MAIL] Using Gmail SMTP as fallback');
     transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 587, // Use port 587 instead of 465
@@ -32,6 +39,7 @@ function getTransporter() {
   const user = env.smtpUser;
   const pass = env.smtpPass;
   if (host && port && user && pass) {
+    console.log('[MAIL] Using generic SMTP as fallback');
     transporter = nodemailer.createTransport({
       host,
       port,
@@ -50,87 +58,69 @@ function getTransporter() {
 
 export async function sendEmail(to: string, subject: string, text: string) {
   const from = env.smtpFrom || env.emailUser;
+  
+  // Try Resend API first (preferred for cloud deployments)
+  if (env.resendApiKey && env.smtpFrom) {
+    try {
+      console.log(`[MAIL] Attempting Resend API delivery to ${to}`);
+      const resp = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.resendApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ 
+          from: env.smtpFrom, 
+          to, 
+          subject, 
+          text,
+          html: `<p>${text.replace(/\n/g, '<br>')}</p>`
+        })
+      });
+      
+      if (resp.ok) {
+        const result = await resp.json();
+        console.log(`[MAIL] Resend email sent successfully to ${to} (ID: ${result.id})`);
+        return { success: true, channel: 'resend' };
+      } else {
+        const errTxt = await resp.text().catch(() => '');
+        console.log(`[MAIL] Resend API failed: ${resp.status} ${errTxt}`);
+        throw new Error(`Resend API failed: ${resp.status} ${errTxt}`);
+      }
+    } catch (e: any) {
+      console.log(`[MAIL] Resend API error: ${e?.message}`);
+      // Continue to SMTP fallback
+    }
+  }
+  
+  // Try SMTP as fallback
   const t = getTransporter();
-  
-  if (!t || !from) {
-    console.log(`[MAIL] No SMTP transporter available, trying API fallback`);
-    // Try Resend API if configured
-    if (env.resendApiKey && env.smtpFrom) {
-      try {
-        const resp = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${env.resendApiKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ from: env.smtpFrom, to, subject, text })
-        });
-        if (!resp.ok) {
-          const errTxt = await resp.text().catch(() => '');
-          console.log(`[MAIL] Resend send failed: ${resp.status} ${errTxt}`);
-          throw new Error(`Resend API failed: ${resp.status}`);
-        } else {
-          console.log(`[MAIL] Resend email sent successfully to ${to}`);
-          return { success: true, channel: 'resend' };
-        }
-      } catch (e: any) {
-        console.log(`[MAIL] Resend error: ${e?.message}`);
-        throw new Error(`All email transports failed: ${e?.message}`);
-      }
+  if (t && from) {
+    try {
+      console.log(`[MAIL] Attempting SMTP delivery to ${to}`);
+      console.log(`[MAIL] Testing SMTP connection to ${t.options.host}:${t.options.port}`);
+      await t.verify();
+      console.log(`[MAIL] SMTP connection verified successfully`);
+      
+      await t.sendMail({ from, to, subject, text });
+      console.log(`[MAIL] Email sent successfully to ${to} via SMTP`);
+      return { success: true, channel: 'smtp' };
+    } catch (error: any) {
+      console.log(`[MAIL] SMTP send failed: ${error?.message}`);
+      console.log(`[MAIL] SMTP config: host=${t.options.host}, port=${t.options.port}, secure=${t.options.secure}`);
     }
-    // Fallback to console if no provider works
-    console.log(`[MAIL FALLBACK] To: ${to} | Subject: ${subject} | Body: ${text}`);
-    throw new Error('No email configuration available');
   }
   
-  try {
-    // Test connection first
-    console.log(`[MAIL] Testing SMTP connection to ${t.options.host}:${t.options.port}`);
-    await t.verify();
-    console.log(`[MAIL] SMTP connection verified successfully`);
-    
-    // Send email
-    await t.sendMail({ from, to, subject, text });
-    console.log(`[MAIL] Email sent successfully to ${to} via SMTP`);
-    return { success: true, channel: 'smtp' };
-  } catch (error: any) {
-    console.log(`[MAIL] SMTP send failed: ${error?.message}`);
-    console.log(`[MAIL] SMTP config: host=${t.options.host}, port=${t.options.port}, secure=${t.options.secure}`);
-    
-    // Try Resend fallback if configured
-    if (env.resendApiKey && env.smtpFrom) {
-      try {
-        console.log(`[MAIL] Attempting Resend API fallback`);
-        const resp = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${env.resendApiKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ from: env.smtpFrom, to, subject, text })
-        });
-        if (resp.ok) {
-          console.log(`[MAIL] Resend fallback delivered email to ${to}`);
-          return { success: true, channel: 'resend' };
-        } else {
-          const errTxt = await resp.text().catch(() => '');
-          console.log(`[MAIL] Resend fallback failed: ${resp.status} ${errTxt}`);
-        }
-      } catch (e: any) {
-        console.log(`[MAIL] Resend fallback error: ${e?.message}`);
-      }
-    }
-    
-    // Final fallback - log to console but don't pretend success
-    console.log(`[MAIL] All email transports failed, logging to console`);
-    console.log(`[MAIL FALLBACK] To: ${to} | Subject: ${subject} | Body: ${text}`);
-    console.log(`[MAIL ERROR] ${error.message}`);
-    throw new Error(`Email delivery failed: ${error.message}`);
-  }
+  // Final fallback - log to console
+  console.log(`[MAIL] All email transports failed, logging to console`);
+  console.log(`[MAIL FALLBACK] To: ${to} | Subject: ${subject} | Body: ${text}`);
+  throw new Error('Email delivery failed: No working email service available');
 }
 
 export function isEmailConfigured(): boolean {
-  // True if Gmail App Password or generic SMTP creds are present
+  // Check Resend API first (preferred for cloud deployments)
+  if (env.resendApiKey && env.smtpFrom) return true;
+  // Fallback to SMTP
   if (env.emailUser && env.emailAppPassword) return true;
   if (env.smtpHost && env.smtpPort && env.smtpUser && env.smtpPass) return true;
   return false;
