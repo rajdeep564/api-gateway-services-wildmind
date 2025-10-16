@@ -17,9 +17,9 @@ function getTransporter() {
       pool: true,
       maxConnections: 3,
       maxMessages: 100,
-      connectionTimeout: 5000,
-      greetingTimeout: 5000,
-      socketTimeout: 10000,
+      connectionTimeout: 15000,
+      greetingTimeout: 10000,
+      socketTimeout: 30000,
       auth: { user: gmailUser, pass: gmailPass }
     });
     return transporter;
@@ -38,9 +38,9 @@ function getTransporter() {
       pool: true,
       maxConnections: 3,
       maxMessages: 100,
-      connectionTimeout: 5000,
-      greetingTimeout: 5000,
-      socketTimeout: 10000,
+      connectionTimeout: 15000,
+      greetingTimeout: 10000,
+      socketTimeout: 30000,
       auth: { user, pass }
     });
   }
