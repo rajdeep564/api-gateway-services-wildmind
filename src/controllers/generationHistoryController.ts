@@ -79,10 +79,24 @@ async function softDelete(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+async function update(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid;
+    const { historyId } = req.params as any;
+    const updates = req.body as any;
+    // Allow per-media privacy updates: image/video payloads are forwarded verbatim
+    await generationHistoryService.update(uid, historyId, updates);
+    return res.json(formatApiResponse('success', 'Updated', {}));
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export const generationHistoryController = {
 	create,
 	updateStatus,
 	get,
   listMine,
   softDelete,
+  update,
 };
