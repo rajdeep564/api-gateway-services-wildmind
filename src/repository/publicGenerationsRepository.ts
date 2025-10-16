@@ -1,8 +1,8 @@
-import { adminDb } from '../config/firebaseAdmin';
+import { adminDb, admin } from '../config/firebaseAdmin';
 import { GenerationHistoryItem } from '../types/generate';
 
 function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
-  const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, createdBy, isPublic, createdAt, updatedAt, isDeleted, aspectRatio, frameSize, aspect_ratio } = data;
+  const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, audios, createdBy, isPublic, createdAt, updatedAt, isDeleted, aspectRatio, frameSize, aspect_ratio } = data;
   return {
     id,
     uid,
@@ -15,6 +15,7 @@ function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
     nsfw,
     images,
     videos,
+    audios,
     createdBy,
     isPublic,
     isDeleted,
@@ -28,11 +29,14 @@ function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
 export async function listPublic(params: {
   limit: number;
   cursor?: string;
-  generationType?: string;
+  generationType?: string | string[];
   status?: string;
   sortBy?: 'createdAt' | 'updatedAt' | 'prompt';
   sortOrder?: 'asc' | 'desc';
   createdBy?: string; // uid of creator
+  dateStart?: string;
+  dateEnd?: string;
+  mode?: 'video' | 'image' | 'music' | 'all';
 }): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string; totalCount?: number }> {
   const col = adminDb.collection('generations');
   
@@ -46,8 +50,14 @@ export async function listPublic(params: {
   q = q.where('isPublic', '==', true);
   
   // Apply filters
+  // Prefer client-side filtering for generationType arrays to avoid Firestore 'in' index requirements
+  let clientFilterTypes: string[] | undefined;
   if (params.generationType) {
-    q = q.where('generationType', '==', params.generationType);
+    if (Array.isArray(params.generationType)) {
+      clientFilterTypes = params.generationType as string[];
+    } else {
+      clientFilterTypes = [String(params.generationType)];
+    }
   }
   
   if (params.status) {
@@ -56,6 +66,19 @@ export async function listPublic(params: {
   
   if (params.createdBy) {
     q = q.where('createdBy.uid', '==', params.createdBy);
+  }
+  // Optional date filtering based on createdAt timestamp
+  let filterByDateInMemory = false;
+  if (params.dateStart && params.dateEnd) {
+    try {
+      const start = new Date(params.dateStart);
+      const end = new Date(params.dateEnd);
+      // Try server-side range filter; requires composite index for where + orderBy
+      q = q.where('createdAt', '>=', admin.firestore.Timestamp.fromDate(start))
+           .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(end));
+    } catch {
+      filterByDateInMemory = true;
+    }
   }
   
   // Handle cursor-based pagination (AFTER filters)
@@ -66,17 +89,36 @@ export async function listPublic(params: {
     }
   }
   
-  // Get total count for pagination context
-  let totalCount: number | undefined;
-  if (params.generationType || params.status || params.createdBy) {
-    const countQuery = await col.where('isPublic', '==', true).get();
-    totalCount = countQuery.docs.length;
-  }
+  // Skip total count to reduce query cost/latency; Firestore count queries require aggregation indexes
+  let totalCount: number | undefined = undefined;
   
-  const fetchCount = Math.max(params.limit * 2, params.limit);
-  const snap = await q.limit(fetchCount).get();
+  // If we need to filter types client-side, fetch a larger page to fill results
+  const fetchLimit = clientFilterTypes ? Math.min(Math.max(params.limit * 5, params.limit), 200) : params.limit;
+  const snap = await q.limit(fetchLimit).get();
   
   let items: GenerationHistoryItem[] = snap.docs.map(d => normalizePublicItem(d.id, d.data() as any));
+  if (clientFilterTypes) {
+    items = items.filter((it: any) => clientFilterTypes!.includes(String(it.generationType || '').toLowerCase()));
+  }
+  // Optional mode-based filtering by media presence (more robust than generationType)
+  if (params.mode && params.mode !== 'all') {
+    if (params.mode === 'video') {
+      items = items.filter((it: any) => Array.isArray((it as any).videos) && (it as any).videos.length > 0);
+    } else if (params.mode === 'image') {
+      items = items.filter((it: any) => Array.isArray((it as any).images) && (it as any).images.length > 0);
+    } else if (params.mode === 'music') {
+      items = items.filter((it: any) => Array.isArray((it as any).audios) && (it as any).audios.length > 0 || String(it.generationType || '').toLowerCase() === 'text-to-music');
+    }
+  }
+  // Optional in-memory date filter fallback
+  if (filterByDateInMemory && params.dateStart && params.dateEnd) {
+    const startMs = new Date(params.dateStart).getTime();
+    const endMs = new Date(params.dateEnd).getTime();
+    items = items.filter((it: any) => {
+      const ts = (it.createdAt && (it.createdAt.seconds ? it.createdAt.seconds * 1000 : Date.parse(it.createdAt))) || 0;
+      return ts >= startMs && ts <= endMs;
+    });
+  }
   // Exclude soft-deleted; treat missing as not deleted for old docs
   items = items.filter((it: any) => it.isDeleted !== true);
   const page = items.slice(0, params.limit);
