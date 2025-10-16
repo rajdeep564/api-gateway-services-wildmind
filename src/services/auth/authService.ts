@@ -100,28 +100,40 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
     return false;
   })();
 
+  let emailSent = false;
+  let emailError: string | null = null;
+
   if (shouldAwaitEmail) {
     try {
       await sendEmail(email, 'Your verification code', `Your OTP code is: ${code}`);
       console.log(`[AUTH] OTP email sent (await) to ${email}`);
+      emailSent = true;
     } catch (emailError: any) {
       console.log(`[AUTH] Email send failed (await): ${emailError.message}`);
-      // Do not throw: code is already saved; client can retry or use another channel
+      emailError = emailError.message;
     }
   } else {
     (async () => {
       try {
         await sendEmail(email, 'Your verification code', `Your OTP code is: ${code}`);
         console.log(`[AUTH] OTP email dispatched (async) to ${email}`);
+        emailSent = true;
       } catch (emailError: any) {
         console.log(`[AUTH] Async email send failed: ${emailError.message}`);
+        emailError = emailError.message;
       }
     })();
   }
 
-  // Respond and indicate delivery channel (email or console fallback)
+  // Respond with actual email status
   const exposeDebug = String(process.env.DEBUG_OTP || '').toLowerCase() === 'true' || (process.env.NODE_ENV !== 'production');
-  return { sent: true, ttl: ttlSeconds, channel: emailConfigured ? 'email' : 'console', ...(exposeDebug ? { debugCode: code } : {}) } as any;
+  return { 
+    sent: emailSent, 
+    ttl: ttlSeconds, 
+    channel: emailSent ? 'email' : 'console', 
+    error: emailError,
+    ...(exposeDebug ? { debugCode: code } : {}) 
+  } as any;
 }
 
 async function verifyEmailOtpAndCreateUser(email: string, username?: string, password?: string, deviceInfo?: any): Promise<{ user: AppUser; idToken: string }> {
