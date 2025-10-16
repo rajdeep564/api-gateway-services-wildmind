@@ -125,10 +125,15 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
     })();
   }
 
-  // Respond with actual email status
-  const exposeDebug = String(process.env.DEBUG_OTP || '').toLowerCase() === 'true' || (process.env.NODE_ENV !== 'production');
+  // For local development, always show OTP in console even if email fails
+  const isLocalDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV !== 'production';
+  const exposeDebug = String(process.env.DEBUG_OTP || '').toLowerCase() === 'true' || isLocalDev;
+  
+  // If email failed but we're in local dev, still consider it "sent" to console
+  const actuallySent = emailSent || (isLocalDev && !emailConfigured);
+  
   return { 
-    sent: emailSent, 
+    sent: actuallySent, 
     ttl: ttlSeconds, 
     channel: emailSent ? 'email' : 'console', 
     error: emailError,

@@ -118,11 +118,27 @@ export async function sendEmail(to: string, subject: string, text: string) {
 }
 
 export function isEmailConfigured(): boolean {
+  console.log('[MAIL] Checking email configuration:');
+  console.log('[MAIL] - Resend API:', !!env.resendApiKey, 'From:', !!env.smtpFrom);
+  console.log('[MAIL] - Gmail User:', !!env.emailUser, 'App Password:', !!env.emailAppPassword);
+  console.log('[MAIL] - SMTP Host:', !!env.smtpHost, 'Port:', !!env.smtpPort, 'User:', !!env.smtpUser, 'Pass:', !!env.smtpPass);
+  
   // Check Resend API first (preferred for cloud deployments)
-  if (env.resendApiKey && env.smtpFrom) return true;
+  if (env.resendApiKey && env.smtpFrom) {
+    console.log('[MAIL] Email configured: Resend API');
+    return true;
+  }
   // Fallback to SMTP
-  if (env.emailUser && env.emailAppPassword) return true;
-  if (env.smtpHost && env.smtpPort && env.smtpUser && env.smtpPass) return true;
+  if (env.emailUser && env.emailAppPassword) {
+    console.log('[MAIL] Email configured: Gmail SMTP');
+    return true;
+  }
+  if (env.smtpHost && env.smtpPort && env.smtpUser && env.smtpPass) {
+    console.log('[MAIL] Email configured: Generic SMTP');
+    return true;
+  }
+  
+  console.log('[MAIL] No email configuration found');
   return false;
 }
 
