@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { replicateService } from '../services/replicateService';
+import { formatApiResponse } from '../utils/formatApiResponse';
 
 async function removeBackground(req: Request, res: Response, next: NextFunction) {
   try {
@@ -61,6 +62,63 @@ async function wanT2V(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-export const replicateController = { removeBackground, upscale, generateImage, wanI2V, wanT2V };
+export const replicateController = { removeBackground, upscale, generateImage, wanI2V, wanT2V } as any;
+// Queue-style handlers for Replicate WAN 2.5
+export async function wanT2vSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).wanT2vSubmit(uid, req.body || {});
+    res.json(formatApiResponse('success', 'Submitted', result));
+  } catch (e) { next(e); }
+}
+
+export async function wanI2vSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).wanI2vSubmit(uid, req.body || {});
+    res.json(formatApiResponse('success', 'Submitted', result));
+  } catch (e) { next(e); }
+}
+
+export async function queueStatus(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const requestId = (req.query.requestId as string) || (req.body?.requestId as string);
+    if (!requestId) return res.status(400).json(formatApiResponse('error', 'requestId is required', null as any));
+    const result = await (replicateService as any).replicateQueueStatus(uid, requestId);
+    res.json(formatApiResponse('success', 'Status', result));
+  } catch (e) { next(e); }
+}
+
+export async function queueResult(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const requestId = (req.query.requestId as string) || (req.body?.requestId as string);
+    if (!requestId) return res.status(400).json(formatApiResponse('error', 'requestId is required', null as any));
+    const result = await (replicateService as any).replicateQueueResult(uid, requestId);
+    res.json(formatApiResponse('success', 'Result', result));
+  } catch (e) { next(e); }
+}
+
+Object.assign(replicateController, { wanT2vSubmit, wanI2vSubmit, queueStatus, queueResult });
+
+// Kling queue handlers
+export async function klingT2vSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).klingT2vSubmit(uid, req.body || {});
+    res.json(formatApiResponse('success', 'Submitted', result));
+  } catch (e) { next(e); }
+}
+
+export async function klingI2vSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).klingI2vSubmit(uid, req.body || {});
+    res.json(formatApiResponse('success', 'Submitted', result));
+  } catch (e) { next(e); }
+}
+
+Object.assign(replicateController, { klingT2vSubmit, klingI2vSubmit });
 
 

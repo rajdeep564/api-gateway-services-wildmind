@@ -2,7 +2,7 @@ import { admin } from '../../config/firebaseAdmin';
 import { authRepository } from '../../repository/auth/authRepository'; // Updated with updateUserByEmail
 import { AppUser, ProviderId } from '../../types/authTypes';
 import { ApiError } from '../../utils/errorHandler';
-import { sendEmail } from '../../utils/mailer';
+import { sendEmail, isEmailConfigured } from '../../utils/mailer';
 
 function normalizeUsername(input: string): string {
   return (input || '')
@@ -90,15 +90,38 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
   await authRepository.saveOtp(email, code, ttlSeconds);
   console.log(`[AUTH] OTP saved to memory store`);
   
-  try {
-    await sendEmail(email, 'Your verification code', `Your OTP code is: ${code}`);
-    console.log(`[AUTH] OTP email sent successfully to ${email}`);
-  } catch (emailError: any) {
-    console.log(`[AUTH] Email send failed: ${emailError.message}`);
-    throw emailError;
+  // Fire-and-forget email send to reduce API latency; log result asynchronously
+  const emailConfigured = isEmailConfigured();
+  const shouldAwaitEmail = (() => {
+    const v = String(process.env.OTP_EMAIL_AWAIT || '').toLowerCase();
+    if (['1','true','yes','on'].includes(v)) return true;
+    // If running on typical serverless platforms, default to await for reliability
+    if (process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL) return true;
+    return false;
+  })();
+
+  if (shouldAwaitEmail) {
+    try {
+      await sendEmail(email, 'Your verification code', `Your OTP code is: ${code}`);
+      console.log(`[AUTH] OTP email sent (await) to ${email}`);
+    } catch (emailError: any) {
+      console.log(`[AUTH] Email send failed (await): ${emailError.message}`);
+      // Do not throw: code is already saved; client can retry or use another channel
+    }
+  } else {
+    (async () => {
+      try {
+        await sendEmail(email, 'Your verification code', `Your OTP code is: ${code}`);
+        console.log(`[AUTH] OTP email dispatched (async) to ${email}`);
+      } catch (emailError: any) {
+        console.log(`[AUTH] Async email send failed: ${emailError.message}`);
+      }
+    })();
   }
-  
-  return { sent: true, ttl: ttlSeconds };
+
+  // Respond and indicate delivery channel (email or console fallback)
+  const exposeDebug = String(process.env.DEBUG_OTP || '').toLowerCase() === 'true' || (process.env.NODE_ENV !== 'production');
+  return { sent: true, ttl: ttlSeconds, channel: emailConfigured ? 'email' : 'console', ...(exposeDebug ? { debugCode: code } : {}) } as any;
 }
 
 async function verifyEmailOtpAndCreateUser(email: string, username?: string, password?: string, deviceInfo?: any): Promise<{ user: AppUser; idToken: string }> {
