@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { Request, Response } from 'express';
 import fetch from 'node-fetch';
 import { ZATA_ENDPOINT, ZATA_BUCKET } from '../utils/storage/zataClient';
+import sharp from 'sharp';
 
 const router = Router();
 
@@ -83,6 +84,7 @@ router.get('/resource/:path(*)', async (req: Request, res: Response) => {
     if (!response.headers.get('cache-control')) {
       res.setHeader('Cache-Control', 'public, max-age=31536000');
     }
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     const origin = req.headers.origin as string | undefined;
     if (origin) {
       res.setHeader('Access-Control-Allow-Origin', origin);
@@ -129,6 +131,7 @@ router.get('/download/:path(*)', async (req: Request, res: Response) => {
     res.setHeader('Content-Type', contentInfo.contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${finalFilename}"`);
     res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     // allow browser to accept streamed download with cookies
     const origin = req.headers.origin as string | undefined;
     if (origin) {
@@ -188,6 +191,8 @@ router.get('/media/:path(*)', async (req: Request, res: Response) => {
     if (!response.headers.get('cache-control')) {
       res.setHeader('Cache-Control', 'public, max-age=31536000');
     }
+    // Avoid NotSameOriginResourcePolicy (CORP) blocking when embedding across origins
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     const origin = req.headers.origin as string | undefined;
     if (origin) {
       res.setHeader('Access-Control-Allow-Origin', origin);
@@ -207,3 +212,39 @@ router.get('/media/:path(*)', async (req: Request, res: Response) => {
 });
 
 export default router;
+
+// Thumbnail endpoint for images stored in Zata (compressed webp previews)
+router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
+  try {
+    const resourcePath = req.params.path;
+    const width = Math.max(16, Math.min(4096, parseInt(String(req.query.w || '512'), 10) || 512));
+    const quality = Math.max(10, Math.min(95, parseInt(String(req.query.q || '60'), 10) || 60));
+    const zataUrl = buildZataUrl(resourcePath);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    const response = await fetch(zataUrl, { signal: controller.signal }).finally(() => clearTimeout(timeout));
+    if (!response.ok) {
+      if (response.status === 404) return res.status(404).json({ error: 'Resource not found' });
+      return res.status(response.status).json({ error: 'Upstream error' });
+    }
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.startsWith('image/')) {
+      return res.status(415).json({ error: 'Unsupported media type for thumbnail' });
+    }
+    const source = Buffer.from(await response.arrayBuffer());
+    const out = await sharp(source)
+      .resize({ width, withoutEnlargement: true })
+      .webp({ quality })
+      .toBuffer();
+    res.status(200);
+    res.setHeader('Content-Type', 'image/webp');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.send(out);
+  } catch (error: any) {
+    if (error?.name === 'AbortError') return res.status(504).json({ error: 'Upstream timeout' });
+    console.error('Thumb generation error:', error);
+    res.status(500).json({ error: 'Failed to generate thumbnail' });
+  }
+});

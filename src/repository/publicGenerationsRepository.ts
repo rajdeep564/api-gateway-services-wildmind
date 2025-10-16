@@ -92,8 +92,9 @@ export async function listPublic(params: {
   // Skip total count to reduce query cost/latency; Firestore count queries require aggregation indexes
   let totalCount: number | undefined = undefined;
   
-  // If we need to filter types client-side, fetch a larger page to fill results
-  const fetchLimit = clientFilterTypes ? Math.min(Math.max(params.limit * 5, params.limit), 200) : params.limit;
+  // If we need to filter in-memory (generationType arrays OR mode !== 'all'), fetch a larger page to increase chances of filling the page
+  const needsInMemoryFilter = Boolean(clientFilterTypes) || (params.mode && params.mode !== 'all');
+  const fetchLimit = needsInMemoryFilter ? Math.min(Math.max(params.limit * 5, params.limit), 200) : params.limit;
   const snap = await q.limit(fetchLimit).get();
   
   let items: GenerationHistoryItem[] = snap.docs.map(d => normalizePublicItem(d.id, d.data() as any));
@@ -122,7 +123,16 @@ export async function listPublic(params: {
   // Exclude soft-deleted; treat missing as not deleted for old docs
   items = items.filter((it: any) => it.isDeleted !== true);
   const page = items.slice(0, params.limit);
-  const nextCursor = page.length === params.limit ? page[page.length - 1].id : undefined;
+  // Compute next cursor: prefer the last of the returned page; if fewer than limit items but we fetched a full window, advance cursor by the last doc of the snapshot so the client can continue
+  let nextCursor: string | undefined;
+  if (page.length === params.limit) {
+    nextCursor = page[page.length - 1].id;
+  } else if (snap.docs.length === fetchLimit) {
+    // We likely have more docs beyond our filter window; advance by last doc in snapshot
+    nextCursor = snap.docs[snap.docs.length - 1].id;
+  } else {
+    nextCursor = undefined;
+  }
   
   return { items: page, nextCursor, totalCount };
 }

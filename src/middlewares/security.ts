@@ -30,6 +30,8 @@ export const securityHeaders = helmet({
   // Disable COOP/COEP to avoid auth popup issues across domains
   crossOriginOpenerPolicy: false,
   crossOriginEmbedderPolicy: false,
+  // Critical: Allow other origins (e.g., Next.js localhost:3000) to display images/videos/audio
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
   referrerPolicy: { policy: 'no-referrer' },
   frameguard: { action: 'deny' },
   hsts: { maxAge: 15552000, includeSubDomains: true, preload: true },
