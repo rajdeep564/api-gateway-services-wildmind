@@ -8,6 +8,7 @@ const router = Router();
 // Internal/admin-only endpoints removed to automate flow within provider services
 router.get('/', requireAuth, validateListGenerations as any, handleValidationErrors, generationHistoryController.listMine);
 router.get('/:historyId', requireAuth, generationHistoryController.get);
+router.patch('/:historyId', requireAuth, generationHistoryController.update);
 router.delete('/:historyId', requireAuth as any, generationHistoryController.softDelete as any);
 
 export default router;
