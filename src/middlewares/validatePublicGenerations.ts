@@ -19,6 +19,9 @@ export const validatePublicListGenerations = [
   query('sortBy').optional().isIn(['createdAt','updatedAt','prompt']),
   query('sortOrder').optional().isIn(['asc','desc']),
   query('createdBy').optional().isString(),
+  query('mode').optional().isIn(['video','image','music','all']),
+  query('dateStart').optional().isISO8601(),
+  query('dateEnd').optional().isISO8601(),
 ];
 
 export const validateGenerationId = [

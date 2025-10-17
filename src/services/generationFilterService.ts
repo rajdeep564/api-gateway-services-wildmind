@@ -6,11 +6,14 @@ export interface FilterParams {
   limit?: number;
   page?: number;
   cursor?: string;
-  generationType?: GenerationType | string;
+  generationType?: GenerationType | string | string[];
   status?: 'generating' | 'completed' | 'failed';
   sortBy?: 'createdAt' | 'updatedAt' | 'prompt';
   sortOrder?: 'asc' | 'desc';
   createdBy?: string;
+  mode?: 'video' | 'image' | 'music' | 'all';
+  dateStart?: string;
+  dateEnd?: string;
 }
 
 export interface PaginationMeta {
@@ -34,10 +37,12 @@ async function getUserGenerations(uid: string, params: FilterParams) {
   const result = await generationHistoryRepository.list(uid, {
     limit,
     cursor,
-    generationType: params.generationType,
+    generationType: params.generationType as any,
     status: params.status,
     sortBy: params.sortBy,
     sortOrder: params.sortOrder,
+    dateStart: params.dateStart,
+    dateEnd: params.dateEnd,
   });
   
   const meta: PaginationMeta = {
@@ -54,51 +59,37 @@ async function getUserGenerations(uid: string, params: FilterParams) {
 }
 
 async function getPublicGenerations(params: FilterParams) {
-  const isAll = (params as any).limit === undefined || typeof (params as any).limit === 'string';
   let cursor = params.cursor;
   if (params.page && !cursor) {
     cursor = undefined;
   }
 
-  if (isAll) {
-    const pageSize = 1000; // safety page size for Firestore
-    const aggregated: any[] = [];
-    let guard = 0;
-    let next = cursor;
-    // Page through all public generations
-    while (guard < 200) {
-      const page = await publicGenerationsRepository.listPublic({
-        limit: pageSize,
-        cursor: next,
-        generationType: params.generationType,
-        status: params.status,
-        sortBy: params.sortBy,
-        sortOrder: params.sortOrder,
-        createdBy: params.createdBy,
-      });
-      aggregated.push(...page.items);
-      if (!page.nextCursor) break;
-      next = page.nextCursor;
-      guard += 1;
+  // Support feature-wise mode mapping to generationType arrays
+  if (!params.generationType && params.mode) {
+    const mode = String(params.mode).toLowerCase();
+    if (mode === 'video') {
+      params.generationType = ['text-to-video', 'image-to-video', 'video-to-video'];
+    } else if (mode === 'image') {
+      params.generationType = ['text-to-image', 'logo', 'sticker-generation', 'product-generation', 'ad-generation'];
+    } else if (mode === 'music') {
+      params.generationType = ['text-to-music'];
+    } else if (mode === 'all') {
+      params.generationType = undefined;
     }
-    const meta: PaginationMeta = {
-      limit: aggregated.length,
-      nextCursor: undefined,
-      totalCount: aggregated.length,
-      hasMore: false,
-    };
-    return { items: aggregated, meta };
   }
 
   const limit = params.limit || 20;
   const result = await publicGenerationsRepository.listPublic({
     limit,
     cursor,
-    generationType: params.generationType,
+    generationType: params.generationType as any,
     status: params.status,
     sortBy: params.sortBy,
     sortOrder: params.sortOrder,
     createdBy: params.createdBy,
+    dateStart: params.dateStart,
+    dateEnd: params.dateEnd,
+    mode: params.mode,
   });
   const meta: PaginationMeta = {
     limit,
@@ -142,8 +133,18 @@ async function validateAndTransformParams(queryParams: any): Promise<FilterParam
   ];
   
   if (queryParams.generationType) {
-    if (validGenerationTypes.includes(queryParams.generationType)) {
-      params.generationType = queryParams.generationType;
+    const raw = queryParams.generationType;
+    if (Array.isArray(raw)) {
+      const invalid = raw.filter((t: any) => !validGenerationTypes.includes(String(t)));
+      if (invalid.length) throw new Error(`Invalid generationType values: ${invalid.join(', ')}`);
+      params.generationType = raw.map(String);
+    } else if (typeof raw === 'string' && raw.includes(',')) {
+      const arr = raw.split(',').map(s => s.trim()).filter(Boolean);
+      const invalid = arr.filter((t: any) => !validGenerationTypes.includes(String(t)));
+      if (invalid.length) throw new Error(`Invalid generationType values: ${invalid.join(', ')}`);
+      params.generationType = arr;
+    } else if (validGenerationTypes.includes(raw)) {
+      params.generationType = raw;
     } else {
       throw new Error(`Invalid generationType. Must be one of: ${validGenerationTypes.join(', ')}`);
     }
@@ -182,6 +183,28 @@ async function validateAndTransformParams(queryParams: any): Promise<FilterParam
   // Handle createdBy
   if (queryParams.createdBy) {
     params.createdBy = queryParams.createdBy;
+  }
+
+  // Handle mode (feature-wise)
+  if (queryParams.mode) {
+    const mode = String(queryParams.mode).toLowerCase();
+    const validModes = ['video','image','music','all'];
+    if (!validModes.includes(mode)) {
+      throw new Error(`Invalid mode. Must be one of: ${validModes.join(', ')}`);
+    }
+    params.mode = mode as any;
+  }
+
+  // Handle date range (ISO strings)
+  if (queryParams.dateStart) {
+    const d = new Date(queryParams.dateStart);
+    if (isNaN(d.getTime())) throw new Error('Invalid dateStart');
+    params.dateStart = d.toISOString();
+  }
+  if (queryParams.dateEnd) {
+    const d = new Date(queryParams.dateEnd);
+    if (isNaN(d.getTime())) throw new Error('Invalid dateEnd');
+    params.dateEnd = d.toISOString();
   }
   
   return params;

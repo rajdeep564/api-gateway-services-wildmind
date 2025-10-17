@@ -72,6 +72,27 @@ router.post(
   replicateController.wanT2vSubmit as any
 );
 
+// Explicit FAST alias for WAN 2.5 T2V
+router.post(
+  '/wan-2-5-t2v/fast/submit',
+  requireAuth,
+  validateWan25T2V,
+  makeCreditCost('replicate', 'wan-t2v', computeWanVideoCost),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      // Force fast mode; prefer explicit -fast slug if not provided
+      req.body = {
+        ...req.body,
+        speed: 'fast',
+        model: req.body?.model && String(req.body.model).toLowerCase().includes('fast')
+          ? req.body.model
+          : 'wan-video/wan-2.5-t2v-fast'
+      };
+      return (replicateController as any).wanT2vSubmit(req, res, next);
+    } catch (e) { next(e); }
+  }
+);
+
 // Image generate (seedream/ideogram/magic-refiner)
 router.post(
   '/generate',
@@ -100,6 +121,27 @@ router.post(
   validateWan25I2V,
   makeCreditCost('replicate', 'wan-i2v', computeWanVideoCost),
   replicateController.wanI2vSubmit as any
+);
+
+// Explicit FAST alias for WAN 2.5 I2V
+router.post(
+  '/wan-2-5-i2v/fast/submit',
+  requireAuth,
+  validateWan25I2V,
+  makeCreditCost('replicate', 'wan-i2v', computeWanVideoCost),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      // Force fast mode; prefer explicit -fast slug if not provided
+      req.body = {
+        ...req.body,
+        speed: 'fast',
+        model: req.body?.model && String(req.body.model).toLowerCase().includes('fast')
+          ? req.body.model
+          : 'wan-video/wan-2.5-i2v-fast'
+      };
+      return (replicateController as any).wanI2vSubmit(req, res, next);
+    } catch (e) { next(e); }
+  }
 );
 
 // ============ Queue-style endpoints for Replicate Kling models ============
