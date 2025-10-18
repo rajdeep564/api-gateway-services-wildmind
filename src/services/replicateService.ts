@@ -1,6 +1,7 @@
 // Use dynamic import signature to avoid type requirement during build-time
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const Replicate = require('replicate');
+import sharp from 'sharp';
 import util from 'util';
 import { ApiError } from '../utils/errorHandler';
 import { env } from '../config/env';
@@ -377,14 +378,80 @@ export async function generateImage(uid: string, body: any) {
       if ((input.max_images ?? 1) > 1 && input.sequential_image_generation !== 'auto') {
         input.sequential_image_generation = 'auto';
       }
-      // multi-image input: ensure URLs; upload data URIs to Zata
+      // multi-image input: ensure HTTP(S) URLs; upload data URIs to Zata first
+      const username = creator?.username || uid;
       let images: string[] = Array.isArray(rest.image_input) ? rest.image_input.slice(0, 10) : [];
-      if (Array.isArray(images) && images.length > 0) {
-        // pass image_input directly (URLs or data URIs) without uploading
-        input.image_input = images;
+      if (!images.length && typeof rest.image === 'string' && rest.image.length) images = [rest.image];
+      if (images.length > 0) {
+        const resolved: string[] = [];
+        for (let i = 0; i < images.length; i++) {
+          const img = images[i];
+          try {
+            if (typeof img === 'string' && img.startsWith('data:')) {
+              const uploaded = await uploadDataUriToZata({ dataUri: img, keyPrefix: `users/${username}/input/${historyId}`, fileName: `seedream-ref-${i+1}` });
+              resolved.push(uploaded.publicUrl);
+            } else if (typeof img === 'string') {
+              resolved.push(img);
+            }
+          } catch {
+            if (typeof img === 'string') resolved.push(img);
+          }
+        }
+        // Normalize any out-of-range aspect ratios to Seedream's allowed bounds (0.33–3.0)
+        async function normalizeIfNeeded(url: string, idx: number): Promise<string> {
+          try {
+            let buf: Buffer | null = null;
+            if (url.startsWith('data:')) {
+              const comma = url.indexOf(',');
+              const b64 = comma >= 0 ? url.slice(comma + 1) : '';
+              buf = Buffer.from(b64, 'base64');
+            } else {
+              const resp = await fetch(url as any);
+              if (!resp.ok) return url;
+              const ab = await resp.arrayBuffer();
+              buf = Buffer.from(new Uint8Array(ab));
+            }
+            if (!buf) return url;
+            const meta = await sharp(buf).metadata();
+            const w = Number(meta.width || 0);
+            const h = Number(meta.height || 0);
+            if (!w || !h) return url;
+            const ratio = w / h;
+            const minR = 0.33;
+            const maxR = 3.0;
+            if (ratio >= minR && ratio <= maxR) return url; // already OK
+            // Pad to nearest bound to avoid cropping content
+            if (ratio > maxR) {
+              const targetH = Math.ceil(w / maxR);
+              const pad = Math.max(0, targetH - h);
+              if (pad <= 0) return url;
+              const top = Math.floor(pad / 2);
+              const bottom = pad - top;
+              const padded = await sharp(buf).extend({ top, bottom, left: 0, right: 0, background: { r: 0, g: 0, b: 0 } }).toBuffer();
+              const uploaded = await uploadDataUriToZata({ dataUri: `data:image/jpeg;base64,${padded.toString('base64')}`, keyPrefix: `users/${username}/input/${historyId}`, fileName: `seedream-ref-fixed-${idx+1}.jpg` });
+              return uploaded.publicUrl;
+            } else {
+              // ratio < minR => too tall; pad width
+              const targetW = Math.ceil(h * minR);
+              const pad = Math.max(0, targetW - w);
+              if (pad <= 0) return url;
+              const left = Math.floor(pad / 2);
+              const right = pad - left;
+              const padded = await sharp(buf).extend({ top: 0, bottom: 0, left, right, background: { r: 0, g: 0, b: 0 } }).toBuffer();
+              const uploaded = await uploadDataUriToZata({ dataUri: `data:image/jpeg;base64,${padded.toString('base64')}`, keyPrefix: `users/${username}/input/${historyId}`, fileName: `seedream-ref-fixed-${idx+1}.jpg` });
+              return uploaded.publicUrl;
+            }
+          } catch {
+            return url;
+          }
+        }
+        const fixed: string[] = [];
+        for (let i = 0; i < resolved.length; i++) {
+          // eslint-disable-next-line no-await-in-loop
+          fixed.push(await normalizeIfNeeded(resolved[i], i));
+        }
+        if (fixed.length > 0) input.image_input = fixed;
       }
-      // also support legacy single image
-      if (!input.image_input && rest.image) input.image_input = [rest.image];
       // Enforce total images cap when auto: input_count + max_images <= 15
       if (input.sequential_image_generation === 'auto') {
         const inputCount = Array.isArray(input.image_input) ? input.image_input.length : 0;
@@ -991,6 +1058,11 @@ export async function replicateQueueResult(uid: string, requestId: string): Prom
         const fakeReq = { body: { kind: modeGuess, duration: (fresh as any)?.duration, resolution: (fresh as any)?.resolution, model: (fresh as any)?.model, kling_mode: (fresh as any)?.kling_mode } } as any;
         const { cost, pricingVersion, meta } = await computeKlingVideoCost(fakeReq as any);
         await creditsRepository.writeDebitIfAbsent(uid, historyId, cost, `replicate.queue.kling-${modeGuess}`, { ...meta, historyId, provider: 'replicate', pricingVersion });
+      } else if (model.includes('seedance')) {
+        const { computeSeedanceVideoCost } = await import('../utils/pricing/seedancePricing');
+        const fakeReq = { body: { kind: modeGuess, duration: (fresh as any)?.duration, resolution: (fresh as any)?.resolution, model: (fresh as any)?.model } } as any;
+        const { cost, pricingVersion, meta } = await computeSeedanceVideoCost(fakeReq as any);
+        await creditsRepository.writeDebitIfAbsent(uid, historyId, cost, `replicate.queue.seedance-${modeGuess}`, { ...meta, historyId, provider: 'replicate', pricingVersion });
       }
     } catch {}
     return { videos: [videoItem], historyId, model: (located.item as any)?.model, requestId, status: 'completed' } as any;
