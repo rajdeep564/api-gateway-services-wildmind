@@ -1,0 +1,14 @@
+[
+  {
+    "code": "STU-335052-MV9TOI",
+    "type": "STUDENT",
+    "planCode": "PLAN_A",
+    "maxUses": 10
+  },
+  {
+    "code": "BUS-335483-PRLKHW",
+    "type": "BUSINESS",
+    "planCode": "PLAN_B",
+    "maxUses": 10
+  }
+]

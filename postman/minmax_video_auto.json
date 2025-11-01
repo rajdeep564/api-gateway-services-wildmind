@@ -1,0 +1,127 @@
+{
+    "info": {
+      "name": "MiniMax Video Flow (Backend)",
+      "_postman_id": "a2f1b4e3-6b4c-42c5-b81f-93d3fd0e2abc",
+      "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "variable": [
+      { "key": "baseUrl", "value": "http://localhost:5000" },
+      { "key": "taskId", "value": "" },
+      { "key": "fileId", "value": "" },
+      { "key": "pollCount", "value": "0" }
+    ],
+    "item": [
+      {
+        "name": "Video - Start",
+        "request": {
+          "method": "POST",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "url": {
+            "raw": "{{baseUrl}}/api/minimax/video",
+            "host": ["{{baseUrl}}"],
+            "path": ["api", "minimax", "video"]
+          },
+          "body": {
+            "mode": "raw",
+            "raw": "{\n  \"model\": \"MiniMax-Hailuo-02\",\n  \"prompt\": \"A man picks up a book [Pedestal up], then reads [Static shot].\",\n  \"duration\": 6,\n  \"resolution\": \"1080P\",\n  \"prompt_optimizer\": true\n}"
+          }
+        },
+        "event": [
+          {
+            "listen": "prerequest",
+            "script": {
+              "exec": [
+                "pm.environment.unset('taskId');",
+                "pm.environment.unset('fileId');",
+                "pm.environment.set('pollCount', '0');"
+              ]
+            }
+          },
+          {
+            "listen": "test",
+            "script": {
+              "exec": [
+                "pm.test('HTTP 200', () => pm.response.code === 200);",
+                "const j = pm.response.json();",
+                "pm.test('API success', () => j.responseStatus === 'success');",
+                "const tid = j.data && (j.data.taskId || j.data.task_id || (j.data.result && j.data.result.task_id));",
+                "pm.environment.set('taskId', tid || '');",
+                "pm.test('taskId captured', () => !!pm.environment.get('taskId'));",
+                "postman.setNextRequest('Video - Status');"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "Video - Status",
+        "request": {
+          "method": "GET",
+          "url": {
+            "raw": "{{baseUrl}}/api/minimax/video/status?task_id={{taskId}}",
+            "host": ["{{baseUrl}}"],
+            "path": ["api", "minimax", "video", "status"],
+            "query": [{ "key": "task_id", "value": "{{taskId}}" }]
+          }
+        },
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "exec": [
+                "pm.test('HTTP 200', () => pm.response.code === 200);",
+                "const j = pm.response.json();",
+                "pm.test('API success', () => j.responseStatus === 'success');",
+                "const data = j.data || {};",
+                "const status = data.status || (data.result && data.result.status);",
+                "const fileId = data.file_id || (data.result && data.result.file_id);",
+                "let polls = parseInt(pm.environment.get('pollCount') || '0', 10);",
+                "if (status === 'Success') {",
+                "  pm.test('Has file_id on success', () => !!fileId);",
+                "  pm.environment.set('fileId', fileId || '');",
+                "  postman.setNextRequest('Video - File');",
+                "} else if (status === 'Fail') {",
+                "  pm.test('Status should not be Fail', () => { throw new Error('MiniMax status: Fail'); });",
+                "  postman.setNextRequest(null);",
+                "} else {",
+                "  if (polls >= 30) {",
+                "    pm.test('Polling timeout', () => { throw new Error('Video polling exceeded 30 attempts'); });",
+                "    postman.setNextRequest(null);",
+                "  } else {",
+                "    pm.environment.set('pollCount', String(polls + 1));",
+                "    postman.setNextRequest('Video - Status');",
+                "  }",
+                "}"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "Video - File",
+        "request": {
+          "method": "GET",
+          "url": {
+            "raw": "{{baseUrl}}/api/minimax/video/file?file_id={{fileId}}",
+            "host": ["{{baseUrl}}"],
+            "path": ["api", "minimax", "video", "file"],
+            "query": [{ "key": "file_id", "value": "{{fileId}}" }]
+          }
+        },
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "exec": [
+                "pm.test('HTTP 200', () => pm.response.code === 200);",
+                "const j = pm.response.json();",
+                "pm.test('API success', () => j.responseStatus === 'success');",
+                "pm.test('Has file data', () => j.data && typeof j.data === 'object');",
+                "postman.setNextRequest(null);"
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }

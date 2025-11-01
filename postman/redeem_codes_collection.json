@@ -1,0 +1,127 @@
+{
+  "info": {
+    "name": "Redeem Codes API",
+    "description": "API endpoints for managing redeem codes",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000/api",
+      "type": "string"
+    },
+    {
+      "key": "adminKey",
+      "value": "{{$randomPassword}}",
+      "type": "string",
+      "description": "Set this to your REDEEM_CODE_ADMIN_KEY environment variable value"
+    }
+  ],
+  "item": [
+    {
+      "name": "Create Student Codes",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"STUDENT\",\n  \"count\": 5,\n  \"maxUsesPerCode\": 1,\n  \"adminKey\": \"{{adminKey}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/redeem-codes/create",
+          "host": ["{{baseUrl}}"],
+          "path": ["redeem-codes", "create"]
+        }
+      }
+    },
+    {
+      "name": "Create Business Codes",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"BUSINESS\",\n  \"count\": 3,\n  \"maxUsesPerCode\": 1,\n  \"adminKey\": \"{{adminKey}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/redeem-codes/create",
+          "host": ["{{baseUrl}}"],
+          "path": ["redeem-codes", "create"]
+        }
+      }
+    },
+    {
+      "name": "Create Codes with Custom Expiry (72 hours)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"STUDENT\",\n  \"count\": 2,\n  \"maxUsesPerCode\": 5,\n  \"expiresIn\": 72,\n  \"adminKey\": \"{{adminKey}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/redeem-codes/create",
+          "host": ["{{baseUrl}}"],
+          "path": ["redeem-codes", "create"]
+        }
+      }
+    },
+    {
+      "name": "Validate Redeem Code",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"redeemCode\": \"STU-335052-MV9TOI\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/redeem-codes/validate",
+          "host": ["{{baseUrl}}"],
+          "path": ["redeem-codes", "validate"]
+        }
+      }
+    },
+    {
+      "name": "Generate Test Codes",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/redeem-codes/generate-test",
+          "host": ["{{baseUrl}}"],
+          "path": ["redeem-codes", "generate-test"]
+        }
+      }
+    }
+  ]
+}
