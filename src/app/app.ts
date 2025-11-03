@@ -66,6 +66,38 @@ const corsOptions: any = {
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
+
+// Strong preflight guard + always-set CORS headers (defensive against proxies/edges)
+const allowOrigin = (origin?: string) => {
+  if (!origin) return false;
+  try {
+    if (allowedOrigins.includes(origin)) return true;
+    if (process.env.FRONTEND_ORIGIN) {
+      const allowHost = new URL(process.env.FRONTEND_ORIGIN).hostname;
+      const reqHost = new URL(origin).hostname;
+      if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) return true;
+    }
+  } catch {}
+  return false;
+};
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin as string | undefined;
+  if (allowOrigin(origin)) {
+    res.header('Access-Control-Allow-Origin', origin as string);
+    res.header('Vary', 'Origin');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD');
+    res.header(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, X-Requested-With, X-Request-Id, X-Device-Id, X-Device-Name, X-Device-Info, ngrok-skip-browser-warning, Range'
+    );
+  }
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+  return next();
+});
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());

@@ -285,6 +285,12 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         res.setHeader('Connection', 'keep-alive');
         res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        const origin = req.headers.origin as string | undefined;
+        if (origin) {
+          res.setHeader('Access-Control-Allow-Origin', origin);
+          res.setHeader('Vary', 'Origin');
+          res.setHeader('Access-Control-Allow-Credentials', 'true');
+        }
         return res.end();
       }
     }
@@ -300,6 +306,12 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      const origin = req.headers.origin as string | undefined;
+      if (origin) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+      }
       return res.send(out);
     }
 
@@ -328,6 +340,12 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         res.setHeader('Connection', 'keep-alive');
         res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        const origin = req.headers.origin as string | undefined;
+        if (origin) {
+          res.setHeader('Access-Control-Allow-Origin', origin);
+          res.setHeader('Vary', 'Origin');
+          res.setHeader('Access-Control-Allow-Credentials', 'true');
+        }
         return res.send(webp);
       } finally {
         // best-effort cleanup
@@ -336,10 +354,23 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
       }
     }
 
+    // Unsupported -> still return CORS headers for transparency
+    const origin = req.headers.origin as string | undefined;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
     return res.status(415).json({ error: 'Unsupported media type for thumbnail' });
   } catch (error: any) {
     if (error?.name === 'AbortError') return res.status(504).json({ error: 'Upstream timeout' });
     console.error('Thumb generation error:', error);
+    const origin = req.headers.origin as string | undefined;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
     res.status(500).json({ error: 'Failed to generate thumbnail' });
   }
 });
