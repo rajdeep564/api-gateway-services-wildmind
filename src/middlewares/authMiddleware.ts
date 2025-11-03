@@ -36,11 +36,12 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     let decoded: any;
     let isSessionCookie = true;
     try {
-      decoded = await admin.auth().verifySessionCookie(token, true);
+      // checkRevoked is controlled via env for performance
+      decoded = await admin.auth().verifySessionCookie(token, env.authStrictRevocation);
       console.log("decoded(session)", decoded);
     } catch (_e) {
       isSessionCookie = false;
-      decoded = await admin.auth().verifyIdToken(token, true);
+      decoded = await admin.auth().verifyIdToken(token, env.authStrictRevocation);
       console.log("decoded(idToken)", decoded);
     }
     (req as any).uid = decoded.uid;

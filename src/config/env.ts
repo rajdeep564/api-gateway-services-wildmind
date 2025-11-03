@@ -38,18 +38,20 @@ export interface EnvConfig {
   // Logging
   logLevel: string;
   // BFL polling
-  bflPollIntervalMs?: number;
+  bflPollIntervalMs?: number;   
   bflPollMaxLoops?: number;
   reedemCodeAdminKey?: string;
   // Redis
   redisUrl?: string;
   redisPrefix?: string;
   redisDebug: boolean;
+  // Auth
+  authStrictRevocation: boolean; // when true, verify* checks revocation (slower); default false for speed
 }
 
 function normalizeBoolean(value: string | undefined, defaultTrue: boolean): boolean {
   if (value == null) return defaultTrue;
-  const v = value.toLowerCase();
+  const v = value.toLowerCase();        
   if (['1', 'true', 'yes', 'on'].includes(v)) return true;
   if (['0', 'false', 'no', 'off'].includes(v)) return false;
   return defaultTrue;
@@ -95,6 +97,8 @@ export const env: EnvConfig = {
   redisUrl: process.env.REDIS_URL,
   redisPrefix: process.env.REDIS_PREFIX || 'sess:app:',
   redisDebug: normalizeBoolean(process.env.REDIS_DEBUG, false),
+  // Auth
+  authStrictRevocation: normalizeBoolean(process.env.AUTH_STRICT_REVOCATION, false),
 };
 
 

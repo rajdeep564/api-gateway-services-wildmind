@@ -359,6 +359,14 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
       } catch (e: any) {
         console.error('[CREDITS][googleSignIn:needsUsername] Init error', { uid: (result.user as any)?.uid, err: e?.message });
       }
+      // Set session cookie immediately so client doesn't need a follow-up session call
+      try {
+        if (typeof idToken === 'string' && idToken.length > 0) {
+          await setSessionCookie(req, res, idToken);
+        }
+      } catch (cookieErr) {
+        console.warn('[CONTROLLER][googleSignIn:needsUsername] session cookie create failed', (cookieErr as any)?.message);
+      }
       // New user needs to set username
       res.json(
         formatApiResponse(
@@ -378,6 +386,14 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
         console.log('[CREDITS][googleSignIn:existing] Init done', init);
       } catch (e: any) {
         console.error('[CREDITS][googleSignIn:existing] Init error', { uid: (result.user as any)?.uid, err: e?.message });
+      }
+      // Set session cookie immediately for existing users too
+      try {
+        if (typeof idToken === 'string' && idToken.length > 0) {
+          await setSessionCookie(req, res, idToken);
+        }
+      } catch (cookieErr) {
+        console.warn('[CONTROLLER][googleSignIn:existing] session cookie create failed', (cookieErr as any)?.message);
       }
       res.json(
         formatApiResponse("success", "Google sign-in successful", {
