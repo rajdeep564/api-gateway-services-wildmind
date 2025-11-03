@@ -45,19 +45,42 @@ export async function listPublic(params: {
   const sortBy = params.sortBy || 'createdAt';
   const sortOrder = params.sortOrder || 'desc';
   
-  let q: FirebaseFirestore.Query = col.orderBy(sortBy, sortOrder);
+  // Projection: fetch only the fields needed for the feed to reduce payload size
+  const projectionFields: Array<keyof GenerationHistoryItem | string> = [
+    'prompt', 'model', 'generationType', 'status', 'visibility', 'tags', 'nsfw',
+    'images', 'videos', 'audios', 'createdBy', 'isPublic', 'isDeleted', 'createdAt', 'updatedAt',
+    'aspectRatio', 'frameSize', 'aspect_ratio'
+  ];
+  let q: FirebaseFirestore.Query = col.select(...projectionFields as any).orderBy(sortBy, sortOrder);
   
   // Only show public; we will exclude deleted after fetch so old docs without the flag still appear
   q = q.where('isPublic', '==', true);
   
   // Apply filters
-  // Prefer client-side filtering for generationType arrays to avoid Firestore 'in' index requirements
+  // Try server-side filtering for generationType if possible (<=10 values for 'in')
   let clientFilterTypes: string[] | undefined;
   if (params.generationType) {
     if (Array.isArray(params.generationType)) {
-      clientFilterTypes = params.generationType as string[];
+      const arr = (params.generationType as string[]).map(s => String(s));
+      if (arr.length > 0 && arr.length <= 10) {
+        try {
+          q = q.where('generationType', 'in', arr);
+          clientFilterTypes = undefined;
+        } catch {
+          // fall back to client-side
+          clientFilterTypes = arr;
+        }
+      } else {
+        clientFilterTypes = arr;
+      }
     } else {
-      clientFilterTypes = [String(params.generationType)];
+      // Single value can be server-side filtered
+      try {
+        q = q.where('generationType', '==', String(params.generationType));
+        clientFilterTypes = undefined;
+      } catch {
+        clientFilterTypes = [String(params.generationType)];
+      }
     }
   }
   
@@ -95,7 +118,8 @@ export async function listPublic(params: {
   
   // If we need to filter in-memory (generationType arrays OR mode !== 'all'), fetch a larger page to increase chances of filling the page
   const needsInMemoryFilter = Boolean(clientFilterTypes) || (params.mode && params.mode !== 'all') || Boolean(params.search);
-  const fetchLimit = needsInMemoryFilter ? Math.min(Math.max(params.limit * 5, params.limit), 200) : params.limit;
+  const fetchMultiplier = clientFilterTypes ? 3 : 2; // be less aggressive with overfetching
+  const fetchLimit = needsInMemoryFilter ? Math.min(Math.max(params.limit * fetchMultiplier, params.limit), 150) : params.limit;
   const snap = await q.limit(fetchLimit).get();
   
   let items: GenerationHistoryItem[] = snap.docs.map(d => normalizePublicItem(d.id, d.data() as any));
