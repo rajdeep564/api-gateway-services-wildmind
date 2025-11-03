@@ -840,6 +840,21 @@ export const creditDistributionData: ModelCreditInfo[] = [
     },
   },
   {
+    srNo: 42.1,
+    modelName: "replicate/bria/eraser",
+    priceToPay: 0.035,
+    overCharge: 0.015,
+    userCost: 0.05,
+    creditsPerGeneration: 100,
+    plans: {
+      planA: 123.6,
+      planB: 247.2,
+      planC: 618,
+      planD: 1977.6,
+      free: 41.2,
+    },
+  },
+  {
     srNo: 43,
     modelName: "replicate/nightmareai/real-esrgan",
     priceToPay: 0.0012,

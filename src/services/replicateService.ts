@@ -125,7 +125,10 @@ export async function removeBackground(uid: string, body: {
     console.error('[replicateService.removeBackground] Missing REPLICATE_API_TOKEN');
     throw new ApiError('Replicate API key not configured', 500);
   }
-  if (!body?.image) throw new ApiError('image is required', 400);
+  // For bria/eraser, validator allows image OR image_url; basic guard here only for legacy models
+  const modelHint = String(body?.model || '').toLowerCase();
+  const isEraser = modelHint.includes('bria/eraser');
+  if (!isEraser && !body?.image) throw new ApiError('image is required', 400);
 
   const replicate = new Replicate({ auth: key });
 
@@ -142,13 +145,29 @@ export async function removeBackground(uid: string, body: {
 
   // Prepare input based on model
   const modelBase = body.model && body.model.length > 0 ? body.model : DEFAULT_BG_MODEL_A.split(':')[0];
-  // Use input image directly (URL or data URI); only upload outputs to Zata
-  const input: Record<string, any> = { image: body.image };
-  if (modelBase.startsWith('851-labs/background-remover')) {
+  // Prepare model-specific input mapping
+  const input: Record<string, any> = {};
+  if (modelBase.startsWith('bria/eraser')) {
+    // bria/eraser schema: support image or image_url; optional mask/mask_url; mask_type; preserve_alpha; content_moderation; sync
+    const anyBody: any = body as any;
+    if (typeof anyBody.image === 'string' && anyBody.image.length > 0) input.image = anyBody.image;
+    if (!input.image && typeof anyBody.image_url === 'string' && anyBody.image_url.length > 0) input.image_url = anyBody.image_url;
+    if (typeof anyBody.mask === 'string' && anyBody.mask.length > 0) input.mask = anyBody.mask;
+    if (typeof anyBody.mask_url === 'string' && anyBody.mask_url.length > 0) input.mask_url = anyBody.mask_url;
+    if (anyBody.mask_type) input.mask_type = String(anyBody.mask_type).toLowerCase() === 'manual' ? 'manual' : (String(anyBody.mask_type).toLowerCase() === 'automatic' ? 'automatic' : undefined);
+    if (typeof anyBody.preserve_alpha === 'boolean') input.preserve_alpha = anyBody.preserve_alpha; else input.preserve_alpha = true;
+    if (typeof anyBody.content_moderation === 'boolean') input.content_moderation = anyBody.content_moderation;
+    if (typeof anyBody.sync === 'boolean') input.sync = anyBody.sync; else input.sync = true;
+  } else {
+    // Legacy background removers
+    // Use input image directly (URL or data URI); only upload outputs to Zata
+    input.image = body.image;
+    if (modelBase.startsWith('851-labs/background-remover')) {
     if (body.format) input.format = body.format;
     if (typeof body.reverse === 'boolean') input.reverse = body.reverse;
     if (typeof body.threshold === 'number') input.threshold = body.threshold;
     if (body.background_type) input.background_type = body.background_type;
+    }
   }
 
   let outputUrl = '';

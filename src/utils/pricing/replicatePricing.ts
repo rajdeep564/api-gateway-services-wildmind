@@ -5,6 +5,7 @@ export const REPLICATE_PRICING_VERSION = 'replicate-v1';
 // Costs in credits (scaled from sheet; integerized via Math.ceil in compute)
 const COST_BACKGROUND_REMOVER = 31; // credits per generation (sheet free column scaled)
 const COST_REMOVE_BG = 31;
+const COST_BRIA_ERASER = 100; // Per sheet: user cost $0.05 -> 100 credits
 const COST_CLARITY_UPSCALER = 62;
 const COST_REAL_ESRGAN = 32.4;
 const COST_SWIN2SR = 43;
@@ -18,7 +19,9 @@ const COST_PHOENIX_1_0 = 180;
 export async function computeReplicateBgRemoveCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { model } = req.body || {};
   const normalized = String(model || '').toLowerCase();
-  const cost = normalized.includes('851-labs/background-remover') ? COST_BACKGROUND_REMOVER : COST_REMOVE_BG;
+  let cost = COST_REMOVE_BG;
+  if (normalized.includes('bria/eraser')) cost = COST_BRIA_ERASER;
+  else if (normalized.includes('851-labs/background-remover')) cost = COST_BACKGROUND_REMOVER;
   return { cost: Math.ceil(cost), pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: normalized } };
 }
 
