@@ -4,10 +4,16 @@ import fetch from 'node-fetch';
 import { Agent as HttpsAgent } from 'https';
 import { ZATA_ENDPOINT, ZATA_BUCKET } from '../utils/storage/zataClient';
 import sharp from 'sharp';
+import { execFile } from 'child_process';
+import ffmpegPath from 'ffmpeg-static';
+import { promises as fs } from 'fs';
+import os from 'os';
+import path from 'path';
 
 // Create HTTPS agent that ignores SSL certificate errors for Zata (certificate expired)
 const httpsAgent = new HttpsAgent({
-  rejectUnauthorized: false
+  rejectUnauthorized: false,
+  keepAlive: true,
 });
 
 const router = Router();
@@ -67,13 +73,15 @@ router.get('/resource/:path(*)', async (req: Request, res: Response) => {
     const response = await fetch(zataUrl, {
       headers: {
         ...(req.headers.range ? { range: String(req.headers.range) } : {}),
+        ...(req.headers['if-none-match'] ? { 'if-none-match': String(req.headers['if-none-match']) } : {}),
+        ...(req.headers['if-modified-since'] ? { 'if-modified-since': String(req.headers['if-modified-since']) } : {}),
       },
       // abort on timeout
       signal: controller.signal,
       agent: httpsAgent as any,
     }).finally(() => clearTimeout(timeout));
-    
-    if (!response.ok) {
+    // Allow 304 to pass through without treating as error
+    if (!response.ok && response.status !== 304) {
       if (response.status === 404) return res.status(404).json({ error: 'Resource not found' });
       return res.status(response.status).json({ error: 'Upstream error' });
     }
@@ -91,6 +99,7 @@ router.get('/resource/:path(*)', async (req: Request, res: Response) => {
     if (!response.headers.get('cache-control')) {
       res.setHeader('Cache-Control', 'public, max-age=31536000');
     }
+    res.setHeader('Connection', 'keep-alive');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     const origin = req.headers.origin as string | undefined;
     if (origin) {
@@ -98,7 +107,10 @@ router.get('/resource/:path(*)', async (req: Request, res: Response) => {
       res.setHeader('Vary', 'Origin');
       res.setHeader('Access-Control-Allow-Credentials', 'true');
     }
-    
+    // If upstream returned 304, end without body
+    if (response.status === 304) {
+      return res.end();
+    }
     // Stream the resource data
     response.body?.pipe(res);
   } catch (error: any) {
@@ -120,11 +132,15 @@ router.get('/download/:path(*)', async (req: Request, res: Response) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
     const response = await fetch(zataUrl, { 
+      headers: {
+        ...(req.headers['if-none-match'] ? { 'if-none-match': String(req.headers['if-none-match']) } : {}),
+        ...(req.headers['if-modified-since'] ? { 'if-modified-since': String(req.headers['if-modified-since']) } : {}),
+      },
       signal: controller.signal,
       agent: httpsAgent as any,
     }).finally(() => clearTimeout(timeout));
     
-    if (!response.ok) {
+    if (!response.ok && response.status !== 304) {
       if (response.status === 404) return res.status(404).json({ error: 'Resource not found' });
       return res.status(response.status).json({ error: 'Upstream error' });
     }
@@ -140,8 +156,9 @@ router.get('/download/:path(*)', async (req: Request, res: Response) => {
     res.status(response.status);
     res.setHeader('Content-Type', contentInfo.contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${finalFilename}"`);
-    res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cache-Control', 'public, max-age=31536000');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     // allow browser to accept streamed download with cookies
     const origin = req.headers.origin as string | undefined;
     if (origin) {
@@ -155,7 +172,10 @@ router.get('/download/:path(*)', async (req: Request, res: Response) => {
     if (contentLength) {
       res.setHeader('Content-Length', contentLength);
     }
-    
+    // If 304, end now
+    if (response.status === 304) {
+      return res.end();
+    }
     // Stream the resource data
     response.body?.pipe(res);
   } catch (error: any) {
@@ -179,12 +199,14 @@ router.get('/media/:path(*)', async (req: Request, res: Response) => {
     const response = await fetch(zataUrl, {
       headers: {
         ...(req.headers.range ? { range: String(req.headers.range) } : {}),
+        ...(req.headers['if-none-match'] ? { 'if-none-match': String(req.headers['if-none-match']) } : {}),
+        ...(req.headers['if-modified-since'] ? { 'if-modified-since': String(req.headers['if-modified-since']) } : {}),
       },
       signal: controller.signal,
       agent: httpsAgent as any,
     }).finally(() => clearTimeout(timeout));
     
-    if (!response.ok) {
+    if (!response.ok && response.status !== 304) {
       if (response.status === 404) return res.status(404).json({ error: 'Resource not found' });
       return res.status(response.status).json({ error: 'Upstream error' });
     }
@@ -203,6 +225,7 @@ router.get('/media/:path(*)', async (req: Request, res: Response) => {
       res.setHeader('Cache-Control', 'public, max-age=31536000');
     }
     // Avoid NotSameOriginResourcePolicy (CORP) blocking when embedding across origins
+    res.setHeader('Connection', 'keep-alive');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     const origin = req.headers.origin as string | undefined;
     if (origin) {
@@ -210,7 +233,10 @@ router.get('/media/:path(*)', async (req: Request, res: Response) => {
       res.setHeader('Vary', 'Origin');
       res.setHeader('Access-Control-Allow-Credentials', 'true');
     }
-    
+    // 304? No body
+    if (response.status === 304) {
+      return res.end();
+    }
     // Stream the resource data (works for images, videos, audio, etc.)
     response.body?.pipe(res);
   } catch (error: any) {
@@ -243,22 +269,115 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
       return res.status(response.status).json({ error: 'Upstream error' });
     }
     const contentType = response.headers.get('content-type') || '';
-    if (!contentType.startsWith('image/')) {
-      return res.status(415).json({ error: 'Unsupported media type for thumbnail' });
+
+    // Conditional ETag based on upstream ETag/Last-Modified + params
+    const upstreamEtag = response.headers.get('etag');
+    const upstreamLM = response.headers.get('last-modified');
+    const baseTag = upstreamEtag || (upstreamLM ? `W/"lm:${upstreamLM}"` : null);
+    if (baseTag) {
+      const baseCore = String(baseTag).replace(/\"/g, '').replace(/"/g, '');
+      const mediaKind = contentType.startsWith('video/') ? 'vthumb' : 'thumb';
+      const thumbTag = `W/"${mediaKind}:${baseCore}:${width}x${quality}"`;
+      res.setHeader('ETag', thumbTag);
+      const inm = req.headers['if-none-match'];
+      if (inm && String(inm).replace(/\"/g, '').replace(/"/g, '') === thumbTag.replace(/\"/g, '').replace(/"/g, '')) {
+        res.status(304);
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        return res.end();
+      }
     }
-    const source = Buffer.from(await response.arrayBuffer());
-    const out = await sharp(source)
-      .resize({ width, withoutEnlargement: true })
-      .webp({ quality })
-      .toBuffer();
-    res.status(200);
-    res.setHeader('Content-Type', 'image/webp');
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-    res.send(out);
+    // Handle images via sharp, videos via ffmpeg snapshot
+    if (contentType.startsWith('image/')) {
+      const source = Buffer.from(await response.arrayBuffer());
+      const out = await sharp(source)
+        .resize({ width, withoutEnlargement: true })
+        .webp({ quality })
+        .toBuffer();
+      res.status(200);
+      res.setHeader('Content-Type', 'image/webp');
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      return res.send(out);
+    }
+
+    if (contentType.startsWith('video/')) {
+      if (!ffmpegPath) {
+        return res.status(501).json({ error: 'Video thumbnail not supported on this host' });
+      }
+      const buf = Buffer.from(await response.arrayBuffer());
+      const tmpDir = os.tmpdir();
+      const id = Math.random().toString(36).slice(2);
+      const inPath = path.join(tmpDir, `wm_in_${id}`);
+      const outPath = path.join(tmpDir, `wm_out_${id}.jpg`);
+      try {
+        await fs.writeFile(inPath, buf);
+        // Grab a frame at 0.5s; scale by width preserving aspect
+        await new Promise<void>((resolve, reject) => {
+          execFile(String(ffmpegPath), ['-y', '-ss', '0.5', '-i', inPath, '-frames:v', '1', '-vf', `scale=${width}:-1:force_original_aspect_ratio=decrease`, outPath], (err) => {
+            if (err) return reject(err);
+            resolve();
+          });
+        });
+        const frame = await fs.readFile(outPath);
+        const webp = await sharp(frame).webp({ quality }).toBuffer();
+        res.status(200);
+        res.setHeader('Content-Type', 'image/webp');
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        return res.send(webp);
+      } finally {
+        // best-effort cleanup
+        try { await fs.unlink(inPath); } catch {}
+        try { await fs.unlink(outPath); } catch {}
+      }
+    }
+
+    return res.status(415).json({ error: 'Unsupported media type for thumbnail' });
   } catch (error: any) {
     if (error?.name === 'AbortError') return res.status(504).json({ error: 'Upstream timeout' });
     console.error('Thumb generation error:', error);
     res.status(500).json({ error: 'Failed to generate thumbnail' });
+  }
+});
+
+// Lightweight external proxy for avatars or one-off assets (CORS-friendly, small cache)
+router.get('/external', async (req: Request, res: Response) => {
+  try {
+    const url = String(req.query.url || '');
+    if (!url) return res.status(400).json({ error: 'url is required' });
+    // Basic allowlist for protocols
+    if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Invalid URL' });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const resp = await fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timeout));
+    if (!resp.ok && resp.status !== 304) {
+      return res.status(resp.status).json({ error: 'Upstream error' });
+    }
+    res.status(resp.status);
+    const ct = resp.headers.get('content-type') || 'application/octet-stream';
+    res.setHeader('Content-Type', ct);
+    const et = resp.headers.get('etag');
+    if (et) res.setHeader('ETag', et);
+    const lm = resp.headers.get('last-modified');
+    if (lm) res.setHeader('Last-Modified', lm);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    const origin = req.headers.origin as string | undefined;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+    if (resp.status === 304) return res.end();
+    resp.body?.pipe(res);
+  } catch (error: any) {
+    if (error?.name === 'AbortError') return res.status(504).json({ error: 'Upstream timeout' });
+    console.error('External proxy error:', error);
+    res.status(500).json({ error: 'Failed to fetch external resource' });
   }
 });
