@@ -1,8 +1,14 @@
 import { Router } from 'express';
 import { Request, Response } from 'express';
 import fetch from 'node-fetch';
+import { Agent as HttpsAgent } from 'https';
 import { ZATA_ENDPOINT, ZATA_BUCKET } from '../utils/storage/zataClient';
 import sharp from 'sharp';
+
+// Create HTTPS agent that ignores SSL certificate errors for Zata (certificate expired)
+const httpsAgent = new HttpsAgent({
+  rejectUnauthorized: false
+});
 
 const router = Router();
 
@@ -64,6 +70,7 @@ router.get('/resource/:path(*)', async (req: Request, res: Response) => {
       },
       // abort on timeout
       signal: controller.signal,
+      agent: httpsAgent as any,
     }).finally(() => clearTimeout(timeout));
     
     if (!response.ok) {
@@ -112,7 +119,10 @@ router.get('/download/:path(*)', async (req: Request, res: Response) => {
     // Fetch the resource from Zata storage with timeout
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
-    const response = await fetch(zataUrl, { signal: controller.signal }).finally(() => clearTimeout(timeout));
+    const response = await fetch(zataUrl, { 
+      signal: controller.signal,
+      agent: httpsAgent as any,
+    }).finally(() => clearTimeout(timeout));
     
     if (!response.ok) {
       if (response.status === 404) return res.status(404).json({ error: 'Resource not found' });
@@ -171,6 +181,7 @@ router.get('/media/:path(*)', async (req: Request, res: Response) => {
         ...(req.headers.range ? { range: String(req.headers.range) } : {}),
       },
       signal: controller.signal,
+      agent: httpsAgent as any,
     }).finally(() => clearTimeout(timeout));
     
     if (!response.ok) {
@@ -223,7 +234,10 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
-    const response = await fetch(zataUrl, { signal: controller.signal }).finally(() => clearTimeout(timeout));
+    const response = await fetch(zataUrl, { 
+      signal: controller.signal,
+      agent: httpsAgent as any,
+    }).finally(() => clearTimeout(timeout));
     if (!response.ok) {
       if (response.status === 404) return res.status(404).json({ error: 'Resource not found' });
       return res.status(response.status).json({ error: 'Upstream error' });
