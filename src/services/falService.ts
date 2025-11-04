@@ -135,7 +135,7 @@ async function generate(
       }
       if (modelEndpoint.endsWith("/edit")) {
         // Use public URLs for edit endpoint, fallback to original uploadedImages if no public URLs available
-        input.image_urls = publicImageUrls.length > 0 ? publicImageUrls.slice(0, 4) : uploadedImages.slice(0, 4);
+        input.image_urls = publicImageUrls.length > 0 ? publicImageUrls.slice(0, 10) : uploadedImages.slice(0, 10);
       }
 
       // Debug log for final body
