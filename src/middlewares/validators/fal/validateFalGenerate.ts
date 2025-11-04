@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
 import { ApiError } from '../../../utils/errorHandler';
+import { probeVideoMeta } from '../../../utils/media/probe';
+import { probeImageMeta } from '../../../utils/media/imageProbe';
 
 export const ALLOWED_FAL_MODELS = [
   'gemini-25-flash-image',
@@ -309,6 +311,71 @@ export const validateFalRecraftVectorize = [
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
     next();
+  }
+];
+
+// SeedVR2 Video Upscaler (fal-ai/seedvr/upscale/video)
+export const validateFalSeedvrUpscale = [
+  body('video_url').isString().notEmpty(),
+  body('upscale_mode').optional().isIn(['target','factor']).withMessage('upscale_mode must be target or factor'),
+  body('upscale_factor').optional().isFloat({ gt: 0.1, lt: 10 }).withMessage('upscale_factor must be between 0.1 and 10'),
+  body('target_resolution').optional().isIn(['720p','1080p','1440p','2160p']),
+  body('seed').optional().isInt(),
+  body('noise_scale').optional().isFloat({ min: 0, max: 2 }),
+  body('output_format').optional().isIn(['X264 (.mp4)','VP9 (.webm)','PRORES4444 (.mov)','GIF (.gif)']),
+  body('output_quality').optional().isIn(['low','medium','high','maximum']),
+  body('output_write_mode').optional().isIn(['fast','balanced','small']),
+  async (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    // Validate 30s max video duration by probing the URL
+    try {
+      const url: string = req.body?.video_url;
+      const meta = await probeVideoMeta(url);
+      const duration = Number(meta?.durationSec || 0);
+      if (!isFinite(duration) || duration <= 0) {
+        return next(new ApiError('Unable to read video metadata. Ensure the URL is public and supports HTTP range requests.', 400));
+      }
+      if (duration > 30.5) {
+        return next(new ApiError('Input video too long. Maximum allowed duration is 30 seconds.', 400));
+      }
+      // Normalize body defaults
+      if (!req.body.upscale_mode) req.body.upscale_mode = 'factor';
+      if (req.body.upscale_mode === 'factor' && (req.body.upscale_factor == null)) req.body.upscale_factor = 2;
+      if (req.body.upscale_mode === 'target' && !req.body.target_resolution) req.body.target_resolution = '1080p';
+      // Stash probed meta for pricing
+      (req as any).seedvrProbe = meta;
+      next();
+    } catch (e) {
+      next(new ApiError('Failed to validate video URL for SeedVR2', 400));
+    }
+  }
+];
+
+// Topaz Image Upscaler (fal-ai/topaz/upscale/image) - dynamic per-MP pricing precheck
+export const validateFalTopazUpscaleImage = [
+  body('image_url').isString().notEmpty(),
+  body('upscale_factor').optional().isFloat({ gt: 0.1, lt: 10 }),
+  body('model').optional().isIn(['Low Resolution V2','Standard V2','CGI','High Fidelity V2','Text Refine','Recovery','Redefine','Recovery V2']),
+  body('output_format').optional().isIn(['jpeg','png']),
+  async (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    try {
+      const url: string = req.body?.image_url;
+      const meta = await probeImageMeta(url);
+      const w = Number(meta?.width || 0);
+      const h = Number(meta?.height || 0);
+      if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0) {
+        return next(new ApiError('Unable to read image dimensions. Ensure the URL is public and accessible.', 400));
+      }
+      // default factor
+      if (req.body.upscale_factor == null) req.body.upscale_factor = 2;
+      (req as any).topazImageProbe = { width: w, height: h };
+      next();
+    } catch (_e) {
+      next(new ApiError('Failed to validate image URL for Topaz upscale', 400));
+    }
   }
 ];
 

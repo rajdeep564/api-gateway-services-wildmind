@@ -450,6 +450,125 @@ async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoIm
 
 export const falService = {
   generate,
+  async topazUpscaleImage(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }>{
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    if (!body?.image_url) throw new ApiError('image_url is required', 400);
+    fal.config({ credentials: falKey });
+
+    const model = 'fal-ai/topaz/upscale/image';
+    const creator = await authRepository.getUserById(uid);
+    const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt: 'Upscale Image',
+      model,
+      generationType: 'image-upscale',
+      visibility: body.isPublic ? 'public' : 'private',
+      isPublic: body.isPublic === true,
+      createdBy,
+    });
+
+    try {
+      const input: any = {
+        image_url: body.image_url,
+        upscale_factor: body.upscale_factor ?? 2,
+        model: body.model || 'Standard V2',
+        crop_to_fill: body.crop_to_fill ?? false,
+        output_format: body.output_format || 'jpeg',
+        subject_detection: body.subject_detection || 'All',
+        face_enhancement: body.face_enhancement ?? true,
+        face_enhancement_strength: body.face_enhancement_strength ?? 0.8,
+        face_enhancement_creativity: body.face_enhancement_creativity,
+      };
+      const result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
+      const imgUrl: string | undefined = (result as any)?.data?.image?.url;
+      if (!imgUrl) throw new ApiError('No image URL returned from FAL API', 502);
+      const username = creator?.username || uid;
+      const { key, publicUrl } = await uploadFromUrlToZata({ sourceUrl: imgUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'upscaled' });
+      const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any ];
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
+      try {
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) {
+          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+            uid,
+            username: creator?.username,
+            displayName: (creator as any)?.displayName,
+            photoURL: creator?.photoURL,
+          });
+        }
+      } catch {}
+      return { images, historyId, model, status: 'completed' };
+    } catch (err: any) {
+      const message = err?.message || 'Failed to upscale image with FAL API';
+      try {
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
+      } catch {}
+      throw new ApiError(message, 500);
+    }
+  },
+  async seedvrUpscale(uid: string, body: any): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }>{
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    if (!body?.video_url) throw new ApiError('video_url is required', 400);
+    fal.config({ credentials: falKey });
+
+    const model = 'fal-ai/seedvr/upscale/video';
+    const creator = await authRepository.getUserById(uid);
+    const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt: 'Upscale Video',
+      model,
+      generationType: 'video-upscale',
+      visibility: body.isPublic ? 'public' : 'private',
+      isPublic: body.isPublic === true,
+      createdBy,
+    });
+
+    try {
+      const input: any = { video_url: body.video_url };
+      if (body.upscale_mode) input.upscale_mode = body.upscale_mode;
+      if (body.upscale_factor != null) input.upscale_factor = body.upscale_factor;
+      if (body.target_resolution) input.target_resolution = body.target_resolution;
+      if (body.noise_scale != null) input.noise_scale = body.noise_scale;
+      if (body.output_format) input.output_format = body.output_format;
+      if (body.output_quality) input.output_quality = body.output_quality;
+      if (body.output_write_mode) input.output_write_mode = body.output_write_mode;
+      const result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
+      const videoUrl: string | undefined = (result as any)?.data?.video?.url || (result as any)?.data?.video_url || (result as any)?.data?.output?.video?.url;
+      if (!videoUrl) throw new ApiError('No video URL returned from FAL API', 502);
+      const username = creator?.username || uid;
+      const keyPrefix = `users/${username}/video/${historyId}`;
+      let stored: any;
+      try {
+        stored = await uploadFromUrlToZata({ sourceUrl: videoUrl, keyPrefix, fileName: 'upscaled' });
+      } catch {
+        stored = { publicUrl: videoUrl, key: '' };
+      }
+      const videos: VideoMedia[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: videoUrl } as any ];
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
+      try {
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) {
+          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+            uid,
+            username: creator?.username,
+            displayName: (creator as any)?.displayName,
+            photoURL: creator?.photoURL,
+          });
+        }
+      } catch {}
+      return { videos, historyId, model, status: 'completed' };
+    } catch (err: any) {
+      const message = err?.message || 'Failed to upscale video with FAL API';
+      try {
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
+      } catch {}
+      throw new ApiError(message, 500);
+    }
+  },
   async image2svg(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }>{
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!body?.image_url) throw new ApiError('image_url is required', 400);

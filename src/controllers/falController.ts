@@ -34,6 +34,46 @@ async function generate(req: Request, res: Response, next: NextFunction) {
 
 export const falController = {
   generate,
+  async topazUpscaleImage(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falService.topazUpscaleImage(uid, req.body || {});
+      let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
+      try {
+        const requestId = (result as any).historyId || ctx.idempotencyKey;
+        if (requestId && typeof ctx.creditCost === 'number') {
+          debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'fal.topaz.upscale.image', {
+            ...(ctx.meta || {}),
+            historyId: (result as any).historyId,
+            provider: 'fal',
+            pricingVersion: ctx.pricingVersion,
+          });
+        }
+      } catch (_e) {}
+      res.json(formatApiResponse('success', 'Upscaled', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
+    } catch (err) { next(err); }
+  },
+  async seedvrUpscale(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falService.seedvrUpscale(uid, req.body || {});
+      let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
+      try {
+        const requestId = (result as any).historyId || ctx.idempotencyKey;
+        if (requestId && typeof ctx.creditCost === 'number') {
+          debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'fal.seedvr.upscale', {
+            ...(ctx.meta || {}),
+            historyId: (result as any).historyId,
+            provider: 'fal',
+            pricingVersion: ctx.pricingVersion,
+          });
+        }
+      } catch (_e) {}
+      res.json(formatApiResponse('success', 'Upscaled', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
+    } catch (err) { next(err); }
+  },
   async image2svg(req: Request, res: Response, next: NextFunction) {
     try {
       const uid = req.uid;

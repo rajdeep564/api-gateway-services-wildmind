@@ -803,6 +803,22 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 50,
     },
   },
+  // Topaz Image Upscaler (dynamic per-megapixel: 70 credits per MP)
+  {
+    srNo: 36.4,
+    modelName: "fal-ai/topaz/upscale/image",
+    priceToPay: 0.025,
+    overCharge: 0.01,
+    userCost: 0.035,
+    creditsPerGeneration: 70,
+    plans: {
+      planA: 176.5714286,
+      planB: 353.1428571,
+      planC: 882.8571429,
+      planD: 2825.142857,
+      free: 28.57142857,
+    },
+  },
   // Replicate models from sheet
   {
     srNo: 37,

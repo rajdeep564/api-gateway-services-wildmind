@@ -1,6 +1,8 @@
 import { Request } from 'express';
 import { creditDistributionData } from '../../data/creditDistribution';
 import { generationHistoryRepository } from '../../repository/generationHistoryRepository';
+import { probeVideoMeta } from '../media/probe';
+import { probeImageMeta } from '../media/imageProbe';
 
 export const FAL_PRICING_VERSION = 'fal-v1';
 
@@ -281,6 +283,93 @@ export async function computeFalRecraftVectorizeCost(_req: Request): Promise<{ c
   const base = findCredits(display);
   if (base == null) throw new Error('Unsupported FAL recraft/vectorize pricing');
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display } };
+}
+
+// SeedVR2 Video Upscaler dynamic pricing
+// Rule: $0.001 per megapixel of upscaled video data (width x height x frames)
+// Credits conversion inferred from sheet: $1 ~= 2000 credits (since $0.05 => 100 credits)
+const CREDITS_PER_USD = 2000;
+export async function computeFalSeedVrUpscaleCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+  const body: any = req.body || {};
+  const url: string = body.video_url;
+  if (!url) throw new Error('video_url is required');
+  // Use validator-stashed probe if available; otherwise probe now
+  const meta = (req as any).seedvrProbe || await probeVideoMeta(url);
+  const durationSec = Number(meta?.durationSec || 0);
+  const inW = Number(meta?.width || 0);
+  const inH = Number(meta?.height || 0);
+  let frames = Number(meta?.frames || 0);
+  const fps = Number(meta?.fps || 0);
+  if ((!frames || !isFinite(frames)) && isFinite(durationSec) && isFinite(fps) && fps > 0) {
+    frames = Math.round(durationSec * fps);
+  }
+  if (!isFinite(durationSec) || durationSec <= 0 || !isFinite(inW) || !isFinite(inH) || inW <= 0 || inH <= 0 || !isFinite(frames) || frames <= 0) {
+    throw new Error('Unable to compute video metadata for pricing');
+  }
+  if (durationSec > 30.5) throw new Error('Input video too long. Maximum allowed duration is 30 seconds.');
+  // Compute output dimensions based on requested mode
+  const mode: 'factor' | 'target' = (body.upscale_mode === 'target' ? 'target' : 'factor');
+  let outW = inW;
+  let outH = inH;
+  if (mode === 'factor') {
+    const factor = Number(body.upscale_factor ?? 2);
+    const f = Math.max(0.1, Math.min(10, isFinite(factor) ? factor : 2));
+    outW = Math.max(1, Math.round(inW * f));
+    outH = Math.max(1, Math.round(inH * f));
+  } else {
+    const target = String(body.target_resolution || '1080p').toLowerCase();
+    const map: Record<string, number> = { '720p': 720, '1080p': 1080, '1440p': 1440, '2160p': 2160 };
+    const targetH = map[target] || 1080;
+    outH = targetH;
+    outW = Math.max(1, Math.round(inW * (targetH / inH)));
+  }
+  const totalPixels = outW * outH * frames;
+  const megapixels = totalPixels / 1_000_000;
+  const dollars = megapixels * 0.001;
+  const credits = Math.max(1, Math.ceil(dollars * CREDITS_PER_USD));
+  return {
+    cost: credits,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: 'fal-ai/seedvr/upscale/video',
+      input: { width: inW, height: inH, durationSec, fps, frames },
+      output: { width: outW, height: outH, frames },
+      pricing: { megapixels, dollars, credits },
+      mode,
+      upscale_factor: mode === 'factor' ? Number(body.upscale_factor ?? 2) : undefined,
+      target_resolution: mode === 'target' ? (body.target_resolution || '1080p') : undefined,
+    }
+  };
+}
+
+// Topaz Image Upscaler dynamic pricing
+// Rule: 70 credits per output megapixel (width x height / 1e6)
+export async function computeFalTopazUpscaleImageCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+  const body: any = req.body || {};
+  const url: string = body.image_url;
+  if (!url) throw new Error('image_url is required');
+  const meta = (req as any).topazImageProbe || await probeImageMeta(url);
+  const inW = Number(meta?.width || 0);
+  const inH = Number(meta?.height || 0);
+  if (!isFinite(inW) || !isFinite(inH) || inW <= 0 || inH <= 0) throw new Error('Unable to compute image dimensions for pricing');
+  const factor = Math.max(0.1, Math.min(10, Number(body.upscale_factor ?? 2)));
+  const outW = Math.max(1, Math.round(inW * factor));
+  const outH = Math.max(1, Math.round(inH * factor));
+  const megapixels = (outW * outH) / 1_000_000;
+  const creditsPerMp = 70;
+  const credits = Math.max(1, Math.ceil(megapixels * creditsPerMp));
+  return {
+    cost: credits,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: 'fal-ai/topaz/upscale/image',
+      input: { width: inW, height: inH },
+      output: { width: outW, height: outH },
+      pricing: { megapixels, creditsPerMp, credits },
+      upscale_factor: factor,
+      topaz_model: body.model,
+    },
+  };
 }
 
 
