@@ -452,7 +452,7 @@ export const falService = {
   generate,
   async image2svg(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }>{
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
-    if (!body?.image_url) throw new ApiError('image_url is required', 400);
+    if (!(body?.image_url) && !(body?.image)) throw new ApiError('image_url or image is required', 400);
     fal.config({ credentials: falKey });
 
     const model = 'fal-ai/image2svg';
@@ -468,8 +468,21 @@ export const falService = {
     });
 
     try {
+      // Resolve input URL: accept direct URL or upload data URI to Zata
+      let inputUrl: string | undefined = typeof body?.image_url === 'string' ? body.image_url : undefined;
+      if (!inputUrl && typeof body?.image === 'string') {
+        try {
+          const username = creator?.username || uid;
+          const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${username}/input/${historyId}`, fileName: 'vectorize-source' });
+          inputUrl = stored.publicUrl;
+        } catch {
+          inputUrl = undefined;
+        }
+      }
+      if (!inputUrl) throw new ApiError('Unable to resolve image_url for image2svg', 400);
+
       const result = await fal.subscribe(model as any, ({ input: {
-        image_url: body.image_url,
+        image_url: inputUrl,
         colormode: body.colormode ?? 'color',
         hierarchical: body.hierarchical ?? 'stacked',
         mode: body.mode ?? 'spline',
