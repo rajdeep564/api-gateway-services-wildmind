@@ -365,28 +365,37 @@ export const validateFalSeedvrUpscale = [
 
 // Topaz Image Upscaler (fal-ai/topaz/upscale/image) - dynamic per-MP pricing precheck
 export const validateFalTopazUpscaleImage = [
-  body('image_url').isString().notEmpty(),
+  body('image_url').optional().isString().notEmpty(),
+  body('image').optional().isString().notEmpty(),
   body('upscale_factor').optional().isFloat({ gt: 0.1, lt: 10 }),
   body('model').optional().isIn(['Low Resolution V2','Standard V2','CGI','High Fidelity V2','Text Refine','Recovery','Redefine','Recovery V2']),
   body('output_format').optional().isIn(['jpeg','png']),
   async (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
-    try {
-      const url: string = req.body?.image_url;
-      const meta = await probeImageMeta(url);
-      const w = Number(meta?.width || 0);
-      const h = Number(meta?.height || 0);
-      if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0) {
-        return next(new ApiError('Unable to read image dimensions. Ensure the URL is public and accessible.', 400));
+    // If client provided a public URL, probe it; if data URI is provided, skip probe and let service upload/handle
+    const url: string | undefined = req.body?.image_url;
+    const dataImage: string | undefined = req.body?.image;
+    if (typeof url === 'string' && url.length > 0) {
+      try {
+        const meta = await probeImageMeta(url);
+        const w = Number(meta?.width || 0);
+        const h = Number(meta?.height || 0);
+        if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0) {
+          return next(new ApiError('Unable to read image dimensions. Ensure the URL is public and accessible.', 400));
+        }
+        if (req.body.upscale_factor == null) req.body.upscale_factor = 2;
+        (req as any).topazImageProbe = { width: w, height: h };
+      } catch {
+        return next(new ApiError('Failed to validate image URL for Topaz upscale', 400));
       }
-      // default factor
+    } else if (typeof dataImage === 'string' && dataImage.startsWith('data:')) {
+      // Accept data URI; service will upload to get a public URL. Ensure default factor.
       if (req.body.upscale_factor == null) req.body.upscale_factor = 2;
-      (req as any).topazImageProbe = { width: w, height: h };
-      next();
-    } catch (_e) {
-      next(new ApiError('Failed to validate image URL for Topaz upscale', 400));
+    } else {
+      return next(new ApiError('image_url or data URI image is required', 400));
     }
+    next();
   }
 ];
 

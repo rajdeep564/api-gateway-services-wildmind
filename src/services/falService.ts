@@ -452,7 +452,7 @@ export const falService = {
   generate,
   async topazUpscaleImage(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }>{
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
-    if (!body?.image_url) throw new ApiError('image_url is required', 400);
+    if (!body?.image_url && !body?.image) throw new ApiError('image_url or image is required', 400);
     fal.config({ credentials: falKey });
 
     const model = 'fal-ai/topaz/upscale/image';
@@ -468,8 +468,18 @@ export const falService = {
     });
 
     try {
+      // Resolve input URL: allow direct URL or data URI via temporary upload
+      let resolvedUrl: string | undefined = typeof body.image_url === 'string' ? body.image_url : undefined;
+      if (!resolvedUrl && typeof body.image === 'string' && /^data:/i.test(body.image)) {
+        try {
+          const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${(creator?.username || uid)}/input/${historyId}`, fileName: 'topaz-source' });
+          resolvedUrl = stored.publicUrl;
+        } catch {}
+      }
+      if (!resolvedUrl) throw new ApiError('Unable to resolve image_url for Topaz upscale', 400);
+
       const input: any = {
-        image_url: body.image_url,
+        image_url: resolvedUrl,
         upscale_factor: body.upscale_factor ?? 2,
         model: body.model || 'Standard V2',
         crop_to_fill: body.crop_to_fill ?? false,

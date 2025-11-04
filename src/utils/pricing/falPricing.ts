@@ -3,6 +3,7 @@ import { creditDistributionData } from '../../data/creditDistribution';
 import { generationHistoryRepository } from '../../repository/generationHistoryRepository';
 import { probeVideoMeta } from '../media/probe';
 import { probeImageMeta } from '../media/imageProbe';
+import { uploadDataUriToZata } from '../storage/zataUpload';
 
 export const FAL_PRICING_VERSION = 'fal-v1';
 
@@ -346,7 +347,17 @@ export async function computeFalSeedVrUpscaleCost(req: Request): Promise<{ cost:
 // Rule: 70 credits per output megapixel (width x height / 1e6)
 export async function computeFalTopazUpscaleImageCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
   const body: any = req.body || {};
-  const url: string = body.image_url;
+  let url: string | undefined = body.image_url;
+  // Allow data URI input (image); upload to Zata to obtain a public URL for probing
+  if (!url && typeof body.image === 'string' && body.image.startsWith('data:')) {
+    try {
+      const uid = (req as any)?.uid || 'anon';
+      const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${uid}/pricing/topaz/${Date.now()}`, fileName: 'source' });
+      url = stored.publicUrl;
+    } catch {
+      url = undefined;
+    }
+  }
   if (!url) throw new Error('image_url is required');
   const meta = (req as any).topazImageProbe || await probeImageMeta(url);
   const inW = Number(meta?.width || 0);
