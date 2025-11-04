@@ -22,6 +22,14 @@ export function errorHandler(
   const status = err.statusCode || 500;
   const message = err.message || "Internal Server Error";
   const data = err.data || null;
+  try {
+    const origin = req.headers.origin as string | undefined;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+  } catch {}
   res.status(status).json({
     responseStatus: "error",
     message,

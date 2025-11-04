@@ -6,9 +6,19 @@ import { ZATA_ENDPOINT, ZATA_BUCKET } from '../utils/storage/zataClient';
 import sharp from 'sharp';
 import { execFile } from 'child_process';
 import ffmpegPath from 'ffmpeg-static';
-import { promises as fs } from 'fs';
+import { promises as fs, createWriteStream } from 'fs';
 import os from 'os';
 import path from 'path';
+
+// Configure sharp to use less memory on small hosts
+try {
+  sharp.cache({ memory: 32, files: 0 });
+  sharp.concurrency(2);
+} catch {}
+
+// Concurrency gate for ffmpeg to avoid CPU/memory spikes in production
+const FFMPEG_MAX_CONCURRENCY = Math.max(1, parseInt(String(process.env.FFMPEG_MAX_CONCURRENCY || '1'), 10));
+let ffmpegActive = 0;
 
 // Create HTTPS agent that ignores SSL certificate errors for Zata (certificate expired)
 const httpsAgent = new HttpsAgent({
@@ -86,7 +96,9 @@ router.get('/resource/:path(*)', async (req: Request, res: Response) => {
       return res.status(response.status).json({ error: 'Upstream error' });
     }
     
-    const contentType = response.headers.get('content-type') || '';
+  const contentType = response.headers.get('content-type') || '';
+  const contentLenHeader = response.headers.get('content-length');
+  const contentLen = contentLenHeader ? parseInt(contentLenHeader, 10) : undefined;
     const contentInfo = getContentInfo(contentType, zataUrl);
     
     // Set appropriate headers and forward key upstream headers
@@ -145,7 +157,9 @@ router.get('/download/:path(*)', async (req: Request, res: Response) => {
       return res.status(response.status).json({ error: 'Upstream error' });
     }
     
-    const contentType = response.headers.get('content-type') || '';
+  const contentType = response.headers.get('content-type') || '';
+  const contentLenHeader = response.headers.get('content-length');
+  const contentLen = contentLenHeader ? parseInt(contentLenHeader, 10) : undefined;
     const contentInfo = getContentInfo(contentType, zataUrl);
     
     // Extract filename from path
@@ -269,6 +283,8 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
       return res.status(response.status).json({ error: 'Upstream error' });
     }
     const contentType = response.headers.get('content-type') || '';
+    const contentLenHeader = response.headers.get('content-length');
+    const contentLen = contentLenHeader ? parseInt(contentLenHeader, 10) : undefined;
 
     // Conditional ETag based on upstream ETag/Last-Modified + params
     const upstreamEtag = response.headers.get('etag');
@@ -296,11 +312,7 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
     }
     // Handle images via sharp, videos via ffmpeg snapshot
     if (contentType.startsWith('image/')) {
-      const source = Buffer.from(await response.arrayBuffer());
-      const out = await sharp(source)
-        .resize({ width, withoutEnlargement: true })
-        .webp({ quality })
-        .toBuffer();
+      // Stream through sharp to avoid buffering whole source image in memory
       res.status(200);
       res.setHeader('Content-Type', 'image/webp');
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
@@ -312,32 +324,101 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
         res.setHeader('Vary', 'Origin');
         res.setHeader('Access-Control-Allow-Credentials', 'true');
       }
-      return res.send(out);
+      try {
+        const transformer = sharp().resize({ width, withoutEnlargement: true }).webp({ quality });
+        (response.body as any)?.pipe(transformer).pipe(res);
+        return;
+      } catch (e) {
+        const placeholder = await sharp({ create: { width, height: Math.max(1, Math.round(width * 9 / 16)), channels: 3, background: { r: 12, g: 12, b: 14 } } }).webp({ quality }).toBuffer();
+        return res.send(placeholder);
+      }
     }
 
     if (contentType.startsWith('video/')) {
       if (!ffmpegPath) {
         return res.status(501).json({ error: 'Video thumbnail not supported on this host' });
       }
-      const buf = Buffer.from(await response.arrayBuffer());
+      // Skip heavy processing for very large files (fallback placeholder)
+      if (contentLen && contentLen > 40 * 1024 * 1024) {
+        const fallback = await sharp({ create: { width: Math.max(16, Math.min(width, 64)), height: Math.max(9, Math.min(Math.round(width * 9 / 16), 64)), channels: 3, background: { r: 12, g: 12, b: 14 } } }).webp({ quality: Math.min(quality, 50) }).toBuffer();
+        res.status(200);
+        res.setHeader('Content-Type', 'image/webp');
+        res.setHeader('Cache-Control', 'public, max-age=600, stale-while-revalidate=3600');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        const origin = req.headers.origin as string | undefined;
+        if (origin) {
+          res.setHeader('Access-Control-Allow-Origin', origin);
+          res.setHeader('Vary', 'Origin');
+          res.setHeader('Access-Control-Allow-Credentials', 'true');
+        }
+        return res.send(fallback);
+      }
       const tmpDir = os.tmpdir();
       const id = Math.random().toString(36).slice(2);
       const inPath = path.join(tmpDir, `wm_in_${id}`);
       const outPath = path.join(tmpDir, `wm_out_${id}.jpg`);
       try {
-        await fs.writeFile(inPath, buf);
-        // Grab a frame at 0.5s; scale by width preserving aspect
+        // If too many concurrent ffmpeg jobs, return a tiny placeholder quickly
+        if (ffmpegActive >= FFMPEG_MAX_CONCURRENCY) {
+          const busy = await sharp({ create: { width: Math.max(16, Math.min(width, 64)), height: Math.max(9, Math.min(Math.round(width * 9 / 16), 64)), channels: 3, background: { r: 12, g: 12, b: 14 } } }).webp({ quality: Math.min(quality, 50) }).toBuffer();
+          res.status(200);
+          res.setHeader('Content-Type', 'image/webp');
+          res.setHeader('Cache-Control', 'public, max-age=120, stale-while-revalidate=3600');
+          res.setHeader('Connection', 'keep-alive');
+          res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+          const origin = req.headers.origin as string | undefined;
+          if (origin) {
+            res.setHeader('Access-Control-Allow-Origin', origin);
+            res.setHeader('Vary', 'Origin');
+            res.setHeader('Access-Control-Allow-Credentials', 'true');
+          }
+          return res.send(busy);
+        }
+        // Write only the first N MB to disk to keep memory low; enough for a poster frame
+        const MAX_BYTES = 8 * 1024 * 1024; // 8MB cap
+        const ws = createWriteStream(inPath, { flags: 'w' });
         await new Promise<void>((resolve, reject) => {
-          execFile(String(ffmpegPath), ['-y', '-ss', '0.5', '-i', inPath, '-frames:v', '1', '-vf', `scale=${width}:-1:force_original_aspect_ratio=decrease`, outPath], (err) => {
-            if (err) return reject(err);
-            resolve();
+          let written = 0;
+          const r = (response.body as any);
+          if (!r) return reject(new Error('No response body'));
+          r.on('data', (chunk: Buffer) => {
+            written += chunk.length;
+            if (written > MAX_BYTES) {
+              try { r.destroy(); } catch {}
+            }
+            if (!ws.write(chunk)) {
+              r.pause();
+              ws.once('drain', () => r.resume());
+            }
           });
+          r.on('end', () => { try { ws.end(); } catch {}; resolve(); });
+          r.on('error', (err: any) => { try { ws.destroy(); } catch {}; reject(err); });
+          ws.on('error', reject);
         });
-        const frame = await fs.readFile(outPath);
-        const webp = await sharp(frame).webp({ quality }).toBuffer();
-        res.status(200);
+        ffmpegActive++;
+        // Grab a frame at 0.5s; scale by width preserving aspect
+        const execOk = await new Promise<boolean>((resolve) => {
+          const child = execFile(String(ffmpegPath), ['-y', '-ss', '0.5', '-i', inPath, '-frames:v', '1', '-vf', `scale=${width}:-1:force_original_aspect_ratio=decrease`, outPath], { timeout: 3500 }, (err) => {
+            if (err) return resolve(false);
+            resolve(true);
+          });
+          // Safety: if process hangs beyond timeout, Node will kill due to timeout option
+          child.on('error', () => resolve(false));
+          // If client disconnects, attempt to kill ffmpeg early
+          res.once('close', () => { try { child.kill('SIGKILL'); } catch {} });
+        });
+        let webp: Buffer;
+        if (execOk) {
+          const frame = await fs.readFile(outPath);
+          webp = await sharp(frame).webp({ quality }).toBuffer();
+        } else {
+          // Fallback: tiny dark placeholder to avoid broken posters under load/timeouts
+          webp = await sharp({ create: { width: Math.max(16, Math.min(width, 64)), height: Math.max(9, Math.min(Math.round(width * 9 / 16), 64)), channels: 3, background: { r: 12, g: 12, b: 14 } } }).webp({ quality: Math.min(quality, 50) }).toBuffer();
+        }
+        res.status(execOk ? 200 : 200);
         res.setHeader('Content-Type', 'image/webp');
-        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.setHeader('Cache-Control', 'public, max-age=600, stale-while-revalidate=3600');
         res.setHeader('Connection', 'keep-alive');
         res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
         const origin = req.headers.origin as string | undefined;
@@ -348,6 +429,7 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
         }
         return res.send(webp);
       } finally {
+        ffmpegActive = Math.max(0, ffmpegActive - 1);
         // best-effort cleanup
         try { await fs.unlink(inPath); } catch {}
         try { await fs.unlink(outPath); } catch {}
