@@ -40,7 +40,7 @@ async function generate(
   } = payload as any;
 
   const imagesRequested = Number.isFinite(num_images) && (num_images as number) > 0 ? (num_images as number) : (Number.isFinite(n) && (n as number) > 0 ? (n as number) : 1);
-  const imagesRequestedClamped = Math.max(1, Math.min(4, imagesRequested));
+  const imagesRequestedClamped = Math.max(1, Math.min(10, imagesRequested));
   const resolvedAspect = (aspect_ratio || frameSize || '1:1') as any;
 
   const falKey = env.falKey as string;

@@ -19,7 +19,7 @@ export const validateFalGenerate = [
   body('model').isString().isIn(ALLOWED_FAL_MODELS),
   body('aspect_ratio').optional().isIn(['1:1','16:9','9:16','3:4','4:3']),
   body('n').optional().isInt({ min: 1, max: 10 }),
-  body('num_images').optional().isInt({ min: 1, max: 4 }),
+  body('num_images').optional().isInt({ min: 1, max: 10 }),
   body('uploadedImages').optional().isArray(),
   body('output_format').optional().isIn(['jpeg', 'png', 'webp']),
   body('resolution').optional().isIn(['1K','2K']),
