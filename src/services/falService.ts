@@ -134,8 +134,9 @@ async function generate(
         if ((payload as any).negative_prompt) input.negative_prompt = (payload as any).negative_prompt;
       }
       if (modelEndpoint.endsWith("/edit")) {
-        // Use public URLs for edit endpoint, fallback to original uploadedImages if no public URLs available
-        input.image_urls = publicImageUrls.length > 0 ? publicImageUrls.slice(0, 4) : uploadedImages.slice(0, 4);
+        // Use public URLs for edit endpoint; allow up to 10 reference images for Nano Banana I2I
+        const refs = publicImageUrls.length > 0 ? publicImageUrls : uploadedImages;
+        input.image_urls = Array.isArray(refs) ? refs.slice(0, 10) : [];
       }
 
       // Debug log for final body
