@@ -2,12 +2,16 @@ import { Router } from 'express';
 import  {falController} from '../controllers/falController';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { makeCreditCost } from '../middlewares/creditCostFactory';
-import { computeFalImageCost, computeFalVeoI2vSubmitCost, computeFalVeoTtvSubmitCost, computeFalVeo31I2vSubmitCost, computeFalVeo31TtvSubmitCost, computeFalSora2I2vSubmitCost, computeFalSora2ProI2vSubmitCost, computeFalLtxV2ProI2vSubmitCost, computeFalLtxV2FastI2vSubmitCost, computeFalSora2T2vSubmitCost, computeFalSora2ProT2vSubmitCost, computeFalSora2RemixSubmitCost, computeFalLtxV2ProT2vSubmitCost, computeFalLtxV2FastT2vSubmitCost } from '../utils/pricing/falPricing';
-import { validateFalGenerate, validateFalQueueStatus, validateFalVeoTextToVideoSubmit, validateFalVeoTextToVideoFastSubmit, validateFalVeoImageToVideoSubmit, validateFalVeoImageToVideoFastSubmit, validateFalVeo31FirstLastFast, validateFalVeo31FirstLast, validateFalVeo31ReferenceToVideo, validateFalSora2I2v, validateFalSora2ProI2v, validateFalLtx2ProI2v, validateFalLtx2FastI2v, validateFalSora2T2v, validateFalSora2ProT2v, validateFalSora2Remix, validateFalSora2RemixByHistory, validateFalLtx2ProT2v, validateFalLtx2FastT2v } from '../middlewares/validators/fal/validateFalGenerate';
+import { computeFalImageCost, computeFalVeoI2vSubmitCost, computeFalVeoTtvSubmitCost, computeFalVeo31I2vSubmitCost, computeFalVeo31TtvSubmitCost, computeFalSora2I2vSubmitCost, computeFalSora2ProI2vSubmitCost, computeFalLtxV2ProI2vSubmitCost, computeFalLtxV2FastI2vSubmitCost, computeFalSora2T2vSubmitCost, computeFalSora2ProT2vSubmitCost, computeFalSora2RemixSubmitCost, computeFalLtxV2ProT2vSubmitCost, computeFalLtxV2FastT2vSubmitCost, computeFalImage2SvgCost, computeFalRecraftVectorizeCost } from '../utils/pricing/falPricing';
+import { validateFalGenerate, validateFalQueueStatus, validateFalVeoTextToVideoSubmit, validateFalVeoTextToVideoFastSubmit, validateFalVeoImageToVideoSubmit, validateFalVeoImageToVideoFastSubmit, validateFalVeo31FirstLastFast, validateFalVeo31FirstLast, validateFalVeo31ReferenceToVideo, validateFalSora2I2v, validateFalSora2ProI2v, validateFalLtx2ProI2v, validateFalLtx2FastI2v, validateFalSora2T2v, validateFalSora2ProT2v, validateFalSora2Remix, validateFalSora2RemixByHistory, validateFalLtx2ProT2v, validateFalLtx2FastT2v, validateFalImage2Svg, validateFalRecraftVectorize } from '../middlewares/validators/fal/validateFalGenerate';
 
 const router = Router();
 
 router.post('/generate', requireAuth, validateFalGenerate, makeCreditCost('fal', 'generate', computeFalImageCost), falController.generate);
+
+// Image utilities
+router.post('/image2svg', requireAuth as any, validateFalImage2Svg as any, makeCreditCost('fal','image2svg', computeFalImage2SvgCost) as any, (falController as any).image2svg);
+router.post('/recraft/vectorize', requireAuth as any, validateFalRecraftVectorize as any, makeCreditCost('fal','recraft_vectorize', computeFalRecraftVectorizeCost) as any, (falController as any).recraftVectorize);
 
 // Queue style endpoints
 router.post('/veo3/text-to-video/submit', requireAuth as any, validateFalVeoTextToVideoSubmit as any, makeCreditCost('fal','veo_t2v_submit', (req)=>computeFalVeoTtvSubmitCost(req,false)) as any, falController.veoTtvSubmit as any);

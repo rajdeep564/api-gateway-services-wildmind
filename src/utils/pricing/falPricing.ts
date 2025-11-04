@@ -268,4 +268,19 @@ export function computeFalVeoCostFromModel(model: string, meta?: any): { cost: n
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display } };
 }
 
+// Image utilities pricing
+export async function computeFalImage2SvgCost(_req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+  const display = 'fal-ai/image2svg';
+  const base = findCredits(display);
+  if (base == null) throw new Error('Unsupported FAL image2svg pricing');
+  return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display } };
+}
+
+export async function computeFalRecraftVectorizeCost(_req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+  const display = 'fal-ai/recraft/vectorize';
+  const base = findCredits(display);
+  if (base == null) throw new Error('Unsupported FAL recraft/vectorize pricing');
+  return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display } };
+}
+
 

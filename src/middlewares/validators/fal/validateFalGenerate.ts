@@ -281,4 +281,35 @@ const validateFalLtx2T2vBase = [
 export const validateFalLtx2ProT2v = validateFalLtx2T2vBase;
 export const validateFalLtx2FastT2v = validateFalLtx2T2vBase;
 
+// Image to SVG (fal-ai/image2svg)
+export const validateFalImage2Svg = [
+  body('image_url').isString().notEmpty(),
+  body('colormode').optional().isIn(['color','binary']),
+  body('hierarchical').optional().isIn(['stacked','cutout']),
+  body('mode').optional().isIn(['spline','polygon']),
+  body('filter_speckle').optional().isInt(),
+  body('color_precision').optional().isInt(),
+  body('layer_difference').optional().isInt(),
+  body('corner_threshold').optional().isInt(),
+  body('length_threshold').optional().isFloat(),
+  body('max_iterations').optional().isInt(),
+  body('splice_threshold').optional().isInt(),
+  body('path_precision').optional().isInt(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
+// Recraft Vectorize (fal-ai/recraft/vectorize)
+export const validateFalRecraftVectorize = [
+  body('image_url').isString().notEmpty(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
 

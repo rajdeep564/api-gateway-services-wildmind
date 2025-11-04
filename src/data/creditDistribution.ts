@@ -772,6 +772,37 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 206,
     },
   },
+  // FAL image utilities
+  {
+    srNo: 36.2,
+    modelName: "fal-ai/image2svg",
+    priceToPay: 0.005,
+    overCharge: 0.01,
+    userCost: 0.015,
+    creditsPerGeneration: 30,
+    plans: {
+      planA: 412,
+      planB: 824,
+      planC: 2060,
+      planD: 6592,
+      free: 66.66666667,
+    },
+  },
+  {
+    srNo: 36.3,
+    modelName: "fal-ai/recraft/vectorize",
+    priceToPay: 0.01,
+    overCharge: 0.01,
+    userCost: 0.02,
+    creditsPerGeneration: 40,
+    plans: {
+      planA: 309,
+      planB: 618,
+      planC: 1545,
+      planD: 4944,
+      free: 50,
+    },
+  },
   // Replicate models from sheet
   {
     srNo: 37,

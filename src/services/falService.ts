@@ -450,6 +450,124 @@ async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoIm
 
 export const falService = {
   generate,
+  async image2svg(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }>{
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    if (!body?.image_url) throw new ApiError('image_url is required', 400);
+    fal.config({ credentials: falKey });
+
+    const model = 'fal-ai/image2svg';
+    const creator = await authRepository.getUserById(uid);
+    const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt: 'Convert to SVG',
+      model,
+      generationType: 'image-to-svg',
+      visibility: body.isPublic ? 'public' : 'private',
+      isPublic: body.isPublic === true,
+      createdBy,
+    });
+
+    try {
+      const result = await fal.subscribe(model as any, ({ input: {
+        image_url: body.image_url,
+        colormode: body.colormode ?? 'color',
+        hierarchical: body.hierarchical ?? 'stacked',
+        mode: body.mode ?? 'spline',
+        filter_speckle: body.filter_speckle ?? 4,
+        color_precision: body.color_precision ?? 6,
+        layer_difference: body.layer_difference ?? 16,
+        corner_threshold: body.corner_threshold ?? 60,
+        length_threshold: body.length_threshold ?? 4,
+        max_iterations: body.max_iterations ?? 10,
+        splice_threshold: body.splice_threshold ?? 45,
+        path_precision: body.path_precision ?? 3,
+      }, logs: true } as unknown) as any);
+
+      const files: any[] = Array.isArray((result as any)?.data?.images) ? (result as any).data.images : [];
+      const svgUrl = files[0]?.url as string | undefined;
+      if (!svgUrl) throw new ApiError('No SVG URL returned from FAL API', 502);
+
+      const username = creator?.username || uid;
+      let stored: any;
+      try {
+        stored = await uploadFromUrlToZata({ sourceUrl: svgUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'vectorized' });
+      } catch {
+        stored = { publicUrl: svgUrl, key: '' };
+      }
+      const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, originalUrl: svgUrl } as any ];
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
+      try {
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) {
+          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+            uid,
+            username: creator?.username,
+            displayName: (creator as any)?.displayName,
+            photoURL: creator?.photoURL,
+          });
+        }
+      } catch {}
+      return { images, historyId, model, status: 'completed' };
+    } catch (err: any) {
+      const message = err?.message || 'Failed to convert image to SVG with FAL API';
+      try {
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
+      } catch {}
+      throw new ApiError(message, 500);
+    }
+  },
+  async recraftVectorize(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }>{
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    if (!body?.image_url) throw new ApiError('image_url is required', 400);
+    fal.config({ credentials: falKey });
+
+    const model = 'fal-ai/recraft/vectorize';
+    const creator = await authRepository.getUserById(uid);
+    const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt: 'Vectorize Image',
+      model,
+      generationType: 'image-to-svg',
+      visibility: body.isPublic ? 'public' : 'private',
+      isPublic: body.isPublic === true,
+      createdBy,
+    });
+
+    try {
+      const result = await fal.subscribe(model as any, ({ input: { image_url: body.image_url }, logs: true } as unknown) as any);
+      const svgUrl: string | undefined = (result as any)?.data?.image?.url;
+      if (!svgUrl) throw new ApiError('No SVG URL returned from FAL API', 502);
+
+      const username = creator?.username || uid;
+      let stored: any;
+      try { stored = await uploadFromUrlToZata({ sourceUrl: svgUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'vectorized' }); }
+      catch { stored = { publicUrl: svgUrl, key: '' }; }
+      const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, originalUrl: svgUrl } as any ];
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
+      try {
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) {
+          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+            uid,
+            username: creator?.username,
+            displayName: (creator as any)?.displayName,
+            photoURL: creator?.photoURL,
+          });
+        }
+      } catch {}
+      return { images, historyId, model, status: 'completed' };
+    } catch (err: any) {
+      const message = err?.message || 'Failed to vectorize image with FAL API';
+      try {
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
+      } catch {}
+      throw new ApiError(message, 500);
+    }
+  }
 };
 
 // Queue-oriented API
