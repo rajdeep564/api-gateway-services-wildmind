@@ -15,7 +15,7 @@ The frontend is sending `Bearer undefined` instead of using session cookies that
 const idToken = await user.getIdToken();
 
 // Send to backend to create session
-const response = await fetch('http://localhost:5000/api/auth/session', {
+const response = await fetch('http://localhost:5001/api/auth/session', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
@@ -34,7 +34,7 @@ if (response.ok) {
 ```javascript
 // For all subsequent API calls, include credentials
 const fetchUserData = async () => {
-  const response = await fetch('http://localhost:5000/api/me', {
+  const response = await fetch('http://localhost:5001/api/me', {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -52,7 +52,7 @@ const fetchUserData = async () => {
 ### Frontend Logout:
 ```javascript
 const logout = async () => {
-  await fetch('http://localhost:5000/api/logout', {
+  await fetch('http://localhost:5001/api/logout', {
     method: 'POST',
     credentials: 'include', // IMPORTANT: Include cookies
   });
@@ -120,7 +120,7 @@ localStorage.setItem('authToken', idToken);
 const fetchUserData = async () => {
   const token = localStorage.getItem('authToken');
   
-  const response = await fetch('http://localhost:5000/api/me', {
+  const response = await fetch('http://localhost:5001/api/me', {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',

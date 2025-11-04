@@ -38,7 +38,7 @@ REDEEM_CODE_ADMIN_KEY=WILDMIND_ADMIN_2024
 
 ### Create Redeem Codes
 ```bash
-curl -X POST http://localhost:5000/api/redeem-codes/create \
+curl -X POST http://localhost:5001/api/redeem-codes/create \
   -H "Content-Type: application/json" \
   -d '{
     "type": "STUDENT",

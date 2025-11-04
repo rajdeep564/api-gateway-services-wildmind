@@ -24,7 +24,7 @@ const handleVerifyOtp = async (e: FormEvent<HTMLFormElement>) => {
   
   try {
     // Step 1: Backend creates Firebase user and returns custom token
-    const response = await axios.post("http://localhost:5000/api/auth/email/verify", {
+    const response = await axios.post("http://localhost:5001/api/auth/email/verify", {
       email: email.trim(),
       code: otp.trim(),
       password: password
@@ -48,7 +48,7 @@ const handleVerifyOtp = async (e: FormEvent<HTMLFormElement>) => {
       
       // Step 3: Create session with backend using ID token
       console.log("🔄 Creating session with ID token...")
-      const sessionResponse = await axios.post('http://localhost:5000/api/auth/session', 
+      const sessionResponse = await axios.post('http://localhost:5001/api/auth/session', 
         { idToken: idToken }, // Use the ID token, not custom token
         { withCredentials: true }
       )
@@ -59,7 +59,7 @@ const handleVerifyOtp = async (e: FormEvent<HTMLFormElement>) => {
         
         // Test the /api/me endpoint immediately
         try {
-          const meResponse = await axios.get('http://localhost:5000/api/me', {
+          const meResponse = await axios.get('http://localhost:5001/api/me', {
             withCredentials: true
           })
           console.log("✅ /api/me test successful:", meResponse.data)

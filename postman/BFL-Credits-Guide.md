@@ -3,7 +3,7 @@
 This guide shows how to test the credit system using Postman (or curl).
 
 ### Prerequisites
-- Server running: `npm run dev` (default `http://localhost:5000`)
+– Server running: `npm run dev` (default `http://localhost:5001`)
 - Environment variables set: `BFL_API_KEY`, Firebase Admin credentials
 - A Firebase Web API Key to get an ID token for auth
 
@@ -31,7 +31,7 @@ Cookie: app_session={{ID_TOKEN}}
 ```
 
 ### 2) Health check (GET)
-GET `http://localhost:5000/health`
+GET `http://localhost:5001/health`
 
 Expected 200 response:
 ```
@@ -43,7 +43,7 @@ Expected 200 response:
 ```
 
 ### 3) List my generations (GET)
-GET `http://localhost:5000/api/generations` with Cookie `app_session={{ID_TOKEN}}`
+GET `http://localhost:5001/api/generations` with Cookie `app_session={{ID_TOKEN}}`
 
 Optional query params:
 - `limit` (1..50)
@@ -61,7 +61,7 @@ Expected 200 response:
 ```
 
 ### 4) BFL Generate (POST)
-POST `http://localhost:5000/api/bfl/generate`
+POST `http://localhost:5001/api/bfl/generate`
 
 Headers:
 ```
@@ -112,7 +112,7 @@ Ledger and balance effects (Firestore):
 - `users/{uid}.creditBalance` decreased by `<cost>`
 
 ### 5) BFL Fill (POST)
-POST `http://localhost:5000/api/bfl/fill`
+POST `http://localhost:5001/api/bfl/fill`
 
 Body:
 ```
@@ -126,7 +126,7 @@ Body:
 Expected 200 success with `historyId` and images, debit created; or 402 like above on insufficient credits.
 
 ### 6) BFL Expand (POST)
-POST `http://localhost:5000/api/bfl/expand`
+POST `http://localhost:5001/api/bfl/expand`
 
 Body:
 ```
@@ -141,7 +141,7 @@ Body:
 Expected 200 success and debit; or 402 insufficient credits.
 
 ### 7) BFL Canny (POST)
-POST `http://localhost:5000/api/bfl/canny`
+POST `http://localhost:5001/api/bfl/canny`
 
 Body:
 ```
@@ -155,7 +155,7 @@ Body:
 Expected 200 success and debit; or 402 insufficient credits.
 
 ### 8) BFL Depth (POST)
-POST `http://localhost:5000/api/bfl/depth`
+POST `http://localhost:5001/api/bfl/depth`
 
 Body:
 ```

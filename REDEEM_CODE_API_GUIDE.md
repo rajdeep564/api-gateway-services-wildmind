@@ -13,7 +13,7 @@ REDEEM_CODE_ADMIN_KEY=your_secret_admin_key_here
 
 ## Base URL
 ```
-http://localhost:5000/api
+http://localhost:5001/api
 ```
 
 ## Endpoints
@@ -127,7 +127,7 @@ Cookie: app_session=<session_token>
 
 ### Example 1: Create 10 Student Codes (Default 48-hour expiry)
 ```bash
-curl -X POST http://localhost:5000/api/redeem-codes/create \
+curl -X POST http://localhost:5001/api/redeem-codes/create \
   -H "Content-Type: application/json" \
   -d '{
     "type": "STUDENT",
@@ -139,7 +139,7 @@ curl -X POST http://localhost:5000/api/redeem-codes/create \
 
 ### Example 2: Create 5 Business Codes with 72 Hour Expiry
 ```bash
-curl -X POST http://localhost:5000/api/redeem-codes/create \
+curl -X POST http://localhost:5001/api/redeem-codes/create \
   -H "Content-Type: application/json" \
   -d '{
     "type": "BUSINESS",
@@ -152,7 +152,7 @@ curl -X POST http://localhost:5000/api/redeem-codes/create \
 
 ### Example 3: Create Reusable Test Codes with 168 Hour Expiry (1 Week)
 ```bash
-curl -X POST http://localhost:5000/api/redeem-codes/create \
+curl -X POST http://localhost:5001/api/redeem-codes/create \
   -H "Content-Type: application/json" \
   -d '{
     "type": "STUDENT",
@@ -165,7 +165,7 @@ curl -X POST http://localhost:5000/api/redeem-codes/create \
 
 ### Example 4: Validate a Code
 ```bash
-curl -X POST http://localhost:5000/api/redeem-codes/validate \
+curl -X POST http://localhost:5001/api/redeem-codes/validate \
   -H "Content-Type: application/json" \
   -d '{
     "redeemCode": "STU-123456-ABC123"

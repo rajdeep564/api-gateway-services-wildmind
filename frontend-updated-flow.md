@@ -43,7 +43,7 @@ const handleVerifyOtp = async (e: FormEvent<HTMLFormElement>) => {
     console.log("📤 Sending OTP verification to backend...")
     
     // Step 1: Verify OTP with backend (backend creates Firebase user and returns token)
-    const response = await axios.post("http://localhost:5000/api/auth/email/verify", requestData, {
+    const response = await axios.post("http://localhost:5001/api/auth/email/verify", requestData, {
       withCredentials: true
     })
     
@@ -63,7 +63,7 @@ const handleVerifyOtp = async (e: FormEvent<HTMLFormElement>) => {
       
       // Step 2: Create session with backend using the token from backend
       console.log("🔄 Creating session with backend...")
-      const sessionResponse = await axios.post('http://localhost:5000/api/auth/session', 
+      const sessionResponse = await axios.post('http://localhost:5001/api/auth/session', 
         { idToken: idToken },
         { withCredentials: true }
       )
