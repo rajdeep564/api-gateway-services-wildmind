@@ -301,9 +301,12 @@ export async function upscale(uid: string, body: any) {
     const output: any = await replicate.run(modelSpec as any, { input });
     // eslint-disable-next-line no-console
     console.log('[replicateService.upscale] output', typeof output, Array.isArray(output) ? output.length : 'n/a');
-    if (Array.isArray(output)) {
-      outputUrls = output.filter((x: any) => typeof x === 'string');
+    // Robustly resolve Replicate SDK file outputs (which may be objects with url())
+    const urlsResolved = await resolveOutputUrls(output);
+    if (urlsResolved && urlsResolved.length) {
+      outputUrls = urlsResolved;
     } else {
+      // Fallback to best-effort single URL extraction
       const one = extractFirstUrl(output);
       if (one) outputUrls = [one];
     }
