@@ -304,8 +304,15 @@ export const validateFalImage2Svg = [
 
 // Recraft Vectorize (fal-ai/recraft/vectorize)
 export const validateFalRecraftVectorize = [
-  body('image_url').isString().notEmpty(),
+  body('image_url').optional().isString().notEmpty(),
+  body('image').optional().isString().notEmpty(),
   (req: Request, _res: Response, next: NextFunction) => {
+    // Require either a public URL or a data URI/image string
+    const hasUrl = typeof req.body?.image_url === 'string' && req.body.image_url.length > 0;
+    const hasImage = typeof req.body?.image === 'string' && req.body.image.length > 0;
+    if (!hasUrl && !hasImage) {
+      return next(new ApiError('image_url or image is required', 400));
+    }
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
     next();

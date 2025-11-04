@@ -520,7 +520,7 @@ export const falService = {
   },
   async recraftVectorize(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }>{
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
-    if (!body?.image_url) throw new ApiError('image_url is required', 400);
+    if (!(body?.image_url) && !(body?.image)) throw new ApiError('image_url or image is required', 400);
     fal.config({ credentials: falKey });
 
     const model = 'fal-ai/recraft/vectorize';
@@ -536,7 +536,25 @@ export const falService = {
     });
 
     try {
-      const result = await fal.subscribe(model as any, ({ input: { image_url: body.image_url }, logs: true } as unknown) as any);
+      // Resolve input URL: accept direct URL, or upload data URI / raw image string to Zata
+      let inputUrl: string | undefined = typeof body?.image_url === 'string' ? body.image_url : undefined;
+      if (!inputUrl && typeof body?.image === 'string') {
+        const imageStr: string = body.image;
+        if (/^data:/i.test(imageStr)) {
+          try {
+            const username = creator?.username || uid;
+            const stored = await uploadDataUriToZata({ dataUri: imageStr, keyPrefix: `users/${username}/input/${historyId}` , fileName: 'vectorize-source' });
+            inputUrl = stored.publicUrl;
+          } catch {
+            inputUrl = undefined;
+          }
+        } else if (/^https?:\/\//i.test(imageStr)) {
+          inputUrl = imageStr;
+        }
+      }
+      if (!inputUrl) throw new ApiError('Unable to resolve image_url for vectorize', 400);
+
+      const result = await fal.subscribe(model as any, ({ input: { image_url: inputUrl }, logs: true } as unknown) as any);
       const svgUrl: string | undefined = (result as any)?.data?.image?.url;
       if (!svgUrl) throw new ApiError('No SVG URL returned from FAL API', 502);
 
