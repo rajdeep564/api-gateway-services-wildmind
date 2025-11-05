@@ -115,12 +115,18 @@ export async function update(sessionDocId: string, updates: Partial<LiveChatSess
     firestoreUpdates.completedAt = admin.firestore.Timestamp.fromDate(new Date(updates.completedAt));
   }
   if (updates.images) {
-    firestoreUpdates.images = updates.images.map((img: any) => ({
-      ...img,
-      timestamp: img.timestamp && typeof img.timestamp === 'string'
-        ? admin.firestore.Timestamp.fromDate(new Date(img.timestamp))
-        : img.timestamp,
-    }));
+    // Ensure images array is properly formatted with Firestore Timestamps
+    firestoreUpdates.images = updates.images.map((img: any) => {
+      const imageData: any = { ...img };
+      // Convert timestamp if it's a string
+      if (imageData.timestamp && typeof imageData.timestamp === 'string') {
+        imageData.timestamp = admin.firestore.Timestamp.fromDate(new Date(imageData.timestamp));
+      } else if (!imageData.timestamp && imageData.timestamp !== null) {
+        // If timestamp is missing but not explicitly null, preserve it as is (might be Firestore Timestamp already)
+      }
+      return imageData;
+    });
+    console.log('[LiveChatSession] Updating session with', firestoreUpdates.images.length, 'images');
   }
   if (updates.messages) {
     firestoreUpdates.messages = updates.messages.map((m: any) => ({
@@ -162,10 +168,17 @@ export async function findBySessionId(sessionId: string): Promise<(LiveChatSessi
 export async function findByImageUrl(imageUrl: string): Promise<(LiveChatSessionData & { id: string }) | null> {
   const col = adminDb.collection('liveChatSessions');
   
-  // Query sessions where imageUrls array contains the imageUrl
-  const snap = await col.where('imageUrls', 'array-contains', imageUrl).limit(1).get();
+  console.log('[LiveChatSession] Finding session by imageUrl:', imageUrl);
   
-  if (snap.empty) return null;
+  // Query sessions where imageUrls array contains the imageUrl
+  const snap = await col.where('imageUrls', 'array-contains', imageUrl).limit(10).get(); // Get more to find the right one
+  
+  if (snap.empty) {
+    console.log('[LiveChatSession] No session found for imageUrl:', imageUrl);
+    return null;
+  }
+  
+  console.log('[LiveChatSession] Found', snap.docs.length, 'session(s) with imageUrl');
   
   // Get the most recent session if multiple exist (shouldn't happen, but safety)
   const docs = snap.docs.sort((a, b) => {
@@ -175,7 +188,18 @@ export async function findByImageUrl(imageUrl: string): Promise<(LiveChatSession
   });
   
   const doc = docs[0];
-  return normalizeSession(doc.id, doc.data());
+  const sessionData = doc.data();
+  const normalized = normalizeSession(doc.id, sessionData);
+  
+  console.log('[LiveChatSession] Returning session:', {
+    id: doc.id,
+    sessionId: normalized.sessionId,
+    totalImages: normalized.totalImages,
+    imageUrlsCount: normalized.imageUrls.length,
+    imagesCount: normalized.images.length,
+  });
+  
+  return normalized;
 }
 
 /**
@@ -186,27 +210,47 @@ export async function findByUserId(uid: string, params: {
   cursor?: string;
   status?: 'active' | 'completed' | 'failed';
 }): Promise<{ sessions: (LiveChatSessionData & { id: string })[]; nextCursor?: string }> {
-  const col = adminDb.collection('liveChatSessions');
-  let q: FirebaseFirestore.Query = col.where('uid', '==', uid).orderBy('updatedAt', 'desc');
-  
-  if (params.status) {
-    q = q.where('status', '==', params.status);
-  }
-  
-  if (params.cursor) {
-    const cursorDoc = await col.doc(params.cursor).get();
-    if (cursorDoc.exists) {
-      q = q.startAfter(cursorDoc);
+  try {
+    if (!uid) {
+      console.error('[LiveChatSession] findByUserId: uid is required');
+      return { sessions: [], nextCursor: undefined };
     }
+
+    const col = adminDb.collection('liveChatSessions');
+    let q: FirebaseFirestore.Query = col.where('uid', '==', uid).orderBy('updatedAt', 'desc');
+    
+    if (params.status) {
+      q = q.where('status', '==', params.status);
+    }
+    
+    if (params.cursor) {
+      const cursorDoc = await col.doc(params.cursor).get();
+      if (cursorDoc.exists) {
+        q = q.startAfter(cursorDoc);
+      }
+    }
+    
+    const limit = params.limit || 20;
+    const snap = await q.limit(limit + 1).get();
+    
+    const sessions = snap.docs.slice(0, limit).map(d => normalizeSession(d.id, d.data()));
+    const nextCursor = snap.docs.length > limit ? snap.docs[limit - 1].id : undefined;
+    
+    console.log('[LiveChatSession] findByUserId: found', sessions.length, 'sessions', { uid, limit, hasMore: !!nextCursor });
+    
+    return { sessions, nextCursor };
+  } catch (error: any) {
+    console.error('[LiveChatSession] findByUserId error:', error);
+    
+    // If it's a Firestore index error, return empty array instead of crashing
+    if (error?.code === 9 || error?.message?.includes('index') || error?.message?.includes('requires an index')) {
+      console.warn('[LiveChatSession] Firestore index required. Please create a composite index for liveChatSessions collection: uid (Ascending) and updatedAt (Descending)');
+      return { sessions: [], nextCursor: undefined };
+    }
+    
+    // Re-throw other errors
+    throw error;
   }
-  
-  const limit = params.limit || 20;
-  const snap = await q.limit(limit + 1).get();
-  
-  const sessions = snap.docs.slice(0, limit).map(d => normalizeSession(d.id, d.data()));
-  const nextCursor = snap.docs.length > limit ? snap.docs[limit - 1].id : undefined;
-  
-  return { sessions, nextCursor };
 }
 
 /**
@@ -224,13 +268,28 @@ export async function addMessage(sessionDocId: string, message: {
   }>;
   timestamp: string; // ISO string
 }): Promise<void> {
-  const session = await get(sessionDocId);
-  if (!session) throw new Error('Session not found');
+  // Get the session directly from Firestore to ensure we have the latest data
+  const ref = adminDb.collection('liveChatSessions').doc(sessionDocId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new Error('Session not found');
+  
+  const sessionData = snap.data() as any;
+  const session = normalizeSession(sessionDocId, sessionData);
+
+  console.log('[LiveChatSession] Adding message to session:', {
+    sessionDocId,
+    currentImagesCount: session.images.length,
+    currentImages: session.images.map(img => ({ url: img.url, order: img.order })),
+    newImagesCount: message.images.length,
+    prompt: message.prompt,
+  });
 
   // Calculate order for new images (continue from last order)
   const lastOrder = session.images.length > 0 
     ? Math.max(...session.images.map(img => img.order || 0))
     : 0;
+  
+  console.log('[LiveChatSession] Last order:', lastOrder, 'Adding', message.images.length, 'new images');
   
   const newImages = message.images.map((img, idx) => ({
     ...img,
@@ -241,6 +300,8 @@ export async function addMessage(sessionDocId: string, message: {
 
   // Add new images to the single images array
   const updatedImages = [...session.images, ...newImages];
+  
+  console.log('[LiveChatSession] Total images after adding:', updatedImages.length);
   
   // Update imageUrls array for quick lookup
   const updatedImageUrls = updatedImages.map(img => img.url);
@@ -254,12 +315,68 @@ export async function addMessage(sessionDocId: string, message: {
     },
   ];
 
-  await update(sessionDocId, {
-    images: updatedImages as any,
-    messages: updatedMessages as any,
-    imageUrls: updatedImageUrls,
-    totalImages: updatedImages.length,
-  });
+  // Use Firestore transaction to ensure atomic update
+  try {
+    await adminDb.runTransaction(async (transaction) => {
+      const sessionRef = adminDb.collection('liveChatSessions').doc(sessionDocId);
+      const sessionDoc = await transaction.get(sessionRef);
+      
+      if (!sessionDoc.exists) {
+        throw new Error('Session not found during transaction');
+      }
+      
+      const currentData = sessionDoc.data() as any;
+      const currentImages = currentData.images || [];
+      
+      console.log('[LiveChatSession] Transaction - Current images:', currentImages.length);
+      console.log('[LiveChatSession] Transaction - Adding new images:', newImages.length);
+      
+      // Merge with existing images (in case of race condition)
+      const existingImageUrls = new Set(currentImages.map((img: any) => img.url));
+      const uniqueNewImages = newImages.filter(img => !existingImageUrls.has(img.url));
+      
+      if (uniqueNewImages.length === 0) {
+        console.log('[LiveChatSession] Transaction - All images already exist, skipping update');
+        return;
+      }
+      
+      const finalImages = [...currentImages, ...uniqueNewImages];
+      const finalImageUrls = finalImages.map((img: any) => img.url);
+      const finalMessages = [
+        ...(currentData.messages || []),
+        {
+          prompt: message.prompt,
+          timestamp: admin.firestore.Timestamp.fromDate(new Date(message.timestamp)),
+        },
+      ];
+      
+      transaction.update(sessionRef, {
+        images: finalImages.map((img: any) => ({
+          ...img,
+          timestamp: img.timestamp && typeof img.timestamp === 'string'
+            ? admin.firestore.Timestamp.fromDate(new Date(img.timestamp))
+            : img.timestamp,
+        })),
+        messages: finalMessages,
+        imageUrls: finalImageUrls,
+        totalImages: finalImages.length,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      
+      console.log('[LiveChatSession] Transaction - Final images count:', finalImages.length);
+    });
+    
+    console.log('[LiveChatSession] Successfully updated session with', updatedImages.length, 'total images');
+  } catch (error) {
+    console.error('[LiveChatSession] Transaction failed, falling back to regular update:', error);
+    // Fallback to regular update if transaction fails
+    await update(sessionDocId, {
+      images: updatedImages as any,
+      messages: updatedMessages as any,
+      imageUrls: updatedImageUrls,
+      totalImages: updatedImages.length,
+    });
+  }
 }
 
 export const liveChatSessionRepository = {

@@ -95,6 +95,11 @@ async function getByImageUrl(req: Request, res: Response, next: NextFunction) {
 async function list(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid;
+    
+    if (!uid) {
+      return res.status(400).json(formatApiResponse('error', 'User ID is required', {}));
+    }
+    
     const { limit, cursor, status } = req.query;
     const result = await liveChatSessionService.listSessions(uid, {
       limit: limit ? Number(limit) : undefined,
@@ -102,7 +107,15 @@ async function list(req: Request, res: Response, next: NextFunction) {
       status: status as 'active' | 'completed' | 'failed' | undefined,
     });
     return res.json(formatApiResponse('success', 'OK', result));
-  } catch (err) {
+  } catch (err: any) {
+    console.error('[LiveChatSession] list error:', err);
+    
+    // If it's a Firestore index error, return empty array with helpful message
+    if (err?.code === 9 || err?.message?.includes('index') || err?.message?.includes('requires an index')) {
+      console.warn('[LiveChatSession] Firestore index required. Returning empty array.');
+      return res.json(formatApiResponse('success', 'OK', { sessions: [], nextCursor: undefined }));
+    }
+    
     return next(err);
   }
 }
