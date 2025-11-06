@@ -26,6 +26,7 @@ export async function create(uid: string, data: {
   tags?: string[];
   nsfw?: boolean;
   frameSize?: string;
+  aspect_ratio?: string;
   isPublic?: boolean;
   createdBy?: { uid: string; username?: string; email?: string };
 }): Promise<{ historyId: string }> {
@@ -39,6 +40,7 @@ export async function create(uid: string, data: {
     tags: data.tags || [],
     nsfw: data.nsfw ?? false,
     frameSize: data.frameSize || null,
+    aspect_ratio: data.aspect_ratio || data.frameSize || null,
     isPublic: data.isPublic ?? false,
     createdBy: data.createdBy ? {
       uid: data.createdBy.uid,

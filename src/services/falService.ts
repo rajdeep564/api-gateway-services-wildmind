@@ -62,6 +62,7 @@ async function generate(
     nsfw: (payload as any).nsfw,
     isPublic: (payload as any).isPublic === true,
     frameSize: resolvedAspect,
+    aspect_ratio: (payload as any).aspect_ratio || resolvedAspect,
     createdBy,
     
     

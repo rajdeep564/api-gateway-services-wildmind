@@ -146,10 +146,38 @@ async function depth(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+async function expandWithFill(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = req.uid;
+    const ctx = (req as any).context || {};
+    logger.info({ uid, ctx }, '[CREDITS] Enter expandWithFill controller with context');
+    const result = await bflService.expandWithFill(uid, req.body);
+    let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
+    try {
+      const requestId = (result as any).historyId || ctx.idempotencyKey;
+      logger.info({ uid, requestId, cost: ctx.creditCost }, '[CREDITS] Attempt debit after expandWithFill success');
+      if (requestId && typeof ctx.creditCost === 'number') {
+        debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'bfl.expandWithFill', {
+          ...(ctx.meta || {}),
+          historyId: (result as any).historyId,
+          provider: 'bfl',
+          pricingVersion: ctx.pricingVersion,
+        });
+        logger.info({ uid, requestId, debitOutcome }, '[CREDITS] Debit result (expandWithFill)');
+      }
+    } catch (_e) {}
+    res.json(formatApiResponse('success', 'Image expanded with FLUX Fill', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
+  } catch (err) {
+    logger.error({ err }, '[CREDITS] ExpandWithFill controller error');
+    next(err);
+  }
+}
+
 export const bflController = {
   generate,
   fill,
   expand,
+  expandWithFill,
   canny,
   depth,
 }

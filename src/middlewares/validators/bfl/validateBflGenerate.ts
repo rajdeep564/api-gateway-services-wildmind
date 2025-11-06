@@ -96,4 +96,19 @@ export const validateBflDepth = [
   ...common,
 ];
 
+export const validateBflExpandWithFill = [
+  body('image').isString().notEmpty().withMessage('image is required'),
+  body('canvas_size').isArray({ min: 2, max: 2 }).withMessage('canvas_size must be [width, height]'),
+  body('canvas_size.*').isInt({ min: 1, max: 5000 }).withMessage('canvas_size values must be 1-5000'),
+  body('original_image_size').isArray({ min: 2, max: 2 }).withMessage('original_image_size must be [width, height]'),
+  body('original_image_size.*').isInt({ min: 1, max: 5000 }).withMessage('original_image_size values must be 1-5000'),
+  body('original_image_location').optional().isArray({ min: 2, max: 2 }).withMessage('original_image_location must be [x, y]'),
+  body('original_image_location.*').optional().isInt(),
+  body('steps').optional().isInt({ min: 15, max: 50 }),
+  body('guidance').optional().isFloat({ min: 1.5, max: 100 }),
+  body('seed').optional().isInt(),
+  body('safety_tolerance').optional().isInt({ min: 0, max: 6 }),
+  ...common,
+];
+
 
