@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { ApiError } from '../utils/errorHandler';
 import { creditsService } from '../services/creditsService';
 import { v4 as uuidv4 } from 'uuid';
+import { creditsRepository } from '../repository/creditsRepository';
 
 type CostComputer = (req: Request) => Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>;
 
@@ -11,8 +12,11 @@ export function makeCreditCost(provider: string, operation: string, computeCost:
       const uid = (req as any).uid;
       if (!uid) throw new ApiError('Unauthorized', 401);
 
-      const { cost, pricingVersion, meta } = await computeCost(req);
-      const { creditBalance } = await creditsService.ensureUserInit(uid);
+  const { cost, pricingVersion, meta } = await computeCost(req);
+  // Ensure user doc exists then perform monthly reroll (idempotent)
+  await creditsService.ensureUserInit(uid);
+  await creditsService.ensureMonthlyReroll(uid);
+  const creditBalance = await creditsRepository.readUserCredits(uid);
       if (creditBalance < cost) {
         return res.status(402).json({
           responseStatus: 'error',

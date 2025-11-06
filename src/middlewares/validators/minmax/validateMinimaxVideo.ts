@@ -3,6 +3,8 @@ import { body, validationResult } from 'express-validator';
 import { ApiError } from '../../../utils/errorHandler';
 
 const ALLOWED_VIDEO_MODELS = [
+  'MiniMax-Hailuo-2.3',
+  'MiniMax-Hailuo-2.3-Fast',
   'MiniMax-Hailuo-02',
   'T2V-01-Director',
   'T2V-01',
@@ -32,11 +34,11 @@ export const validateMinimaxVideoGenerate = [
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
 
-    const { model, resolution, duration, first_frame_image, subject_reference } = req.body || {};
+  const { model, resolution, duration, first_frame_image, subject_reference } = req.body || {};
 
     // Conditional requirements per docs
     // I2V models require first_frame_image. Hailuo-02 requires it when resolution is 512P.
-    const isI2V = ['I2V-01', 'I2V-01-Director', 'I2V-01-live'].includes(model);
+    const isI2V = ['I2V-01', 'I2V-01-Director', 'I2V-01-live', 'MiniMax-Hailuo-2.3-Fast'].includes(model);
     if (isI2V && !first_frame_image) {
       return next(new ApiError('first_frame_image is required for I2V models', 400));
     }
@@ -65,6 +67,17 @@ export const validateMinimaxVideoGenerate = [
       }
       if (Number(duration) === 10 && resolution === '1080P') {
         return next(new ApiError('1080P supports only 6s for MiniMax-Hailuo-02', 400));
+      }
+    } else if (model === 'MiniMax-Hailuo-2.3' || model === 'MiniMax-Hailuo-2.3-Fast') {
+      // Per docs for 2.3: 6s supports 768P (default) and 1080P; 10s supports 768P only
+      if (duration && ![6, 10].includes(Number(duration))) {
+        return next(new ApiError('duration must be 6 or 10 for MiniMax-Hailuo-2.3 models', 400));
+      }
+      if (resolution && !['768P', '1080P'].includes(resolution)) {
+        return next(new ApiError('resolution must be 768P or 1080P for MiniMax-Hailuo-2.3 models', 400));
+      }
+      if (Number(duration) === 10 && resolution === '1080P') {
+        return next(new ApiError('1080P supports only 6s for MiniMax-Hailuo-2.3 models', 400));
       }
     } else {
       if (resolution && resolution !== '720P') {
