@@ -451,7 +451,279 @@ async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoIm
 
 export const falService = {
   generate,
-  async topazUpscaleImage(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }>{
+  async briaExpandImage(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    if (!body?.image_url && !body?.image) throw new ApiError('image_url or image is required', 400);
+    fal.config({ credentials: falKey });
+
+    const model = 'fal-ai/bria/expand';
+    const creator = await authRepository.getUserById(uid);
+    const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+    const promptText = typeof body?.prompt === 'string' ? String(body.prompt) : '';
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt: promptText ? `Bria Expand: ${promptText}` : 'Bria Expand',
+      model,
+      generationType: 'image-outpaint',
+      visibility: body.isPublic ? 'public' : 'private',
+      isPublic: body.isPublic === true,
+      createdBy,
+    });
+
+    try {
+      let inputUrl: string | undefined = typeof body?.image_url === 'string' && body.image_url.length > 0 ? body.image_url : undefined;
+      if (!inputUrl && typeof body?.image === 'string') {
+        try {
+          const username = creator?.username || uid;
+          const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${username}/input/${historyId}`, fileName: 'bria-expand-source' });
+          inputUrl = stored.publicUrl;
+        } catch {}
+      }
+      if (!inputUrl) throw new ApiError('Unable to resolve image_url for Bria Expand', 400);
+
+      // Normalize inputs
+      const canvas = Array.isArray(body?.canvas_size) && body.canvas_size.length === 2
+        ? [Number(body.canvas_size[0]), Number(body.canvas_size[1])]
+        : undefined;
+      const origSize = Array.isArray(body?.original_image_size) && body.original_image_size.length === 2
+        ? [Number(body.original_image_size[0]), Number(body.original_image_size[1])]
+        : undefined;
+      const origLoc = Array.isArray(body?.original_image_location) && body.original_image_location.length === 2
+        ? [Number(body.original_image_location[0]), Number(body.original_image_location[1])]
+        : undefined;
+      const aspect = typeof body?.aspect_ratio === 'string' && ['1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9'].includes(body.aspect_ratio)
+        ? body.aspect_ratio
+        : undefined;
+
+      const input: any = {
+        image_url: inputUrl,
+      };
+      if (canvas) input.canvas_size = canvas;
+      if (aspect) input.aspect_ratio = aspect;
+      if (origSize) input.original_image_size = origSize;
+      if (origLoc) input.original_image_location = origLoc;
+      if (promptText) input.prompt = promptText;
+      if (typeof body?.seed === 'number') input.seed = Math.round(Number(body.seed));
+      if (typeof body?.negative_prompt === 'string') input.negative_prompt = String(body.negative_prompt);
+      if (body?.sync_mode === true) input.sync_mode = true;
+
+      console.log('[falService.briaExpandImage] Calling FAL API:', { model, input: { ...input, image_url: (input.image_url || '').slice(0,100) + '...' } });
+      let result: any;
+      try {
+        result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
+      } catch (falErr: any) {
+        const details = falErr?.response?.data || falErr?.message || falErr;
+        console.error('[falService.briaExpandImage] FAL API error:', JSON.stringify(details, null, 2));
+        throw new ApiError(`FAL API error: ${JSON.stringify(details)}`, 500);
+      }
+
+      const imgUrl: string | undefined = (result as any)?.data?.image?.url || (result as any)?.data?.output?.image?.url;
+      if (!imgUrl) {
+        console.error('[falService.briaExpandImage] No image in response:', JSON.stringify(result, null, 2));
+        throw new ApiError('No image URL returned from FAL Bria Expand API', 502);
+      }
+
+      const username = creator?.username || uid;
+      const { key, publicUrl } = await uploadFromUrlToZata({ sourceUrl: imgUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'bria-expand' });
+      const images: FalGeneratedImage[] = [ { id: (result as any)?.requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any ];
+
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
+      try {
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) {
+          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+            uid,
+            username: creator?.username,
+            displayName: (creator as any)?.displayName,
+            photoURL: creator?.photoURL,
+          });
+        }
+      } catch {}
+
+      return { images, historyId, model, status: 'completed' };
+    } catch (err: any) {
+      const responseData = err?.response?.data;
+      const detailedMessage = typeof responseData === 'string'
+        ? responseData
+        : responseData?.error || responseData?.message || responseData?.detail;
+      const message = detailedMessage || err?.message || 'Failed to expand image with Bria API';
+      try {
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
+      } catch {}
+      throw new ApiError(message, 500);
+    }
+  },
+  async outpaintImage(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    if (!body?.image_url && !body?.image) throw new ApiError('image_url or image is required', 400);
+    fal.config({ credentials: falKey });
+
+    const model = 'fal-ai/outpaint';
+    const creator = await authRepository.getUserById(uid);
+    const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+    const promptText = typeof body?.prompt === 'string' && body.prompt.trim().length > 0 ? body.prompt.trim() : '';
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt: promptText ? `Outpaint: ${promptText}` : 'Outpaint Image',
+      model,
+      generationType: 'image-outpaint',
+      visibility: body.isPublic ? 'public' : 'private',
+      isPublic: body.isPublic === true,
+      createdBy,
+    });
+
+    const clampInt = (value: any, min: number, max: number, fallback: number) => {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return fallback;
+      return Math.max(min, Math.min(max, Math.round(num)));
+    };
+
+    try {
+      let resolvedUrl: string | undefined = typeof body?.image_url === 'string' && body.image_url.length > 0 ? body.image_url : undefined;
+      if (!resolvedUrl && typeof body?.image === 'string' && body.image.startsWith('data:')) {
+        try {
+          const username = creator?.username || uid;
+          const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${username}/input/${historyId}`, fileName: 'outpaint-source' });
+          resolvedUrl = stored.publicUrl;
+        } catch {
+          resolvedUrl = undefined;
+        }
+      }
+      if (!resolvedUrl) throw new ApiError('Unable to resolve image_url for outpaint', 400);
+
+      // FAL cannot access Zata URLs due to TLS certificate issues
+      // For Zata URLs, we need to download the image and upload it to a publicly accessible location
+      // Since we don't have another storage service, we'll try to use FAL's file upload API
+      // or re-upload to Zata and hope FAL can access it (though this may still fail)
+      if (resolvedUrl && resolvedUrl.includes('idr01.zata.ai')) {
+        try {
+          const username = creator?.username || uid;
+          // Download from Zata using our backend (bypasses TLS) and re-upload
+          // This creates a new Zata URL, but FAL may still not be able to access it
+          const reuploaded = await uploadFromUrlToZata({ 
+            sourceUrl: resolvedUrl, 
+            keyPrefix: `users/${username}/input/${historyId}`, 
+            fileName: `outpaint-fal-${Date.now()}` 
+          });
+          resolvedUrl = reuploaded.publicUrl;
+          console.log('[falService.outpaintImage] Re-uploaded image for FAL access:', resolvedUrl);
+        } catch (err: any) {
+          console.error('[falService.outpaintImage] Failed to re-upload image for FAL access:', err?.message || err);
+          // Continue with original URL - FAL might still fail but we'll surface the error
+        }
+      }
+
+      const expandLeft = clampInt(body?.expand_left, 0, 700, 0);
+      const expandRight = clampInt(body?.expand_right, 0, 700, 0);
+      const expandTop = clampInt(body?.expand_top, 0, 700, 0);
+      const expandBottom = clampInt(body?.expand_bottom, 0, 700, 400);
+      const zoomValue = Number(body?.zoom_out_percentage);
+      const zoomOut = Number.isFinite(zoomValue) ? Math.max(0, Math.min(100, zoomValue)) : 20;
+      const requestedImages = Number(body?.num_images ?? 1);
+      const numImages = Number.isFinite(requestedImages) ? Math.max(1, Math.min(4, Math.round(requestedImages))) : 1;
+      const enableSafety = body?.enable_safety_checker === false ? false : true;
+      const syncMode = body?.sync_mode === true;
+      const outputFormat = typeof body?.output_format === 'string' ? String(body.output_format).toLowerCase() : 'png';
+
+      const input: any = {
+        image_url: resolvedUrl,
+        expand_left: expandLeft,
+        expand_right: expandRight,
+        expand_top: expandTop,
+        expand_bottom: expandBottom,
+        zoom_out_percentage: zoomOut,
+        num_images: numImages,
+        enable_safety_checker: enableSafety,
+        sync_mode: syncMode,
+        output_format: ['png', 'jpeg', 'jpg', 'webp'].includes(outputFormat) ? outputFormat : 'png',
+      };
+      if (promptText) input.prompt = promptText;
+      if (typeof body?.aspect_ratio === 'string' && ['1:1', '16:9', '9:16', '4:3', '3:4'].includes(body.aspect_ratio)) {
+        input.aspect_ratio = body.aspect_ratio;
+      }
+
+      console.log('[falService.outpaintImage] Calling FAL API:', { model, input: { ...input, image_url: input.image_url?.substring(0, 100) + '...' } });
+      let result: any;
+      const endpointCandidates = [model, 'fal-ai/image/outpaint', 'fal-ai/outpaint/image'];
+      let lastErr: any = null;
+      for (const endpoint of endpointCandidates) {
+        try {
+          if (endpoint !== model) {
+            console.log('[falService.outpaintImage] Retrying with endpoint:', endpoint);
+          }
+          result = await fal.subscribe(endpoint as any, ({ input, logs: true } as unknown) as any);
+          // If call succeeds, break the retry loop
+          break;
+        } catch (falErr: any) {
+          lastErr = falErr;
+          const details = falErr?.response?.data || falErr?.message || falErr;
+          console.error('[falService.outpaintImage] FAL API error for', endpoint, ':', JSON.stringify(details, null, 2));
+          // If explicit 404/Not Found, continue to try next candidate; else rethrow
+          const msg = String(details || '').toLowerCase();
+          const isNotFound = msg.includes('not found') || falErr?.response?.status === 404;
+          if (!isNotFound) {
+            throw new ApiError(`FAL API error: ${JSON.stringify(details)}`, 500);
+          }
+        }
+      }
+      if (!result) {
+        const details = lastErr?.response?.data || lastErr?.message || lastErr;
+        throw new ApiError(`FAL API error: ${JSON.stringify(details)}`, 500);
+      }
+      const files: any[] = Array.isArray((result as any)?.data?.images) ? (result as any).data.images : [];
+      if (!files.length) {
+        console.error('[falService.outpaintImage] No images in response:', JSON.stringify(result, null, 2));
+        throw new ApiError('No image URL returned from FAL Outpaint API', 502);
+      }
+
+      const username = creator?.username || uid;
+      const storedImages: FalGeneratedImage[] = await Promise.all(files.map(async (img, index) => {
+        const sourceUrl: string | undefined = img?.url || img?.image_url;
+        const fallbackId = img?.file_name || img?.id || (result as any)?.requestId || `fal-outpaint-${Date.now()}-${index}`;
+        if (!sourceUrl) {
+          return { id: fallbackId, url: '', originalUrl: '' } as any;
+        }
+        try {
+          const { key, publicUrl } = await uploadFromUrlToZata({ sourceUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: `outpaint-${index + 1}` });
+          return { id: fallbackId, url: publicUrl, storagePath: key, originalUrl: sourceUrl } as any;
+        } catch {
+          return { id: fallbackId, url: sourceUrl, originalUrl: sourceUrl } as any;
+        }
+      }));
+
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: storedImages,
+        frameSize: body?.aspect_ratio,
+      } as any);
+      try {
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) {
+          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+            uid,
+            username: creator?.username,
+            displayName: (creator as any)?.displayName,
+            photoURL: creator?.photoURL,
+          });
+        }
+      } catch {}
+
+      return { images: storedImages, historyId, model, status: 'completed' };
+    } catch (err: any) {
+      const responseData = err?.response?.data;
+      const detailedMessage = typeof responseData === 'string'
+        ? responseData
+        : responseData?.error || responseData?.message || responseData?.detail;
+      const message = detailedMessage || err?.message || 'Failed to outpaint image with FAL API';
+      try {
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
+      } catch {}
+      throw new ApiError(message, 500);
+    }
+  },
+  async topazUpscaleImage(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!body?.image_url && !body?.image) throw new ApiError('image_url or image is required', 400);
     fal.config({ credentials: falKey });
@@ -721,6 +993,123 @@ export const falService = {
       return { images, historyId, model, status: 'completed' };
     } catch (err: any) {
       const message = err?.message || 'Failed to vectorize image with FAL API';
+      try {
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
+      } catch {}
+      throw new ApiError(message, 500);
+    }
+  },
+  async briaGenfill(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    if (!body?.image_url && !body?.image) throw new ApiError('image_url or image is required', 400);
+    if (!body?.mask_url && !body?.mask) throw new ApiError('mask_url or mask is required', 400);
+    if (!body?.prompt) throw new ApiError('prompt is required', 400);
+    fal.config({ credentials: falKey });
+
+    const model = 'fal-ai/bria/genfill';
+    const creator = await authRepository.getUserById(uid);
+    const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+    const promptText = typeof body?.prompt === 'string' ? String(body.prompt) : '';
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt: promptText ? `Bria GenFill: ${promptText}` : 'Bria GenFill',
+      model,
+      generationType: 'image-edit',
+      visibility: body.isPublic ? 'public' : 'private',
+      isPublic: body.isPublic === true,
+      createdBy,
+    });
+
+    try {
+      // Resolve image URL
+      let imageUrl: string | undefined = typeof body?.image_url === 'string' && body.image_url.length > 0 ? body.image_url : undefined;
+      if (!imageUrl && typeof body?.image === 'string') {
+        try {
+          const username = creator?.username || uid;
+          const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${username}/input/${historyId}`, fileName: 'genfill-source' });
+          imageUrl = stored.publicUrl;
+        } catch {}
+      }
+      if (!imageUrl) throw new ApiError('Unable to resolve image_url for Bria GenFill', 400);
+
+      // Resolve mask URL
+      let maskUrl: string | undefined = typeof body?.mask_url === 'string' && body.mask_url.length > 0 ? body.mask_url : undefined;
+      if (!maskUrl && typeof body?.mask === 'string') {
+        try {
+          const username = creator?.username || uid;
+          const stored = await uploadDataUriToZata({ dataUri: body.mask, keyPrefix: `users/${username}/input/${historyId}`, fileName: 'genfill-mask' });
+          maskUrl = stored.publicUrl;
+        } catch {}
+      }
+      if (!maskUrl) throw new ApiError('Unable to resolve mask_url for Bria GenFill', 400);
+
+      const input: any = {
+        image_url: imageUrl,
+        mask_url: maskUrl,
+        prompt: promptText,
+      };
+      if (typeof body?.negative_prompt === 'string' && body.negative_prompt.trim()) {
+        input.negative_prompt = String(body.negative_prompt).trim();
+      }
+      if (typeof body?.seed === 'number') input.seed = Math.round(Number(body.seed));
+      const numImages = Number(body?.num_images ?? 1);
+      if (Number.isFinite(numImages) && numImages >= 1 && numImages <= 4) {
+        input.num_images = Math.round(numImages);
+      }
+      if (body?.sync_mode === true) input.sync_mode = true;
+
+      console.log('[falService.briaGenfill] Calling FAL API:', { model, input: { ...input, image_url: (input.image_url || '').slice(0,100) + '...', mask_url: (input.mask_url || '').slice(0,100) + '...' } });
+      let result: any;
+      try {
+        result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
+      } catch (falErr: any) {
+        const details = falErr?.response?.data || falErr?.message || falErr;
+        console.error('[falService.briaGenfill] FAL API error:', JSON.stringify(details, null, 2));
+        throw new ApiError(`FAL API error: ${JSON.stringify(details)}`, 500);
+      }
+
+      const imagesArray: any[] = Array.isArray((result as any)?.data?.images) ? (result as any).data.images : [];
+      if (!imagesArray.length) {
+        console.error('[falService.briaGenfill] No images in response:', JSON.stringify(result, null, 2));
+        throw new ApiError('No images returned from FAL Bria GenFill API', 502);
+      }
+
+      const username = creator?.username || uid;
+      const storedImages: FalGeneratedImage[] = await Promise.all(imagesArray.map(async (img, index) => {
+        const sourceUrl: string | undefined = img?.url;
+        const fallbackId = img?.file_name || img?.id || (result as any)?.requestId || `fal-genfill-${Date.now()}-${index}`;
+        if (!sourceUrl) {
+          return { id: fallbackId, url: '', originalUrl: '' } as any;
+        }
+        try {
+          const { key, publicUrl } = await uploadFromUrlToZata({ sourceUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: `genfill-${index + 1}` });
+          return { id: fallbackId, url: publicUrl, storagePath: key, originalUrl: sourceUrl } as any;
+        } catch {
+          return { id: fallbackId, url: sourceUrl, originalUrl: sourceUrl } as any;
+        }
+      }));
+
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: storedImages } as any);
+      try {
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) {
+          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+            uid,
+            username: creator?.username,
+            displayName: (creator as any)?.displayName,
+            photoURL: creator?.photoURL,
+          });
+        }
+      } catch {}
+
+      return { images: storedImages, historyId, model, status: 'completed' };
+    } catch (err: any) {
+      const responseData = err?.response?.data;
+      const detailedMessage = typeof responseData === 'string'
+        ? responseData
+        : responseData?.error || responseData?.message || responseData?.detail;
+      const message = detailedMessage || err?.message || 'Failed to generate with Bria GenFill API';
       try {
         await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
         const fresh = await generationHistoryRepository.get(uid, historyId);

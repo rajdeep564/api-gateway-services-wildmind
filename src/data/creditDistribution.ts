@@ -803,6 +803,36 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 50,
     },
   },
+  {
+    srNo: 36.35,
+    modelName: "fal-ai/outpaint",
+    priceToPay: 0.035,
+    overCharge: 0,
+    userCost: 0.035,
+    creditsPerGeneration: 70,
+    plans: {
+      planA: 148.5714286,
+      planB: 297.1428571,
+      planC: 742.8571429,
+      planD: 2377.142857,
+      free: 24.28571429,
+    },
+  },
+  {
+    srNo: 36.36,
+    modelName: "fal-ai/bria/genfill",
+    priceToPay: 0.04,
+    overCharge: 0.01,
+    userCost: 0.05,
+    creditsPerGeneration: 100,
+    plans: {
+      planA: 123.6,
+      planB: 247.2,
+      planC: 618,
+      planD: 1977.6,
+      free: 20,
+    },
+  },
   // Topaz Image Upscaler (dynamic per-megapixel: 70 credits per MP)
   {
     srNo: 36.4,

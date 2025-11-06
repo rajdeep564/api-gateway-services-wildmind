@@ -308,6 +308,91 @@ export const validateFalImage2Svg = [
   }
 ];
 
+export const validateFalOutpaint = [
+  body('image_url').optional().isString().notEmpty(),
+  body('image').optional().isString().notEmpty(),
+  body('expand_left').optional().isInt({ min: 0, max: 700 }),
+  body('expand_right').optional().isInt({ min: 0, max: 700 }),
+  body('expand_top').optional().isInt({ min: 0, max: 700 }),
+  body('expand_bottom').optional().isInt({ min: 0, max: 700 }),
+  body('zoom_out_percentage').optional().isFloat({ min: 0, max: 100 }),
+  body('prompt').optional().isString(),
+  body('num_images').optional().isInt({ min: 1, max: 4 }),
+  body('enable_safety_checker').optional().isBoolean(),
+  body('sync_mode').optional().isBoolean(),
+  body('output_format').optional().isIn(['png', 'jpeg', 'jpg', 'webp']),
+  body('aspect_ratio').optional().isIn(['1:1','16:9','9:16','4:3','3:4']),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const hasUrl = typeof req.body?.image_url === 'string' && req.body.image_url.length > 0;
+    const hasImage = typeof req.body?.image === 'string' && req.body.image.length > 0;
+    if (!hasUrl && !hasImage) return next(new ApiError('image_url or image is required', 400));
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
+// Bria Expand (fal-ai/bria/expand)
+export const validateFalBriaExpand = [
+  body('image_url').optional().isString().notEmpty(),
+  body('image').optional().isString().notEmpty(),
+  body('canvas_size').optional().isArray({ min: 2, max: 2 }),
+  body('canvas_size.*').optional().isInt({ min: 1, max: 5000 }),
+  body('aspect_ratio').optional().isIn(['1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9']),
+  body('original_image_size').optional().isArray({ min: 2, max: 2 }),
+  body('original_image_size.*').optional().isInt({ min: 1, max: 5000 }),
+  body('original_image_location').optional().isArray({ min: 2, max: 2 }),
+  body('original_image_location.*').optional().isInt({ min: -10000, max: 10000 }),
+  body('prompt').optional().isString(),
+  body('seed').optional().isInt(),
+  body('negative_prompt').optional().isString(),
+  body('sync_mode').optional().isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const hasUrl = typeof req.body?.image_url === 'string' && req.body.image_url.length > 0;
+    const hasImage = typeof req.body?.image === 'string' && req.body.image.length > 0;
+    if (!hasUrl && !hasImage) return next(new ApiError('image_url or image is required', 400));
+    // Optional safety: if canvas_size is given, enforce area <= 5000x5000
+    if (Array.isArray(req.body?.canvas_size) && req.body.canvas_size.length === 2) {
+      const w = Number(req.body.canvas_size[0]);
+      const h = Number(req.body.canvas_size[1]);
+      if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0 || w > 5000 || h > 5000) {
+        return next(new ApiError('canvas_size must be [width,height] each <= 5000', 400));
+      }
+    }
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
+// Bria GenFill (fal-ai/bria/genfill)
+export const validateFalBriaGenfill = [
+  body('image_url').optional().isString().notEmpty(),
+  body('image').optional().isString().notEmpty(),
+  body('mask_url').optional().isString().notEmpty(),
+  body('mask').optional().isString().notEmpty(),
+  body('prompt').isString().notEmpty(),
+  body('negative_prompt').optional().isString(),
+  body('seed').optional().isInt(),
+  body('num_images').optional().isInt({ min: 1, max: 4 }),
+  body('sync_mode').optional().isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const hasImageUrl = typeof req.body?.image_url === 'string' && req.body.image_url.length > 0;
+    const hasImage = typeof req.body?.image === 'string' && req.body.image.length > 0;
+    if (!hasImageUrl && !hasImage) {
+      return next(new ApiError('image_url or image is required', 400));
+    }
+    const hasMaskUrl = typeof req.body?.mask_url === 'string' && req.body.mask_url.length > 0;
+    const hasMask = typeof req.body?.mask === 'string' && req.body.mask.length > 0;
+    if (!hasMaskUrl && !hasMask) {
+      return next(new ApiError('mask_url or mask is required', 400));
+    }
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
 // Recraft Vectorize (fal-ai/recraft/vectorize)
 export const validateFalRecraftVectorize = [
   body('image_url').optional().isString().notEmpty(),

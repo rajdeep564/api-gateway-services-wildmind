@@ -34,6 +34,46 @@ async function generate(req: Request, res: Response, next: NextFunction) {
 
 export const falController = {
   generate,
+  async briaExpandImage(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falService.briaExpandImage(uid, req.body || {});
+      let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
+      try {
+        const requestId = (result as any).historyId || ctx.idempotencyKey;
+        if (requestId && typeof ctx.creditCost === 'number') {
+          debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'fal.bria.expand', {
+            ...(ctx.meta || {}),
+            historyId: (result as any).historyId,
+            provider: 'fal',
+            pricingVersion: ctx.pricingVersion,
+          });
+        }
+      } catch (_e) {}
+      res.json(formatApiResponse('success', 'Expanded', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
+    } catch (err) { next(err); }
+  },
+  async outpaintImage(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falService.outpaintImage(uid, req.body || {});
+      let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
+      try {
+        const requestId = (result as any).historyId || ctx.idempotencyKey;
+        if (requestId && typeof ctx.creditCost === 'number') {
+          debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'fal.outpaint.image', {
+            ...(ctx.meta || {}),
+            historyId: (result as any).historyId,
+            provider: 'fal',
+            pricingVersion: ctx.pricingVersion,
+          });
+        }
+      } catch (_e) {}
+      res.json(formatApiResponse('success', 'Outpainted', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
+    } catch (err) { next(err); }
+  },
   async topazUpscaleImage(req: Request, res: Response, next: NextFunction) {
     try {
       const uid = req.uid;
@@ -112,6 +152,26 @@ export const falController = {
         }
       } catch (_e) {}
       res.json(formatApiResponse('success', 'Vectorized to SVG', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
+    } catch (err) { next(err); }
+  },
+  async briaGenfill(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await (falService as any).briaGenfill(uid, req.body || {});
+      let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
+      try {
+        const requestId = (result as any).historyId || ctx.idempotencyKey;
+        if (requestId && typeof ctx.creditCost === 'number') {
+          debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'fal.bria.genfill', {
+            ...(ctx.meta || {}),
+            historyId: (result as any).historyId,
+            provider: 'fal',
+            pricingVersion: ctx.pricingVersion,
+          });
+        }
+      } catch (_e) {}
+      res.json(formatApiResponse('success', 'Generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
     } catch (err) { next(err); }
   },
   // Queue
