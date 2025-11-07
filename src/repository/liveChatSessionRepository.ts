@@ -330,6 +330,7 @@ export async function addMessage(sessionDocId: string, message: {
       
       console.log('[LiveChatSession] Transaction - Current images:', currentImages.length);
       console.log('[LiveChatSession] Transaction - Adding new images:', newImages.length);
+      console.log('[LiveChatSession] Transaction - Current status:', currentData.status);
       
       // Merge with existing images (in case of race condition)
       const existingImageUrls = new Set(currentImages.map((img: any) => img.url));
@@ -350,6 +351,9 @@ export async function addMessage(sessionDocId: string, message: {
         },
       ];
       
+      // Reactivate session if it was completed (user is continuing to edit)
+      const shouldReactivate = currentData.status === 'completed';
+      
       transaction.update(sessionRef, {
         images: finalImages.map((img: any) => ({
           ...img,
@@ -360,8 +364,16 @@ export async function addMessage(sessionDocId: string, message: {
         messages: finalMessages,
         imageUrls: finalImageUrls,
         totalImages: finalImages.length,
+        // Reactivate session if it was completed
+        status: shouldReactivate ? 'active' : currentData.status,
+        // Clear completedAt if reactivating
+        ...(shouldReactivate ? { completedAt: admin.firestore.FieldValue.delete() } : {}),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
+      
+      if (shouldReactivate) {
+        console.log('[LiveChatSession] Transaction - Reactivating completed session');
+      }
       
       console.log('[LiveChatSession] Transaction - Final images count:', finalImages.length);
     });
@@ -370,11 +382,15 @@ export async function addMessage(sessionDocId: string, message: {
   } catch (error) {
     console.error('[LiveChatSession] Transaction failed, falling back to regular update:', error);
     // Fallback to regular update if transaction fails
+    // Reactivate session if it was completed
+    const shouldReactivate = session.status === 'completed';
     await update(sessionDocId, {
       images: updatedImages as any,
       messages: updatedMessages as any,
       imageUrls: updatedImageUrls,
       totalImages: updatedImages.length,
+      // Reactivate session if it was completed
+      ...(shouldReactivate ? { status: 'active' as const, completedAt: null } : {}),
     });
   }
 }
