@@ -37,6 +37,7 @@ async function generate(
     nsfw,
     visibility,
     isPublic,
+    characterName,
   } = payload as any;
 
   const imagesRequested = Number.isFinite(num_images) && (num_images as number) > 0 ? (num_images as number) : (Number.isFinite(n) && (n as number) > 0 ? (n as number) : 1);
@@ -63,15 +64,19 @@ async function generate(
     isPublic: (payload as any).isPublic === true,
     frameSize: resolvedAspect,
     aspect_ratio: (payload as any).aspect_ratio || resolvedAspect,
+    // Store characterName only for text-to-character generation type
+    ...(generationType === 'text-to-character' && characterName ? { characterName } : {}),
     createdBy,
     
     
   });
   // Persist any user-uploaded input images to Zata and get public URLs
+  // Use 'character' folder for text-to-character generation input images
+  const inputFolder = generationType === 'text-to-character' ? 'character' : 'input';
   let publicImageUrls: string[] = [];
   try {
     const username = creator?.username || uid;
-    const keyPrefix = `users/${username}/input/${historyId}`;
+    const keyPrefix = `users/${username}/${inputFolder}/${historyId}`;
     const inputPersisted: any[] = [];
     let idx = 0;
     for (const src of (uploadedImages || [])) {
@@ -106,9 +111,61 @@ async function generate(
       : 'fal-ai/gemini-25-flash-image';
   }
 
+  // Parse prompt to extract @references and map them to image indices
+  // This ensures @Rajdeep maps to image[0], @Aryan maps to image[1], etc.
+  const parseCharacterReferences = (promptText: string): string[] => {
+    const refMatches = Array.from((promptText || '').matchAll(/@(\w+)/gi)) as RegExpMatchArray[];
+    return refMatches.map(match => match[1].toLowerCase());
+  };
+
+  // Transform prompt to replace @references with explicit image references
+  // @Rajdeep -> "the character from the first reference image" (image 0)
+  // @Aryan -> "the character from the second reference image" (image 1)
+  const transformPromptWithImageReferences = (promptText: string, imageCount: number): string => {
+    if (!promptText || imageCount === 0) return promptText;
+    
+    const refMatches = Array.from((promptText || '').matchAll(/@(\w+)/gi)) as RegExpMatchArray[];
+    if (refMatches.length === 0) return promptText;
+    
+    // Create a map of character names to their image indices (in order of appearance)
+    const characterToIndex = new Map<string, number>();
+    let currentIndex = 0;
+    
+    refMatches.forEach((match) => {
+      const charName = match[1].toLowerCase();
+      if (!characterToIndex.has(charName)) {
+        characterToIndex.set(charName, currentIndex);
+        currentIndex++;
+      }
+    });
+    
+    // Replace @references with explicit image references
+    let transformedPrompt = promptText;
+    characterToIndex.forEach((imageIndex, charName) => {
+      const regex = new RegExp(`@${charName}\\b`, 'gi');
+      const imageRef = imageIndex === 0 
+        ? 'the character from the first reference image'
+        : imageIndex === 1
+        ? 'the character from the second reference image'
+        : imageIndex === 2
+        ? 'the character from the third reference image'
+        : `the character from reference image ${imageIndex + 1}`;
+      transformedPrompt = transformedPrompt.replace(regex, imageRef);
+    });
+    
+    return transformedPrompt;
+  };
+
+  // Transform prompt if we have character references and images
+  const hasCharacterRefs = prompt && /@\w+/i.test(prompt);
+  const hasImages = (publicImageUrls.length > 0 || uploadedImages.length > 0);
+  const finalPrompt = (hasCharacterRefs && hasImages) 
+    ? transformPromptWithImageReferences(prompt, publicImageUrls.length || uploadedImages.length)
+    : prompt;
+
   try {
     const imagePromises = Array.from({ length: imagesRequested }, async (_, index) => {
-  const input: any = { prompt, output_format, num_images: 1 };
+  const input: any = { prompt: finalPrompt, output_format, num_images: 1 };
       // Seedream expects image_size instead of aspect_ratio; allow explicit image_size override
       if (modelEndpoint.includes('seedream')) {
         const explicit = (payload as any).image_size;
@@ -137,7 +194,23 @@ async function generate(
       if (modelEndpoint.endsWith("/edit")) {
         // Use public URLs for edit endpoint; allow up to 10 reference images for Nano Banana I2I
         const refs = publicImageUrls.length > 0 ? publicImageUrls : uploadedImages;
+        // Images are already ordered by frontend to match @references in prompt
+        // @Rajdeep -> image[0], @Aryan -> image[1], etc.
         input.image_urls = Array.isArray(refs) ? refs.slice(0, 10) : [];
+        
+        // Log for debugging character mapping
+        if (prompt && refs.length > 0) {
+          const characterRefs = parseCharacterReferences(prompt);
+          try {
+            console.log('[falService.generate] Character reference mapping:', {
+              originalPrompt: prompt,
+              transformedPrompt: finalPrompt,
+              characterRefs,
+              imageCount: refs.length,
+              firstImage: refs[0]?.substring(0, 50) + '...',
+            });
+          } catch {}
+        }
       }
 
       // Debug log for final body
@@ -161,13 +234,15 @@ async function generate(
 
     const images = await Promise.all(imagePromises);
     // Upload to Zata and keep both links
+    // Use 'character' folder for text-to-character generation, 'image' folder for others
+    const storageFolder = generationType === 'text-to-character' ? 'character' : 'image';
     const storedImages = await Promise.all(
       images.map(async (img, index) => {
         try {
           const username = creator?.username || uid;
           const { key, publicUrl } = await uploadFromUrlToZata({
             sourceUrl: img.url,
-            keyPrefix: `users/${username}/image/${historyId}`,
+            keyPrefix: `users/${username}/${storageFolder}/${historyId}`,
             fileName: `image-${index + 1}`,
           });
           return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url };

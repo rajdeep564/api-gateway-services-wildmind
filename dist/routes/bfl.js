@@ -1,0 +1,16 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const bflController_1 = require("../controllers/bflController");
+const validateBflGenerate_1 = require("../middlewares/validators/bfl/validateBflGenerate");
+const authMiddleware_1 = require("../middlewares/authMiddleware");
+const creditCostFactory_1 = require("../middlewares/creditCostFactory");
+const bflPricing_1 = require("../utils/pricing/bflPricing");
+const router = (0, express_1.Router)();
+router.post('/generate', authMiddleware_1.requireAuth, validateBflGenerate_1.validateBflGenerate, (0, creditCostFactory_1.makeCreditCost)('bfl', 'generate', bflPricing_1.computeBflCost), bflController_1.bflController.generate);
+router.post('/fill', authMiddleware_1.requireAuth, validateBflGenerate_1.validateBflFill, (0, creditCostFactory_1.makeCreditCost)('bfl', 'fill', bflPricing_1.computeBflFillCost), bflController_1.bflController.fill);
+router.post('/expand', authMiddleware_1.requireAuth, validateBflGenerate_1.validateBflExpand, (0, creditCostFactory_1.makeCreditCost)('bfl', 'expand', bflPricing_1.computeBflExpandCost), bflController_1.bflController.expand);
+router.post('/expand-with-fill', authMiddleware_1.requireAuth, validateBflGenerate_1.validateBflExpandWithFill, (0, creditCostFactory_1.makeCreditCost)('bfl', 'expandWithFill', bflPricing_1.computeBflExpandWithFillCost), bflController_1.bflController.expandWithFill);
+router.post('/canny', authMiddleware_1.requireAuth, validateBflGenerate_1.validateBflCanny, (0, creditCostFactory_1.makeCreditCost)('bfl', 'canny', bflPricing_1.computeBflCannyCost), bflController_1.bflController.canny);
+router.post('/depth', authMiddleware_1.requireAuth, validateBflGenerate_1.validateBflDepth, (0, creditCostFactory_1.makeCreditCost)('bfl', 'depth', bflPricing_1.computeBflDepthCost), bflController_1.bflController.depth);
+exports.default = router;

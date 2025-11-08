@@ -19,7 +19,7 @@ const allowedFrameSizes: FrameSize[] = [
 export const validateBflGenerate = [
   body('prompt').isString().notEmpty().withMessage('prompt is required'),
   body('model').isString().isIn(ALLOWED_MODELS).withMessage('invalid model'),
-  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
+  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat','text-to-character']).withMessage('invalid generationType'),
   body('n').optional().isInt({ min: 1, max: 10 }).withMessage('n must be 1-10'),
   body('frameSize').optional().isIn(allowedFrameSizes).withMessage('invalid frameSize'),
   body('width').optional().isInt({ min: 16 }).withMessage('width must be a number'),
@@ -40,7 +40,7 @@ export const validateBflGenerate = [
 // Consolidated validators for additional BFL operations
 const common = [
   body('prompt').optional().isString(),
-  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
+  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat','text-to-character']).withMessage('invalid generationType'),
   body('output_format').optional().isIn(['jpeg','png']).withMessage('invalid output_format'),
   body('prompt_upsampling').optional().isBoolean(),
   body('isPublic').optional().isBoolean(),

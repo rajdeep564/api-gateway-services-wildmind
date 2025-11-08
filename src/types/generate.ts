@@ -7,7 +7,8 @@ export type GenerationType =
   | 'mockup-generation'
   | 'product-generation'
   | 'ad-generation'
-  | 'live-chat';
+  | 'live-chat'
+  | 'text-to-character';
 
 export const GenerationTypes = {
   TextToImage: 'text-to-image' as const,
@@ -19,6 +20,7 @@ export const GenerationTypes = {
   Product: 'product-generation' as const,
   Ad: 'ad-generation' as const,
   LiveChat: 'live-chat' as const,
+  TextToCharacter: 'text-to-character' as const,
 } as const;
 
 export enum GenerationStatus {
@@ -76,6 +78,8 @@ export interface GenerationHistoryItem {
   // soft delete flag; when true item should be hidden everywhere
   isDeleted?: boolean;
   error?: string;
+  // Character name for text-to-character generation type
+  characterName?: string;
   createdAt: any;
   updatedAt: any;
 }

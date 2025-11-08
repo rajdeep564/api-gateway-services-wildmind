@@ -15,7 +15,7 @@ export const ALLOWED_FAL_MODELS = [
 
 export const validateFalGenerate = [
   body('prompt').isString().notEmpty(),
-  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
+  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat','text-to-character']).withMessage('invalid generationType'),
   body('model').isString().isIn(ALLOWED_FAL_MODELS),
   body('aspect_ratio').optional().isIn(['1:1','16:9','9:16','3:4','4:3']),
   body('n').optional().isInt({ min: 1, max: 10 }),

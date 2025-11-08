@@ -1,0 +1,72 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.validateSeedanceT2V = void 0;
+const express_validator_1 = require("express-validator");
+const errorHandler_1 = require("../../../utils/errorHandler");
+// Validator for Replicate model: Seedance 1.0 Pro/Lite T2V
+// Required: prompt (string)
+// Optional: duration (integer 2-12, default 5), resolution (480p/720p/1080p, default 1080p), 
+//           aspect_ratio (16:9/4:3/1:1/3:4/9:16/21:9/9:21, default 16:9),
+//           seed (integer), fps (24 only), camera_fixed (boolean, default false)
+const allowedResolutions = ['480p', '720p', '1080p'];
+const allowedAspectRatios = ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', '9:21'];
+exports.validateSeedanceT2V = [
+    (0, express_validator_1.body)('model').optional().isString(),
+    (0, express_validator_1.body)('prompt').isString().withMessage('prompt is required').isLength({ min: 1, max: 2000 }),
+    (0, express_validator_1.body)('duration').optional().isInt({ min: 2, max: 12 }).withMessage('duration must be between 2 and 12 seconds'),
+    (0, express_validator_1.body)('resolution').optional().isIn(allowedResolutions),
+    (0, express_validator_1.body)('aspect_ratio').optional().isIn(allowedAspectRatios),
+    (0, express_validator_1.body)('seed').optional().isInt(),
+    (0, express_validator_1.body)('fps').optional().custom(v => v == null || Number(v) === 24).withMessage('fps must be 24'),
+    (0, express_validator_1.body)('camera_fixed').optional().isBoolean(),
+    (0, express_validator_1.body)('speed').optional().custom(v => typeof v === 'string' || typeof v === 'boolean'), // For tier detection (lite vs pro)
+    (0, express_validator_1.body)('reference_images').optional().isArray().withMessage('reference_images must be an array'),
+    (0, express_validator_1.body)('reference_images.*').optional().isString().isLength({ min: 5 }).withMessage('Each reference image must be a valid URI'),
+    (req, _res, next) => {
+        const errors = (0, express_validator_1.validationResult)(req);
+        if (!errors.isEmpty())
+            return next(new errorHandler_1.ApiError('Validation failed', 400, errors.array()));
+        // Defaults and normalization
+        if (!req.body.model) {
+            // Default to Pro tier unless 'lite' is specified
+            const modelStr = String(req.body.model || '').toLowerCase();
+            const speed = String(req.body.speed || '').toLowerCase();
+            const isLite = modelStr.includes('lite') || speed === 'lite' || speed.includes('lite');
+            req.body.model = isLite ? 'bytedance/seedance-1-lite' : 'bytedance/seedance-1-pro';
+        }
+        // Normalize duration: default 5, clamp to 2-12
+        const d = Number(req.body.duration ?? 5);
+        req.body.duration = Math.max(2, Math.min(12, Math.round(d)));
+        // Default resolution to 1080p
+        if (!req.body.resolution)
+            req.body.resolution = '1080p';
+        // Default aspect_ratio to 16:9
+        if (!req.body.aspect_ratio)
+            req.body.aspect_ratio = '16:9';
+        // Default fps to 24
+        if (!req.body.fps)
+            req.body.fps = 24;
+        // Default camera_fixed to false
+        if (req.body.camera_fixed === undefined)
+            req.body.camera_fixed = false;
+        // Validate reference_images: 1-4 images, cannot be used with 1080p
+        if (Array.isArray(req.body.reference_images) && req.body.reference_images.length > 0) {
+            if (req.body.reference_images.length > 4) {
+                return next(new errorHandler_1.ApiError('reference_images can contain at most 4 images', 400));
+            }
+            if (req.body.resolution === '1080p') {
+                return next(new errorHandler_1.ApiError('reference_images cannot be used with 1080p resolution', 400));
+            }
+            // Validate each reference image is a valid URI
+            for (const refImg of req.body.reference_images) {
+                if (typeof refImg !== 'string' || refImg.length < 5) {
+                    return next(new errorHandler_1.ApiError('Each reference image must be a valid URI', 400));
+                }
+            }
+        }
+        // Set mode for pricing
+        if (!req.body.mode && !req.body.kind && !req.body.type)
+            req.body.mode = 't2v';
+        return next();
+    }
+];
