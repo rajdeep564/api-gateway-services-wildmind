@@ -159,9 +159,14 @@ async function generate(
   // Transform prompt if we have character references and images
   const hasCharacterRefs = prompt && /@\w+/i.test(prompt);
   const hasImages = (publicImageUrls.length > 0 || uploadedImages.length > 0);
-  const finalPrompt = (hasCharacterRefs && hasImages) 
+  let finalPrompt = (hasCharacterRefs && hasImages) 
     ? transformPromptWithImageReferences(prompt, publicImageUrls.length || uploadedImages.length)
     : prompt;
+  
+  // For text-to-character generation, enhance prompt to avoid white borders/frames
+  if (generationType === 'text-to-character') {
+    finalPrompt = `${finalPrompt}, no white borders, no frames, no white padding, no background frames, seamless edges, full frame character, no margins, no white space around subject, edge-to-edge`;
+  }
 
   try {
     const imagePromises = Array.from({ length: imagesRequested }, async (_, index) => {
@@ -198,6 +203,11 @@ async function generate(
         // @Rajdeep -> image[0], @Aryan -> image[1], etc.
         input.image_urls = Array.isArray(refs) ? refs.slice(0, 10) : [];
         
+        // For text-to-character generation, add negative prompt to prevent white borders
+        if (generationType === 'text-to-character') {
+          input.negative_prompt = 'white borders, white frames, white padding, background frames, margins, white space around subject, borders, frames, padding, white background, white edges';
+        }
+        
         // Log for debugging character mapping
         if (prompt && refs.length > 0) {
           const characterRefs = parseCharacterReferences(prompt);
@@ -233,51 +243,99 @@ async function generate(
     });
 
     const images = await Promise.all(imagePromises);
-    // QUICK WIN: respond immediately with provider URLs and offload Zata upload to background
-    const quickImages = images.map((img) => ({ id: img.id, url: img.url, originalUrl: img.originalUrl || img.url, storagePath: '' } as any));
-    // Mark history completed with provider URLs for instant UX
-    await generationHistoryRepository.update(uid, historyId, {
-      status: 'completed',
-      images: quickImages,
-      frameSize: resolvedAspect,
-    } as Partial<GenerationHistoryItem>);
-    // Best-effort: background upload to Zata, then replace URLs in history/mirror
-    setImmediate(async () => {
-      try {
-        const username = creator?.username || uid;
-        const storedImages = await Promise.all(
-          images.map(async (img, index) => {
-            try {
-              const { key, publicUrl } = await uploadFromUrlToZata({
-                sourceUrl: img.url,
-                keyPrefix: `users/${username}/image/${historyId}`,
-                fileName: `image-${index + 1}`,
-              });
-              return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
-            } catch {
-              return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url } as any;
-            }
-          })
-        );
-        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
-        await generationHistoryRepository.update(uid, historyId, { images: storedImages } as any);
-        try {
-          const fresh = await generationHistoryRepository.get(uid, historyId);
-          if (fresh) {
-            await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-              uid,
-              username: creator?.username,
-              displayName: (creator as any)?.displayName,
-              photoURL: creator?.photoURL,
+    
+    // For text-to-character, upload to Zata synchronously to ensure storage
+    // For other types, use background upload for faster response
+    const storageFolder = generationType === 'text-to-character' ? 'character' : 'image';
+    const username = creator?.username || uid;
+    
+    if (generationType === 'text-to-character') {
+      // Synchronous upload for character generation to ensure storage
+      const storedImages = await Promise.all(
+        images.map(async (img, index) => {
+          try {
+            const { key, publicUrl } = await uploadFromUrlToZata({
+              sourceUrl: img.url,
+              keyPrefix: `users/${username}/${storageFolder}/${historyId}`,
+              fileName: `image-${index + 1}`,
             });
+            return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
+          } catch (e) {
+            console.error('[falService.generate] Zata upload failed for character:', e);
+            // Fallback to provider URL if Zata fails
+            return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url, storagePath: '' } as any;
           }
-        } catch {}
-      } catch (e) {
-        try { await falRepository.updateGenerationRecord(legacyId, { status: 'completed' }); } catch {}
-      }
-    });
-    // Respond quickly with provider URLs
-    return { images: quickImages as any, historyId, model, status: 'completed' };
+        })
+      );
+      
+      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: storedImages,
+        frameSize: resolvedAspect,
+      } as Partial<GenerationHistoryItem>);
+      
+      try {
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) {
+          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+            uid,
+            username: creator?.username,
+            displayName: (creator as any)?.displayName,
+            photoURL: creator?.photoURL,
+          });
+        }
+      } catch {}
+      
+      return { images: storedImages as any, historyId, model, status: 'completed' };
+    } else {
+      // For non-character generation, use background upload for faster response
+      const quickImages = images.map((img) => ({ id: img.id, url: img.url, originalUrl: img.originalUrl || img.url, storagePath: '' } as any));
+      // Mark history completed with provider URLs for instant UX
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: quickImages,
+        frameSize: resolvedAspect,
+      } as Partial<GenerationHistoryItem>);
+      
+      // Best-effort: background upload to Zata, then replace URLs in history/mirror
+      setImmediate(async () => {
+        try {
+          const storedImages = await Promise.all(
+            images.map(async (img, index) => {
+              try {
+                const { key, publicUrl } = await uploadFromUrlToZata({
+                  sourceUrl: img.url,
+                  keyPrefix: `users/${username}/${storageFolder}/${historyId}`,
+                  fileName: `image-${index + 1}`,
+                });
+                return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
+              } catch {
+                return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url } as any;
+              }
+            })
+          );
+          await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
+          await generationHistoryRepository.update(uid, historyId, { images: storedImages } as any);
+          try {
+            const fresh = await generationHistoryRepository.get(uid, historyId);
+            if (fresh) {
+              await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+                uid,
+                username: creator?.username,
+                displayName: (creator as any)?.displayName,
+                photoURL: creator?.photoURL,
+              });
+            }
+          } catch {}
+        } catch (e) {
+          try { await falRepository.updateGenerationRecord(legacyId, { status: 'completed' }); } catch {}
+        }
+      });
+      
+      // Respond quickly with provider URLs
+      return { images: quickImages as any, historyId, model, status: 'completed' };
+    }
   } catch (err: any) {
     const message = err?.message || "Failed to generate images with FAL API";
     try {
