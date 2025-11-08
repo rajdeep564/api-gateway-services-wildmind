@@ -863,25 +863,17 @@ export const falService = {
       }
       const videos: VideoMedia[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: videoUrl } as any ];
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
-      try {
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) {
-          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-            uid,
-            username: creator?.username,
-            displayName: (creator as any)?.displayName,
-            photoURL: creator?.photoURL,
-          });
-        }
-      } catch {}
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
       return { videos, historyId, model, status: 'completed' };
     } catch (err: any) {
       const message = err?.message || 'Failed to upscale video with FAL API';
       try {
         await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-      } catch {}
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[seedvrUpscale] Failed to mirror error state:', mirrorErr);
+      }
       throw new ApiError(message, 500);
     }
   },
@@ -944,25 +936,17 @@ export const falService = {
       }
       const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, originalUrl: svgUrl } as any ];
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
-      try {
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) {
-          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-            uid,
-            username: creator?.username,
-            displayName: (creator as any)?.displayName,
-            photoURL: creator?.photoURL,
-          });
-        }
-      } catch {}
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
       return { images, historyId, model, status: 'completed' };
     } catch (err: any) {
       const message = err?.message || 'Failed to convert image to SVG with FAL API';
       try {
         await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-      } catch {}
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[image2svg] Failed to mirror error state:', mirrorErr);
+      }
       throw new ApiError(message, 500);
     }
   },
@@ -1012,25 +996,17 @@ export const falService = {
       catch { stored = { publicUrl: svgUrl, key: '' }; }
       const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, originalUrl: svgUrl } as any ];
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
-      try {
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) {
-          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-            uid,
-            username: creator?.username,
-            displayName: (creator as any)?.displayName,
-            photoURL: creator?.photoURL,
-          });
-        }
-      } catch {}
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
       return { images, historyId, model, status: 'completed' };
     } catch (err: any) {
       const message = err?.message || 'Failed to vectorize image with FAL API';
       try {
         await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-      } catch {}
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[recraftVectorize] Failed to mirror error state:', mirrorErr);
+      }
       throw new ApiError(message, 500);
     }
   },
@@ -1124,17 +1100,8 @@ export const falService = {
       }));
 
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: storedImages } as any);
-      try {
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) {
-          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-            uid,
-            username: creator?.username,
-            displayName: (creator as any)?.displayName,
-            photoURL: creator?.photoURL,
-          });
-        }
-      } catch {}
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
 
       return { images: storedImages, historyId, model, status: 'completed' };
     } catch (err: any) {
@@ -1145,9 +1112,10 @@ export const falService = {
       const message = detailedMessage || err?.message || 'Failed to generate with Bria GenFill API';
       try {
         await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-      } catch {}
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[briaGenfill] Failed to mirror error state:', mirrorErr);
+      }
       throw new ApiError(message, 500);
     }
   }
@@ -1250,13 +1218,8 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
     }
     const fresh = await generationHistoryRepository.get(uid, located.id);
     if (fresh) {
-      const creator = await authRepository.getUserById(uid);
-      await generationsMirrorRepository.upsertFromHistory(uid, located.id, fresh, {
-        uid,
-        username: creator?.username,
-        displayName: (creator as any)?.displayName,
-        photoURL: creator?.photoURL,
-      });
+      // Sync to mirror with retries
+      await syncToMirror(uid, located.id);
     }
     // Build enriched response with Zata and original URLs
     const enrichedVideos = (fresh?.videos && Array.isArray(fresh.videos) ? fresh.videos : videos).map((v: any) => ({
@@ -1293,16 +1256,8 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
       const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(model, (located as any)?.item);
       await creditsRepository.writeDebitIfAbsent(uid, located.id, cost, 'fal.queue.image', { ...meta, historyId: located.id, provider: 'fal', pricingVersion });
     } catch {}
-    const fresh = await generationHistoryRepository.get(uid, located.id);
-    if (fresh) {
-      const creator = await authRepository.getUserById(uid);
-      await generationsMirrorRepository.upsertFromHistory(uid, located.id, fresh, {
-        uid,
-        username: creator?.username,
-        displayName: (creator as any)?.displayName,
-        photoURL: creator?.photoURL,
-      });
-    }
+    // Sync to mirror with retries
+    await syncToMirror(uid, located.id);
     return { images: stored, historyId: located.id, model, requestId, status: 'completed' } as any;
   }
   return result;

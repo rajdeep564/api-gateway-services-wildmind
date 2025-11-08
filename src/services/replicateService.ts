@@ -12,6 +12,7 @@ import { uploadFromUrlToZata, uploadDataUriToZata } from '../utils/storage/zataU
 import { replicateRepository } from '../repository/replicateRepository';
 import { creditsRepository } from '../repository/creditsRepository';
 import { computeWanVideoCost } from '../utils/pricing/wanPricing';
+import { syncToMirror, updateMirror } from '../utils/mirrorHelper';
 
 const DEFAULT_BG_MODEL_A = '851-labs/background-remover:a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc';
 const DEFAULT_BG_MODEL_B = 'lucataco/remove-bg:95fcc2a26d3899cd6c2691c900465aaeff466285a65c14638cc5f36f34befaf1';
@@ -209,15 +210,8 @@ export async function removeBackground(uid: string, body: {
   } as any);
   try { await replicateRepository.updateGenerationRecord(legacyId, { status: 'completed', images: [{ id: `replicate-${Date.now()}`, url: storedUrl, storagePath, originalUrl: outputUrl }] }); } catch {}
 
-  try {
-    const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-      uid,
-      username: creator?.username,
-      displayName: (creator as any)?.displayName,
-      photoURL: creator?.photoURL,
-    });
-  } catch {}
+  // Robust mirror sync with retry logic
+  await syncToMirror(uid, historyId);
 
   return { images: [{ id: `replicate-${Date.now()}`, url: storedUrl, storagePath, originalUrl: outputUrl }], historyId, model: modelBase, status: 'completed' } as any;
 }
@@ -347,10 +341,8 @@ export async function upscale(uid: string, body: any) {
 
   await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: uploadedImages as any } as any);
   try { await replicateRepository.updateGenerationRecord(legacyId, { status: 'completed', images: uploadedImages }); } catch {}
-  try {
-    const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, { uid, username: creator?.username, displayName: (creator as any)?.displayName, photoURL: creator?.photoURL });
-  } catch {}
+  // Robust mirror sync with retry logic
+  await syncToMirror(uid, historyId);
   return { images: uploadedImages, historyId, model: modelBase, status: 'completed' } as any;
 }
 
@@ -667,10 +659,8 @@ export async function generateImage(uid: string, body: any) {
 
   await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: uploadedImages as any } as any);
   try { await replicateRepository.updateGenerationRecord(legacyId, { status: 'completed', images: uploadedImages }); } catch {}
-  try {
-    const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, { uid, username: creator?.username, displayName: (creator as any)?.displayName, photoURL: creator?.photoURL });
-  } catch {}
+  // Robust mirror sync with retry logic
+  await syncToMirror(uid, historyId);
   return { images: uploadedImages, historyId, model: modelBase, status: 'completed' } as any;
 }
 
@@ -776,10 +766,8 @@ export async function wanI2V(uid: string, body: any) {
   const videoItem: any = { id: `replicate-${Date.now()}`, url: storedUrl, storagePath, originalUrl: outputUrl };
   await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: [videoItem] } as any);
   try { await replicateRepository.updateGenerationRecord(legacyId, { status: 'completed', videos: [videoItem] }); } catch {}
-  try {
-    const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, { uid, username: creator?.username, displayName: (creator as any)?.displayName, photoURL: creator?.photoURL });
-  } catch {}
+  // Robust mirror sync with retry logic
+  await syncToMirror(uid, historyId);
   return { videos: [videoItem], historyId, model: modelBase, status: 'completed' } as any;
 }
 
@@ -872,10 +860,8 @@ export async function wanT2V(uid: string, body: any) {
   const videoItem: any = { id: `replicate-${Date.now()}`, url: storedUrl, storagePath, originalUrl: outputUrl };
   await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: [videoItem] } as any);
   try { await replicateRepository.updateGenerationRecord(legacyId, { status: 'completed', videos: [videoItem] }); } catch {}
-  try {
-    const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, { uid, username: creator?.username, displayName: (creator as any)?.displayName, photoURL: creator?.photoURL });
-  } catch {}
+  // Robust mirror sync with retry logic
+  await syncToMirror(uid, historyId);
   return { videos: [videoItem], historyId, model: modelBase, status: 'completed' } as any;
 }
 Object.assign(replicateService, { wanT2V });
@@ -1065,10 +1051,8 @@ export async function replicateQueueResult(uid: string, requestId: string): Prom
     } catch {}
     const videoItem: any = { id: requestId, url: storedUrl, storagePath, originalUrl: outputUrl };
     await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: [videoItem] } as any);
-    try {
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, { uid, username: (await authRepository.getUserById(uid))?.username });
-    } catch {}
+    // Robust mirror sync with retry logic
+    await syncToMirror(uid, historyId);
     // Compute and write debit (use stored history fields)
     try {
       const fresh = await generationHistoryRepository.get(uid, historyId);
