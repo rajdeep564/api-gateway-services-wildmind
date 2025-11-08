@@ -7,7 +7,8 @@
     "nodemon": "nodemon --watch src --ext ts,js,json --exec ts-node src/index.ts",
     "build": "tsc",
     "postinstall": "npm run build",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "migrate:optimize-images": "ts-node scripts/migrateImageOptimization.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.893.0",

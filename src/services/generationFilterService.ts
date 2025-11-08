@@ -6,7 +6,8 @@ import { redisGetSafe, redisSetSafe } from '../config/redisClient';
 export interface FilterParams {
   limit?: number;
   page?: number;
-  cursor?: string;
+  cursor?: string; // LEGACY: document ID cursor
+  nextCursor?: string; // NEW: timestamp cursor
   generationType?: GenerationType | string | string[];
   status?: 'generating' | 'completed' | 'failed';
   sortBy?: 'createdAt' | 'updatedAt' | 'prompt';
@@ -20,7 +21,7 @@ export interface FilterParams {
 
 export interface PaginationMeta {
   limit: number;
-  nextCursor?: string;
+  nextCursor?: string | number | null;
   totalCount?: number;
   hasMore?: boolean;
 }
@@ -30,7 +31,8 @@ async function getUserGenerations(uid: string, params: FilterParams) {
   
   // Support both cursor and page-based pagination
   let cursor = params.cursor;
-  if (params.page && !cursor) {
+  let nextCursor = params.nextCursor;
+  if (params.page && !cursor && !nextCursor) {
     // For page-based pagination, we need to simulate with cursor
     // This is a simplified approach - for production, consider using offset-based pagination
     cursor = undefined; // Start from beginning for now
@@ -38,7 +40,8 @@ async function getUserGenerations(uid: string, params: FilterParams) {
   
   const result = await generationHistoryRepository.list(uid, {
     limit,
-    cursor,
+    cursor, // LEGACY: document ID cursor
+    nextCursor, // NEW: timestamp cursor
     generationType: params.generationType as any,
     status: params.status,
     sortBy: params.sortBy,
@@ -52,7 +55,7 @@ async function getUserGenerations(uid: string, params: FilterParams) {
     limit,
     nextCursor: result.nextCursor,
     totalCount: result.totalCount,
-    hasMore: !!result.nextCursor,
+    hasMore: result.hasMore !== undefined ? result.hasMore : !!result.nextCursor,
   };
   
   return {

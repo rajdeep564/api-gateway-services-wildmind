@@ -159,42 +159,51 @@ async function generate(
     });
 
     const images = await Promise.all(imagePromises);
-    // Upload to Zata and keep both links
-    const storedImages = await Promise.all(
-      images.map(async (img, index) => {
-        try {
-          const username = creator?.username || uid;
-          const { key, publicUrl } = await uploadFromUrlToZata({
-            sourceUrl: img.url,
-            keyPrefix: `users/${username}/image/${historyId}`,
-            fileName: `image-${index + 1}`,
-          });
-          return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url };
-        } catch {
-          return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url } as any;
-        }
-      })
-    );
-    await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
-    // Update authoritative history and mirror
+    // QUICK WIN: respond immediately with provider URLs and offload Zata upload to background
+    const quickImages = images.map((img) => ({ id: img.id, url: img.url, originalUrl: img.originalUrl || img.url, storagePath: '' } as any));
+    // Mark history completed with provider URLs for instant UX
     await generationHistoryRepository.update(uid, historyId, {
       status: 'completed',
-      images: storedImages,
+      images: quickImages,
       frameSize: resolvedAspect,
     } as Partial<GenerationHistoryItem>);
-    try {
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) {
-        await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-          uid,
-          username: creator?.username,
-          displayName: (creator as any)?.displayName,
-          photoURL: creator?.photoURL,
-        });
+    // Best-effort: background upload to Zata, then replace URLs in history/mirror
+    setImmediate(async () => {
+      try {
+        const username = creator?.username || uid;
+        const storedImages = await Promise.all(
+          images.map(async (img, index) => {
+            try {
+              const { key, publicUrl } = await uploadFromUrlToZata({
+                sourceUrl: img.url,
+                keyPrefix: `users/${username}/image/${historyId}`,
+                fileName: `image-${index + 1}`,
+              });
+              return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
+            } catch {
+              return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url } as any;
+            }
+          })
+        );
+        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
+        await generationHistoryRepository.update(uid, historyId, { images: storedImages } as any);
+        try {
+          const fresh = await generationHistoryRepository.get(uid, historyId);
+          if (fresh) {
+            await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+              uid,
+              username: creator?.username,
+              displayName: (creator as any)?.displayName,
+              photoURL: creator?.photoURL,
+            });
+          }
+        } catch {}
+      } catch (e) {
+        try { await falRepository.updateGenerationRecord(legacyId, { status: 'completed' }); } catch {}
       }
-    } catch {}
-    // Return Zata URLs to client
-    return { images: storedImages as any, historyId, model, status: "completed" };
+    });
+    // Respond quickly with provider URLs
+    return { images: quickImages as any, historyId, model, status: 'completed' };
   } catch (err: any) {
     const message = err?.message || "Failed to generate images with FAL API";
     try {

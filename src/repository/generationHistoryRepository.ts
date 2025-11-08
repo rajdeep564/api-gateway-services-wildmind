@@ -77,6 +77,120 @@ export async function get(uid: string, historyId: string): Promise<GenerationHis
 
 export async function list(uid: string, params: {
   limit: number;
+  cursor?: string; // LEGACY: document ID cursor (deprecated, use nextCursor instead)
+  nextCursor?: string; // NEW: createdAt timestamp in milliseconds for optimized pagination
+  status?: 'generating' | 'completed' | 'failed';
+  generationType?: GenerationType | string;
+  sortBy?: 'createdAt' | 'updatedAt' | 'prompt'; // LEGACY: kept for backward compatibility
+  sortOrder?: 'asc' | 'desc'; // LEGACY: kept for backward compatibility
+  dateStart?: string; // LEGACY: ISO date string for range filtering
+  dateEnd?: string; // LEGACY: ISO date string for range filtering
+  search?: string;
+}): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string | number | null; hasMore?: boolean; totalCount?: number }> {
+  const col = adminDb.collection('generationHistory').doc(uid).collection('items');
+  
+  // Determine if we're using new optimized pagination or legacy mode
+  const useOptimizedPagination = params.nextCursor !== undefined || 
+    (!params.sortBy && !params.sortOrder && !params.dateStart && !params.dateEnd && !params.cursor);
+  
+  // NEW OPTIMIZED PATH: Use createdAt DESC with timestamp cursor and limit+1
+  if (useOptimizedPagination) {
+    let q: FirebaseFirestore.Query = col
+      .orderBy('createdAt', 'desc')
+      .where('isDeleted', '==', false);
+    
+    // Apply filters with proper composite index support
+    if (params.status) {
+      q = q.where('status', '==', params.status);
+    }
+    
+    if (params.generationType) {
+      if (Array.isArray(params.generationType as any)) {
+        const types = params.generationType as any as string[];
+        if (types.length > 0 && types.length <= 10) {
+          q = q.where('generationType', 'in', types);
+        }
+      } else {
+        q = q.where('generationType', '==', params.generationType);
+      }
+    }
+
+    // Handle cursor-based pagination using createdAt timestamp
+    if (params.nextCursor) {
+      try {
+        const cursorTimestamp = admin.firestore.Timestamp.fromMillis(parseInt(String(params.nextCursor)));
+        q = q.startAfter(cursorTimestamp);
+      } catch (e) {
+        console.warn('[list] Invalid nextCursor, ignoring:', e);
+      }
+    }
+    
+    // Fetch limit + 1 to detect if more items exist
+    const fetchLimit = params.limit + 1;
+    
+    let snap: FirebaseFirestore.QuerySnapshot;
+    try {
+      snap = await q.limit(fetchLimit).get();
+    } catch (e: any) {
+      // If composite index is missing, provide clear error message
+      const codeStr = String(e?.code || '').toLowerCase();
+      const isMissingIndexError =
+        codeStr === 'failed-precondition' ||
+        e?.code === 9 ||
+        /index|composite/i.test(String(e?.message || ''));
+      
+      if (isMissingIndexError) {
+        console.warn(
+          `[list] Missing Firestore composite index. Falling back to legacy pagination. ` +
+          `Please create index for: generationHistory/{uid}/items with fields: ` +
+          `${params.status ? 'status, ' : ''}${params.generationType ? 'generationType, ' : ''}createdAt DESC, isDeleted`
+        );
+        // Fall back to legacy mode
+        return listLegacy(uid, params);
+      }
+      throw e;
+    }
+    
+    if (snap.empty) {
+      return { items: [], nextCursor: null, hasMore: false };
+    }
+
+    let items: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
+
+    // Optional free-text search by prompt (case-insensitive) - done in-memory for simplicity
+    if (params.search && params.search.trim().length > 0) {
+      const needle = params.search.toLowerCase();
+      items = items.filter((it: any) => String((it as any).prompt || '').toLowerCase().includes(needle));
+    }
+
+    // Detect if there are more items
+    const hasMore = items.length > params.limit;
+    const pageItems = hasMore ? items.slice(0, params.limit) : items;
+
+    // Next cursor is the createdAt timestamp of the last item
+    let nextCursor: number | null = null;
+    if (hasMore && pageItems.length > 0) {
+      const lastItem = pageItems[pageItems.length - 1];
+      try {
+        const createdAt = (lastItem as any).createdAt;
+        if (typeof createdAt === 'string') {
+          nextCursor = new Date(createdAt).getTime();
+        }
+      } catch (e) {
+        console.warn('[list] Failed to extract cursor from last item:', e);
+      }
+    }
+
+    return { items: pageItems, nextCursor, hasMore };
+  }
+  
+  // LEGACY PATH: Support old pagination with sortBy, sortOrder, dateStart, dateEnd
+  return listLegacy(uid, params);
+}
+
+// Legacy pagination logic (kept for backward compatibility)
+async function listLegacy(uid: string, params: {
+  limit: number;
   cursor?: string;
   status?: 'generating' | 'completed' | 'failed';
   generationType?: GenerationType | string;
@@ -108,37 +222,30 @@ export async function list(uid: string, params: {
   
   if (params.generationType) {
     if (Array.isArray(params.generationType as any)) {
-      // Firestore doesn't support IN with array of strings directly on composite; split into OR by client side
-      // We'll fetch without filter here and filter client-side after fetchCount; better to add mirror if needed
-      // As a compromise, we can use 'in' for up to 10 values
       const types = params.generationType as any as string[];
       if (types.length <= 10) {
         q = q.where('generationType', 'in', types);
-      } else {
-        // fallback: no where and filter after fetch
       }
     } else {
       q = q.where('generationType', '==', params.generationType);
     }
   }
   
-  // Optional date filtering (client provides ISO). Firestore requires composite index for where + orderBy; if missing, fallback to in-memory filter after fetch.
+  // Optional date filtering
   const wantsDateFilter = typeof params.dateStart === 'string' && typeof params.dateEnd === 'string';
-  let filterByDateInMemory = false;
   if (wantsDateFilter) {
     try {
       const start = new Date(params.dateStart as string);
       const end = new Date(params.dateEnd as string);
-      // Try server-side range filter; if the index is missing, Firestore throws FAILED_PRECONDITION which we will catch later and fallback client-side
       q = col.where('createdAt', '>=', admin.firestore.Timestamp.fromDate(start))
              .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(end))
              .orderBy('createdAt', sortOrder);
     } catch {
-      filterByDateInMemory = true;
+      // Ignore date filter if invalid
     }
   }
 
-  // Handle cursor-based pagination (must be applied AFTER where/orderBy)
+  // Handle cursor-based pagination (document ID)
   if (params.cursor) {
     const cursorDoc = await col.doc(params.cursor).get();
     if (cursorDoc.exists) {
@@ -154,17 +261,14 @@ export async function list(uid: string, params: {
   try {
     snap = await q.limit(fetchCount).get();
   } catch (e: any) {
-    // Fallback for missing composite index (e.g., generationType + createdAt sorting)
+    // Fallback for missing composite index
     const codeStr = String(e?.code || '').toLowerCase();
-    const msgStr = String(e?.message || '').toLowerCase();
     const isMissingIndexError =
-      // Firestore web/node SDK may emit either string or numeric code
       codeStr === 'failed-precondition' ||
       e?.code === 9 ||
-      String(e?.code || e?.message || '').toUpperCase().includes('FAILED_PRECONDITION') ||
       /index|composite/i.test(String(e?.message || ''));
     if (isMissingIndexError) {
-      // Iteratively scan by createdAt in the requested order until we can satisfy the page
+      // Iteratively scan by createdAt
       const batchLimit = Math.max(params.limit * 10, 100);
       let lastDoc: FirebaseFirestore.QueryDocumentSnapshot | undefined;
       let pooledDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
@@ -176,20 +280,16 @@ export async function list(uid: string, params: {
         pooledDocs.push(...batch.docs);
         lastDoc = batch.docs[batch.docs.length - 1];
       }
-      // Build a synthetic snapshot-like object
       snap = { docs: pooledDocs } as any;
-      // We'll filter by generationType/status/date in memory below
-      filterByDateInMemory = true; // ensures consistent post-filter sorting
     } else {
       throw e;
     }
   }
   
   let items: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
-  // Exclude soft-deleted; treat missing field as not deleted for backwards compatibility
   items = items.filter((it: any) => it.isDeleted !== true);
 
-  // Apply in-memory filters for status, generationType, and optional date range
+  // Apply in-memory filters
   if (params.status) {
     const want = String(params.status).toLowerCase();
     items = items.filter((it) => String((it as any).status).toLowerCase() === want);
@@ -217,8 +317,7 @@ export async function list(uid: string, params: {
     });
   }
 
-  // Ensure stable sort after in-memory filtering
-  // Optional free-text search by prompt (case-insensitive)
+  // Optional free-text search by prompt
   if (params.search && params.search.trim().length > 0) {
     const needle = params.search.toLowerCase();
     items = items.filter((it: any) => String((it as any).prompt || '').toLowerCase().includes(needle));

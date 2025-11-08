@@ -46,23 +46,27 @@ async function get(req: Request, res: Response, next: NextFunction) {
 async function listMine(req: Request, res: Response, next: NextFunction) {
 	try {
 		const uid = (req as any).uid;
-		const { 	limit = 20, cursor, status, generationType, sortBy, sortOrder, mode, dateStart, dateEnd, search } = req.query as any;
+		const { limit = 20, cursor, nextCursor, status, generationType, sortBy, sortOrder, mode, dateStart, dateEnd, search } = req.query as any;
+		
 		// Support grouped mode for convenience (e.g., mode=video)
 		let generationTypeFilter: string | string[] | undefined = generationType;
 		if (typeof mode === 'string' && mode.toLowerCase() === 'video') {
 			generationTypeFilter = ['text-to-video', 'image-to-video', 'video-to-video'];
 		}
+		
 		const result = await generationHistoryService.listUserGenerations(uid, { 
-			limit: Number(limit), 
-			cursor, 
+			limit: Number(limit),
+			cursor, // LEGACY: document ID cursor (for backward compatibility)
+			nextCursor, // NEW: timestamp cursor (for optimized pagination)
 			status, 
 			generationType: generationTypeFilter as any,
-			sortBy: sortBy || 'createdAt',
-			sortOrder: sortOrder || 'desc',
-			dateStart,
-			dateEnd,
+			sortBy: sortBy || 'createdAt', // LEGACY: kept for backward compatibility
+			sortOrder: sortOrder || 'desc', // LEGACY: kept for backward compatibility
+			dateStart, // LEGACY: kept for backward compatibility
+			dateEnd, // LEGACY: kept for backward compatibility
 			search,
 		});
+		
 		return res.json(formatApiResponse('success', 'OK', result));
 	} catch (err) {
 		return next(err);

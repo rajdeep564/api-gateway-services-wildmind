@@ -1,5 +1,8 @@
 import { generationHistoryRepository } from "../repository/generationHistoryRepository";
 import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
+import { mirrorQueueRepository } from "../repository/mirrorQueueRepository";
+import { generationStatsRepository } from "../repository/generationStatsRepository";
+import { imageOptimizationService } from "./imageOptimizationService";
 import {
   GenerationStatus,
   CreateGenerationPayload,
@@ -17,15 +20,21 @@ export async function startGeneration(
   const { historyId } = await generationHistoryRepository.create(uid, payload);
   const item = await generationHistoryRepository.get(uid, historyId);
   if (!item) throw new ApiError("Failed to read created history item", 500);
+  
+  // OPTIMIZATION: Update stats counter
   try {
-    const creator = await authRepository.getUserById(uid);
-    await generationsMirrorRepository.upsertFromHistory(uid, historyId, item, {
-      uid,
-      username: creator?.username,
-      displayName: (creator as any)?.displayName,
-      photoURL: creator?.photoURL,
-    });
-  } catch {}
+    await generationStatsRepository.incrementOnCreate(uid, payload.generationType);
+  } catch (e) {
+    console.warn('[startGeneration] Failed to increment stats:', e);
+  }
+  
+  // OPTIMIZATION: Enqueue mirror upsert instead of blocking request
+  try {
+    await mirrorQueueRepository.enqueueUpsert({ uid, historyId, itemSnapshot: item });
+  } catch (e) {
+    console.warn('[startGeneration] Failed to enqueue mirror upsert:', e);
+  }
+  
   return { historyId, item };
 }
 
@@ -47,23 +56,97 @@ export async function markGenerationCompleted(
     nsfw: updates.nsfw ?? existing.nsfw,
   };
   await generationHistoryRepository.update(uid, historyId, next);
+  
+  // OPTIMIZATION: Update stats counter
   try {
-    const creator = await authRepository.getUserById(uid);
+    await generationStatsRepository.updateOnStatusChange(uid, 'generating', 'completed');
+  } catch (e) {
+    console.warn('[markGenerationCompleted] Failed to update stats:', e);
+  }
+  
+  // OPTIMIZATION: Trigger image optimization in background (non-blocking)
+  if (updates.images && updates.images.length > 0) {
+    setImmediate(async () => {
+      try {
+        console.log('[markGenerationCompleted] Starting image optimization:', { uid, historyId, imageCount: updates.images?.length });
+        
+        const images = updates.images || [];
+        
+        // Optimize each image in its original storage location
+        const optimizedImages = await Promise.all(
+          images.map(async (img: any, index: number) => {
+            try {
+              // Extract storage path from original URL
+              const ZATA_PREFIX = 'https://idr01.zata.ai/devstoragev1/';
+              let basePath = '';
+              let filename = '';
+              
+              if (img.url && img.url.startsWith(ZATA_PREFIX)) {
+                const fullPath = img.url.substring(ZATA_PREFIX.length);
+                const lastSlashIndex = fullPath.lastIndexOf('/');
+                if (lastSlashIndex > 0) {
+                  basePath = fullPath.substring(0, lastSlashIndex);
+                  const originalFilename = fullPath.substring(lastSlashIndex + 1);
+                  // Remove extension(s) to get base filename
+                  filename = originalFilename.replace(/\.[^.]+$/, '').replace(/\.[^.]+$/, '');
+                }
+              }
+              
+              // Skip if we couldn't extract valid paths
+              if (!basePath || !filename) {
+                console.warn('[markGenerationCompleted] Could not extract path from URL, skipping optimization:', img.url);
+                return img;
+              }
+              
+              console.log('[markGenerationCompleted] Optimizing image:', { index, basePath, filename, url: img.url });
+              
+              // Use AVIF-only optimization with high quality
+              const optimized = await imageOptimizationService.optimizeImage(img.url, basePath, filename, {
+                maxWidth: 2048,
+                maxHeight: 2048,
+                avifQuality: 90,      // High quality AVIF (only format)
+                thumbnailQuality: 80, // Thumbnail quality
+                thumbnailSize: 400,
+              });
+              
+              return {
+                ...img,
+                avifUrl: optimized.avifUrl,        // Primary and only format
+                thumbnailUrl: optimized.thumbnailUrl,
+                blurDataUrl: optimized.blurDataUrl,
+                optimized: true,
+                optimizedAt: Date.now(),
+              };
+            } catch (error) {
+              console.error(`[markGenerationCompleted] Failed to optimize image ${index}:`, error);
+              return img; // Return original if optimization fails
+            }
+          })
+        );
+        
+        await generationHistoryRepository.update(uid, historyId, { images: optimizedImages });
+        console.log('[markGenerationCompleted] Image optimization complete:', { uid, historyId, optimizedCount: optimizedImages.length });
+        
+        // Re-enqueue mirror update with optimized images
+        const fresh = await generationHistoryRepository.get(uid, historyId);
+        if (fresh) {
+          await mirrorQueueRepository.enqueueUpsert({ uid, historyId, itemSnapshot: fresh });
+        }
+      } catch (error) {
+        console.error('[markGenerationCompleted] Image optimization failed (non-blocking):', error);
+      }
+    });
+  }
+  
+  // OPTIMIZATION: Enqueue mirror update (initial, will be updated after optimization)
+  try {
     const fresh = await generationHistoryRepository.get(uid, historyId);
     if (fresh) {
-      await generationsMirrorRepository.upsertFromHistory(
-        uid,
-        historyId,
-        fresh,
-        {
-          uid,
-          username: creator?.username,
-          displayName: (creator as any)?.displayName,
-          photoURL: creator?.photoURL,
-        }
-      );
+      await mirrorQueueRepository.enqueueUpsert({ uid, historyId, itemSnapshot: fresh });
     }
-  } catch {}
+  } catch (e) {
+    console.warn('[markGenerationCompleted] Failed to enqueue mirror upsert:', e);
+  }
 }
 
 export async function markGenerationFailed(
@@ -79,16 +162,27 @@ export async function markGenerationFailed(
     status: GenerationStatus.Failed,
     error: payload.error,
   });
+  
+  // OPTIMIZATION: Update stats counter
   try {
-    const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh) {
-      await generationsMirrorRepository.updateFromHistory(
-        uid,
-        historyId,
-        fresh
-      );
-    }
-  } catch {}
+    await generationStatsRepository.updateOnStatusChange(uid, 'generating', 'failed');
+  } catch (e) {
+    console.warn('[markGenerationFailed] Failed to update stats:', e);
+  }
+  
+  // OPTIMIZATION: Enqueue mirror update instead of blocking
+  try {
+    await mirrorQueueRepository.enqueueUpdate({
+      uid,
+      historyId,
+      updates: {
+        status: GenerationStatus.Failed,
+        error: payload.error,
+      },
+    });
+  } catch (e) {
+    console.warn('[markGenerationFailed] Failed to enqueue mirror update:', e);
+  }
 }
 
 export async function getUserGeneration(
@@ -102,31 +196,35 @@ export async function listUserGenerations(
   uid: string,
   params: {
     limit: number;
-    cursor?: string;
+    cursor?: string; // LEGACY: document ID cursor
+    nextCursor?: string; // NEW: timestamp cursor for optimized pagination
     status?: "generating" | "completed" | "failed";
     generationType?: string | string[];
-    sortBy?: 'createdAt' | 'updatedAt' | 'prompt';
-    sortOrder?: 'asc' | 'desc';
-    dateStart?: string;
-    dateEnd?: string;
+    sortBy?: 'createdAt' | 'updatedAt' | 'prompt'; // LEGACY: for backward compatibility
+    sortOrder?: 'asc' | 'desc'; // LEGACY: for backward compatibility
+    dateStart?: string; // LEGACY: ISO date string
+    dateEnd?: string; // LEGACY: ISO date string
     search?: string;
   }
-): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string; totalCount?: number }> {
-  // Delegate to repository; it handles optional in-memory date-range fallback when indexes are missing
+): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string | number | null; hasMore?: boolean; totalCount?: number }> {
   return generationHistoryRepository.list(uid, params as any);
 }
 
 export async function softDelete(uid: string, historyId: string): Promise<void> {
-  
   const existing = await generationHistoryRepository.get(uid, historyId);
   if (!existing) throw new ApiError('History item not found', 404);
+  
   await generationHistoryRepository.update(uid, historyId, { isDeleted: true, isPublic: false } as any);
+  
+  // OPTIMIZATION: Enqueue mirror update instead of blocking
   try {
-    await generationsMirrorRepository.updateFromHistory(uid, historyId, { isDeleted: true, isPublic: false } as any);
+    await mirrorQueueRepository.enqueueUpdate({
+      uid,
+      historyId,
+      updates: { isDeleted: true, isPublic: false } as any,
+    });
   } catch (e) {
-    try {
-      await generationsMirrorRepository.remove(historyId);
-    } catch {}
+    console.warn('[softDelete] Failed to enqueue mirror update:', e);
   }
 }
 
@@ -171,10 +269,11 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
 
   await generationHistoryRepository.update(uid, historyId, nextDoc);
 
+  // OPTIMIZATION: Enqueue mirror update instead of blocking
   try {
-    await generationsMirrorRepository.updateFromHistory(uid, historyId, nextDoc);
+    await mirrorQueueRepository.enqueueUpdate({ uid, historyId, updates: nextDoc });
   } catch (e) {
-    console.warn('Failed to update mirror repository:', e);
+    console.warn('[update] Failed to enqueue mirror update:', e);
   }
 }
 

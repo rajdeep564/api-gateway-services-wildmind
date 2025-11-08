@@ -270,6 +270,14 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
     const resourcePath = req.params.path;
     const width = Math.max(16, Math.min(4096, parseInt(String(req.query.w || '512'), 10) || 512));
     const quality = Math.max(10, Math.min(95, parseInt(String(req.query.q || '60'), 10) || 60));
+    // target output format: webp (default) or avif if requested/accepted
+    const fmtParam = String(req.query.fmt || 'auto').toLowerCase();
+    const accept = String(req.headers['accept'] || '');
+    const avifAccepted = /image\/avif/i.test(accept);
+    const preferAvif = fmtParam === 'avif' || (fmtParam === 'auto' && avifAccepted);
+    const outFormat: 'webp' | 'avif' = preferAvif ? 'avif' : 'webp';
+    // for video posters, allow selecting timestamp in seconds (default 0.5s)
+    const t = Math.max(0, Math.min(120, parseFloat(String(req.query.t || '0.5')) || 0.5));
     const zataUrl = buildZataUrl(resourcePath);
 
     const controller = new AbortController();
@@ -293,7 +301,8 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
     if (baseTag) {
       const baseCore = String(baseTag).replace(/\"/g, '').replace(/"/g, '');
       const mediaKind = contentType.startsWith('video/') ? 'vthumb' : 'thumb';
-      const thumbTag = `W/"${mediaKind}:${baseCore}:${width}x${quality}"`;
+      const tPart = contentType.startsWith('video/') ? `:t=${t}` : '';
+      const thumbTag = `W/"${mediaKind}:${baseCore}:${width}x${quality}:fmt=${outFormat}${tPart}"`;
       res.setHeader('ETag', thumbTag);
       const inm = req.headers['if-none-match'];
       if (inm && String(inm).replace(/\"/g, '').replace(/"/g, '') === thumbTag.replace(/\"/g, '').replace(/"/g, '')) {
@@ -304,7 +313,7 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
         const origin = req.headers.origin as string | undefined;
         if (origin) {
           res.setHeader('Access-Control-Allow-Origin', origin);
-          res.setHeader('Vary', 'Origin');
+          res.setHeader('Vary', 'Origin, Accept');
           res.setHeader('Access-Control-Allow-Credentials', 'true');
         }
         return res.end();
@@ -314,22 +323,27 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
     if (contentType.startsWith('image/')) {
       // Stream through sharp to avoid buffering whole source image in memory
       res.status(200);
-      res.setHeader('Content-Type', 'image/webp');
+      res.setHeader('Content-Type', outFormat === 'avif' ? 'image/avif' : 'image/webp');
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
       const origin = req.headers.origin as string | undefined;
       if (origin) {
         res.setHeader('Access-Control-Allow-Origin', origin);
-        res.setHeader('Vary', 'Origin');
+        res.setHeader('Vary', 'Origin, Accept');
         res.setHeader('Access-Control-Allow-Credentials', 'true');
       }
       try {
-        const transformer = sharp().resize({ width, withoutEnlargement: true }).webp({ quality });
+        const base = sharp().resize({ width, withoutEnlargement: true });
+        const transformer = outFormat === 'avif'
+          ? base.avif({ quality, effort: 0 })
+          : base.webp({ quality, effort: 0 });
         (response.body as any)?.pipe(transformer).pipe(res);
         return;
       } catch (e) {
-        const placeholder = await sharp({ create: { width, height: Math.max(1, Math.round(width * 9 / 16)), channels: 3, background: { r: 12, g: 12, b: 14 } } }).webp({ quality }).toBuffer();
+        const placeholder = await sharp({ create: { width, height: Math.max(1, Math.round(width * 9 / 16)), channels: 3, background: { r: 12, g: 12, b: 14 } } })
+          [outFormat === 'avif' ? 'avif' : 'webp']({ quality, effort: 0 } as any)
+          .toBuffer();
         return res.send(placeholder);
       }
     }
@@ -399,7 +413,7 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
         ffmpegActive++;
         // Grab a frame at 0.5s; scale by width preserving aspect
         const execOk = await new Promise<boolean>((resolve) => {
-          const child = execFile(String(ffmpegPath), ['-y', '-ss', '0.5', '-i', inPath, '-frames:v', '1', '-vf', `scale=${width}:-1:force_original_aspect_ratio=decrease`, outPath], { timeout: 3500 }, (err) => {
+          const child = execFile(String(ffmpegPath), ['-y', '-ss', String(t), '-i', inPath, '-frames:v', '1', '-vf', `scale=${width}:-1:force_original_aspect_ratio=decrease`, outPath], { timeout: 3500 }, (err) => {
             if (err) return resolve(false);
             resolve(true);
           });
@@ -411,20 +425,24 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
         let webp: Buffer;
         if (execOk) {
           const frame = await fs.readFile(outPath);
-          webp = await sharp(frame).webp({ quality }).toBuffer();
+          const conv = sharp(frame);
+          webp = await (outFormat === 'avif' ? conv.avif({ quality, effort: 0 }) : conv.webp({ quality, effort: 0 })).toBuffer();
         } else {
           // Fallback: tiny dark placeholder to avoid broken posters under load/timeouts
-          webp = await sharp({ create: { width: Math.max(16, Math.min(width, 64)), height: Math.max(9, Math.min(Math.round(width * 9 / 16), 64)), channels: 3, background: { r: 12, g: 12, b: 14 } } }).webp({ quality: Math.min(quality, 50) }).toBuffer();
+          const phW = Math.max(16, Math.min(width, 64));
+          const phH = Math.max(9, Math.min(Math.round(width * 9 / 16), 64));
+          const conv = sharp({ create: { width: phW, height: phH, channels: 3, background: { r: 12, g: 12, b: 14 } } });
+          webp = await (outFormat === 'avif' ? conv.avif({ quality: Math.min(quality, 50), effort: 0 }) : conv.webp({ quality: Math.min(quality, 50), effort: 0 })).toBuffer();
         }
         res.status(execOk ? 200 : 200);
-        res.setHeader('Content-Type', 'image/webp');
+        res.setHeader('Content-Type', outFormat === 'avif' ? 'image/avif' : 'image/webp');
         res.setHeader('Cache-Control', 'public, max-age=600, stale-while-revalidate=3600');
         res.setHeader('Connection', 'keep-alive');
         res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
         const origin = req.headers.origin as string | undefined;
         if (origin) {
           res.setHeader('Access-Control-Allow-Origin', origin);
-          res.setHeader('Vary', 'Origin');
+          res.setHeader('Vary', 'Origin, Accept');
           res.setHeader('Access-Control-Allow-Credentials', 'true');
         }
         return res.send(webp);
