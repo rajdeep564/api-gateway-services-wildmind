@@ -3,6 +3,7 @@ import { generationsMirrorRepository } from "../repository/generationsMirrorRepo
 import { mirrorQueueRepository } from "../repository/mirrorQueueRepository";
 import { generationStatsRepository } from "../repository/generationStatsRepository";
 import { imageOptimizationService } from "./imageOptimizationService";
+import * as generationCache from "../utils/generationCache";
 import {
   GenerationStatus,
   CreateGenerationPayload,
@@ -189,7 +190,21 @@ export async function getUserGeneration(
   uid: string,
   historyId: string
 ): Promise<GenerationHistoryItem | null> {
-  return generationHistoryRepository.get(uid, historyId);
+  // Try cache first
+  const cached = await generationCache.getCachedItem(uid, historyId);
+  if (cached) {
+    return cached;
+  }
+  
+  // Cache miss - fetch from Firestore
+  const item = await generationHistoryRepository.get(uid, historyId);
+  
+  // Cache the result (even if null to prevent repeated DB hits)
+  if (item) {
+    await generationCache.setCachedItem(uid, historyId, item);
+  }
+  
+  return item;
 }
 
 export async function listUserGenerations(
@@ -207,7 +222,27 @@ export async function listUserGenerations(
     search?: string;
   }
 ): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string | number | null; hasMore?: boolean; totalCount?: number }> {
-  return generationHistoryRepository.list(uid, params as any);
+  // Try cache first (only for first page with standard params)
+  const useCache = !params.cursor && !params.nextCursor && !params.sortBy && !params.sortOrder && !params.dateStart && !params.dateEnd;
+  
+  if (useCache) {
+    const cached = await generationCache.getCachedList(uid, params);
+    if (cached) {
+      return cached;
+    }
+  }
+  
+  // Cache miss - fetch from Firestore
+  const result = await generationHistoryRepository.list(uid, params as any);
+  
+  // Cache the result (only first page)
+  if (useCache && result.items.length > 0) {
+    await generationCache.setCachedList(uid, params, result);
+    // Also cache individual items for faster single-item lookups
+    await generationCache.setCachedItemsBatch(uid, result.items);
+  }
+  
+  return result;
 }
 
 export async function softDelete(uid: string, historyId: string): Promise<void> {
@@ -215,6 +250,9 @@ export async function softDelete(uid: string, historyId: string): Promise<void> 
   if (!existing) throw new ApiError('History item not found', 404);
   
   await generationHistoryRepository.update(uid, historyId, { isDeleted: true, isPublic: false } as any);
+  
+  // Invalidate cache
+  await generationCache.invalidateItem(uid, historyId);
   
   // OPTIMIZATION: Enqueue mirror update instead of blocking
   try {
@@ -268,6 +306,9 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
   }
 
   await generationHistoryRepository.update(uid, historyId, nextDoc);
+
+  // Invalidate cache
+  await generationCache.invalidateItem(uid, historyId);
 
   // OPTIMIZATION: Enqueue mirror update instead of blocking
   try {
