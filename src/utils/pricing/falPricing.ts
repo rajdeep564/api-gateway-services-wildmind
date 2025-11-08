@@ -34,6 +34,63 @@ export async function computeFalImageCost(req: Request): Promise<{ cost: number;
   return { cost, pricingVersion: FAL_PRICING_VERSION, meta: { model: display, n: count } };
 }
 
+export async function computeFalOutpaintCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const body: any = req.body || {};
+  let url: string | undefined = typeof body.image_url === 'string' && body.image_url.length > 0 ? body.image_url : undefined;
+  if (!url && typeof body.image === 'string' && body.image.startsWith('data:')) {
+    try {
+      const uid = (req as any)?.uid || 'anon';
+      const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${uid}/pricing/outpaint/${Date.now()}`, fileName: 'source' });
+      url = stored.publicUrl;
+    } catch {
+      url = undefined;
+    }
+  }
+  if (!url) throw new Error('image_url is required');
+
+  const meta = await probeImageMeta(url);
+  const baseWidth = Number(meta?.width || 0);
+  const baseHeight = Number(meta?.height || 0);
+  if (!isFinite(baseWidth) || !isFinite(baseHeight) || baseWidth <= 0 || baseHeight <= 0) {
+    throw new Error('Unable to compute image dimensions for outpaint pricing');
+  }
+
+  const clampInt = (value: any, min: number, max: number, fallback: number) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    return Math.max(min, Math.min(max, Math.round(num)));
+  };
+
+  const expandLeft = clampInt(body?.expand_left, 0, 700, 0);
+  const expandRight = clampInt(body?.expand_right, 0, 700, 0);
+  const expandTop = clampInt(body?.expand_top, 0, 700, 0);
+  const expandBottom = clampInt(body?.expand_bottom, 0, 700, 400);
+  const requestedZoom = Number(body?.zoom_out_percentage ?? 20);
+  const zoomOut = Number.isFinite(requestedZoom) ? Math.max(0, Math.min(100, requestedZoom)) : 20;
+  const requestedImages = Number(body?.num_images ?? 1);
+  const numImages = Number.isFinite(requestedImages) ? Math.max(1, Math.min(4, Math.round(requestedImages))) : 1;
+
+  const outputWidth = baseWidth + expandLeft + expandRight;
+  const outputHeight = baseHeight + expandTop + expandBottom;
+  const totalMegapixels = (outputWidth * outputHeight * numImages) / 1_000_000;
+  const creditsPerMp = 70; // $0.035 * 2000 credits/USD
+  const credits = Math.max(1, Math.ceil(totalMegapixels * creditsPerMp));
+
+  return {
+    cost: credits,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: 'fal-ai/outpaint',
+      input: { width: baseWidth, height: baseHeight },
+      output: { width: outputWidth, height: outputHeight },
+      expansions: { left: expandLeft, right: expandRight, top: expandTop, bottom: expandBottom },
+      zoom_out_percentage: zoomOut,
+      num_images: numImages,
+      pricing: { megapixels: totalMegapixels, creditsPerMp, credits },
+    },
+  };
+}
+
 function resolveVeoDisplay(isFast: boolean, kind: 't2v' | 'i2v', duration?: string): string {
   const dur = (duration || '8s').toLowerCase();
   if (isFast) {
@@ -284,6 +341,16 @@ export async function computeFalRecraftVectorizeCost(_req: Request): Promise<{ c
   const base = findCredits(display);
   if (base == null) throw new Error('Unsupported FAL recraft/vectorize pricing');
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display } };
+}
+
+export async function computeFalBriaGenfillCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+  const display = 'fal-ai/bria/genfill';
+  const base = findCredits(display);
+  if (base == null) throw new Error('Unsupported FAL bria/genfill pricing');
+  const body: any = req.body || {};
+  const numImages = Number(body?.num_images ?? 1);
+  const count = Number.isFinite(numImages) && numImages >= 1 && numImages <= 4 ? Math.round(numImages) : 1;
+  return { cost: Math.ceil(base * count), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, num_images: count } };
 }
 
 // SeedVR2 Video Upscaler dynamic pricing

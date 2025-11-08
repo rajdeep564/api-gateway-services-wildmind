@@ -366,12 +366,15 @@ export async function generateImage(uid: string, body: any) {
   const replicate = new Replicate({ auth: key });
   const modelBase = (body.model && body.model.length > 0 ? String(body.model) : 'bytedance/seedream-4').trim();
   const creator = await authRepository.getUserById(uid);
+  const aspectRatio = body.aspect_ratio || body.frameSize || null;
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
     model: modelBase,
     generationType: 'text-to-image',
     visibility: body.isPublic ? 'public' : 'private',
     isPublic: body.isPublic ?? false,
+    frameSize: aspectRatio,
+    aspect_ratio: aspectRatio,
     createdBy: creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid },
   } as any);
   const legacyId = await replicateRepository.createGenerationRecord({ prompt: body.prompt, model: modelBase, isPublic: body.isPublic === true }, creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid });

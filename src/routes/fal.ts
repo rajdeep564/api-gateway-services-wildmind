@@ -4,6 +4,7 @@ import { requireAuth } from "../middlewares/authMiddleware";
 import { makeCreditCost } from "../middlewares/creditCostFactory";
 import {
   computeFalImageCost,
+  computeFalOutpaintCost,
   computeFalVeoI2vSubmitCost,
   computeFalVeoTtvSubmitCost,
   computeFalVeo31I2vSubmitCost,
@@ -19,6 +20,7 @@ import {
   computeFalLtxV2FastT2vSubmitCost,
   computeFalImage2SvgCost,
   computeFalRecraftVectorizeCost,
+  computeFalBriaGenfillCost,
   computeFalSeedVrUpscaleCost,
   computeFalTopazUpscaleImageCost,
 } from "../utils/pricing/falPricing";
@@ -43,7 +45,10 @@ import {
   validateFalLtx2ProT2v,
   validateFalLtx2FastT2v,
   validateFalImage2Svg,
+  validateFalOutpaint,
+  validateFalBriaExpand,
   validateFalRecraftVectorize,
+  validateFalBriaGenfill,
   validateFalSeedvrUpscale,
   validateFalTopazUpscaleImage,
 } from "../middlewares/validators/fal/validateFalGenerate";
@@ -67,6 +72,21 @@ router.post(
   (falController as any).image2svg
 );
 router.post(
+  "/outpaint",
+  requireAuth as any,
+  validateFalOutpaint as any,
+  makeCreditCost("fal", "outpaint", (req) => computeFalOutpaintCost(req)) as any,
+  (falController as any).outpaintImage
+);
+// Bria Expand (image outpaint with resizing)
+router.post(
+  "/bria/expand",
+  requireAuth as any,
+  validateFalBriaExpand as any,
+  makeCreditCost("fal", "bria_expand", (req) => computeFalOutpaintCost(req)) as any,
+  (falController as any).briaExpandImage
+);
+router.post(
   "/recraft/vectorize",
   requireAuth as any,
   validateFalRecraftVectorize as any,
@@ -76,6 +96,14 @@ router.post(
     computeFalRecraftVectorizeCost
   ) as any,
   (falController as any).recraftVectorize
+);
+// Bria GenFill (image inpainting/replace)
+router.post(
+  "/bria/genfill",
+  requireAuth as any,
+  validateFalBriaGenfill as any,
+  makeCreditCost("fal", "bria_genfill", (req) => computeFalBriaGenfillCost(req)) as any,
+  (falController as any).briaGenfill
 );
 // Topaz Image Upscaler (per-megapixel dynamic pricing)
 router.post(

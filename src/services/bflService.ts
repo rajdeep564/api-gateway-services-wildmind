@@ -657,11 +657,179 @@ async function depth(uid: string, body: any) {
     } as any;
 }
 
+// Expansion using FLUX Fill - generates mask from expansion margins
+async function expandWithFill(uid: string, body: any) {
+  const apiKey = env.bflApiKey as string;
+  if (!apiKey) throw new ApiError("API key not configured", 500);
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+  
+  if (!body?.image) throw new ApiError("image is required", 400);
+  if (!body?.canvas_size || !Array.isArray(body.canvas_size) || body.canvas_size.length !== 2) {
+    throw new ApiError("canvas_size [width, height] is required", 400);
+  }
+  if (!body?.original_image_size || !Array.isArray(body.original_image_size) || body.original_image_size.length !== 2) {
+    throw new ApiError("original_image_size [width, height] is required", 400);
+  }
+  
+  const canvasW = Number(body.canvas_size[0]);
+  const canvasH = Number(body.canvas_size[1]);
+  const origW = Number(body.original_image_size[0]);
+  const origH = Number(body.original_image_size[1]);
+  const origX = Number(body.original_image_location?.[0] || 0);
+  const origY = Number(body.original_image_location?.[1] || 0);
+  
+  if (canvasW <= 0 || canvasH <= 0 || origW <= 0 || origH <= 0) {
+    throw new ApiError("Invalid canvas or original image dimensions", 400);
+  }
+  
+  // Normalize image to base64
+  const imgNorm = await normalizeToBase64(body.image);
+  if (!imgNorm.width || !imgNorm.height) {
+    throw new ApiError("Could not determine image dimensions", 400);
+  }
+  
+  // Create expanded canvas with original image placed at specified position
+  // Then generate mask: white for expansion areas, black for original image
+  const imgBuffer = Buffer.from(imgNorm.base64, "base64");
+  
+  // Create expanded canvas with transparent background
+  const expandedCanvasBuffer = Buffer.alloc(canvasW * canvasH * 4); // RGBA
+  expandedCanvasBuffer.fill(0); // Transparent black
+  
+  const expandedCanvas = await sharp(expandedCanvasBuffer, {
+    raw: {
+      width: canvasW,
+      height: canvasH,
+      channels: 4
+    }
+  })
+    .composite([
+      {
+        input: imgBuffer,
+        left: origX,
+        top: origY,
+      }
+    ])
+    .png()
+    .toBuffer();
+  
+  // Generate mask: white (255) for expansion areas, black (0) for original image area
+  // Create a white canvas for the mask (all areas to fill)
+  const whiteCanvasBuffer = Buffer.alloc(canvasW * canvasH);
+  whiteCanvasBuffer.fill(255); // White = fill area
+  
+  // Create a black rectangle for the original image area (keep original)
+  const blackRectBuffer = Buffer.alloc(origW * origH);
+  blackRectBuffer.fill(0); // Black = keep original
+  
+  // Composite the black rectangle onto the white canvas at the original image position
+  const maskBuffer = await sharp(whiteCanvasBuffer, {
+    raw: {
+      width: canvasW,
+      height: canvasH,
+      channels: 1
+    }
+  })
+    .composite([
+      {
+        input: await sharp(blackRectBuffer, {
+          raw: {
+            width: origW,
+            height: origH,
+            channels: 1
+          }
+        }).png().toBuffer(),
+        left: origX,
+        top: origY,
+      }
+    ])
+    .png()
+    .toBuffer();
+  
+  const expandedBase64 = expandedCanvas.toString("base64");
+  const maskBase64 = maskBuffer.toString("base64");
+  
+  // Call FLUX Fill API
+  const endpoint = `https://api.bfl.ai/v1/flux-pro-1.0-fill`;
+  const normalizedPayload: any = {
+    image: expandedBase64,
+    mask: maskBase64,
+    prompt: body?.prompt || "",
+    steps: body?.steps || 50,
+    prompt_upsampling: body?.prompt_upsampling ?? false,
+    seed: body?.seed,
+    guidance: body?.guidance || 60,
+    output_format: body?.output_format || "jpeg",
+    safety_tolerance: body?.safety_tolerance ?? 2,
+  };
+  
+  const response = await axios.post(endpoint, normalizedPayload, {
+    headers: {
+      accept: "application/json",
+      "x-key": apiKey,
+      "Content-Type": "application/json",
+    },
+    validateStatus: () => true,
+  });
+  
+  if (response.status < 200 || response.status >= 300)
+    throw new ApiError("Failed to start fill expansion", response.status, response.data);
+  
+  const { polling_url, id } = response.data || {};
+  if (!polling_url) throw new ApiError("No polling URL received", 502);
+  const imageUrl = await pollForResults(polling_url, apiKey);
+  
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body?.prompt || "FLUX Fill Expansion",
+    model: "flux-pro-1.0-fill",
+    generationType: "image-outpaint",
+    visibility: body?.isPublic ? "public" : "private",
+    isPublic: body?.isPublic === true,
+    createdBy,
+  } as any);
+  
+  const { key, publicUrl } = await uploadFromUrlToZata({
+    sourceUrl: imageUrl,
+    keyPrefix: `users/${creator?.username || uid}/image/${historyId}`,
+    fileName: "image-1",
+  });
+  
+  await generationHistoryRepository.update(uid, historyId, {
+    status: "completed",
+    images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+  } as any);
+  
+  try {
+    const fresh = await generationHistoryRepository.get(uid, historyId);
+    if (fresh)
+      await generationsMirrorRepository.upsertFromHistory(
+        uid,
+        historyId,
+        fresh,
+        { uid, username: creator?.username }
+      );
+  } catch {}
+  
+  return {
+    historyId,
+    prompt: body?.prompt || "FLUX Fill Expansion",
+    model: "flux-pro-1.0-fill",
+    generationType: "image-outpaint",
+    visibility: body?.isPublic ? "public" : "private",
+    isPublic: body?.isPublic === true,
+    createdBy,
+    images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+    status: "completed",
+  } as any;
+}
+
 export const bflService = {
   generate,
   pollForResults,
   fill,
   expand,
+  expandWithFill,
   canny,
   depth,
 };

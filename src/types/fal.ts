@@ -1,4 +1,5 @@
 export interface FalGenerateRequest {
+  characterName?: string;
   prompt: string;
   userPrompt?: string;
   model: string; // e.g., 'gemini-25-flash-image'
