@@ -18,6 +18,7 @@ import { GenerationHistoryItem } from "../types/generate";
 import { uploadFromUrlToZata, uploadBufferToZata } from "../utils/storage/zataUpload";
 import { creditsRepository } from "../repository/creditsRepository";
 import { computeMinimaxVideoCostFromParams } from "../utils/pricing/minimaxPricing";
+import { syncToMirror, updateMirror } from "../utils/mirrorHelper";
 
 const MINIMAX_API_BASE = "https://api.minimax.io/v1";
 const MINIMAX_MODEL = "image-01";
@@ -231,17 +232,8 @@ async function generate(
       images: storedImages,
       provider: 'minimax',
     } as Partial<GenerationHistoryItem>);
-    try {
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) {
-        await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-          uid,
-          username: creator?.username,
-          displayName: (creator as any)?.displayName,
-          photoURL: creator?.photoURL,
-        });
-      }
-    } catch {}
+    // Robust mirror sync with retry logic
+    await syncToMirror(uid, historyId);
     return { images: storedImages, historyId, id: data.id } as any;
   } catch (err: any) {
     const message = err?.message || "Failed to generate images with MiniMax";
@@ -249,13 +241,9 @@ async function generate(
       status: "failed",
       error: message,
     });
-    try {
-      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) {
-        await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-      }
-    } catch {}
+    // Update history and mirror with error state
+    await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+    await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
     throw err;
   }
 }
@@ -437,17 +425,8 @@ async function processVideoFile(
       const { cost, pricingVersion, meta } = await computeMinimaxVideoCostFromParams(model, duration, resolution);
       await creditsRepository.writeDebitIfAbsent(uid, historyId, cost, 'minimax.video', { ...meta, historyId, provider: 'minimax', pricingVersion });
     } catch {}
-    try {
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) {
-        await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-          uid,
-          username: creator?.username,
-          displayName: (creator as any)?.displayName,
-          photoURL: creator?.photoURL,
-        });
-      }
-    } catch {}
+    // Robust mirror sync with retry logic
+    await syncToMirror(uid, historyId);
     return { videos: [videoItem], historyId, status: 'completed' };
   } catch (e) {
     // eslint-disable-next-line no-console
@@ -468,10 +447,8 @@ async function processVideoFile(
       const { cost, pricingVersion, meta } = await computeMinimaxVideoCostFromParams(model, (freshForCost as any)?.duration, (freshForCost as any)?.resolution);
       await creditsRepository.writeDebitIfAbsent(uid, historyId, cost, 'minimax.video', { ...meta, historyId, provider: 'minimax', pricingVersion });
     } catch {}
-    try {
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-    } catch {}
+    // Robust mirror sync with retry logic
+    await syncToMirror(uid, historyId);
     return { videos: [videoItem], historyId, status: 'completed' };
   }
 }
@@ -504,27 +481,16 @@ async function musicGenerateAndStore(
       });
       const audioItem: any = { id: 'music-1', url: publicUrl, storagePath: key, originalUrl: providerUrl };
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', audios: [audioItem], provider: 'minimax' } as any);
-      try {
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) {
-          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-            uid,
-            username: creator?.username,
-            displayName: (creator as any)?.displayName,
-            photoURL: creator?.photoURL,
-          });
-        }
-      } catch {}
+      // Robust mirror sync with retry logic
+      await syncToMirror(uid, historyId);
       return { historyId, audios: [audioItem], status: 'completed' };
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn('[MiniMax] Music Zata upload failed; using provider URL');
       const audioItem: any = { id: 'music-1', url: providerUrl, originalUrl: providerUrl };
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', audios: [audioItem], provider: 'minimax' } as any);
-      try {
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-      } catch {}
+      // Robust mirror sync with retry logic
+      await syncToMirror(uid, historyId);
       return { historyId, audios: [audioItem], status: 'completed' };
     }
   }
@@ -544,17 +510,8 @@ async function musicGenerateAndStore(
   const { publicUrl } = await uploadBufferToZata(key, buffer, contentType);
   const audioItem: any = { id: 'music-1', url: publicUrl, storagePath: key };
   await generationHistoryRepository.update(uid, historyId, { status: 'completed', audios: [audioItem], provider: 'minimax' } as any);
-  try {
-    const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh) {
-      await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-        uid,
-        username: creator?.username,
-        displayName: (creator as any)?.displayName,
-        photoURL: creator?.photoURL,
-      });
-    }
-  } catch {}
+  // Robust mirror sync with retry logic
+  await syncToMirror(uid, historyId);
   return { historyId, audios: [audioItem], status: 'completed' };
 }
 

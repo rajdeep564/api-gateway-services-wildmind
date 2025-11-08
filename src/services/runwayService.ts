@@ -11,6 +11,7 @@ import { authRepository } from "../repository/auth/authRepository";
 import { uploadFromUrlToZata, uploadDataUriToZata } from "../utils/storage/zataUpload";
 import { creditsRepository } from "../repository/creditsRepository";
 import { computeRunwayCostFromHistoryModel } from "../utils/pricing/runwayPricing";
+import { syncToMirror } from "../utils/mirrorHelper";
 //
 
 // (SDK handles base/version internally)
@@ -168,18 +169,8 @@ async function getStatus(uid: string, id: string): Promise<any> {
             await creditsRepository.writeDebitIfAbsent(uid, found.id, cost, 'runway.video', { ...meta, historyId: found.id, provider: 'runway', pricingVersion });
           } catch {}
         }
-        try {
-          const creator = await authRepository.getUserById(uid);
-          const fresh = await generationHistoryRepository.get(uid, found.id);
-          if (fresh) {
-            await generationsMirrorRepository.upsertFromHistory(uid, found.id, fresh, {
-              uid,
-              username: creator?.username,
-              displayName: (creator as any)?.displayName,
-              photoURL: creator?.photoURL,
-            });
-          }
-        } catch {}
+        // Robust mirror sync with retry logic
+        await syncToMirror(uid, found.id);
       }
     }
     return task;

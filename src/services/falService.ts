@@ -14,6 +14,7 @@ import { uploadFromUrlToZata, uploadDataUriToZata } from "../utils/storage/zataU
 import { falRepository } from "../repository/falRepository";
 import { creditsRepository } from "../repository/creditsRepository";
 import { computeFalVeoCostFromModel } from "../utils/pricing/falPricing";
+import { syncToMirror, updateMirror, ensureMirrorSync } from "../utils/mirrorHelper";
 
 async function generate(
   uid: string,
@@ -243,109 +244,58 @@ async function generate(
     });
 
     const images = await Promise.all(imagePromises);
+    // QUICK WIN: respond immediately with provider URLs and offload Zata upload to background
+    const quickImages = images.map((img) => ({ id: img.id, url: img.url, originalUrl: img.originalUrl || img.url, storagePath: '' } as any));
+    // Mark history completed with provider URLs for instant UX
+    await generationHistoryRepository.update(uid, historyId, {
+      status: 'completed',
+      images: quickImages,
+      frameSize: resolvedAspect,
+    } as Partial<GenerationHistoryItem>);
     
-    // For text-to-character, upload to Zata synchronously to ensure storage
-    // For other types, use background upload for faster response
-    const storageFolder = generationType === 'text-to-character' ? 'character' : 'image';
-    const username = creator?.username || uid;
+    // Sync to mirror immediately with provider URLs
+    await syncToMirror(uid, historyId);
     
-    if (generationType === 'text-to-character') {
-      // Synchronous upload for character generation to ensure storage
-      const storedImages = await Promise.all(
-        images.map(async (img, index) => {
-          try {
-            const { key, publicUrl } = await uploadFromUrlToZata({
-              sourceUrl: img.url,
-              keyPrefix: `users/${username}/${storageFolder}/${historyId}`,
-              fileName: `image-${index + 1}`,
-            });
-            return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
-          } catch (e) {
-            console.error('[falService.generate] Zata upload failed for character:', e);
-            // Fallback to provider URL if Zata fails
-            return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url, storagePath: '' } as any;
-          }
-        })
-      );
-      
-      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
-      await generationHistoryRepository.update(uid, historyId, {
-        status: 'completed',
-        images: storedImages,
-        frameSize: resolvedAspect,
-      } as Partial<GenerationHistoryItem>);
-      
+    // Best-effort: background upload to Zata, then replace URLs in history/mirror
+    setImmediate(async () => {
       try {
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) {
-          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-            uid,
-            username: creator?.username,
-            displayName: (creator as any)?.displayName,
-            photoURL: creator?.photoURL,
-          });
-        }
-      } catch {}
-      
-      return { images: storedImages as any, historyId, model, status: 'completed' };
-    } else {
-      // For non-character generation, use background upload for faster response
-      const quickImages = images.map((img) => ({ id: img.id, url: img.url, originalUrl: img.originalUrl || img.url, storagePath: '' } as any));
-      // Mark history completed with provider URLs for instant UX
-      await generationHistoryRepository.update(uid, historyId, {
-        status: 'completed',
-        images: quickImages,
-        frameSize: resolvedAspect,
-      } as Partial<GenerationHistoryItem>);
-      
-      // Best-effort: background upload to Zata, then replace URLs in history/mirror
-      setImmediate(async () => {
-        try {
-          const storedImages = await Promise.all(
-            images.map(async (img, index) => {
-              try {
-                const { key, publicUrl } = await uploadFromUrlToZata({
-                  sourceUrl: img.url,
-                  keyPrefix: `users/${username}/${storageFolder}/${historyId}`,
-                  fileName: `image-${index + 1}`,
-                });
-                return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
-              } catch {
-                return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url } as any;
-              }
-            })
-          );
-          await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
-          await generationHistoryRepository.update(uid, historyId, { images: storedImages } as any);
-          try {
-            const fresh = await generationHistoryRepository.get(uid, historyId);
-            if (fresh) {
-              await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-                uid,
-                username: creator?.username,
-                displayName: (creator as any)?.displayName,
-                photoURL: creator?.photoURL,
+        const username = creator?.username || uid;
+        const storedImages = await Promise.all(
+          images.map(async (img, index) => {
+            try {
+              const { key, publicUrl } = await uploadFromUrlToZata({
+                sourceUrl: img.url,
+                keyPrefix: `users/${username}/image/${historyId}`,
+                fileName: `image-${index + 1}`,
               });
+              return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
+            } catch {
+              return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url } as any;
             }
-          } catch {}
-        } catch (e) {
-          try { await falRepository.updateGenerationRecord(legacyId, { status: 'completed' }); } catch {}
-        }
-      });
-      
-      // Respond quickly with provider URLs
-      return { images: quickImages as any, historyId, model, status: 'completed' };
-    }
+          })
+        );
+        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
+        await generationHistoryRepository.update(uid, historyId, { images: storedImages } as any);
+        
+        // Ensure mirror sync after Zata upload with retries
+        await ensureMirrorSync(uid, historyId);
+      } catch (e) {
+        console.error('[falService.generate] Background Zata upload failed:', e);
+        try { await falRepository.updateGenerationRecord(legacyId, { status: 'completed' }); } catch {}
+      }
+    });
+    // Respond quickly with provider URLs
+    return { images: quickImages as any, historyId, model, status: 'completed' };
   } catch (err: any) {
     const message = err?.message || "Failed to generate images with FAL API";
     try {
       await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message });
       await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) {
-        await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-      }
-    } catch {}
+      // Ensure failed generations are also mirrored
+      await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+    } catch (mirrorErr) {
+      console.error('[falService.generate] Failed to mirror error state:', mirrorErr);
+    }
     throw new ApiError(message, 500);
   }
 }
@@ -397,23 +347,17 @@ async function veoTextToVideo(uid: string, payload: {
       { id: result.requestId || `fal-${Date.now()}`, url: videoUrl, storagePath: '', thumbUrl: undefined },
     ];
     await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
-    try {
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-        uid,
-        username: creator?.username,
-        displayName: (creator as any)?.displayName,
-        photoURL: creator?.photoURL,
-      });
-    } catch {}
+    // Sync to mirror with retries
+    await syncToMirror(uid, historyId);
     return { videos, historyId, model: 'fal-ai/veo3', status: 'completed' };
   } catch (err: any) {
     const message = err?.message || 'Failed to generate video with FAL API';
     try {
       await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-    } catch {}
+      await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+    } catch (mirrorErr) {
+      console.error('[veoTextToVideo] Failed to mirror error state:', mirrorErr);
+    }
     throw new ApiError(message, 500);
   }
 }
@@ -453,23 +397,17 @@ async function veoTextToVideoFast(uid: string, payload: Parameters<typeof veoTex
       { id: result.requestId || `fal-${Date.now()}`, url: videoUrl, storagePath: '', thumbUrl: undefined },
     ];
     await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
-    try {
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-        uid,
-        username: creator?.username,
-        displayName: (creator as any)?.displayName,
-        photoURL: creator?.photoURL,
-      });
-    } catch {}
+    // Sync to mirror with retries
+    await syncToMirror(uid, historyId);
     return { videos, historyId, model: 'fal-ai/veo3/fast', status: 'completed' };
   } catch (err: any) {
     const message = err?.message || 'Failed to generate video with FAL API';
     try {
       await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-    } catch {}
+      await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+    } catch (mirrorErr) {
+      console.error('[veoTextToVideoFast] Failed to mirror error state:', mirrorErr);
+    }
     throw new ApiError(message, 500);
   }
 }
@@ -515,23 +453,17 @@ async function veoImageToVideo(uid: string, payload: {
       { id: result.requestId || `fal-${Date.now()}`, url: videoUrl, storagePath: '', thumbUrl: undefined },
     ];
     await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
-    try {
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-        uid,
-        username: creator?.username,
-        displayName: (creator as any)?.displayName,
-        photoURL: creator?.photoURL,
-      });
-    } catch {}
+    // Sync to mirror with retries
+    await syncToMirror(uid, historyId);
     return { videos, historyId, model: 'fal-ai/veo3/image-to-video', status: 'completed' };
   } catch (err: any) {
     const message = err?.message || 'Failed to generate video with FAL API';
     try {
       await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-    } catch {}
+      await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+    } catch (mirrorErr) {
+      console.error('[veoImageToVideo] Failed to mirror error state:', mirrorErr);
+    }
     throw new ApiError(message, 500);
   }
 }
@@ -569,23 +501,17 @@ async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoIm
       { id: result.requestId || `fal-${Date.now()}`, url: videoUrl, storagePath: '', thumbUrl: undefined },
     ];
     await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
-    try {
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-        uid,
-        username: creator?.username,
-        displayName: (creator as any)?.displayName,
-        photoURL: creator?.photoURL,
-      });
-    } catch {}
+    // Sync to mirror with retries
+    await syncToMirror(uid, historyId);
     return { videos, historyId, model: 'fal-ai/veo3/fast/image-to-video', status: 'completed' };
   } catch (err: any) {
     const message = err?.message || 'Failed to generate video with FAL API';
     try {
       await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-    } catch {}
+      await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+    } catch (mirrorErr) {
+      console.error('[veoImageToVideoFast] Failed to mirror error state:', mirrorErr);
+    }
     throw new ApiError(message, 500);
   }
 }
@@ -668,17 +594,8 @@ export const falService = {
       const images: FalGeneratedImage[] = [ { id: (result as any)?.requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any ];
 
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
-      try {
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) {
-          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-            uid,
-            username: creator?.username,
-            displayName: (creator as any)?.displayName,
-            photoURL: creator?.photoURL,
-          });
-        }
-      } catch {}
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
 
       return { images, historyId, model, status: 'completed' };
     } catch (err: any) {
@@ -689,9 +606,10 @@ export const falService = {
       const message = detailedMessage || err?.message || 'Failed to expand image with Bria API';
       try {
         await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-      } catch {}
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[briaExpandImage] Failed to mirror error state:', mirrorErr);
+      }
       throw new ApiError(message, 500);
     }
   },
@@ -837,17 +755,8 @@ export const falService = {
         images: storedImages,
         frameSize: body?.aspect_ratio,
       } as any);
-      try {
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) {
-          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-            uid,
-            username: creator?.username,
-            displayName: (creator as any)?.displayName,
-            photoURL: creator?.photoURL,
-          });
-        }
-      } catch {}
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
 
       return { images: storedImages, historyId, model, status: 'completed' };
     } catch (err: any) {
@@ -858,9 +767,10 @@ export const falService = {
       const message = detailedMessage || err?.message || 'Failed to outpaint image with FAL API';
       try {
         await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-      } catch {}
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[outpaintImage] Failed to mirror error state:', mirrorErr);
+      }
       throw new ApiError(message, 500);
     }
   },
@@ -910,25 +820,17 @@ export const falService = {
       const { key, publicUrl } = await uploadFromUrlToZata({ sourceUrl: imgUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'upscaled' });
       const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any ];
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
-      try {
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) {
-          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-            uid,
-            username: creator?.username,
-            displayName: (creator as any)?.displayName,
-            photoURL: creator?.photoURL,
-          });
-        }
-      } catch {}
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
       return { images, historyId, model, status: 'completed' };
     } catch (err: any) {
       const message = err?.message || 'Failed to upscale image with FAL API';
       try {
         await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-      } catch {}
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[topazUpscaleImage] Failed to mirror error state:', mirrorErr);
+      }
       throw new ApiError(message, 500);
     }
   },
@@ -971,25 +873,17 @@ export const falService = {
       }
       const videos: VideoMedia[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: videoUrl } as any ];
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
-      try {
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) {
-          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-            uid,
-            username: creator?.username,
-            displayName: (creator as any)?.displayName,
-            photoURL: creator?.photoURL,
-          });
-        }
-      } catch {}
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
       return { videos, historyId, model, status: 'completed' };
     } catch (err: any) {
       const message = err?.message || 'Failed to upscale video with FAL API';
       try {
         await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-      } catch {}
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[seedvrUpscale] Failed to mirror error state:', mirrorErr);
+      }
       throw new ApiError(message, 500);
     }
   },
@@ -1052,25 +946,17 @@ export const falService = {
       }
       const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, originalUrl: svgUrl } as any ];
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
-      try {
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) {
-          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-            uid,
-            username: creator?.username,
-            displayName: (creator as any)?.displayName,
-            photoURL: creator?.photoURL,
-          });
-        }
-      } catch {}
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
       return { images, historyId, model, status: 'completed' };
     } catch (err: any) {
       const message = err?.message || 'Failed to convert image to SVG with FAL API';
       try {
         await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-      } catch {}
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[image2svg] Failed to mirror error state:', mirrorErr);
+      }
       throw new ApiError(message, 500);
     }
   },
@@ -1120,25 +1006,17 @@ export const falService = {
       catch { stored = { publicUrl: svgUrl, key: '' }; }
       const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, originalUrl: svgUrl } as any ];
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
-      try {
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) {
-          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-            uid,
-            username: creator?.username,
-            displayName: (creator as any)?.displayName,
-            photoURL: creator?.photoURL,
-          });
-        }
-      } catch {}
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
       return { images, historyId, model, status: 'completed' };
     } catch (err: any) {
       const message = err?.message || 'Failed to vectorize image with FAL API';
       try {
         await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-      } catch {}
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[recraftVectorize] Failed to mirror error state:', mirrorErr);
+      }
       throw new ApiError(message, 500);
     }
   },
@@ -1232,17 +1110,8 @@ export const falService = {
       }));
 
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: storedImages } as any);
-      try {
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) {
-          await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
-            uid,
-            username: creator?.username,
-            displayName: (creator as any)?.displayName,
-            photoURL: creator?.photoURL,
-          });
-        }
-      } catch {}
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
 
       return { images: storedImages, historyId, model, status: 'completed' };
     } catch (err: any) {
@@ -1253,9 +1122,10 @@ export const falService = {
       const message = detailedMessage || err?.message || 'Failed to generate with Bria GenFill API';
       try {
         await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) await generationsMirrorRepository.updateFromHistory(uid, historyId, fresh);
-      } catch {}
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[briaGenfill] Failed to mirror error state:', mirrorErr);
+      }
       throw new ApiError(message, 500);
     }
   }
@@ -1358,13 +1228,8 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
     }
     const fresh = await generationHistoryRepository.get(uid, located.id);
     if (fresh) {
-      const creator = await authRepository.getUserById(uid);
-      await generationsMirrorRepository.upsertFromHistory(uid, located.id, fresh, {
-        uid,
-        username: creator?.username,
-        displayName: (creator as any)?.displayName,
-        photoURL: creator?.photoURL,
-      });
+      // Sync to mirror with retries
+      await syncToMirror(uid, located.id);
     }
     // Build enriched response with Zata and original URLs
     const enrichedVideos = (fresh?.videos && Array.isArray(fresh.videos) ? fresh.videos : videos).map((v: any) => ({
@@ -1401,16 +1266,8 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
       const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(model, (located as any)?.item);
       await creditsRepository.writeDebitIfAbsent(uid, located.id, cost, 'fal.queue.image', { ...meta, historyId: located.id, provider: 'fal', pricingVersion });
     } catch {}
-    const fresh = await generationHistoryRepository.get(uid, located.id);
-    if (fresh) {
-      const creator = await authRepository.getUserById(uid);
-      await generationsMirrorRepository.upsertFromHistory(uid, located.id, fresh, {
-        uid,
-        username: creator?.username,
-        displayName: (creator as any)?.displayName,
-        photoURL: creator?.photoURL,
-      });
-    }
+    // Sync to mirror with retries
+    await syncToMirror(uid, located.id);
     return { images: stored, historyId: located.id, model, requestId, status: 'completed' } as any;
   }
   return result;

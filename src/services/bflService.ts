@@ -16,6 +16,7 @@ import { GenerationHistoryItem } from "../types/generate";
 import { uploadFromUrlToZata, uploadDataUriToZata } from "../utils/storage/zataUpload";
 import { env } from "../config/env";
 import sharp from "sharp";
+import { syncToMirror, updateMirror } from "../utils/mirrorHelper";
 
 // Normalize input (URL | data URI | raw base64) to a base64 string without a data URI prefix
 // Returns base64 plus metadata (mime, width, height)
@@ -331,23 +332,8 @@ async function generate(
       // persist optional fields
       ...(frameSize ? { frameSize: frameSize as any } : {}),
     } as Partial<GenerationHistoryItem>);
-    try {
-      const creator = await authRepository.getUserById(uid);
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) {
-        await generationsMirrorRepository.upsertFromHistory(
-          uid,
-          historyId,
-          fresh,
-          {
-            uid,
-            username: creator?.username,
-            displayName: (creator as any)?.displayName,
-            photoURL: creator?.photoURL,
-          }
-        );
-      }
-    } catch {}
+    // Robust mirror sync with retry logic
+    await syncToMirror(uid, historyId);
     return {
       historyId,
       prompt,
@@ -367,20 +353,12 @@ async function generate(
       status: "failed",
       error: message,
     });
-    try {
-      await generationHistoryRepository.update(uid, historyId, {
-        status: "failed",
-        error: message,
-      } as any);
-      const fresh = await generationHistoryRepository.get(uid, historyId);
-      if (fresh) {
-        await generationsMirrorRepository.updateFromHistory(
-          uid,
-          historyId,
-          fresh
-        );
-      }
-    } catch {}
+    // Update history and mirror with error state
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: message,
+    } as any);
+    await updateMirror(uid, historyId, { status: "failed" as any, error: message });
     throw err;
   }
 }
@@ -447,16 +425,8 @@ async function fill(uid: string, body: any) {
     status: "completed",
     images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
   } as any);
-  try {
-    const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh)
-      await generationsMirrorRepository.upsertFromHistory(
-        uid,
-        historyId,
-        fresh,
-        { uid, username: (await authRepository.getUserById(uid))?.username }
-      );
-  } catch {}
+  // Robust mirror sync with retry logic
+  await syncToMirror(uid, historyId);
   return {
     historyId,
     prompt: body?.prompt || "",
@@ -512,16 +482,8 @@ async function expand(uid: string, body: any) {
     status: "completed",
     images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
   } as any);
-  try {
-    const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh)
-      await generationsMirrorRepository.upsertFromHistory(
-        uid,
-        historyId,
-        fresh,
-        { uid, username: (await authRepository.getUserById(uid))?.username }
-      );
-  } catch {}
+  // Robust mirror sync with retry logic
+  await syncToMirror(uid, historyId);
   return {
     historyId,
     prompt: body?.prompt || "",
@@ -573,16 +535,8 @@ async function canny(uid: string, body: any) {
     status: "completed",
     images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
   } as any);
-  try {
-    const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh)
-      await generationsMirrorRepository.upsertFromHistory(
-        uid,
-        historyId,
-        fresh,
-        { uid, username: (await authRepository.getUserById(uid))?.username }
-      );
-  } catch {}
+  // Robust mirror sync with retry logic
+  await syncToMirror(uid, historyId);
   return {
     historyId,
     prompt: body?.prompt || "",
@@ -634,16 +588,8 @@ async function depth(uid: string, body: any) {
     status: "completed",
     images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
   } as any);
-  try {
-    const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh)
-      await generationsMirrorRepository.upsertFromHistory(
-        uid,
-        historyId,
-        fresh,
-        { uid, username: (await authRepository.getUserById(uid))?.username }
-      );
-  } catch {}
+  // Robust mirror sync with retry logic
+  await syncToMirror(uid, historyId);
   return {
     historyId,
     prompt: body?.prompt || "",
@@ -800,16 +746,8 @@ async function expandWithFill(uid: string, body: any) {
     images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
   } as any);
   
-  try {
-    const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh)
-      await generationsMirrorRepository.upsertFromHistory(
-        uid,
-        historyId,
-        fresh,
-        { uid, username: creator?.username }
-      );
-  } catch {}
+  // Robust mirror sync with retry logic
+  await syncToMirror(uid, historyId);
   
   return {
     historyId,
