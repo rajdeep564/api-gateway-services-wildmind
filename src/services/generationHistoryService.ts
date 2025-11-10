@@ -3,7 +3,9 @@ import { generationsMirrorRepository } from "../repository/generationsMirrorRepo
 import { mirrorQueueRepository } from "../repository/mirrorQueueRepository";
 import { generationStatsRepository } from "../repository/generationStatsRepository";
 import { imageOptimizationService } from "./imageOptimizationService";
-import * as generationCache from "../utils/generationCache";
+// CACHING REMOVED: Redis generationCache disabled due to stale list items not reflecting newly started generations promptly.
+// If reintroducing, ensure immediate inclusion of generating items and robust invalidation on create/complete/fail/update.
+import { deleteGenerationFiles } from "../utils/storage/zataDelete";
 import {
   GenerationStatus,
   CreateGenerationPayload,
@@ -21,6 +23,8 @@ export async function startGeneration(
   const { historyId } = await generationHistoryRepository.create(uid, payload);
   const item = await generationHistoryRepository.get(uid, historyId);
   if (!item) throw new ApiError("Failed to read created history item", 500);
+  
+  // Cache invalidation removed (no cache layer active)
   
   // OPTIMIZATION: Update stats counter
   try {
@@ -57,6 +61,8 @@ export async function markGenerationCompleted(
     nsfw: updates.nsfw ?? existing.nsfw,
   };
   await generationHistoryRepository.update(uid, historyId, next);
+  
+  // Cache invalidation removed
   
   // OPTIMIZATION: Update stats counter
   try {
@@ -164,6 +170,8 @@ export async function markGenerationFailed(
     error: payload.error,
   });
   
+  // Cache invalidation removed
+  
   // OPTIMIZATION: Update stats counter
   try {
     await generationStatsRepository.updateOnStatusChange(uid, 'generating', 'failed');
@@ -190,21 +198,8 @@ export async function getUserGeneration(
   uid: string,
   historyId: string
 ): Promise<GenerationHistoryItem | null> {
-  // Try cache first
-  const cached = await generationCache.getCachedItem(uid, historyId);
-  if (cached) {
-    return cached;
-  }
-  
-  // Cache miss - fetch from Firestore
-  const item = await generationHistoryRepository.get(uid, historyId);
-  
-  // Cache the result (even if null to prevent repeated DB hits)
-  if (item) {
-    await generationCache.setCachedItem(uid, historyId, item);
-  }
-  
-  return item;
+  // Direct fetch (no caching)
+  return generationHistoryRepository.get(uid, historyId);
 }
 
 export async function listUserGenerations(
@@ -222,51 +217,54 @@ export async function listUserGenerations(
     search?: string;
   }
 ): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string | number | null; hasMore?: boolean; totalCount?: number }> {
-  // Try cache first (only for first page with standard params)
-  const useCache = !params.cursor && !params.nextCursor && !params.sortBy && !params.sortOrder && !params.dateStart && !params.dateEnd;
-  
-  if (useCache) {
-    const cached = await generationCache.getCachedList(uid, params);
-    if (cached) {
-      return cached;
-    }
-  }
-  
-  // Cache miss - fetch from Firestore
-  const result = await generationHistoryRepository.list(uid, params as any);
-  
-  // Cache the result (only first page)
-  if (useCache && result.items.length > 0) {
-    await generationCache.setCachedList(uid, params, result);
-    // Also cache individual items for faster single-item lookups
-    await generationCache.setCachedItemsBatch(uid, result.items);
-  }
-  
-  return result;
+  // Direct fetch from Firestore (caching disabled)
+  return generationHistoryRepository.list(uid, params as any);
 }
 
-export async function softDelete(uid: string, historyId: string): Promise<void> {
+export async function softDelete(uid: string, historyId: string): Promise<{ item: GenerationHistoryItem }> {
   const existing = await generationHistoryRepository.get(uid, historyId);
   if (!existing) throw new ApiError('History item not found', 404);
   
+  console.log('[softDelete] Starting deletion:', { uid, historyId, isPublic: existing.isPublic });
+  
+  // 1. Mark as deleted in generationHistory
   await generationHistoryRepository.update(uid, historyId, { isDeleted: true, isPublic: false } as any);
+  console.log('[softDelete] Marked as deleted in generationHistory');
   
-  // Invalidate cache
-  await generationCache.invalidateItem(uid, historyId);
+  // 2. Cache invalidation removed
   
-  // OPTIMIZATION: Enqueue mirror update instead of blocking
+  // 3. Delete from publicGenerations mirror (generations collection)
   try {
-    await mirrorQueueRepository.enqueueUpdate({
-      uid,
-      historyId,
-      updates: { isDeleted: true, isPublic: false } as any,
-    });
+    await generationsMirrorRepository.remove(historyId);
+    console.log('[softDelete] Deleted from publicGenerations mirror');
   } catch (e) {
-    console.warn('[softDelete] Failed to enqueue mirror update:', e);
+    console.warn('[softDelete] Failed to delete from mirror:', e);
   }
+  
+  // 4. Delete files from Zata storage (in background, non-blocking)
+  setImmediate(async () => {
+    try {
+      console.log('[softDelete] Starting Zata file deletion...');
+      await deleteGenerationFiles(existing);
+      console.log('[softDelete] Successfully deleted files from Zata storage');
+    } catch (e) {
+      console.error('[softDelete] Failed to delete files from Zata:', e);
+    }
+  });
+  
+  console.log('[softDelete] Deletion completed');
+  
+  // Return the item with isDeleted flag
+  return { 
+    item: { 
+      ...existing, 
+      isDeleted: true, 
+      isPublic: false 
+    } 
+  };
 }
 
-export async function update(uid: string, historyId: string, updates: Partial<GenerationHistoryItem>): Promise<void> {
+export async function update(uid: string, historyId: string, updates: Partial<GenerationHistoryItem>): Promise<{ item: GenerationHistoryItem }> {
   const existing = await generationHistoryRepository.get(uid, historyId);
   if (!existing) throw new ApiError('History item not found', 404);
 
@@ -307,8 +305,9 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
 
   await generationHistoryRepository.update(uid, historyId, nextDoc);
 
-  // Invalidate cache
-  await generationCache.invalidateItem(uid, historyId);
+  // Cache invalidation removed
+
+  console.log('[update] Updated generation:', { historyId, isPublic: nextDoc.isPublic, hasImages: !!nextDoc.images, hasVideos: !!nextDoc.videos });
 
   // OPTIMIZATION: Enqueue mirror update instead of blocking
   try {
@@ -316,6 +315,12 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
   } catch (e) {
     console.warn('[update] Failed to enqueue mirror update:', e);
   }
+  
+  // Fetch and return the updated item
+  const updatedItem = await generationHistoryRepository.get(uid, historyId);
+  if (!updatedItem) throw new ApiError('Failed to fetch updated item', 500);
+  
+  return { item: updatedItem };
 }
 
 export const generationHistoryService = {

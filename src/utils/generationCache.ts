@@ -28,10 +28,17 @@ function getListCacheKey(uid: string, params: any): string {
 export async function getCachedItem(uid: string, historyId: string): Promise<GenerationHistoryItem | null> {
   try {
     const client = getClient();
-    if (!client) return null;
+    if (!client) {
+      console.log('[generationCache] ❌ No Redis client available');
+      return null;
+    }
     const key = getItemCacheKey(uid, historyId);
     const cached = await client.get(key);
-    if (!cached) return null;
+    if (!cached) {
+      console.log(`[generationCache] ⚠️  CACHE MISS: ${key}`);
+      return null;
+    }
+    console.log(`[generationCache] ✅ CACHE HIT: ${key}`);
     return JSON.parse(cached) as GenerationHistoryItem;
   } catch (error) {
     console.warn('[generationCache] getCachedItem error:', error);
@@ -45,9 +52,13 @@ export async function getCachedItem(uid: string, historyId: string): Promise<Gen
 export async function setCachedItem(uid: string, historyId: string, item: GenerationHistoryItem): Promise<void> {
   try {
     const client = getClient();
-    if (!client) return;
+    if (!client) {
+      console.log('[generationCache] ❌ No Redis client available for caching');
+      return;
+    }
     const key = getItemCacheKey(uid, historyId);
     await client.setEx(key, CACHE_TTL, JSON.stringify(item));
+    console.log(`[generationCache] 💾 CACHED: ${key} (TTL: ${CACHE_TTL}s)`);
   } catch (error) {
     console.warn('[generationCache] setCachedItem error:', error);
   }
@@ -75,10 +86,17 @@ export async function invalidateItem(uid: string, historyId: string): Promise<vo
 export async function getCachedList(uid: string, params: any): Promise<any | null> {
   try {
     const client = getClient();
-    if (!client) return null;
+    if (!client) {
+      console.log('[generationCache] ❌ No Redis client available');
+      return null;
+    }
     const key = getListCacheKey(uid, params);
     const cached = await client.get(key);
-    if (!cached) return null;
+    if (!cached) {
+      console.log(`[generationCache] ⚠️  LIST CACHE MISS: ${key}`);
+      return null;
+    }
+    console.log(`[generationCache] ✅ LIST CACHE HIT: ${key}`);
     return JSON.parse(cached);
   } catch (error) {
     console.warn('[generationCache] getCachedList error:', error);
@@ -92,9 +110,13 @@ export async function getCachedList(uid: string, params: any): Promise<any | nul
 export async function setCachedList(uid: string, params: any, result: any): Promise<void> {
   try {
     const client = getClient();
-    if (!client) return;
+    if (!client) {
+      console.log('[generationCache] ❌ No Redis client available for list caching');
+      return;
+    }
     const key = getListCacheKey(uid, params);
     await client.setEx(key, LIST_CACHE_TTL, JSON.stringify(result));
+    console.log(`[generationCache] 💾 LIST CACHED: ${key} (TTL: ${LIST_CACHE_TTL}s, items: ${result.items?.length || 0})`);
   } catch (error) {
     console.warn('[generationCache] setCachedList error:', error);
   }

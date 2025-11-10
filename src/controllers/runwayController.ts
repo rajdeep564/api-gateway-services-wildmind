@@ -48,8 +48,9 @@ async function getStatus(req: Request, res: Response, next: NextFunction) {
 async function videoGenerate(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid;
+    const ctx = (req as any).context || {};
     const result = await runwayService.videoGenerate(uid, req.body);
-    res.json(formatApiResponse('success', 'Runway video task created', result));
+    res.json(formatApiResponse('success', 'Runway video task created', { ...result, expectedDebit: ctx.creditCost }));
   } catch (err) {
     next(err);
   }
