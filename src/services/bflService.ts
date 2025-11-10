@@ -730,7 +730,7 @@ async function expandWithFill(uid: string, body: any) {
     prompt: body?.prompt || "FLUX Fill Expansion",
     model: "flux-pro-1.0-fill",
     generationType: "image-outpaint",
-    visibility: body?.isPublic ? "public" : "private",
+    visibility: body?.isPublic === true ? "public" : "private",
     isPublic: body?.isPublic === true,
     createdBy,
   } as any);
@@ -754,7 +754,7 @@ async function expandWithFill(uid: string, body: any) {
     prompt: body?.prompt || "FLUX Fill Expansion",
     model: "flux-pro-1.0-fill",
     generationType: "image-outpaint",
-    visibility: body?.isPublic ? "public" : "private",
+    visibility: body?.isPublic === true ? "public" : "private",
     isPublic: body?.isPublic === true,
     createdBy,
     images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],

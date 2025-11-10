@@ -12,8 +12,10 @@ import {
   CompleteGenerationPayload,
   FailGenerationPayload,
   GenerationHistoryItem,
+  Visibility,
 } from "../types/generate";
 import { authRepository } from "../repository/auth/authRepository";
+import { syncToMirror } from "../utils/mirrorHelper";
 import { ApiError } from "../utils/errorHandler";
 
 export async function startGeneration(
@@ -52,11 +54,13 @@ export async function markGenerationCompleted(
   if (!existing) throw new ApiError("History item not found", 404);
   if (existing.status !== GenerationStatus.Generating)
     throw new ApiError("Invalid status transition", 400);
+  const finalIsPublic = updates.isPublic === true ? true : (updates.isPublic === false ? false : (existing.isPublic === true));
   const next: Partial<GenerationHistoryItem> = {
     status: GenerationStatus.Completed,
     images: updates.images,
     videos: updates.videos,
-    isPublic: updates.isPublic ?? existing.isPublic ?? false,
+    isPublic: finalIsPublic,
+  visibility: finalIsPublic ? Visibility.Public : Visibility.Private,
     tags: updates.tags ?? existing.tags,
     nsfw: updates.nsfw ?? existing.nsfw,
   };
@@ -168,6 +172,8 @@ export async function markGenerationFailed(
   await generationHistoryRepository.update(uid, historyId, {
     status: GenerationStatus.Failed,
     error: payload.error,
+    isPublic: false,
+    visibility: Visibility.Private
   });
   
   // Cache invalidation removed
@@ -270,6 +276,8 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
 
   // Support per-media privacy updates
   let nextDoc: Partial<GenerationHistoryItem> = { ...updates };
+  const explicitIsPublicProvided = Object.prototype.hasOwnProperty.call(updates, 'isPublic') && typeof (updates as any).isPublic === 'boolean';
+  const explicitIsPublicValue = explicitIsPublicProvided ? (updates as any).isPublic === true : undefined;
 
   // If client sends { image: { id, isPublic } } then update matching image in arrays
   const anyImageUpdate = (updates as any)?.image;
@@ -295,12 +303,21 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
     }
   }
 
-  // Recompute document-level isPublic as true if any media item is explicitly public
-  if (nextDoc.images || nextDoc.videos || typeof (updates as any)?.isPublic === 'boolean') {
+  // Recompute document-level isPublic considering explicit toggle precedence then media items
+  if (nextDoc.images || nextDoc.videos || explicitIsPublicProvided) {
     const imgs = (nextDoc.images || existing.images || []) as any[];
     const vds = (nextDoc.videos || existing.videos || []) as any[];
-    const anyPublic = imgs.some((im: any) => im?.isPublic === true) || vds.some((vd: any) => vd?.isPublic === true);
-    nextDoc.isPublic = anyPublic;
+    const anyMediaPublic = imgs.some((im: any) => im?.isPublic === true) || vds.some((vd: any) => vd?.isPublic === true);
+    if (explicitIsPublicProvided) {
+      // Explicit true forces public; explicit false only if no media marked public
+      nextDoc.isPublic = explicitIsPublicValue ? true : (anyMediaPublic ? true : false);
+    } else {
+      nextDoc.isPublic = anyMediaPublic;
+    }
+  }
+  // Align visibility with final isPublic state when changed or explicitly provided
+  if (typeof nextDoc.isPublic === 'boolean') {
+    nextDoc.visibility = nextDoc.isPublic ? Visibility.Public : Visibility.Private;
   }
 
   await generationHistoryRepository.update(uid, historyId, nextDoc);
@@ -314,6 +331,15 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
     await mirrorQueueRepository.enqueueUpdate({ uid, historyId, updates: nextDoc });
   } catch (e) {
     console.warn('[update] Failed to enqueue mirror update:', e);
+  }
+  // Immediate mirror sync if public flag changed to ensure ArtStation reflects toggle quickly
+  try {
+    const publicChanged = typeof nextDoc.isPublic === 'boolean' && nextDoc.isPublic !== (existing.isPublic === true);
+    if (publicChanged) {
+      await syncToMirror(uid, historyId);
+    }
+  } catch (e) {
+    console.warn('[update] Immediate mirror sync failed:', e);
   }
   
   // Fetch and return the updated item

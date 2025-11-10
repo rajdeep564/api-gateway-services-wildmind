@@ -139,8 +139,8 @@ export async function removeBackground(uid: string, body: {
     prompt: '[Remove background]',
     model: body.model || DEFAULT_BG_MODEL_A,
     generationType: 'text-to-image',
-    visibility: body.isPublic ? 'public' : 'private',
-    isPublic: body.isPublic ?? false,
+    visibility: body.isPublic === true ? 'public' : 'private',
+    isPublic: body.isPublic === true,
     createdBy: creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid },
   } as any);
 
@@ -233,8 +233,8 @@ export async function upscale(uid: string, body: any) {
     prompt: '[Upscale]',
     model: modelBase,
     generationType: 'text-to-image',
-    visibility: body.isPublic ? 'public' : 'private',
-    isPublic: body.isPublic ?? false,
+    visibility: body.isPublic === true ? 'public' : 'private',
+    isPublic: body.isPublic === true,
     createdBy: creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid },
   } as any);
 

@@ -1,7 +1,6 @@
 import { GenerationType } from '../types/generate';
 import { generationHistoryRepository } from '../repository/generationHistoryRepository';
 import { publicGenerationsRepository } from '../repository/publicGenerationsRepository';
-import { redisGetSafe, redisSetSafe } from '../config/redisClient';
 
 export interface FilterParams {
   limit?: number;
@@ -86,27 +85,7 @@ async function getPublicGenerations(params: FilterParams) {
 
   const limit = params.limit || 20;
 
-  // Basic cache for first page (no cursor, no search/date/creator specific filters) to speed up common views
-  const canCache = !cursor && !params.search && !params.dateStart && !params.dateEnd && !params.createdBy;
-  const cacheKey = canCache ? (() => {
-    const keyParts = {
-      feature: 'feed',
-      limit,
-      generationType: params.generationType || 'any',
-      mode: params.mode || 'all',
-      status: params.status || 'any',
-      sortBy: params.sortBy || 'createdAt',
-      sortOrder: params.sortOrder || 'desc',
-    } as any;
-    return `feed:${JSON.stringify(keyParts)}`;
-  })() : null;
-
-  if (canCache && cacheKey) {
-    const cached = await redisGetSafe<{ items: any[]; meta: any }>(cacheKey);
-    if (cached && Array.isArray(cached.items)) {
-      return cached; // short-circuit
-    }
-  }
+  // CACHING DISABLED for feed: always return fresh results to ensure new generations appear immediately.
 
   const result = await publicGenerationsRepository.listPublic({
     limit,
@@ -127,12 +106,7 @@ async function getPublicGenerations(params: FilterParams) {
     totalCount: result.totalCount,
     hasMore: !!result.nextCursor,
   };
-  const payload = { items: result.items, meta };
-  if (canCache && cacheKey) {
-    // Short TTL to keep feed fresh while smoothing spikes
-    await redisSetSafe(cacheKey, payload, 30);
-  }
-  return payload;
+  return { items: result.items, meta };
 }
 
 async function validateAndTransformParams(queryParams: any): Promise<FilterParams> {

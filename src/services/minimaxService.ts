@@ -466,7 +466,7 @@ async function musicGenerateAndStore(
     model: String(body?.model || 'MiniMax-Music'),
     generationType: body?.generationType || 'text-to-music',
     visibility: (body as any)?.visibility || 'private',
-    isPublic: (body as any)?.isPublic === true,
+  isPublic: (body as any)?.isPublic === true,
     createdBy,
   } as any);
   const result = await generateMusic(apiKey, body);
