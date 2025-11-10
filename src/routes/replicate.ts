@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { makeCreditCost } from '../middlewares/creditCostFactory';
-import { creditsRepository } from '../repository/creditsRepository';
+// Removed route-level debit writes; controller handles debit via unified helper
 import { replicateController } from '../controllers/replicateController';
 import { computeReplicateBgRemoveCost, computeReplicateImageGenCost, computeReplicateUpscaleCost } from '../utils/pricing/replicatePricing';
 import { computeWanVideoCost } from '../utils/pricing/wanPricing';
@@ -28,22 +28,7 @@ router.post(
   requireAuth,
   validateRemoveBg,
   makeCreditCost('replicate', 'bg-remove', computeReplicateBgRemoveCost),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const result = await replicateController.removeBackground(req, res, next);
-      if ((res as any).locals?.success) {
-        try {
-          const ctx = (req as any).context || {};
-          const uid = (req as any).uid;
-          const idempotencyKey = ctx.idempotencyKey || `replicate-bg-${Date.now()}`;
-          await creditsRepository.writeDebitIfAbsent(uid, idempotencyKey, ctx.creditCost, 'replicate.bg', { pricingVersion: ctx.pricingVersion, ...(ctx.meta || {}) });
-        } catch {}
-      }
-      return result as any;
-    } catch (e) {
-      next(e);
-    }
-  }
+  replicateController.removeBackground as any
 );
 
 // Upscale (Replicate)
@@ -52,20 +37,7 @@ router.post(
   requireAuth,
   validateUpscale,
   makeCreditCost('replicate', 'upscale', computeReplicateUpscaleCost),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const result = await replicateController.upscale(req, res, next);
-      if ((res as any).locals?.success) {
-        try {
-          const ctx = (req as any).context || {};
-          const uid = (req as any).uid;
-          const idempotencyKey = ctx.idempotencyKey || `replicate-up-${Date.now()}`;
-          await creditsRepository.writeDebitIfAbsent(uid, idempotencyKey, ctx.creditCost, 'replicate.upscale', { pricingVersion: ctx.pricingVersion, ...(ctx.meta || {}) });
-        } catch {}
-      }
-      return result as any;
-    } catch (e) { next(e); }
-  }
+  replicateController.upscale as any
 );
 
 // ============ Queue-style endpoints for Replicate WAN 2.5 ============
@@ -105,20 +77,7 @@ router.post(
   requireAuth,
   validateReplicateGenerate,
   makeCreditCost('replicate', 'generate', computeReplicateImageGenCost),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const result = await replicateController.generateImage(req, res, next);
-      if ((res as any).locals?.success) {
-        try {
-          const ctx = (req as any).context || {};
-          const uid = (req as any).uid;
-          const idempotencyKey = ctx.idempotencyKey || `replicate-gen-${Date.now()}`;
-          await creditsRepository.writeDebitIfAbsent(uid, idempotencyKey, ctx.creditCost, 'replicate.generate', { pricingVersion: ctx.pricingVersion, ...(ctx.meta || {}) });
-        } catch {}
-      }
-      return result as any;
-    } catch (e) { next(e); }
-  }
+  replicateController.generateImage as any
 );
 
 router.post(

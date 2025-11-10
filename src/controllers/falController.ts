@@ -4,6 +4,7 @@ import '../types/http';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import {falService, falQueueService} from '../services/falService';
 import { creditsRepository } from '../repository/creditsRepository';
+import { postSuccessDebit } from '../utils/creditDebit';
 import { logger } from '../utils/logger';
 
 async function generate(req: Request, res: Response, next: NextFunction) {
@@ -13,19 +14,7 @@ async function generate(req: Request, res: Response, next: NextFunction) {
     const ctx = (req as any).context || {};
     logger.info({ uid, ctx }, '[CREDITS][FAL] Enter generate with context');
   const result = await falService.generate(uid, { num_images, prompt, userPrompt, model, n, frameSize, style, uploadedImages, output_format , generationType , tags , nsfw , visibility , isPublic , aspect_ratio, resolution, seed, negative_prompt, characterName });
-    let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
-    try {
-      const requestId = (result as any).historyId || ctx.idempotencyKey;
-      logger.info({ uid, requestId, cost: ctx.creditCost }, '[CREDITS][FAL] Attempt debit after success');
-      if (requestId && typeof ctx.creditCost === 'number') {
-        debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'fal.generate', {
-          ...(ctx.meta || {}),
-          historyId: (result as any).historyId,
-          provider: 'fal',
-          pricingVersion: ctx.pricingVersion,
-        });
-      }
-    } catch (_e) {}
+    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'generate');
     res.json(formatApiResponse('success', 'Images generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
   } catch (err) {
     next(err);
@@ -39,18 +28,7 @@ export const falController = {
       const uid = req.uid;
       const ctx = (req as any).context || {};
       const result = await falService.briaExpandImage(uid, req.body || {});
-      let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
-      try {
-        const requestId = (result as any).historyId || ctx.idempotencyKey;
-        if (requestId && typeof ctx.creditCost === 'number') {
-          debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'fal.bria.expand', {
-            ...(ctx.meta || {}),
-            historyId: (result as any).historyId,
-            provider: 'fal',
-            pricingVersion: ctx.pricingVersion,
-          });
-        }
-      } catch (_e) {}
+      const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'bria.expand');
       res.json(formatApiResponse('success', 'Expanded', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
     } catch (err) { next(err); }
   },
@@ -59,18 +37,7 @@ export const falController = {
       const uid = req.uid;
       const ctx = (req as any).context || {};
       const result = await falService.outpaintImage(uid, req.body || {});
-      let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
-      try {
-        const requestId = (result as any).historyId || ctx.idempotencyKey;
-        if (requestId && typeof ctx.creditCost === 'number') {
-          debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'fal.outpaint.image', {
-            ...(ctx.meta || {}),
-            historyId: (result as any).historyId,
-            provider: 'fal',
-            pricingVersion: ctx.pricingVersion,
-          });
-        }
-      } catch (_e) {}
+      const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'outpaint');
       res.json(formatApiResponse('success', 'Outpainted', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
     } catch (err) { next(err); }
   },
@@ -79,18 +46,7 @@ export const falController = {
       const uid = req.uid;
       const ctx = (req as any).context || {};
       const result = await falService.topazUpscaleImage(uid, req.body || {});
-      let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
-      try {
-        const requestId = (result as any).historyId || ctx.idempotencyKey;
-        if (requestId && typeof ctx.creditCost === 'number') {
-          debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'fal.topaz.upscale.image', {
-            ...(ctx.meta || {}),
-            historyId: (result as any).historyId,
-            provider: 'fal',
-            pricingVersion: ctx.pricingVersion,
-          });
-        }
-      } catch (_e) {}
+      const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'topaz.upscale.image');
       res.json(formatApiResponse('success', 'Upscaled', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
     } catch (err) { next(err); }
   },
@@ -99,18 +55,7 @@ export const falController = {
       const uid = req.uid;
       const ctx = (req as any).context || {};
       const result = await falService.seedvrUpscale(uid, req.body || {});
-      let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
-      try {
-        const requestId = (result as any).historyId || ctx.idempotencyKey;
-        if (requestId && typeof ctx.creditCost === 'number') {
-          debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'fal.seedvr.upscale', {
-            ...(ctx.meta || {}),
-            historyId: (result as any).historyId,
-            provider: 'fal',
-            pricingVersion: ctx.pricingVersion,
-          });
-        }
-      } catch (_e) {}
+      const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'seedvr.upscale');
       res.json(formatApiResponse('success', 'Upscaled', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
     } catch (err) { next(err); }
   },
@@ -119,18 +64,7 @@ export const falController = {
       const uid = req.uid;
       const ctx = (req as any).context || {};
       const result = await falService.image2svg(uid, req.body || {});
-      let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
-      try {
-        const requestId = (result as any).historyId || ctx.idempotencyKey;
-        if (requestId && typeof ctx.creditCost === 'number') {
-          debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'fal.image2svg', {
-            ...(ctx.meta || {}),
-            historyId: (result as any).historyId,
-            provider: 'fal',
-            pricingVersion: ctx.pricingVersion,
-          });
-        }
-      } catch (_e) {}
+      const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'image2svg');
       res.json(formatApiResponse('success', 'Converted to SVG', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
     } catch (err) { next(err); }
   },
@@ -139,18 +73,7 @@ export const falController = {
       const uid = req.uid;
       const ctx = (req as any).context || {};
       const result = await falService.recraftVectorize(uid, req.body || {});
-      let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
-      try {
-        const requestId = (result as any).historyId || ctx.idempotencyKey;
-        if (requestId && typeof ctx.creditCost === 'number') {
-          debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'fal.recraft.vectorize', {
-            ...(ctx.meta || {}),
-            historyId: (result as any).historyId,
-            provider: 'fal',
-            pricingVersion: ctx.pricingVersion,
-          });
-        }
-      } catch (_e) {}
+      const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'recraft.vectorize');
       res.json(formatApiResponse('success', 'Vectorized to SVG', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
     } catch (err) { next(err); }
   },
@@ -159,18 +82,7 @@ export const falController = {
       const uid = req.uid;
       const ctx = (req as any).context || {};
       const result = await (falService as any).briaGenfill(uid, req.body || {});
-      let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
-      try {
-        const requestId = (result as any).historyId || ctx.idempotencyKey;
-        if (requestId && typeof ctx.creditCost === 'number') {
-          debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'fal.bria.genfill', {
-            ...(ctx.meta || {}),
-            historyId: (result as any).historyId,
-            provider: 'fal',
-            pricingVersion: ctx.pricingVersion,
-          });
-        }
-      } catch (_e) {}
+      const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'bria.genfill');
       res.json(formatApiResponse('success', 'Generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
     } catch (err) { next(err); }
   },

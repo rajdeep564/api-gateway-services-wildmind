@@ -1,5 +1,6 @@
 import { adminDb, admin } from '../config/firebaseAdmin';
 import { GenerationHistoryItem, GenerationStatus, Visibility, GenerationType } from '../types/generate';
+import { logger } from '../utils/logger';
 
 function toIso(value: any): any {
   try {
@@ -31,6 +32,23 @@ export async function create(uid: string, data: {
   characterName?: string;
   createdBy?: { uid: string; username?: string; email?: string };
 }): Promise<{ historyId: string }> {
+  // Centralized isPublic validation and audit logging
+  const hasIsPublicProp = Object.prototype.hasOwnProperty.call(data, 'isPublic');
+  const rawIsPublic: unknown = (data as any).isPublic;
+  const normalizedIsPublic = rawIsPublic === true; // strict policy: only boolean true is public
+
+  try {
+    if (!hasIsPublicProp) {
+      logger.warn({ uid, generationType: data.generationType, model: data.model }, '[Visibility] isPublic missing on request; defaulting to false');
+    } else if (typeof rawIsPublic !== 'boolean') {
+      logger.warn({ uid, generationType: data.generationType, model: data.model, rawType: typeof rawIsPublic, rawValue: rawIsPublic }, '[Visibility] isPublic provided but not boolean; defaulting to false');
+    } else {
+      logger.info({ uid, generationType: data.generationType, model: data.model, isPublic: normalizedIsPublic }, '[Visibility] isPublic received');
+    }
+  } catch (_e) {
+    // never block creation due to logging issues
+  }
+
   const col = adminDb.collection('generationHistory').doc(uid).collection('items');
   const docRef = await col.add({
     uid,
@@ -42,7 +60,7 @@ export async function create(uid: string, data: {
     nsfw: data.nsfw ?? false,
     frameSize: data.frameSize || null,
     aspect_ratio: data.aspect_ratio || data.frameSize || null,
-    isPublic: data.isPublic ?? false,
+    isPublic: normalizedIsPublic,
     // Store characterName only for text-to-character generation type
     ...(data.generationType === 'text-to-character' && data.characterName ? { characterName: data.characterName } : {}),
     createdBy: data.createdBy ? {

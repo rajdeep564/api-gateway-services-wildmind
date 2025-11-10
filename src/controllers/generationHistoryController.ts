@@ -60,8 +60,9 @@ async function listMine(req: Request, res: Response, next: NextFunction) {
 			nextCursor, // NEW: timestamp cursor (for optimized pagination)
 			status, 
 			generationType: generationTypeFilter as any,
-			sortBy: sortBy || 'createdAt', // LEGACY: kept for backward compatibility
-			sortOrder: sortOrder || 'desc', // LEGACY: kept for backward compatibility
+			// Only pass sortBy/sortOrder if explicitly provided (for caching)
+			sortBy: sortBy ? sortBy : undefined,
+			sortOrder: sortOrder ? sortOrder : undefined,
 			dateStart, // LEGACY: kept for backward compatibility
 			dateEnd, // LEGACY: kept for backward compatibility
 			search,
@@ -77,8 +78,8 @@ async function softDelete(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid;
     const { historyId } = req.params as any;
-    await generationHistoryService.softDelete(uid, historyId);
-    return res.json(formatApiResponse('success', 'Deleted', {}));
+    const result = await generationHistoryService.softDelete(uid, historyId);
+    return res.json(formatApiResponse('success', 'Deleted', result));
   } catch (err) {
     return next(err);
   }
@@ -90,8 +91,8 @@ async function update(req: Request, res: Response, next: NextFunction) {
     const { historyId } = req.params as any;
     const updates = req.body as any;
     // Allow per-media privacy updates: image/video payloads are forwarded verbatim
-    await generationHistoryService.update(uid, historyId, updates);
-    return res.json(formatApiResponse('success', 'Updated', {}));
+    const result = await generationHistoryService.update(uid, historyId, updates);
+    return res.json(formatApiResponse('success', 'Updated', result));
   } catch (err) {
     return next(err);
   }

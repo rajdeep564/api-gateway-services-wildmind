@@ -1,13 +1,16 @@
 import { Request, Response, NextFunction } from 'express';
 import { replicateService } from '../services/replicateService';
 import { formatApiResponse } from '../utils/formatApiResponse';
+import { postSuccessDebit } from '../utils/creditDebit';
 
 async function removeBackground(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
     const data = await replicateService.removeBackground(uid, req.body || {});
-    (res as any).locals = { ...(res as any).locals, success: true };
-    res.json({ responseStatus: 'success', message: 'OK', data });
+  (res as any).locals = { ...(res as any).locals, success: true };
+  const ctx = (req as any).context || {};
+  try { await postSuccessDebit(uid, data, ctx, 'replicate', 'bg-remove'); } catch {}
+  res.json({ responseStatus: 'success', message: 'OK', data });
   } catch (e) {
     next(e);
     return;
@@ -18,8 +21,10 @@ async function upscale(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
     const data = await replicateService.upscale(uid, req.body || {});
-    (res as any).locals = { ...(res as any).locals, success: true };
-    res.json({ responseStatus: 'success', message: 'OK', data });
+  (res as any).locals = { ...(res as any).locals, success: true };
+  const ctx = (req as any).context || {};
+  try { await postSuccessDebit(uid, data, ctx, 'replicate', 'upscale'); } catch {}
+  res.json({ responseStatus: 'success', message: 'OK', data });
   } catch (e) {
     next(e);
     return;
@@ -30,8 +35,10 @@ async function generateImage(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
     const data = await replicateService.generateImage(uid, req.body || {});
-    (res as any).locals = { ...(res as any).locals, success: true };
-    res.json({ responseStatus: 'success', message: 'OK', data });
+  (res as any).locals = { ...(res as any).locals, success: true };
+  const ctx = (req as any).context || {};
+  try { await postSuccessDebit(uid, data, ctx, 'replicate', 'generate'); } catch {}
+  res.json({ responseStatus: 'success', message: 'OK', data });
   } catch (e) {
     next(e);
     return;

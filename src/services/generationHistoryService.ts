@@ -3,14 +3,19 @@ import { generationsMirrorRepository } from "../repository/generationsMirrorRepo
 import { mirrorQueueRepository } from "../repository/mirrorQueueRepository";
 import { generationStatsRepository } from "../repository/generationStatsRepository";
 import { imageOptimizationService } from "./imageOptimizationService";
+// CACHING REMOVED: Redis generationCache disabled due to stale list items not reflecting newly started generations promptly.
+// If reintroducing, ensure immediate inclusion of generating items and robust invalidation on create/complete/fail/update.
+import { deleteGenerationFiles } from "../utils/storage/zataDelete";
 import {
   GenerationStatus,
   CreateGenerationPayload,
   CompleteGenerationPayload,
   FailGenerationPayload,
   GenerationHistoryItem,
+  Visibility,
 } from "../types/generate";
 import { authRepository } from "../repository/auth/authRepository";
+import { syncToMirror } from "../utils/mirrorHelper";
 import { ApiError } from "../utils/errorHandler";
 
 export async function startGeneration(
@@ -20,6 +25,8 @@ export async function startGeneration(
   const { historyId } = await generationHistoryRepository.create(uid, payload);
   const item = await generationHistoryRepository.get(uid, historyId);
   if (!item) throw new ApiError("Failed to read created history item", 500);
+  
+  // Cache invalidation removed (no cache layer active)
   
   // OPTIMIZATION: Update stats counter
   try {
@@ -47,15 +54,19 @@ export async function markGenerationCompleted(
   if (!existing) throw new ApiError("History item not found", 404);
   if (existing.status !== GenerationStatus.Generating)
     throw new ApiError("Invalid status transition", 400);
+  const finalIsPublic = updates.isPublic === true ? true : (updates.isPublic === false ? false : (existing.isPublic === true));
   const next: Partial<GenerationHistoryItem> = {
     status: GenerationStatus.Completed,
     images: updates.images,
     videos: updates.videos,
-    isPublic: updates.isPublic ?? existing.isPublic ?? false,
+    isPublic: finalIsPublic,
+  visibility: finalIsPublic ? Visibility.Public : Visibility.Private,
     tags: updates.tags ?? existing.tags,
     nsfw: updates.nsfw ?? existing.nsfw,
   };
   await generationHistoryRepository.update(uid, historyId, next);
+  
+  // Cache invalidation removed
   
   // OPTIMIZATION: Update stats counter
   try {
@@ -161,7 +172,11 @@ export async function markGenerationFailed(
   await generationHistoryRepository.update(uid, historyId, {
     status: GenerationStatus.Failed,
     error: payload.error,
+    isPublic: false,
+    visibility: Visibility.Private
   });
+  
+  // Cache invalidation removed
   
   // OPTIMIZATION: Update stats counter
   try {
@@ -189,6 +204,7 @@ export async function getUserGeneration(
   uid: string,
   historyId: string
 ): Promise<GenerationHistoryItem | null> {
+  // Direct fetch (no caching)
   return generationHistoryRepository.get(uid, historyId);
 }
 
@@ -207,33 +223,61 @@ export async function listUserGenerations(
     search?: string;
   }
 ): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string | number | null; hasMore?: boolean; totalCount?: number }> {
+  // Direct fetch from Firestore (caching disabled)
   return generationHistoryRepository.list(uid, params as any);
 }
 
-export async function softDelete(uid: string, historyId: string): Promise<void> {
+export async function softDelete(uid: string, historyId: string): Promise<{ item: GenerationHistoryItem }> {
   const existing = await generationHistoryRepository.get(uid, historyId);
   if (!existing) throw new ApiError('History item not found', 404);
   
-  await generationHistoryRepository.update(uid, historyId, { isDeleted: true, isPublic: false } as any);
+  console.log('[softDelete] Starting deletion:', { uid, historyId, isPublic: existing.isPublic });
   
-  // OPTIMIZATION: Enqueue mirror update instead of blocking
+  // 1. Mark as deleted in generationHistory
+  await generationHistoryRepository.update(uid, historyId, { isDeleted: true, isPublic: false } as any);
+  console.log('[softDelete] Marked as deleted in generationHistory');
+  
+  // 2. Cache invalidation removed
+  
+  // 3. Delete from publicGenerations mirror (generations collection)
   try {
-    await mirrorQueueRepository.enqueueUpdate({
-      uid,
-      historyId,
-      updates: { isDeleted: true, isPublic: false } as any,
-    });
+    await generationsMirrorRepository.remove(historyId);
+    console.log('[softDelete] Deleted from publicGenerations mirror');
   } catch (e) {
-    console.warn('[softDelete] Failed to enqueue mirror update:', e);
+    console.warn('[softDelete] Failed to delete from mirror:', e);
   }
+  
+  // 4. Delete files from Zata storage (in background, non-blocking)
+  setImmediate(async () => {
+    try {
+      console.log('[softDelete] Starting Zata file deletion...');
+      await deleteGenerationFiles(existing);
+      console.log('[softDelete] Successfully deleted files from Zata storage');
+    } catch (e) {
+      console.error('[softDelete] Failed to delete files from Zata:', e);
+    }
+  });
+  
+  console.log('[softDelete] Deletion completed');
+  
+  // Return the item with isDeleted flag
+  return { 
+    item: { 
+      ...existing, 
+      isDeleted: true, 
+      isPublic: false 
+    } 
+  };
 }
 
-export async function update(uid: string, historyId: string, updates: Partial<GenerationHistoryItem>): Promise<void> {
+export async function update(uid: string, historyId: string, updates: Partial<GenerationHistoryItem>): Promise<{ item: GenerationHistoryItem }> {
   const existing = await generationHistoryRepository.get(uid, historyId);
   if (!existing) throw new ApiError('History item not found', 404);
 
   // Support per-media privacy updates
   let nextDoc: Partial<GenerationHistoryItem> = { ...updates };
+  const explicitIsPublicProvided = Object.prototype.hasOwnProperty.call(updates, 'isPublic') && typeof (updates as any).isPublic === 'boolean';
+  const explicitIsPublicValue = explicitIsPublicProvided ? (updates as any).isPublic === true : undefined;
 
   // If client sends { image: { id, isPublic } } then update matching image in arrays
   const anyImageUpdate = (updates as any)?.image;
@@ -259,15 +303,28 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
     }
   }
 
-  // Recompute document-level isPublic as true if any media item is explicitly public
-  if (nextDoc.images || nextDoc.videos || typeof (updates as any)?.isPublic === 'boolean') {
+  // Recompute document-level isPublic considering explicit toggle precedence then media items
+  if (nextDoc.images || nextDoc.videos || explicitIsPublicProvided) {
     const imgs = (nextDoc.images || existing.images || []) as any[];
     const vds = (nextDoc.videos || existing.videos || []) as any[];
-    const anyPublic = imgs.some((im: any) => im?.isPublic === true) || vds.some((vd: any) => vd?.isPublic === true);
-    nextDoc.isPublic = anyPublic;
+    const anyMediaPublic = imgs.some((im: any) => im?.isPublic === true) || vds.some((vd: any) => vd?.isPublic === true);
+    if (explicitIsPublicProvided) {
+      // Explicit true forces public; explicit false only if no media marked public
+      nextDoc.isPublic = explicitIsPublicValue ? true : (anyMediaPublic ? true : false);
+    } else {
+      nextDoc.isPublic = anyMediaPublic;
+    }
+  }
+  // Align visibility with final isPublic state when changed or explicitly provided
+  if (typeof nextDoc.isPublic === 'boolean') {
+    nextDoc.visibility = nextDoc.isPublic ? Visibility.Public : Visibility.Private;
   }
 
   await generationHistoryRepository.update(uid, historyId, nextDoc);
+
+  // Cache invalidation removed
+
+  console.log('[update] Updated generation:', { historyId, isPublic: nextDoc.isPublic, hasImages: !!nextDoc.images, hasVideos: !!nextDoc.videos });
 
   // OPTIMIZATION: Enqueue mirror update instead of blocking
   try {
@@ -275,6 +332,21 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
   } catch (e) {
     console.warn('[update] Failed to enqueue mirror update:', e);
   }
+  // Immediate mirror sync if public flag changed to ensure ArtStation reflects toggle quickly
+  try {
+    const publicChanged = typeof nextDoc.isPublic === 'boolean' && nextDoc.isPublic !== (existing.isPublic === true);
+    if (publicChanged) {
+      await syncToMirror(uid, historyId);
+    }
+  } catch (e) {
+    console.warn('[update] Immediate mirror sync failed:', e);
+  }
+  
+  // Fetch and return the updated item
+  const updatedItem = await generationHistoryRepository.get(uid, historyId);
+  if (!updatedItem) throw new ApiError('Failed to fetch updated item', 500);
+  
+  return { item: updatedItem };
 }
 
 export const generationHistoryService = {

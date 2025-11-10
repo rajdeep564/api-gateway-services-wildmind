@@ -18,6 +18,11 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       }
     }
     if (!token) throw new ApiError('Unauthorized - No session token', 401);
+    
+    // 🔑 LOG TOKEN FOR TESTING
+    console.log('\n🔑 AUTH TOKEN (for testing):\n');
+    console.log(token);
+    console.log('\n');
     // Try Redis cache first to avoid repeated verifies
     const cached = await getCachedSession(token);
     if (cached?.uid) {

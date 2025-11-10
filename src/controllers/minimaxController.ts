@@ -4,6 +4,7 @@ import { env } from '../config/env';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { minimaxService } from '../services/minimaxService';
 import { creditsRepository } from '../repository/creditsRepository';
+import { postSuccessDebit } from '../utils/creditDebit';
 import { logger } from '../utils/logger';
 import { generationHistoryRepository } from '../repository/generationHistoryRepository';
 import { authRepository } from '../repository/auth/authRepository';
@@ -17,19 +18,7 @@ async function generate(req: Request, res: Response, next: NextFunction) {
     const ctx = (req as any).context || {};
     logger.info({ uid, ctx }, '[CREDITS][MINIMAX] Enter generate with context');
     const result = await minimaxService.generate(uid, { prompt, aspect_ratio, width, height, response_format, seed, n, prompt_optimizer, subject_reference, generationType, style });
-    let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
-    try {
-      const requestId = (result as any).historyId || ctx.idempotencyKey;
-      logger.info({ uid, requestId, cost: ctx.creditCost }, '[CREDITS][MINIMAX] Attempt debit after success');
-      if (requestId && typeof ctx.creditCost === 'number') {
-        debitOutcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, ctx.creditCost, ctx.reason || 'minimax.generate', {
-          ...(ctx.meta || {}),
-          historyId: (result as any).historyId,
-          provider: 'minimax',
-          pricingVersion: ctx.pricingVersion,
-        });
-      }
-    } catch (_e) {}
+    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'minimax', 'generate');
     res.json(formatApiResponse('success', 'Images generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
   } catch (err) {
     next(err);
@@ -98,17 +87,7 @@ async function musicGenerate(req: Request, res: Response, next: NextFunction) {
     const ctx = (req as any).context || {};
     const result = await minimaxService.musicGenerateAndStore(req.uid, req.body);
     // musicGenerateAndStore updates history; we'll perform debit here if historyId present
-    try {
-      const requestId = (result as any).historyId || ctx.idempotencyKey;
-      if (requestId && typeof ctx.creditCost === 'number') {
-        await creditsRepository.writeDebitIfAbsent(req.uid, requestId, ctx.creditCost, ctx.reason || 'minimax.music', {
-          ...(ctx.meta || {}),
-          historyId: (result as any).historyId,
-          provider: 'minimax',
-          pricingVersion: ctx.pricingVersion,
-        });
-      }
-    } catch (_e) {}
+    try { await postSuccessDebit(req.uid, result, ctx, 'minimax', 'music'); } catch {}
     res.json(formatApiResponse('success', 'Music generated', { ...result, debitedCredits: ctx.creditCost }));
   } catch (err) {
     next(err);
