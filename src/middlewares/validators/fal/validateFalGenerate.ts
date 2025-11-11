@@ -452,14 +452,27 @@ export const validateFalSeedvrUpscale = [
     // Validate 30s max video duration by probing the URL
     try {
       const url: string = req.body?.video_url;
-      const meta = await probeVideoMeta(url);
+      let meta: any;
+      try {
+        meta = await probeVideoMeta(url);
+      } catch (probeErr: any) {
+        // If probing fails, log but don't block - FAL will handle validation
+        console.warn('[validateFalSeedvrUpscale] Video probe failed:', probeErr?.message || probeErr);
+        // Still set defaults and continue
+        if (!req.body.upscale_mode) req.body.upscale_mode = 'factor';
+        if (req.body.upscale_mode === 'factor' && (req.body.upscale_factor == null)) req.body.upscale_factor = 2;
+        if (req.body.upscale_mode === 'target' && !req.body.target_resolution) req.body.target_resolution = '1080p';
+        return next();
+      }
+      
       const duration = Number(meta?.durationSec || 0);
       if (!isFinite(duration) || duration <= 0) {
-        return next(new ApiError('Unable to read video metadata. Ensure the URL is public and supports HTTP range requests.', 400));
-      }
-      if (duration > 30.5) {
+        console.warn('[validateFalSeedvrUpscale] Could not read video duration, but continuing - FAL will validate');
+        // Don't block - let FAL handle it
+      } else if (duration > 30.5) {
         return next(new ApiError('Input video too long. Maximum allowed duration is 30 seconds.', 400));
       }
+      
       // Normalize body defaults
       if (!req.body.upscale_mode) req.body.upscale_mode = 'factor';
       if (req.body.upscale_mode === 'factor' && (req.body.upscale_factor == null)) req.body.upscale_factor = 2;
@@ -467,8 +480,13 @@ export const validateFalSeedvrUpscale = [
       // Stash probed meta for pricing
       (req as any).seedvrProbe = meta;
       next();
-    } catch (e) {
-      next(new ApiError('Failed to validate video URL for SeedVR2', 400));
+    } catch (e: any) {
+      console.error('[validateFalSeedvrUpscale] Validation error:', e?.message || e);
+      // Don't block on validation errors - let FAL API handle it
+      if (!req.body.upscale_mode) req.body.upscale_mode = 'factor';
+      if (req.body.upscale_mode === 'factor' && (req.body.upscale_factor == null)) req.body.upscale_factor = 2;
+      if (req.body.upscale_mode === 'target' && !req.body.target_resolution) req.body.target_resolution = '1080p';
+      next();
     }
   }
 ];

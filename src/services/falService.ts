@@ -923,9 +923,27 @@ export const falService = {
       if (body.output_format) input.output_format = body.output_format;
       if (body.output_quality) input.output_quality = body.output_quality;
       if (body.output_write_mode) input.output_write_mode = body.output_write_mode;
-      const result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
+      if (body.seed != null) input.seed = body.seed;
+      
+      console.log('[seedvrUpscale] Calling FAL API with input:', { ...input, video_url: input.video_url?.substring(0, 100) + '...' });
+      
+      let result: any;
+      try {
+        result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
+      } catch (falErr: any) {
+        const errorDetails = falErr?.response?.data || falErr?.message || falErr;
+        console.error('[seedvrUpscale] FAL API error:', JSON.stringify(errorDetails, null, 2));
+        const errorMessage = typeof errorDetails === 'string' 
+          ? errorDetails 
+          : errorDetails?.error || errorDetails?.message || errorDetails?.detail || 'FAL API request failed';
+        throw new ApiError(`FAL API error: ${errorMessage}`, 502);
+      }
+      
       const videoUrl: string | undefined = (result as any)?.data?.video?.url || (result as any)?.data?.video_url || (result as any)?.data?.output?.video?.url;
-      if (!videoUrl) throw new ApiError('No video URL returned from FAL API', 502);
+      if (!videoUrl) {
+        console.error('[seedvrUpscale] No video URL in response:', JSON.stringify(result, null, 2));
+        throw new ApiError('No video URL returned from FAL API', 502);
+      }
       const username = creator?.username || uid;
       const keyPrefix = `users/${username}/video/${historyId}`;
       let stored: any;
