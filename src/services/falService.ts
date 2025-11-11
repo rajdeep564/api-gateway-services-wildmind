@@ -277,6 +277,31 @@ async function generate(
         await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
         await generationHistoryRepository.update(uid, historyId, { images: storedImages } as any);
         
+        // For text-to-character generation, save character to characters collection
+        if (generationType === 'text-to-character' && characterName && storedImages.length > 0) {
+          try {
+            const { characterRepository } = await import('../repository/characterRepository');
+            const generatedImage = storedImages[0];
+            const historyEntry = await generationHistoryRepository.get(uid, historyId);
+            const inputImages = (historyEntry as any)?.inputImages || [];
+            
+            await characterRepository.createCharacter(uid, {
+              characterName,
+              historyId,
+              frontImageUrl: generatedImage.url,
+              frontImageStoragePath: generatedImage.storagePath,
+              // Store input images if available (left/right views)
+              leftImageUrl: inputImages[1]?.url || undefined,
+              leftImageStoragePath: inputImages[1]?.storagePath || undefined,
+              rightImageUrl: inputImages[2]?.url || undefined,
+              rightImageStoragePath: inputImages[2]?.storagePath || undefined,
+            });
+          } catch (charErr) {
+            console.error('[falService.generate] Failed to save character:', charErr);
+            // Don't fail the whole request if character save fails
+          }
+        }
+        
         // Ensure mirror sync after Zata upload with retries
         await ensureMirrorSync(uid, historyId);
       } catch (e) {
