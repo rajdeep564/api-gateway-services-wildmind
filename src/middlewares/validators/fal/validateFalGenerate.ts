@@ -491,6 +491,44 @@ export const validateFalSeedvrUpscale = [
   }
 ];
 
+// BiRefNet v2 Video Background Removal (fal-ai/birefnet/v2/video)
+export const validateFalBirefnetVideo = [
+  body('video_url').optional().isString().notEmpty(),
+  body('video').optional().isString(), // data URI allowed
+  body('model').optional().isIn(['General Use (Light)','General Use (Light 2K)','General Use (Heavy)','Matting','Portrait','General Use (Dynamic)']),
+  body('operating_resolution').optional().isIn(['1024x1024','2048x2048','2304x2304']),
+  body('output_mask').optional().isBoolean(),
+  body('refine_foreground').optional().isBoolean(),
+  body('sync_mode').optional().isBoolean(),
+  body('video_output_type').optional().isIn(['X264 (.mp4)','VP9 (.webm)','PRORES4444 (.mov)','GIF (.gif)']),
+  body('video_quality').optional().isIn(['low','medium','high','maximum']),
+  body('video_write_mode').optional().isIn(['fast','balanced','small']),
+  async (req: Request, _res: Response, next: NextFunction) => {
+    const hasVideoUrl = typeof req.body?.video_url === 'string' && req.body.video_url.trim().length > 0;
+    const hasVideoData = typeof (req.body as any)?.video === 'string' && String((req.body as any).video).startsWith('data:');
+    if (!hasVideoUrl && !hasVideoData) {
+      return next(new ApiError('Either video_url or video (data URI) is required', 400));
+    }
+    // If client sent a data URI, upload to Zata and set video_url
+    if (hasVideoData && !hasVideoUrl) {
+      try {
+        const uid = (req as any)?.uid || 'anon';
+        const stored = await uploadDataUriToZata({
+          dataUri: (req.body as any).video,
+          keyPrefix: `users/${uid}/input/birefnet/${Date.now()}`,
+          fileName: 'birefnet-source'
+        });
+        (req.body as any).video_url = stored.publicUrl;
+      } catch (e) {
+        return next(new ApiError('Failed to upload video data URI to storage', 400));
+      }
+    }
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
 // Topaz Image Upscaler (fal-ai/topaz/upscale/image) - dynamic per-MP pricing precheck
 export const validateFalTopazUpscaleImage = [
   body('image_url').optional().isString().notEmpty(),

@@ -7,6 +7,9 @@ import { uploadDataUriToZata } from '../storage/zataUpload';
 
 export const FAL_PRICING_VERSION = 'fal-v1';
 
+// Credits conversion: $1 ~= 2000 credits (since $0.05 => 100 credits)
+const CREDITS_PER_USD = 2000;
+
 function findCredits(modelName: string): number | null {
   const row = creditDistributionData.find(m => m.modelName.toLowerCase() === modelName.toLowerCase());
   return row?.creditsPerGeneration ?? null;
@@ -355,8 +358,6 @@ export async function computeFalBriaGenfillCost(req: Request): Promise<{ cost: n
 
 // SeedVR2 Video Upscaler dynamic pricing
 // Rule: $0.001 per megapixel of upscaled video data (width x height x frames)
-// Credits conversion inferred from sheet: $1 ~= 2000 credits (since $0.05 => 100 credits)
-const CREDITS_PER_USD = 2000;
 export async function computeFalSeedVrUpscaleCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
   const body: any = req.body || {};
   const url: string = body.video_url;
@@ -406,6 +407,62 @@ export async function computeFalSeedVrUpscaleCost(req: Request): Promise<{ cost:
       mode,
       upscale_factor: mode === 'factor' ? Number(body.upscale_factor ?? 2) : undefined,
       target_resolution: mode === 'target' ? (body.target_resolution || '1080p') : undefined,
+    }
+  };
+}
+
+// BiRefNet v2 Background Removal pricing: similar to SeedVR (per output megapixel)
+export async function computeFalBirefnetVideoCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+  const body: any = req.body || {};
+  let url: string | undefined = body.video_url;
+  // Handle data URI videos: upload to Zata to get a public URL for probing
+  if (!url && typeof body.video === 'string' && body.video.startsWith('data:')) {
+    try {
+      const uid = (req as any)?.uid || 'anon';
+      const stored = await uploadDataUriToZata({ dataUri: body.video, keyPrefix: `users/${uid}/pricing/birefnet/${Date.now()}`, fileName: 'source' });
+      url = stored.publicUrl;
+    } catch {
+      url = undefined;
+    }
+  }
+  if (!url) throw new Error('video_url or video (data URI) is required');
+  // Use validator-stashed probe if available; otherwise probe now
+  const meta = (req as any).birefnetProbe || await probeVideoMeta(url);
+  const durationSec = Number(meta?.durationSec || 0);
+  const inW = Number(meta?.width || 0);
+  const inH = Number(meta?.height || 0);
+  let frames = Number(meta?.frames || 0);
+  const fps = Number(meta?.fps || 0);
+  if ((!frames || !isFinite(frames)) && isFinite(durationSec) && isFinite(fps) && fps > 0) {
+    frames = Math.round(durationSec * fps);
+  }
+  if (!isFinite(durationSec) || durationSec <= 0 || !isFinite(inW) || !isFinite(inH) || inW <= 0 || inH <= 0 || !isFinite(frames) || frames <= 0) {
+    throw new Error('Unable to compute video metadata for pricing');
+  }
+  // Assume output same resolution as input for pricing purposes
+  const outW = inW;
+  const outH = inH;
+  const totalPixels = outW * outH * frames;
+  const megapixels = totalPixels / 1_000_000;
+  const dollars = megapixels * 0.001;
+  const credits = Math.max(1, Math.ceil(dollars * CREDITS_PER_USD));
+  return {
+    cost: credits,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: 'fal-ai/birefnet/v2/video',
+      input: { width: inW, height: inH, durationSec, fps, frames },
+      output: { width: outW, height: outH, frames },
+      pricing: { megapixels, dollars, credits },
+      params: {
+        model: body.model,
+        operating_resolution: body.operating_resolution,
+        output_mask: body.output_mask,
+        refine_foreground: body.refine_foreground,
+        video_output_type: body.video_output_type,
+        video_quality: body.video_quality,
+        video_write_mode: body.video_write_mode,
+      }
     }
   };
 }

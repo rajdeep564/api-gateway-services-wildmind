@@ -59,6 +59,15 @@ export const falController = {
       res.json(formatApiResponse('success', 'Upscaled', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
     } catch (err) { next(err); }
   },
+  async birefnetVideo(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await (falService as any).birefnetVideo(uid, req.body || {});
+      const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'birefnet.video');
+      res.json(formatApiResponse('success', 'Background removed', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
+    } catch (err) { next(err); }
+  },
   async image2svg(req: Request, res: Response, next: NextFunction) {
     try {
       const uid = req.uid;

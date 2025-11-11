@@ -1209,6 +1209,67 @@ export const falService = {
       }
       throw new ApiError(message, 500);
     }
+  },
+  async birefnetVideo(uid: string, body: any): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }>{
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    if (!body?.video_url) throw new ApiError('video_url is required', 400);
+    fal.config({ credentials: falKey });
+    const model = 'fal-ai/birefnet/v2/video';
+    const creator = await authRepository.getUserById(uid);
+    const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt: 'Remove Background (Video)',
+      model,
+      generationType: 'video-remove-bg',
+      visibility: body.isPublic ? 'public' : 'private',
+      isPublic: body.isPublic === true,
+      createdBy,
+    });
+    try {
+      const input: any = { video_url: body.video_url };
+      if (body.model) input.model = body.model;
+      if (body.operating_resolution) input.operating_resolution = body.operating_resolution;
+      if (typeof body.output_mask === 'boolean') input.output_mask = body.output_mask;
+      if (typeof body.refine_foreground === 'boolean') input.refine_foreground = body.refine_foreground;
+      if (body.sync_mode === true) input.sync_mode = true;
+      if (body.video_output_type) input.video_output_type = body.video_output_type;
+      if (body.video_quality) input.video_quality = body.video_quality;
+      if (body.video_write_mode) input.video_write_mode = body.video_write_mode;
+      let result: any;
+      try {
+        result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
+      } catch (falErr: any) {
+        const details = falErr?.response?.data || falErr?.message || falErr;
+        console.error('[birefnetVideo] FAL API error:', JSON.stringify(details, null, 2));
+        throw new ApiError(`FAL API error: ${JSON.stringify(details)}`, 502);
+      }
+      const videoUrl: string | undefined = (result as any)?.data?.video?.url || (result as any)?.data?.video_url;
+      if (!videoUrl) {
+        console.error('[birefnetVideo] No video URL in response:', JSON.stringify(result, null, 2));
+        throw new ApiError('No video URL returned from FAL API', 502);
+      }
+      const username = creator?.username || uid;
+      const keyPrefix = `users/${username}/video/${historyId}`;
+      let stored: any;
+      try {
+        stored = await uploadFromUrlToZata({ sourceUrl: videoUrl, keyPrefix, fileName: 'remove-bg' });
+      } catch {
+        stored = { publicUrl: videoUrl, key: '' };
+      }
+      const videos: VideoMedia[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: videoUrl } as any ];
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
+      await syncToMirror(uid, historyId);
+      return { videos, historyId, model, status: 'completed' };
+    } catch (err: any) {
+      const message = err?.message || 'Failed to remove background from video with FAL API';
+      try {
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[birefnetVideo] Failed to mirror error state:', mirrorErr);
+      }
+      throw new ApiError(message, 500);
+    }
   }
 };
 
