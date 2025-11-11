@@ -3,6 +3,7 @@ import { body, validationResult } from 'express-validator';
 import { ApiError } from '../../../utils/errorHandler';
 import { probeVideoMeta } from '../../../utils/media/probe';
 import { probeImageMeta } from '../../../utils/media/imageProbe';
+import { uploadDataUriToZata } from '../../../utils/storage/zataUpload';
 
 export const ALLOWED_FAL_MODELS = [
   'gemini-25-flash-image',
@@ -413,6 +414,7 @@ export const validateFalRecraftVectorize = [
 // SeedVR2 Video Upscaler (fal-ai/seedvr/upscale/video)
 export const validateFalSeedvrUpscale = [
   body('video_url').isString().notEmpty(),
+  body('video').optional().isString(), // allow data URI video as fallback
   body('upscale_mode').optional().isIn(['target','factor']).withMessage('upscale_mode must be target or factor'),
   body('upscale_factor').optional().isFloat({ gt: 0.1, lt: 10 }).withMessage('upscale_factor must be between 0.1 and 10'),
   body('target_resolution').optional().isIn(['720p','1080p','1440p','2160p']),
@@ -422,6 +424,24 @@ export const validateFalSeedvrUpscale = [
   body('output_quality').optional().isIn(['low','medium','high','maximum']),
   body('output_write_mode').optional().isIn(['fast','balanced','small']),
   async (req: Request, _res: Response, next: NextFunction) => {
+    // If caller sent a data URI under 'video', upload and convert to video_url
+    try {
+      const hasData = typeof (req.body as any)?.video === 'string' && String((req.body as any).video).startsWith('data:');
+      if (hasData && (!req.body?.video_url || String(req.body.video_url).trim() === '')) {
+        try {
+          const uid = (req as any)?.uid || 'anon';
+          const stored = await uploadDataUriToZata({
+            dataUri: (req.body as any).video,
+            keyPrefix: `users/${uid}/input/seedvr/${Date.now()}`,
+            fileName: 'seedvr-source'
+          });
+          (req.body as any).video_url = stored.publicUrl;
+        } catch {
+          // fall through; validation below will catch missing URL
+        }
+      }
+    } catch {}
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
     // Validate 30s max video duration by probing the URL
