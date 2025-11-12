@@ -59,6 +59,7 @@ async function generate(
   // Create history first (source of truth)
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt,
+    userPrompt: userPrompt || undefined,
     model,
     generationType: (payload as any).generationType || 'text-to-image',
     visibility: (payload as any).visibility || 'private',
@@ -166,9 +167,9 @@ async function generate(
     ? transformPromptWithImageReferences(prompt, publicImageUrls.length || uploadedImages.length)
     : prompt;
   
-  // For text-to-character generation, enhance prompt to avoid white borders/frames
+  // For text-to-character generation, enhance prompt for passport photo style in square format with exact skin details
   if (generationType === 'text-to-character') {
-    finalPrompt = `${finalPrompt}, no white borders, no frames, no white padding, no background frames, seamless edges, full frame character, no margins, no white space around subject, edge-to-edge`;
+    finalPrompt = `${finalPrompt}, passport photo style, front facing, looking directly at camera, neutral expression, head and shoulders visible, hands partially visible, preserve exact skin texture and details from reference image, natural looking, maintain identical skin tone and complexion, professional photography, high quality, photorealistic, square format, light neutral background, even studio lighting, no white borders, no white padding, no white margins, no frames, no white space, edge-to-edge, full frame character, seamless background integration`;
   }
 
   try {
@@ -206,9 +207,9 @@ async function generate(
         // @Rajdeep -> image[0], @Aryan -> image[1], etc.
         input.image_urls = Array.isArray(refs) ? refs.slice(0, 10) : [];
         
-        // For text-to-character generation, add negative prompt to prevent white borders
+        // For text-to-character generation, add negative prompt to preserve skin details and prevent white padding
         if (generationType === 'text-to-character') {
-          input.negative_prompt = 'white borders, white frames, white padding, background frames, margins, white space around subject, borders, frames, padding, white background, white edges';
+          input.negative_prompt = 'white padding, white borders, white frames, white margins, thick white space, white background padding, white edges, white space around subject, white space around character, white border around image, white frame around image, pure white background, bright white background, white backdrop, white canvas, altered skin texture, smoothed skin, airbrushed, beautified skin, changed skin tone, different complexion, modified skin details, enhanced skin, retouched skin, changed facial expression, smiling, laughing, frowning, exaggerated expression, looking away, side profile, tilted head, three quarter view, cropped shoulders, missing hands, cut off hands, artistic interpretation, stylized, cartoon, illustration, landscape orientation, busy background, textured background, shadows on background, multiple people, group photo, blurry, low quality, distorted features, unnatural lighting, harsh shadows';
         }
         
         // Log for debugging character mapping

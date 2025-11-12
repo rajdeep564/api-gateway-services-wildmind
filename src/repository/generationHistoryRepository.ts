@@ -22,6 +22,7 @@ function normalizeItem(id: string, data: any): GenerationHistoryItem {
 
 export async function create(uid: string, data: {
   prompt: string;
+  userPrompt?: string;
   model: string;
   generationType: GenerationType | string;
   visibility?: Visibility | string;
@@ -54,6 +55,7 @@ export async function create(uid: string, data: {
   const docRef = await col.add({
     uid,
     prompt: data.prompt,
+    userPrompt: data.userPrompt || null,
     model: data.model,
     generationType: data.generationType,
     visibility: (data.visibility as Visibility) || Visibility.Private,
