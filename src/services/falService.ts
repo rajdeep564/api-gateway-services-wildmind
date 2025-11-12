@@ -280,6 +280,17 @@ async function generate(
       
       await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
       await syncToMirror(uid, historyId);
+
+      // Trigger image optimization (AVIF + thumbnail + blur) in background for character generations
+      try {
+        markGenerationCompleted(uid, historyId, {
+          status: 'completed',
+          images: storedImages,
+          isPublic: (payload as any).isPublic === true,
+        }).catch(err => console.error('[falService.generate] markGenerationCompleted (character) failed:', err));
+      } catch (optErr) {
+        console.warn('[falService.generate] markGenerationCompleted invocation error (character):', optErr);
+      }
       
       // Save character to characters collection
       if (characterName && storedImages.length > 0) {
@@ -342,6 +353,17 @@ async function generate(
           
           // Ensure mirror sync after Zata upload with retries
           await ensureMirrorSync(uid, historyId);
+
+          // Trigger image optimization once storage paths are available
+          try {
+            markGenerationCompleted(uid, historyId, {
+              status: 'completed',
+              images: storedImages,
+              isPublic: (payload as any).isPublic === true,
+            }).catch(err => console.error('[falService.generate] markGenerationCompleted (background upload) failed:', err));
+          } catch (optErr) {
+            console.warn('[falService.generate] markGenerationCompleted invocation error (background upload):', optErr);
+          }
         } catch (e) {
           console.error('[falService.generate] Background Zata upload failed:', e);
           try { await falRepository.updateGenerationRecord(legacyId, { status: 'completed' }); } catch {}

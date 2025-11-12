@@ -60,109 +60,87 @@ export async function markGenerationCompleted(
 ): Promise<void> {
   const existing = await generationHistoryRepository.get(uid, historyId);
   if (!existing) throw new ApiError("History item not found", 404);
-  if (existing.status !== GenerationStatus.Generating)
-    throw new ApiError("Invalid status transition", 400);
+
+  // Allow idempotent calls: if already completed just reuse existing flags/images
+  const wasGenerating = existing.status === GenerationStatus.Generating;
   const finalIsPublic = updates.isPublic === true ? true : (updates.isPublic === false ? false : (existing.isPublic === true));
+
+  // Merge / hydrate fields before optimization
+  const baseImages = updates.images && updates.images.length > 0 ? updates.images : (existing.images || []);
   const next: Partial<GenerationHistoryItem> = {
     status: GenerationStatus.Completed,
-    images: updates.images,
-    videos: updates.videos,
+    images: baseImages,
+    videos: updates.videos ?? existing.videos,
     isPublic: finalIsPublic,
-  visibility: finalIsPublic ? Visibility.Public : Visibility.Private,
+    visibility: finalIsPublic ? Visibility.Public : Visibility.Private,
     tags: updates.tags ?? existing.tags,
     nsfw: updates.nsfw ?? existing.nsfw,
   };
+  // Only adjust stats if transitioning from generating -> completed
+  if (wasGenerating) {
+    try {
+      await generationStatsRepository.updateOnStatusChange(uid, 'generating', 'completed');
+    } catch (e) {
+      console.warn('[markGenerationCompleted] Failed to update stats:', e);
+    }
+  }
   await generationHistoryRepository.update(uid, historyId, next);
-  
-  // Cache invalidation removed
-  
-  // OPTIMIZATION: Update stats counter
-  try {
-    await generationStatsRepository.updateOnStatusChange(uid, 'generating', 'completed');
-  } catch (e) {
-    console.warn('[markGenerationCompleted] Failed to update stats:', e);
-  }
-  
-  // OPTIMIZATION: Trigger image optimization in background (non-blocking)
-  if (updates.images && updates.images.length > 0) {
-    setImmediate(async () => {
+
+  // Inline (synchronous) optimization so caller immediately sees avif/thumbnail in history & mirror
+  let optimizedImages = baseImages;
+  if (Array.isArray(baseImages) && baseImages.length > 0) {
+    optimizedImages = await Promise.all(baseImages.map(async (img: any, index: number) => {
       try {
-        console.log('[markGenerationCompleted] Starting image optimization:', { uid, historyId, imageCount: updates.images?.length });
-        
-        const images = updates.images || [];
-        
-        // Optimize each image in its original storage location
-        const optimizedImages = await Promise.all(
-          images.map(async (img: any, index: number) => {
-            try {
-              // Extract storage path from original URL
-              const ZATA_PREFIX = 'https://idr01.zata.ai/devstoragev1/';
-              let basePath = '';
-              let filename = '';
-              
-              if (img.url && img.url.startsWith(ZATA_PREFIX)) {
-                const fullPath = img.url.substring(ZATA_PREFIX.length);
-                const lastSlashIndex = fullPath.lastIndexOf('/');
-                if (lastSlashIndex > 0) {
-                  basePath = fullPath.substring(0, lastSlashIndex);
-                  const originalFilename = fullPath.substring(lastSlashIndex + 1);
-                  // Remove extension(s) to get base filename
-                  filename = originalFilename.replace(/\.[^.]+$/, '').replace(/\.[^.]+$/, '');
-                }
-              }
-              
-              // Skip if we couldn't extract valid paths
-              if (!basePath || !filename) {
-                console.warn('[markGenerationCompleted] Could not extract path from URL, skipping optimization:', img.url);
-                return img;
-              }
-              
-              console.log('[markGenerationCompleted] Optimizing image:', { index, basePath, filename, url: img.url });
-              
-              // Use AVIF-only optimization with high quality
-              const optimized = await imageOptimizationService.optimizeImage(img.url, basePath, filename, {
-                maxWidth: 2048,
-                maxHeight: 2048,
-                avifQuality: 90,      // High quality AVIF (only format)
-                thumbnailQuality: 80, // Thumbnail quality
-                thumbnailSize: 400,
-              });
-              
-              return {
-                ...img,
-                avifUrl: optimized.avifUrl,        // Primary and only format
-                thumbnailUrl: optimized.thumbnailUrl,
-                blurDataUrl: optimized.blurDataUrl,
-                optimized: true,
-                optimizedAt: Date.now(),
-              };
-            } catch (error) {
-              console.error(`[markGenerationCompleted] Failed to optimize image ${index}:`, error);
-              return img; // Return original if optimization fails
-            }
-          })
-        );
-        
-        await generationHistoryRepository.update(uid, historyId, { images: optimizedImages });
-        console.log('[markGenerationCompleted] Image optimization complete:', { uid, historyId, optimizedCount: optimizedImages.length });
-        
-        // Re-enqueue mirror update with optimized images
-        const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh) {
-          await mirrorQueueRepository.enqueueUpsert({ uid, historyId, itemSnapshot: fresh });
+        // If already optimized (idempotent) keep
+        if (img.optimized && img.avifUrl && img.thumbnailUrl) return img;
+        const url: string | undefined = img.url || img.originalUrl;
+        if (!url) return img;
+        // Try to derive basePath/filename from url
+        const ZATA_PREFIXES = [
+          'https://idr01.zata.ai/devstoragev1/',
+          'https://idr01.zata.ai/prodstoragev1/',
+          'https://idr01.zata.ai/'
+        ];
+        let relative = '';
+        for (const p of ZATA_PREFIXES) if (url.startsWith(p)) { relative = url.substring(p.length); break; }
+        if (!relative) {
+          console.warn('[markGenerationCompleted] Non-Zata URL, skipping optimization:', url);
+          return img;
         }
-      } catch (error) {
-        console.error('[markGenerationCompleted] Image optimization failed (non-blocking):', error);
+        const lastSlash = relative.lastIndexOf('/');
+        if (lastSlash < 0) return img;
+        const basePath = relative.substring(0, lastSlash);
+        const rawFile = relative.substring(lastSlash + 1);
+        const filename = rawFile.replace(/\.[^.]+$/, '').replace(/\.[^.]+$/, '');
+        if (!basePath || !filename) return img;
+        const optimized = await imageOptimizationService.optimizeImage(url, basePath, filename, {
+          maxWidth: 2048,
+          maxHeight: 2048,
+          avifQuality: 90,
+          thumbnailQuality: 80,
+          thumbnailSize: 400,
+        });
+        return {
+          ...img,
+          avifUrl: optimized.avifUrl,
+            thumbnailUrl: optimized.thumbnailUrl,
+            blurDataUrl: optimized.blurDataUrl,
+            optimized: true,
+            optimizedAt: Date.now(),
+        };
+      } catch (e) {
+        console.error(`[markGenerationCompleted] Optimization failed for image ${index}:`, e);
+        return img;
       }
-    });
+    }));
+    // Persist optimized images
+    try { await generationHistoryRepository.update(uid, historyId, { images: optimizedImages } as any); } catch {}
   }
-  
-  // OPTIMIZATION: Enqueue mirror update (initial, will be updated after optimization)
+
+  // Enqueue mirror upsert with optimized fields
   try {
     const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh) {
-      await mirrorQueueRepository.enqueueUpsert({ uid, historyId, itemSnapshot: fresh });
-    }
+    if (fresh) await mirrorQueueRepository.enqueueUpsert({ uid, historyId, itemSnapshot: fresh });
   } catch (e) {
     console.warn('[markGenerationCompleted] Failed to enqueue mirror upsert:', e);
   }
