@@ -85,6 +85,8 @@ export interface GenerationHistoryItem {
   characterName?: string;
   createdAt: any;
   updatedAt: any;
+  // Creator information
+  createdBy?: { uid: string; username?: string; email?: string; photoURL?: string };
 }
 
 export interface CreateGenerationPayload {

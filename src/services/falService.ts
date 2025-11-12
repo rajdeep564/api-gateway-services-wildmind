@@ -246,59 +246,111 @@ async function generate(
     });
 
     const images = await Promise.all(imagePromises);
-    // QUICK WIN: respond immediately with provider URLs and offload Zata upload to background
-    const quickImages = images.map((img) => ({ id: img.id, url: img.url, originalUrl: img.originalUrl || img.url, storagePath: '' } as any));
-    // Mark history completed with provider URLs for instant UX
-    await generationHistoryRepository.update(uid, historyId, {
-      status: 'completed',
-      images: quickImages,
-      frameSize: resolvedAspect,
-    } as Partial<GenerationHistoryItem>);
     
-    // Sync to mirror immediately with provider URLs
-    await syncToMirror(uid, historyId);
+    // For text-to-character, upload to Zata synchronously to ensure storagePath is set
+    // For other types, use background upload for faster response
+    const username = creator?.username || uid;
+    const outputFolder = generationType === 'text-to-character' ? 'character' : 'image';
     
-    // Best-effort: background upload to Zata, then replace URLs in history/mirror
-    setImmediate(async () => {
-      try {
-        const username = creator?.username || uid;
-        const storedImages = await Promise.all(
-          images.map(async (img, index) => {
-            try {
-              const { key, publicUrl } = await uploadFromUrlToZata({
-                sourceUrl: img.url,
-                keyPrefix: `users/${username}/image/${historyId}`,
-                fileName: `image-${index + 1}`,
-              });
-              return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
-            } catch {
-              return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url } as any;
-            }
-          })
-        );
-
-        // Score the images for aesthetic quality
-        const scoredImages = await aestheticScoreService.scoreImages(storedImages);
-        const highestScore = aestheticScoreService.getHighestScore(scoredImages);
-
-        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: scoredImages as any });
-        await generationHistoryRepository.update(uid, historyId, { images: scoredImages, aestheticScore: highestScore } as any);
-        
-        // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
-        markGenerationCompleted(uid, historyId, {
-          status: "completed",
-          images: scoredImages,
-        }).catch(err => console.error('[FAL] Image optimization failed:', err));
-        
-        // Ensure mirror sync after Zata upload with retries (scores will sync too)
-        await ensureMirrorSync(uid, historyId);
-      } catch (e) {
-        console.error('[falService.generate] Background Zata upload failed:', e);
-        try { await falRepository.updateGenerationRecord(legacyId, { status: 'completed' }); } catch {}
+    let storedImages: any[];
+    if (generationType === 'text-to-character') {
+      // Synchronous upload for character generation to ensure storagePath is available
+      storedImages = await Promise.all(
+        images.map(async (img, index) => {
+          try {
+            const { key, publicUrl } = await uploadFromUrlToZata({
+              sourceUrl: img.url,
+              keyPrefix: `users/${username}/${outputFolder}/${historyId}`,
+              fileName: `image-${index + 1}`,
+            });
+            return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
+          } catch (e) {
+            console.error('[falService.generate] Zata upload failed for character:', e);
+            return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url, storagePath: '' } as any;
+          }
+        })
+      );
+      
+      // Mark history completed with Zata URLs
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: storedImages,
+        frameSize: resolvedAspect,
+      } as Partial<GenerationHistoryItem>);
+      
+      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
+      await syncToMirror(uid, historyId);
+      
+      // Save character to characters collection
+      if (characterName && storedImages.length > 0) {
+        try {
+          const { characterRepository } = await import('../repository/characterRepository');
+          const generatedImage = storedImages[0];
+          const historyEntry = await generationHistoryRepository.get(uid, historyId);
+          const inputImages = (historyEntry as any)?.inputImages || [];
+          
+          await characterRepository.createCharacter(uid, {
+            characterName,
+            historyId,
+            frontImageUrl: generatedImage.url,
+            frontImageStoragePath: generatedImage.storagePath,
+            // Store input images if available (left/right views)
+            leftImageUrl: inputImages[1]?.url || undefined,
+            leftImageStoragePath: inputImages[1]?.storagePath || undefined,
+            rightImageUrl: inputImages[2]?.url || undefined,
+            rightImageStoragePath: inputImages[2]?.storagePath || undefined,
+          });
+        } catch (charErr) {
+          console.error('[falService.generate] Failed to save character:', charErr);
+          // Don't fail the whole request if character save fails
+        }
       }
-    });
-    // Respond quickly with provider URLs
-    return { images: quickImages as any, historyId, model, status: 'completed' };
+      
+      return { images: storedImages as any, historyId, model, status: 'completed' };
+    } else {
+      // For non-character generation, use background upload for faster response
+      const quickImages = images.map((img) => ({ id: img.id, url: img.url, originalUrl: img.originalUrl || img.url, storagePath: '' } as any));
+      // Mark history completed with provider URLs for instant UX
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: quickImages,
+        frameSize: resolvedAspect,
+      } as Partial<GenerationHistoryItem>);
+      
+      // Sync to mirror immediately with provider URLs
+      await syncToMirror(uid, historyId);
+      
+      // Best-effort: background upload to Zata, then replace URLs in history/mirror
+      setImmediate(async () => {
+        try {
+          const storedImages = await Promise.all(
+            images.map(async (img, index) => {
+              try {
+                const { key, publicUrl } = await uploadFromUrlToZata({
+                  sourceUrl: img.url,
+                  keyPrefix: `users/${username}/${outputFolder}/${historyId}`,
+                  fileName: `image-${index + 1}`,
+                });
+                return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
+              } catch {
+                return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url } as any;
+              }
+            })
+          );
+          await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
+          await generationHistoryRepository.update(uid, historyId, { images: storedImages } as any);
+          
+          // Ensure mirror sync after Zata upload with retries
+          await ensureMirrorSync(uid, historyId);
+        } catch (e) {
+          console.error('[falService.generate] Background Zata upload failed:', e);
+          try { await falRepository.updateGenerationRecord(legacyId, { status: 'completed' }); } catch {}
+        }
+      });
+      
+      // Respond quickly with provider URLs
+      return { images: quickImages as any, historyId, model, status: 'completed' };
+    }
   } catch (err: any) {
     const message = err?.message || "Failed to generate images with FAL API";
     try {
@@ -914,9 +966,27 @@ export const falService = {
       if (body.output_format) input.output_format = body.output_format;
       if (body.output_quality) input.output_quality = body.output_quality;
       if (body.output_write_mode) input.output_write_mode = body.output_write_mode;
-      const result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
+      if (body.seed != null) input.seed = body.seed;
+      
+      console.log('[seedvrUpscale] Calling FAL API with input:', { ...input, video_url: input.video_url?.substring(0, 100) + '...' });
+      
+      let result: any;
+      try {
+        result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
+      } catch (falErr: any) {
+        const errorDetails = falErr?.response?.data || falErr?.message || falErr;
+        console.error('[seedvrUpscale] FAL API error:', JSON.stringify(errorDetails, null, 2));
+        const errorMessage = typeof errorDetails === 'string' 
+          ? errorDetails 
+          : errorDetails?.error || errorDetails?.message || errorDetails?.detail || 'FAL API request failed';
+        throw new ApiError(`FAL API error: ${errorMessage}`, 502);
+      }
+      
       const videoUrl: string | undefined = (result as any)?.data?.video?.url || (result as any)?.data?.video_url || (result as any)?.data?.output?.video?.url;
-      if (!videoUrl) throw new ApiError('No video URL returned from FAL API', 502);
+      if (!videoUrl) {
+        console.error('[seedvrUpscale] No video URL in response:', JSON.stringify(result, null, 2));
+        throw new ApiError('No video URL returned from FAL API', 502);
+      }
       const username = creator?.username || uid;
       const keyPrefix = `users/${username}/video/${historyId}`;
       let stored: any;
@@ -1186,6 +1256,67 @@ export const falService = {
         await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
       } catch (mirrorErr) {
         console.error('[briaGenfill] Failed to mirror error state:', mirrorErr);
+      }
+      throw new ApiError(message, 500);
+    }
+  },
+  async birefnetVideo(uid: string, body: any): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }>{
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    if (!body?.video_url) throw new ApiError('video_url is required', 400);
+    fal.config({ credentials: falKey });
+    const model = 'fal-ai/birefnet/v2/video';
+    const creator = await authRepository.getUserById(uid);
+    const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt: 'Remove Background (Video)',
+      model,
+      generationType: 'video-remove-bg',
+      visibility: body.isPublic ? 'public' : 'private',
+      isPublic: body.isPublic === true,
+      createdBy,
+    });
+    try {
+      const input: any = { video_url: body.video_url };
+      if (body.model) input.model = body.model;
+      if (body.operating_resolution) input.operating_resolution = body.operating_resolution;
+      if (typeof body.output_mask === 'boolean') input.output_mask = body.output_mask;
+      if (typeof body.refine_foreground === 'boolean') input.refine_foreground = body.refine_foreground;
+      if (body.sync_mode === true) input.sync_mode = true;
+      if (body.video_output_type) input.video_output_type = body.video_output_type;
+      if (body.video_quality) input.video_quality = body.video_quality;
+      if (body.video_write_mode) input.video_write_mode = body.video_write_mode;
+      let result: any;
+      try {
+        result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
+      } catch (falErr: any) {
+        const details = falErr?.response?.data || falErr?.message || falErr;
+        console.error('[birefnetVideo] FAL API error:', JSON.stringify(details, null, 2));
+        throw new ApiError(`FAL API error: ${JSON.stringify(details)}`, 502);
+      }
+      const videoUrl: string | undefined = (result as any)?.data?.video?.url || (result as any)?.data?.video_url;
+      if (!videoUrl) {
+        console.error('[birefnetVideo] No video URL in response:', JSON.stringify(result, null, 2));
+        throw new ApiError('No video URL returned from FAL API', 502);
+      }
+      const username = creator?.username || uid;
+      const keyPrefix = `users/${username}/video/${historyId}`;
+      let stored: any;
+      try {
+        stored = await uploadFromUrlToZata({ sourceUrl: videoUrl, keyPrefix, fileName: 'remove-bg' });
+      } catch {
+        stored = { publicUrl: videoUrl, key: '' };
+      }
+      const videos: VideoMedia[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: videoUrl } as any ];
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
+      await syncToMirror(uid, historyId);
+      return { videos, historyId, model, status: 'completed' };
+    } catch (err: any) {
+      const message = err?.message || 'Failed to remove background from video with FAL API';
+      try {
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[birefnetVideo] Failed to mirror error state:', mirrorErr);
       }
       throw new ApiError(message, 500);
     }

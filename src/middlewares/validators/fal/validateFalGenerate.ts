@@ -3,6 +3,7 @@ import { body, validationResult } from 'express-validator';
 import { ApiError } from '../../../utils/errorHandler';
 import { probeVideoMeta } from '../../../utils/media/probe';
 import { probeImageMeta } from '../../../utils/media/imageProbe';
+import { uploadDataUriToZata } from '../../../utils/storage/zataUpload';
 
 export const ALLOWED_FAL_MODELS = [
   'gemini-25-flash-image',
@@ -412,7 +413,20 @@ export const validateFalRecraftVectorize = [
 
 // SeedVR2 Video Upscaler (fal-ai/seedvr/upscale/video)
 export const validateFalSeedvrUpscale = [
-  body('video_url').isString().notEmpty(),
+  // Only validate video_url if it's provided AND video (data URI) is not provided
+  body('video_url').optional().custom((value, { req }) => {
+    const hasVideo = typeof (req.body as any)?.video === 'string' && String((req.body as any).video).startsWith('data:');
+    // If video (data URI) is provided, video_url is optional
+    if (hasVideo) return true;
+    // If video_url is provided, it must be a non-empty string
+    if (value !== undefined && value !== null) {
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        throw new Error('video_url must be a non-empty string if provided');
+      }
+    }
+    return true;
+  }),
+  body('video').optional().isString().withMessage('video must be a string if provided'), // allow data URI video as fallback
   body('upscale_mode').optional().isIn(['target','factor']).withMessage('upscale_mode must be target or factor'),
   body('upscale_factor').optional().isFloat({ gt: 0.1, lt: 10 }).withMessage('upscale_factor must be between 0.1 and 10'),
   body('target_resolution').optional().isIn(['720p','1080p','1440p','2160p']),
@@ -422,19 +436,55 @@ export const validateFalSeedvrUpscale = [
   body('output_quality').optional().isIn(['low','medium','high','maximum']),
   body('output_write_mode').optional().isIn(['fast','balanced','small']),
   async (req: Request, _res: Response, next: NextFunction) => {
+    // Ensure either video_url or video (data URI) is provided
+    const hasVideoUrl = typeof req.body?.video_url === 'string' && req.body.video_url.trim().length > 0;
+    const hasVideoData = typeof (req.body as any)?.video === 'string' && String((req.body as any).video).startsWith('data:');
+    
+    if (!hasVideoUrl && !hasVideoData) {
+      return next(new ApiError('Either video_url or video (data URI) is required', 400));
+    }
+
+    // If caller sent a data URI under 'video', upload and convert to video_url
+    if (hasVideoData && !hasVideoUrl) {
+      try {
+        const uid = (req as any)?.uid || 'anon';
+        const stored = await uploadDataUriToZata({
+          dataUri: (req.body as any).video,
+          keyPrefix: `users/${uid}/input/seedvr/${Date.now()}`,
+          fileName: 'seedvr-source'
+        });
+        (req.body as any).video_url = stored.publicUrl;
+      } catch (e) {
+        return next(new ApiError('Failed to upload video data URI to storage', 400));
+      }
+    }
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
     // Validate 30s max video duration by probing the URL
     try {
       const url: string = req.body?.video_url;
-      const meta = await probeVideoMeta(url);
+      let meta: any;
+      try {
+        meta = await probeVideoMeta(url);
+      } catch (probeErr: any) {
+        // If probing fails, log but don't block - FAL will handle validation
+        console.warn('[validateFalSeedvrUpscale] Video probe failed:', probeErr?.message || probeErr);
+        // Still set defaults and continue
+        if (!req.body.upscale_mode) req.body.upscale_mode = 'factor';
+        if (req.body.upscale_mode === 'factor' && (req.body.upscale_factor == null)) req.body.upscale_factor = 2;
+        if (req.body.upscale_mode === 'target' && !req.body.target_resolution) req.body.target_resolution = '1080p';
+        return next();
+      }
+      
       const duration = Number(meta?.durationSec || 0);
       if (!isFinite(duration) || duration <= 0) {
-        return next(new ApiError('Unable to read video metadata. Ensure the URL is public and supports HTTP range requests.', 400));
-      }
-      if (duration > 30.5) {
+        console.warn('[validateFalSeedvrUpscale] Could not read video duration, but continuing - FAL will validate');
+        // Don't block - let FAL handle it
+      } else if (duration > 30.5) {
         return next(new ApiError('Input video too long. Maximum allowed duration is 30 seconds.', 400));
       }
+      
       // Normalize body defaults
       if (!req.body.upscale_mode) req.body.upscale_mode = 'factor';
       if (req.body.upscale_mode === 'factor' && (req.body.upscale_factor == null)) req.body.upscale_factor = 2;
@@ -442,9 +492,52 @@ export const validateFalSeedvrUpscale = [
       // Stash probed meta for pricing
       (req as any).seedvrProbe = meta;
       next();
-    } catch (e) {
-      next(new ApiError('Failed to validate video URL for SeedVR2', 400));
+    } catch (e: any) {
+      console.error('[validateFalSeedvrUpscale] Validation error:', e?.message || e);
+      // Don't block on validation errors - let FAL API handle it
+      if (!req.body.upscale_mode) req.body.upscale_mode = 'factor';
+      if (req.body.upscale_mode === 'factor' && (req.body.upscale_factor == null)) req.body.upscale_factor = 2;
+      if (req.body.upscale_mode === 'target' && !req.body.target_resolution) req.body.target_resolution = '1080p';
+      next();
     }
+  }
+];
+
+// BiRefNet v2 Video Background Removal (fal-ai/birefnet/v2/video)
+export const validateFalBirefnetVideo = [
+  body('video_url').optional().isString().notEmpty(),
+  body('video').optional().isString(), // data URI allowed
+  body('model').optional().isIn(['General Use (Light)','General Use (Light 2K)','General Use (Heavy)','Matting','Portrait','General Use (Dynamic)']),
+  body('operating_resolution').optional().isIn(['1024x1024','2048x2048','2304x2304']),
+  body('output_mask').optional().isBoolean(),
+  body('refine_foreground').optional().isBoolean(),
+  body('sync_mode').optional().isBoolean(),
+  body('video_output_type').optional().isIn(['X264 (.mp4)','VP9 (.webm)','PRORES4444 (.mov)','GIF (.gif)']),
+  body('video_quality').optional().isIn(['low','medium','high','maximum']),
+  body('video_write_mode').optional().isIn(['fast','balanced','small']),
+  async (req: Request, _res: Response, next: NextFunction) => {
+    const hasVideoUrl = typeof req.body?.video_url === 'string' && req.body.video_url.trim().length > 0;
+    const hasVideoData = typeof (req.body as any)?.video === 'string' && String((req.body as any).video).startsWith('data:');
+    if (!hasVideoUrl && !hasVideoData) {
+      return next(new ApiError('Either video_url or video (data URI) is required', 400));
+    }
+    // If client sent a data URI, upload to Zata and set video_url
+    if (hasVideoData && !hasVideoUrl) {
+      try {
+        const uid = (req as any)?.uid || 'anon';
+        const stored = await uploadDataUriToZata({
+          dataUri: (req.body as any).video,
+          keyPrefix: `users/${uid}/input/birefnet/${Date.now()}`,
+          fileName: 'birefnet-source'
+        });
+        (req.body as any).video_url = stored.publicUrl;
+      } catch (e) {
+        return next(new ApiError('Failed to upload video data URI to storage', 400));
+      }
+    }
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
   }
 ];
 

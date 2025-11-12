@@ -100,6 +100,39 @@ async function getPublicGenerations(params: FilterParams) {
     mode: params.mode,
     search: params.search,
   });
+  
+  // Enrich createdBy objects with photoURL if missing
+  const uidsToFetch = new Set<string>();
+  result.items.forEach(item => {
+    if (item.createdBy?.uid && !item.createdBy.photoURL) {
+      uidsToFetch.add(item.createdBy.uid);
+    }
+  });
+  
+  // Batch fetch user documents for missing photoURLs
+  if (uidsToFetch.size > 0) {
+    const { authRepository } = await import('../repository/auth/authRepository');
+    const userPromises = Array.from(uidsToFetch).map(uid => authRepository.getUserById(uid));
+    const users = await Promise.all(userPromises);
+    const userMap = new Map<string, { photoURL?: string }>();
+    users.forEach((user, index) => {
+      if (user) {
+        const uid = Array.from(uidsToFetch)[index];
+        userMap.set(uid, { photoURL: user.photoURL });
+      }
+    });
+    
+    // Enrich items with photoURL
+    result.items.forEach(item => {
+      if (item.createdBy?.uid && !item.createdBy.photoURL) {
+        const userData = userMap.get(item.createdBy.uid);
+        if (userData?.photoURL) {
+          item.createdBy.photoURL = userData.photoURL;
+        }
+      }
+    });
+  }
+  
   const meta: PaginationMeta = {
     limit,
     nextCursor: result.nextCursor,

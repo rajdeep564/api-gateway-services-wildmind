@@ -23,6 +23,7 @@ import {
   computeFalBriaGenfillCost,
   computeFalSeedVrUpscaleCost,
   computeFalTopazUpscaleImageCost,
+  computeFalBirefnetVideoCost,
 } from "../utils/pricing/falPricing";
 import {
   validateFalGenerate,
@@ -51,6 +52,7 @@ import {
   validateFalBriaGenfill,
   validateFalSeedvrUpscale,
   validateFalTopazUpscaleImage,
+  validateFalBirefnetVideo,
 } from "../middlewares/validators/fal/validateFalGenerate";
 
 const router = Router();
@@ -126,6 +128,14 @@ router.post(
   (falController as any).seedvrUpscale
 );
 
+// BiRefNet v2 Video Background Removal
+router.post(
+  "/birefnet/v2/video/remove-bg",
+  requireAuth as any,
+  validateFalBirefnetVideo as any,
+  makeCreditCost("fal", "birefnet_video", (req) => computeFalBirefnetVideoCost(req)) as any,
+  (falController as any).birefnetVideo
+);
 // Queue style endpoints
 router.post(
   "/veo3/text-to-video/submit",
