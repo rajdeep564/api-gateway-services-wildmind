@@ -413,8 +413,20 @@ export const validateFalRecraftVectorize = [
 
 // SeedVR2 Video Upscaler (fal-ai/seedvr/upscale/video)
 export const validateFalSeedvrUpscale = [
-  body('video_url').optional().isString().notEmpty(),
-  body('video').optional().isString(), // allow data URI video as fallback
+  // Only validate video_url if it's provided AND video (data URI) is not provided
+  body('video_url').optional().custom((value, { req }) => {
+    const hasVideo = typeof (req.body as any)?.video === 'string' && String((req.body as any).video).startsWith('data:');
+    // If video (data URI) is provided, video_url is optional
+    if (hasVideo) return true;
+    // If video_url is provided, it must be a non-empty string
+    if (value !== undefined && value !== null) {
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        throw new Error('video_url must be a non-empty string if provided');
+      }
+    }
+    return true;
+  }),
+  body('video').optional().isString().withMessage('video must be a string if provided'), // allow data URI video as fallback
   body('upscale_mode').optional().isIn(['target','factor']).withMessage('upscale_mode must be target or factor'),
   body('upscale_factor').optional().isFloat({ gt: 0.1, lt: 10 }).withMessage('upscale_factor must be between 0.1 and 10'),
   body('target_resolution').optional().isIn(['720p','1080p','1440p','2160p']),
