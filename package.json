@@ -8,13 +8,15 @@
     "build": "tsc",
     "postinstall": "npm run build",
     "start": "node dist/index.js",
-    "migrate:optimize-images": "ts-node scripts/migrateImageOptimization.ts"
+    "migrate:optimize-images": "ts-node scripts/migrateImageOptimization.ts",
+    "sync:optimized-to-mirror": "ts-node scripts/syncOptimizedToMirror.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.893.0",
     "@aws-sdk/s3-request-presigner": "^3.893.0",
     "@fal-ai/client": "^1.6.2",
     "@runwayml/sdk": "^2.10.0",
+    "@types/multer": "^2.0.0",
     "adm-zip": "^0.5.16",
     "axios": "^1.12.2",
     "compression": "^1.8.1",
@@ -30,6 +32,7 @@
     "firebase-admin": "^13.5.0",
     "helmet": "^8.1.0",
     "hpp": "^0.2.3",
+    "multer": "^2.0.2",
     "nodemailer": "^7.0.6",
     "openai": "^6.1.0",
     "pino": "^9.10.0",

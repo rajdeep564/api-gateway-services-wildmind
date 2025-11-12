@@ -5,7 +5,8 @@ import { formatApiResponse } from '../utils/formatApiResponse';
 export const validateCreateGeneration = [
   body('prompt').isString().trim().isLength({ min: 1, max: 4000 }),
   body('model').isString().trim().isLength({ min: 1, max: 200 }),
-  body('generationType').isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat','text-to-character']),
+  // Accept legacy alias 'logo-generation' for backward compatibility; normalize in service layer
+  body('generationType').isIn(['text-to-image','logo','logo-generation','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat','text-to-character']),
   body('visibility').optional().isIn(['private','public','unlisted']),
   body('tags').optional().isArray({ max: 30 }),
   body('tags.*').optional().isString().isLength({ max: 40 }),
@@ -44,7 +45,8 @@ export const validateListGenerations = [
   query('page').optional().toInt().isInt({ min: 1 }),
   query('cursor').optional().isString(),
   query('status').optional().isIn(['generating','completed','failed']),
-  query('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat','text-to-character']),
+  // Accept legacy alias 'logo-generation' and normalize downstream
+  query('generationType').optional().isIn(['text-to-image','logo','logo-generation','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat','text-to-character']),
   query('sortBy').optional().isIn(['createdAt','updatedAt','prompt']),
   query('sortOrder').optional().isIn(['asc','desc']),
   query('search').optional().isString().trim().isLength({ max: 200 }),

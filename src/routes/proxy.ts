@@ -75,12 +75,15 @@ function buildZataUrl(resourcePath: string): string {
 router.get('/resource/:path(*)', async (req: Request, res: Response) => {
   try {
     const resourcePath = req.params.path;
-    const zataUrl = buildZataUrl(resourcePath);
+    
+    // Check if the path is an external URL
+    const isExternalUrl = /^https?:\/\//i.test(resourcePath);
+    const targetUrl = isExternalUrl ? resourcePath : buildZataUrl(resourcePath);
     
     // Forward Range header for media streaming
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
-    const response = await fetch(zataUrl, {
+    const response = await fetch(targetUrl, {
       headers: {
         ...(req.headers.range ? { range: String(req.headers.range) } : {}),
         ...(req.headers['if-none-match'] ? { 'if-none-match': String(req.headers['if-none-match']) } : {}),
@@ -88,7 +91,7 @@ router.get('/resource/:path(*)', async (req: Request, res: Response) => {
       },
       // abort on timeout
       signal: controller.signal,
-      agent: httpsAgent as any,
+      agent: isExternalUrl ? undefined : (httpsAgent as any),
     }).finally(() => clearTimeout(timeout));
     // Allow 304 to pass through without treating as error
     if (!response.ok && response.status !== 304) {
@@ -99,7 +102,7 @@ router.get('/resource/:path(*)', async (req: Request, res: Response) => {
   const contentType = response.headers.get('content-type') || '';
   const contentLenHeader = response.headers.get('content-length');
   const contentLen = contentLenHeader ? parseInt(contentLenHeader, 10) : undefined;
-    const contentInfo = getContentInfo(contentType, zataUrl);
+    const contentInfo = getContentInfo(contentType, targetUrl);
     
     // Set appropriate headers and forward key upstream headers
     res.status(response.status);
@@ -138,18 +141,21 @@ router.get('/resource/:path(*)', async (req: Request, res: Response) => {
 router.get('/download/:path(*)', async (req: Request, res: Response) => {
   try {
     const resourcePath = req.params.path;
-    const zataUrl = buildZataUrl(resourcePath);
+    
+    // Check if the path is an external URL
+    const isExternalUrl = /^https?:\/\//i.test(resourcePath);
+    const targetUrl = isExternalUrl ? resourcePath : buildZataUrl(resourcePath);
     
     // Fetch the resource from Zata storage with timeout
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
-    const response = await fetch(zataUrl, { 
+    const response = await fetch(targetUrl, { 
       headers: {
         ...(req.headers['if-none-match'] ? { 'if-none-match': String(req.headers['if-none-match']) } : {}),
         ...(req.headers['if-modified-since'] ? { 'if-modified-since': String(req.headers['if-modified-since']) } : {}),
       },
       signal: controller.signal,
-      agent: httpsAgent as any,
+      agent: isExternalUrl ? undefined : (httpsAgent as any),
     }).finally(() => clearTimeout(timeout));
     
     if (!response.ok && response.status !== 304) {
@@ -160,7 +166,7 @@ router.get('/download/:path(*)', async (req: Request, res: Response) => {
   const contentType = response.headers.get('content-type') || '';
   const contentLenHeader = response.headers.get('content-length');
   const contentLen = contentLenHeader ? parseInt(contentLenHeader, 10) : undefined;
-    const contentInfo = getContentInfo(contentType, zataUrl);
+    const contentInfo = getContentInfo(contentType, targetUrl);
     
     // Extract filename from path
     const filename = resourcePath.split('/').pop() || 'download';
@@ -205,19 +211,22 @@ router.get('/download/:path(*)', async (req: Request, res: Response) => {
 router.get('/media/:path(*)', async (req: Request, res: Response) => {
   try {
     const resourcePath = req.params.path;
-    const zataUrl = buildZataUrl(resourcePath);
+    
+    // Check if the path is an external URL (provider URL like fal.media, replicate.delivery, etc.)
+    const isExternalUrl = /^https?:\/\//i.test(resourcePath);
+    const targetUrl = isExternalUrl ? resourcePath : buildZataUrl(resourcePath);
     
     // Fetch the resource with Range support and timeout
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
-    const response = await fetch(zataUrl, {
+    const response = await fetch(targetUrl, {
       headers: {
         ...(req.headers.range ? { range: String(req.headers.range) } : {}),
         ...(req.headers['if-none-match'] ? { 'if-none-match': String(req.headers['if-none-match']) } : {}),
         ...(req.headers['if-modified-since'] ? { 'if-modified-since': String(req.headers['if-modified-since']) } : {}),
       },
       signal: controller.signal,
-      agent: httpsAgent as any,
+      agent: isExternalUrl ? undefined : (httpsAgent as any), // Don't use custom agent for external URLs
     }).finally(() => clearTimeout(timeout));
     
     if (!response.ok && response.status !== 304) {
@@ -226,7 +235,7 @@ router.get('/media/:path(*)', async (req: Request, res: Response) => {
     }
     
     const contentType = response.headers.get('content-type') || '';
-    const contentInfo = getContentInfo(contentType, zataUrl);
+    const contentInfo = getContentInfo(contentType, targetUrl);
     
     // Set appropriate headers for all media types, forward key headers
     res.status(response.status);

@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import axios from 'axios';
-import { uploadBufferToZata } from '../utils/storage/zataUpload';
+import { uploadBufferToZata, getZataSignedGetUrl } from '../utils/storage/zataUpload';
 import { adminDb } from '../config/firebaseAdmin';
 import { logger } from '../utils/logger';
 
@@ -75,10 +75,46 @@ function extractStoragePathFromUrl(imageUrl: string): { basePath: string; filena
 
 /**
  * Download image from URL and return buffer
+ * Handles both public URLs and Zata storage URLs with signed URLs
  */
 async function downloadImage(url: string): Promise<Buffer> {
   try {
-    const response = await axios.get(url, {
+    // Check if this is a Zata storage URL
+    const ZATA_PATTERN = /https?:\/\/[^\/]+\/(devstoragev1|prodstoragev1)\//;
+    const match = url.match(ZATA_PATTERN);
+    
+    let isZataUrl = false;
+    let storageKey = '';
+    
+    if (match) {
+      isZataUrl = true;
+      // Extract everything AFTER the bucket name
+      const bucketName = match[1]; // 'devstoragev1' or 'prodstoragev1'
+      const afterBucket = url.substring(url.indexOf(`/${bucketName}/`) + bucketName.length + 2);
+      storageKey = afterBucket;
+      
+      console.log('[ImageOptimization] Extracted Zata key:', {
+        originalUrl: url,
+        bucketName,
+        storageKey
+      });
+    }
+    
+    // If it's a Zata URL, get a signed URL for authenticated access
+    let downloadUrl = url;
+    if (isZataUrl && storageKey) {
+      console.log('[ImageOptimization] Generating signed URL for key:', storageKey);
+      try {
+        downloadUrl = await getZataSignedGetUrl(storageKey, 600); // 10 minute expiry
+        console.log('[ImageOptimization] Using signed URL for download');
+      } catch (signError) {
+        console.warn('[ImageOptimization] Failed to generate signed URL, trying direct access:', signError);
+        // Fall back to direct URL
+        downloadUrl = url;
+      }
+    }
+    
+    const response = await axios.get(downloadUrl, {
       responseType: 'arraybuffer',
       timeout: 30000,
       maxContentLength: 50 * 1024 * 1024, // 50MB max

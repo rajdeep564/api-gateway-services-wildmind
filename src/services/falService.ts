@@ -15,6 +15,8 @@ import { falRepository } from "../repository/falRepository";
 import { creditsRepository } from "../repository/creditsRepository";
 import { computeFalVeoCostFromModel } from "../utils/pricing/falPricing";
 import { syncToMirror, updateMirror, ensureMirrorSync } from "../utils/mirrorHelper";
+import { aestheticScoreService } from "./aestheticScoreService";
+import { markGenerationCompleted } from "./generationHistoryService";
 
 async function generate(
   uid: string,
@@ -274,10 +276,21 @@ async function generate(
             }
           })
         );
-        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
-        await generationHistoryRepository.update(uid, historyId, { images: storedImages } as any);
+
+        // Score the images for aesthetic quality
+        const scoredImages = await aestheticScoreService.scoreImages(storedImages);
+        const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
+        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: scoredImages as any });
+        await generationHistoryRepository.update(uid, historyId, { images: scoredImages, aestheticScore: highestScore } as any);
         
-        // Ensure mirror sync after Zata upload with retries
+        // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+        markGenerationCompleted(uid, historyId, {
+          status: "completed",
+          images: scoredImages,
+        }).catch(err => console.error('[FAL] Image optimization failed:', err));
+        
+        // Ensure mirror sync after Zata upload with retries (scores will sync too)
         await ensureMirrorSync(uid, historyId);
       } catch (e) {
         console.error('[falService.generate] Background Zata upload failed:', e);
@@ -346,10 +359,15 @@ async function veoTextToVideo(uid: string, payload: {
     const videos: VideoMedia[] = [
       { id: result.requestId || `fal-${Date.now()}`, url: videoUrl, storagePath: '', thumbUrl: undefined },
     ];
-    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
+
+    // Score the video for aesthetic quality
+    const scoredVideos = await aestheticScoreService.scoreVideos(videos);
+    const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
+
+    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
     // Sync to mirror with retries
     await syncToMirror(uid, historyId);
-    return { videos, historyId, model: 'fal-ai/veo3', status: 'completed' };
+    return { videos: scoredVideos, historyId, model: 'fal-ai/veo3', status: 'completed' };
   } catch (err: any) {
     const message = err?.message || 'Failed to generate video with FAL API';
     try {
@@ -396,10 +414,15 @@ async function veoTextToVideoFast(uid: string, payload: Parameters<typeof veoTex
     const videos: VideoMedia[] = [
       { id: result.requestId || `fal-${Date.now()}`, url: videoUrl, storagePath: '', thumbUrl: undefined },
     ];
-    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
+
+    // Score the video for aesthetic quality
+    const scoredVideos = await aestheticScoreService.scoreVideos(videos);
+    const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
+
+    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
     // Sync to mirror with retries
     await syncToMirror(uid, historyId);
-    return { videos, historyId, model: 'fal-ai/veo3/fast', status: 'completed' };
+    return { videos: scoredVideos, historyId, model: 'fal-ai/veo3/fast', status: 'completed' };
   } catch (err: any) {
     const message = err?.message || 'Failed to generate video with FAL API';
     try {
@@ -452,10 +475,15 @@ async function veoImageToVideo(uid: string, payload: {
     const videos: VideoMedia[] = [
       { id: result.requestId || `fal-${Date.now()}`, url: videoUrl, storagePath: '', thumbUrl: undefined },
     ];
-    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
+
+    // Score the video for aesthetic quality
+    const scoredVideos = await aestheticScoreService.scoreVideos(videos);
+    const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
+
+    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
     // Sync to mirror with retries
     await syncToMirror(uid, historyId);
-    return { videos, historyId, model: 'fal-ai/veo3/image-to-video', status: 'completed' };
+    return { videos: scoredVideos, historyId, model: 'fal-ai/veo3/image-to-video', status: 'completed' };
   } catch (err: any) {
     const message = err?.message || 'Failed to generate video with FAL API';
     try {
@@ -500,10 +528,15 @@ async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoIm
     const videos: VideoMedia[] = [
       { id: result.requestId || `fal-${Date.now()}`, url: videoUrl, storagePath: '', thumbUrl: undefined },
     ];
-    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
+
+    // Score the video for aesthetic quality
+    const scoredVideos = await aestheticScoreService.scoreVideos(videos);
+    const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
+
+    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
     // Sync to mirror with retries
     await syncToMirror(uid, historyId);
-    return { videos, historyId, model: 'fal-ai/veo3/fast/image-to-video', status: 'completed' };
+    return { videos: scoredVideos, historyId, model: 'fal-ai/veo3/fast/image-to-video', status: 'completed' };
   } catch (err: any) {
     const message = err?.message || 'Failed to generate video with FAL API';
     try {
@@ -594,6 +627,13 @@ export const falService = {
       const images: FalGeneratedImage[] = [ { id: (result as any)?.requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any ];
 
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
+      
+      // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+      markGenerationCompleted(uid, historyId, {
+        status: "completed",
+        images: images,
+      }).catch(err => console.error('[FAL] Image optimization failed:', err));
+      
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
 
@@ -755,6 +795,13 @@ export const falService = {
         images: storedImages,
         frameSize: body?.aspect_ratio,
       } as any);
+      
+      // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+      markGenerationCompleted(uid, historyId, {
+        status: "completed",
+        images: storedImages,
+      }).catch(err => console.error('[FAL] Image optimization failed:', err));
+      
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
 
@@ -820,6 +867,13 @@ export const falService = {
       const { key, publicUrl } = await uploadFromUrlToZata({ sourceUrl: imgUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'upscaled' });
       const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any ];
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
+      
+      // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+      markGenerationCompleted(uid, historyId, {
+        status: "completed",
+        images: images,
+      }).catch(err => console.error('[FAL] Image optimization failed:', err));
+      
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
       return { images, historyId, model, status: 'completed' };
@@ -1110,6 +1164,13 @@ export const falService = {
       }));
 
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: storedImages } as any);
+      
+      // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+      markGenerationCompleted(uid, historyId, {
+        status: "completed",
+        images: storedImages,
+      }).catch(err => console.error('[FAL] Image optimization failed:', err));
+      
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
 
@@ -1266,6 +1327,13 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
       const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(model, (located as any)?.item);
       await creditsRepository.writeDebitIfAbsent(uid, located.id, cost, 'fal.queue.image', { ...meta, historyId: located.id, provider: 'fal', pricingVersion });
     } catch {}
+    
+    // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+    markGenerationCompleted(uid, located.id, {
+      status: "completed",
+      images: stored,
+    }).catch(err => console.error('[FAL] Image optimization failed:', err));
+    
     // Sync to mirror with retries
     await syncToMirror(uid, located.id);
     return { images: stored, historyId: located.id, model, requestId, status: 'completed' } as any;

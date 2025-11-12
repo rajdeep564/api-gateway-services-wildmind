@@ -19,6 +19,8 @@ import { uploadFromUrlToZata, uploadBufferToZata } from "../utils/storage/zataUp
 import { creditsRepository } from "../repository/creditsRepository";
 import { computeMinimaxVideoCostFromParams } from "../utils/pricing/minimaxPricing";
 import { syncToMirror, updateMirror } from "../utils/mirrorHelper";
+import { aestheticScoreService } from "./aestheticScoreService";
+import { markGenerationCompleted } from "./generationHistoryService";
 
 const MINIMAX_API_BASE = "https://api.minimax.io/v1";
 const MINIMAX_MODEL = "image-01";
@@ -95,6 +97,9 @@ async function generate(
 
   const creator = await authRepository.getUserById(uid);
   const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+
+  // Debug log incoming payload flags (visibility/isPublic) to help trace public generation flow
+  console.log('[MiniMax] generate() payload flags:', { uid, isPublic: (payload as any).isPublic, visibility: (payload as any).visibility, generationType: payload.generationType });
 
   const legacyId = await minimaxRepository.createGenerationRecord(
     { ...payload, isPublic: (payload as any).isPublic === true },
@@ -205,7 +210,7 @@ async function generate(
     );
 
     // Upload to Zata and preserve originalUrl
-    const storedImages = await Promise.all(
+      const storedImages = await Promise.all(
       images.map(async (img, index) => {
         try {
           const username = creator?.username || uid;
@@ -216,25 +221,42 @@ async function generate(
           });
           return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url };
         } catch (e: any) {
-          // eslint-disable-next-line no-console
-          console.warn('[MiniMax] Zata upload failed, using provider URL:', e?.message || e);
+            // eslint-disable-next-line no-console
+            console.warn('[MiniMax] Zata upload failed, using provider URL:', e?.message || e);
           return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url } as any;
         }
       })
     );
 
+      // Log what was stored (useful to ensure storagePath/publicUrl exist and will be optimized)
+      try { console.log('[MiniMax] storedImages:', storedImages.map(s => ({ id: s.id, url: s.url, storagePath: (s as any).storagePath }))); } catch {}
+
+    // Score the images for aesthetic quality
+    const scoredImages = await aestheticScoreService.scoreImages(storedImages);
+    const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
     await minimaxRepository.updateGenerationRecord(legacyId, {
       status: "completed",
-      images: storedImages,
+      images: scoredImages as any,
     });
     await generationHistoryRepository.update(uid, historyId, {
       status: 'completed',
-      images: storedImages,
+      images: scoredImages,
+      aestheticScore: highestScore,
       provider: 'minimax',
     } as Partial<GenerationHistoryItem>);
+    
+    // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+    console.log('[MiniMax] Triggering markGenerationCompleted for optimization and mirror sync', { uid, historyId, isPublic: (payload as any).isPublic });
+    markGenerationCompleted(uid, historyId, {
+      status: "completed",
+      images: scoredImages,
+      isPublic: (payload as any).isPublic === true,
+    }).catch(err => console.error('[MiniMax] Image optimization failed:', err));
+    
     // Robust mirror sync with retry logic
     await syncToMirror(uid, historyId);
-    return { images: storedImages, historyId, id: data.id } as any;
+    return { images: scoredImages, aestheticScore: highestScore, historyId, id: data.id } as any;
   } catch (err: any) {
     const message = err?.message || "Failed to generate images with MiniMax";
     await minimaxRepository.updateGenerationRecord(legacyId, {
@@ -410,10 +432,16 @@ async function processVideoFile(
     });
     const videoItem: any = { id: fileId, url: publicUrl, storagePath: key, originalUrl: providerUrl };
     
+    // Score the video for aesthetic quality
+    const videos = [videoItem];
+    const scoredVideos = await aestheticScoreService.scoreVideos(videos);
+    const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
+    
     // Update existing history entry
     await generationHistoryRepository.update(uid, historyId, {
       status: 'completed',
-      videos: [videoItem],
+      videos: scoredVideos,
+      aestheticScore: highestScore,
       provider: 'minimax',
     } as any);
     // Attempt debit using stored params on history (model/duration/resolution)
@@ -427,17 +455,23 @@ async function processVideoFile(
     } catch {}
     // Robust mirror sync with retry logic
     await syncToMirror(uid, historyId);
-    return { videos: [videoItem], historyId, status: 'completed' };
+    return { videos: scoredVideos, aestheticScore: highestScore, historyId, status: 'completed' };
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn('[MiniMax] Video Zata upload failed; using provider URL');
     const creator = await authRepository.getUserById(uid);
     const videoItem: any = { id: fileId, url: providerUrl, originalUrl: providerUrl };
     
+    // Score the video even with provider URL
+    const videos = [videoItem];
+    const scoredVideos = await aestheticScoreService.scoreVideos(videos);
+    const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
+    
     // Update existing history entry
     await generationHistoryRepository.update(uid, historyId, {
       status: 'completed',
-      videos: [videoItem],
+      videos: scoredVideos,
+      aestheticScore: highestScore,
       provider: 'minimax',
     } as any);
     // Attempt debit even if we used provider URL
@@ -449,7 +483,7 @@ async function processVideoFile(
     } catch {}
     // Robust mirror sync with retry logic
     await syncToMirror(uid, historyId);
-    return { videos: [videoItem], historyId, status: 'completed' };
+    return { videos: scoredVideos, aestheticScore: highestScore, historyId, status: 'completed' };
   }
 }
 

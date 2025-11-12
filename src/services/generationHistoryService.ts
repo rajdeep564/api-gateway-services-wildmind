@@ -6,6 +6,7 @@ import { imageOptimizationService } from "./imageOptimizationService";
 // CACHING REMOVED: Redis generationCache disabled due to stale list items not reflecting newly started generations promptly.
 // If reintroducing, ensure immediate inclusion of generating items and robust invalidation on create/complete/fail/update.
 import { deleteGenerationFiles } from "../utils/storage/zataDelete";
+import { getCachedItem, setCachedItem, getCachedList, setCachedList } from "../utils/generationCache";
 import {
   GenerationStatus,
   CreateGenerationPayload,
@@ -17,12 +18,19 @@ import {
 import { authRepository } from "../repository/auth/authRepository";
 import { syncToMirror } from "../utils/mirrorHelper";
 import { ApiError } from "../utils/errorHandler";
+import { normalizeGenerationType } from "../utils/normalizeGenerationType";
 
 export async function startGeneration(
   uid: string,
   payload: CreateGenerationPayload
 ): Promise<{ historyId: string } & { item: GenerationHistoryItem }> {
-  const { historyId } = await generationHistoryRepository.create(uid, payload);
+  // Normalize generationType aliases (e.g., 'logo-generation' -> 'logo')
+  const normalizedPayload: CreateGenerationPayload = {
+    ...payload,
+    generationType: (normalizeGenerationType(payload.generationType as any) as any) || payload.generationType,
+  } as any;
+
+  const { historyId } = await generationHistoryRepository.create(uid, normalizedPayload);
   const item = await generationHistoryRepository.get(uid, historyId);
   if (!item) throw new ApiError("Failed to read created history item", 500);
   
@@ -30,7 +38,7 @@ export async function startGeneration(
   
   // OPTIMIZATION: Update stats counter
   try {
-    await generationStatsRepository.incrementOnCreate(uid, payload.generationType);
+    await generationStatsRepository.incrementOnCreate(uid, normalizedPayload.generationType);
   } catch (e) {
     console.warn('[startGeneration] Failed to increment stats:', e);
   }
@@ -204,8 +212,20 @@ export async function getUserGeneration(
   uid: string,
   historyId: string
 ): Promise<GenerationHistoryItem | null> {
-  // Direct fetch (no caching)
-  return generationHistoryRepository.get(uid, historyId);
+  // Try cache first
+  try {
+    const cached = await getCachedItem(uid, historyId);
+    if (cached) return cached;
+  } catch (e) {
+    console.warn('[getUserGeneration] Cache read failed, falling back to DB:', e);
+  }
+  const item = await generationHistoryRepository.get(uid, historyId);
+  try {
+    if (item) await setCachedItem(uid, historyId, item);
+  } catch (e) {
+    console.warn('[getUserGeneration] Failed to set cache:', e);
+  }
+  return item;
 }
 
 export async function listUserGenerations(
@@ -221,10 +241,63 @@ export async function listUserGenerations(
     dateStart?: string; // LEGACY: ISO date string
     dateEnd?: string; // LEGACY: ISO date string
     search?: string;
+    debug?: string | boolean; // from query (?debug=1)
   }
 ): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string | number | null; hasMore?: boolean; totalCount?: number }> {
-  // Direct fetch from Firestore (caching disabled)
-  return generationHistoryRepository.list(uid, params as any);
+  // Normalize generation type; do NOT force status. We want generating + completed by default and exclude failed in post-filter.
+  const debugFlag = params.debug === '1' || params.debug === 'true' || params.debug === true;
+  const normalizedGenType = normalizeGenerationType(params.generationType as any);
+  // Backward-compat: if requesting 'logo', include legacy 'logo-generation' too
+  let generationTypeParam: any = normalizedGenType as any;
+  if (typeof normalizedGenType === 'string' && normalizedGenType === 'logo') {
+    generationTypeParam = ['logo', 'logo-generation'];
+  } else if (Array.isArray(normalizedGenType)) {
+    const set = new Set<string>(normalizedGenType as string[]);
+    if (set.has('logo') || set.has('logo-generation')) {
+      set.add('logo');
+      set.add('logo-generation');
+    }
+    generationTypeParam = Array.from(set);
+  }
+
+  const effectiveParams = {
+    ...params,
+    generationType: generationTypeParam,
+    debug: debugFlag,
+    // status left as-is (undefined means no status filter at repository level)
+  } as any;
+
+  // Try cache for list results using effective params so key matches actual query semantics
+  try {
+    const cached = await getCachedList(uid, effectiveParams);
+    if (cached) return cached;
+  } catch (e) {
+    console.warn('[listUserGenerations] Cache read failed, falling back to DB:', e);
+  }
+
+  const result = await generationHistoryRepository.list(uid, effectiveParams as any);
+
+  // Post-filter: exclude failed items while preserving original hasMore/nextCursor semantics.
+  // Note: If we filter out many failed items and end up with < limit while hasMore=true, we still return hasMore=true
+  // so client can request the next page. For a perfect fill we could iteratively fetch more pages, but that is omitted
+  // for performance simplicity.
+  const filteredItems = Array.isArray(result.items) ? result.items.filter(it => it.status !== GenerationStatus.Failed) : [];
+  const response = { ...result, items: filteredItems };
+  if (debugFlag) {
+    (response as any).diagnostics = {
+      ...(response as any).diagnostics,
+      postFilterReturned: filteredItems.length,
+      postFilterExcluded: Array.isArray(result.items) ? (result.items.length - filteredItems.length) : 0,
+      debug: true,
+    };
+  }
+  try {
+    await setCachedList(uid, effectiveParams, response);
+  } catch (e) {
+    console.warn('[listUserGenerations] Failed to set list cache:', e);
+  }
+
+  return response;
 }
 
 export async function softDelete(uid: string, historyId: string): Promise<{ item: GenerationHistoryItem }> {
