@@ -485,8 +485,18 @@ export async function computeFalBirefnetVideoCost(req: Request): Promise<{ cost:
     }
   }
   if (!url) throw new Error('video_url or video (data URI) is required');
+  
   // Use validator-stashed probe if available; otherwise probe now
-  const meta = (req as any).birefnetProbe || await probeVideoMeta(url);
+  let meta: any = (req as any).birefnetProbe;
+  if (!meta) {
+    try {
+      meta = await probeVideoMeta(url);
+    } catch (probeErr: any) {
+      console.warn('[computeFalBirefnetVideoCost] Video probe failed, using conservative defaults:', probeErr?.message || probeErr);
+      meta = {};
+    }
+  }
+  
   const durationSec = Number(meta?.durationSec || 0);
   const inW = Number(meta?.width || 0);
   const inH = Number(meta?.height || 0);
@@ -495,9 +505,50 @@ export async function computeFalBirefnetVideoCost(req: Request): Promise<{ cost:
   if ((!frames || !isFinite(frames)) && isFinite(durationSec) && isFinite(fps) && fps > 0) {
     frames = Math.round(durationSec * fps);
   }
-  if (!isFinite(durationSec) || durationSec <= 0 || !isFinite(inW) || !isFinite(inH) || inW <= 0 || inH <= 0 || !isFinite(frames) || frames <= 0) {
-    throw new Error('Unable to compute video metadata for pricing');
+  
+  // If metadata is incomplete, use conservative defaults for pricing
+  // Default: assume 1080p video, 30fps, 10 seconds (max allowed)
+  const useDefaults = !isFinite(durationSec) || durationSec <= 0 || !isFinite(inW) || !isFinite(inH) || inW <= 0 || inH <= 0 || !isFinite(frames) || frames <= 0;
+  
+  if (useDefaults) {
+    console.warn('[computeFalBirefnetVideoCost] Using conservative default estimates for pricing (metadata unavailable)');
+    // Use conservative defaults: 1080p (1920x1080), 30fps, 10 seconds
+    const defaultW = 1920;
+    const defaultH = 1080;
+    const defaultFps = 30;
+    const defaultDuration = 10; // Conservative: assume 10 seconds
+    const defaultFrames = defaultDuration * defaultFps;
+    
+    // Assume output same resolution as input for pricing purposes
+    const outW = defaultW;
+    const outH = defaultH;
+    const totalPixels = outW * outH * defaultFrames;
+    const megapixels = totalPixels / 1_000_000;
+    const dollars = megapixels * 0.001;
+    const credits = Math.max(1, Math.ceil(dollars * CREDITS_PER_USD));
+    
+    return {
+      cost: credits,
+      pricingVersion: FAL_PRICING_VERSION,
+      meta: {
+        model: 'fal-ai/birefnet/v2/video',
+        input: { width: defaultW, height: defaultH, durationSec: defaultDuration, fps: defaultFps, frames: defaultFrames, estimated: true },
+        output: { width: outW, height: outH, frames: defaultFrames },
+        pricing: { megapixels, dollars, credits },
+        params: {
+          model: body.model,
+          operating_resolution: body.operating_resolution,
+          output_mask: body.output_mask,
+          refine_foreground: body.refine_foreground,
+          video_output_type: body.video_output_type,
+          video_quality: body.video_quality,
+          video_write_mode: body.video_write_mode,
+        },
+        note: 'Pricing based on conservative estimates (video metadata unavailable)'
+      }
+    };
   }
+  
   // Assume output same resolution as input for pricing purposes
   const outW = inW;
   const outH = inH;
