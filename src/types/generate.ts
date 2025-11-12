@@ -60,6 +60,7 @@ export interface GenerationHistoryItem {
   id: string;
   uid: string;
   prompt: string;
+  userPrompt?: string; // Original user-entered prompt (e.g., "@buddy is dancing with @emily")
   model: string;
   generationType: GenerationType;
   status: GenerationStatus;
