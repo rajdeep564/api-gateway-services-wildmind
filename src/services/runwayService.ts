@@ -12,6 +12,8 @@ import { uploadFromUrlToZata, uploadDataUriToZata } from "../utils/storage/zataU
 import { creditsRepository } from "../repository/creditsRepository";
 import { computeRunwayCostFromHistoryModel } from "../utils/pricing/runwayPricing";
 import { syncToMirror } from "../utils/mirrorHelper";
+import { aestheticScoreService } from "./aestheticScoreService";
+import { markGenerationCompleted } from "./generationHistoryService";
 //
 
 // (SDK handles base/version internally)
@@ -145,7 +147,19 @@ async function getStatus(uid: string, id: string): Promise<any> {
               return { id: `${id}-${i}`, url: u, originalUrl: u } as any;
             }
           }));
-          await generationHistoryRepository.update(uid, found.id, { status: 'completed', images: storedImages } as any);
+
+          // Score the images
+          const scoredImages = await aestheticScoreService.scoreImages(storedImages);
+          const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
+          await generationHistoryRepository.update(uid, found.id, { status: 'completed', images: scoredImages, aestheticScore: highestScore } as any);
+          
+          // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+          markGenerationCompleted(uid, found.id, {
+            status: "completed",
+            images: scoredImages,
+          }).catch(err => console.error('[Runway] Image optimization failed:', err));
+          
           try {
             const { cost, pricingVersion, meta } = computeRunwayCostFromHistoryModel(found.item.model);
             await creditsRepository.writeDebitIfAbsent(uid, found.id, cost, 'runway.generate', { ...meta, historyId: found.id, provider: 'runway', pricingVersion });
@@ -163,7 +177,12 @@ async function getStatus(uid: string, id: string): Promise<any> {
               return { id: `${id}-${i}`, url: u, originalUrl: u } as any;
             }
           }));
-          await generationHistoryRepository.update(uid, found.id, { status: 'completed', videos: storedVideos } as any);
+
+          // Score the videos
+          const scoredVideos = await aestheticScoreService.scoreVideos(storedVideos);
+          const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
+
+          await generationHistoryRepository.update(uid, found.id, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
           try {
             const { cost, pricingVersion, meta } = computeRunwayCostFromHistoryModel(found.item.model);
             await creditsRepository.writeDebitIfAbsent(uid, found.id, cost, 'runway.video', { ...meta, historyId: found.id, provider: 'runway', pricingVersion });

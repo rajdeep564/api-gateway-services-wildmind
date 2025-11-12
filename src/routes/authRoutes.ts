@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authController, sessionCacheStatus } from '../controllers/auth/authController';
 import { redeemCodeController } from '../controllers/redeemCodeController';
+import { publicVisibilityController } from '../controllers/auth/publicVisibilityController';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { validateSession, validateOtpStart, validateOtpVerify, validateUsername, validateUpdateMe, validateLogin, validateGoogleSignIn, validateGoogleUsername, validateCheckUsername } from '../middlewares/validateAuth';
 
@@ -19,6 +20,8 @@ router.get('/me', requireAuth, authController.getCurrentUser);
 router.patch('/me', requireAuth, validateUpdateMe, authController.updateUser);
 router.post('/logout', authController.logout);
 router.post('/redeem-code/apply', requireAuth, redeemCodeController.applyRedeemCode);
+// Check if user can toggle public generation (free users cannot)
+router.get('/can-toggle-public', requireAuth, publicVisibilityController.canTogglePublic);
 // Debug: check if current session cookie is cached in Redis
 router.get('/session-cache', requireAuth, sessionCacheStatus);
 

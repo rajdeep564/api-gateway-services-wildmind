@@ -38,8 +38,9 @@ export enum Visibility {
 export interface ImageMedia {
   id: string;
   url: string;
-  storagePath: string;
+  storagePath?: string;
   originalUrl?: string;
+  aestheticScore?: number;
 }
 
 export interface VideoMedia {
@@ -47,6 +48,7 @@ export interface VideoMedia {
   url: string;
   storagePath: string;
   thumbUrl?: string;
+  aestheticScore?: number;
 }
 
 export interface AudioMedia {
@@ -70,6 +72,7 @@ export interface GenerationHistoryItem {
   images?: ImageMedia[];
   videos?: VideoMedia[];
   audios?: AudioMedia[];
+  aestheticScore?: number; // Highest score among all images/videos
   frameSize?: string;
   aspectRatio?: string;
   aspect_ratio?: string;

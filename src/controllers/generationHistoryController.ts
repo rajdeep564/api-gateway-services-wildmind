@@ -46,7 +46,7 @@ async function get(req: Request, res: Response, next: NextFunction) {
 async function listMine(req: Request, res: Response, next: NextFunction) {
 	try {
 		const uid = (req as any).uid;
-		const { limit = 20, cursor, nextCursor, status, generationType, sortBy, sortOrder, mode, dateStart, dateEnd, search } = req.query as any;
+		const { limit = 20, cursor, nextCursor, status, generationType, sortBy, sortOrder, mode, dateStart, dateEnd, search, debug } = req.query as any;
 		
 		// Support grouped mode for convenience (e.g., mode=video)
 		let generationTypeFilter: string | string[] | undefined = generationType;
@@ -54,18 +54,22 @@ async function listMine(req: Request, res: Response, next: NextFunction) {
 			generationTypeFilter = ['text-to-video', 'image-to-video', 'video-to-video'];
 		}
 		
+		// Prefer optimized pagination: omit legacy sort fields unless explicitly provided.
+		// Frontend now passes nextCursor (millis) for createdAt DESC pagination.
 		const result = await generationHistoryService.listUserGenerations(uid, { 
 			limit: Number(limit),
-			cursor, // LEGACY: document ID cursor (for backward compatibility)
-			nextCursor, // NEW: timestamp cursor (for optimized pagination)
+			// Legacy cursor only if explicitly provided (kept for backward compatibility)
+			cursor: cursor || undefined,
+			nextCursor: nextCursor || undefined,
 			status, 
 			generationType: generationTypeFilter as any,
-			// Only pass sortBy/sortOrder if explicitly provided (for caching)
-			sortBy: sortBy ? sortBy : undefined,
-			sortOrder: sortOrder ? sortOrder : undefined,
-			dateStart, // LEGACY: kept for backward compatibility
-			dateEnd, // LEGACY: kept for backward compatibility
-			search,
+			// Pass sortBy/sortOrder only if they were explicitly included to avoid disabling optimized path
+			sortBy: sortBy || undefined,
+			sortOrder: sortOrder || undefined,
+			dateStart: dateStart || undefined,
+			dateEnd: dateEnd || undefined,
+			search: search || undefined,
+			debug: debug || undefined,
 		});
 		
 		return res.json(formatApiResponse('success', 'OK', result));

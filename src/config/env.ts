@@ -47,6 +47,8 @@ export interface EnvConfig {
   redisDebug: boolean;
   // Auth
   authStrictRevocation: boolean; // when true, verify* checks revocation (slower); default false for speed
+  // Local services
+  scoreLocal?: string; // base URL for aesthetic scoring service
 }
 
 function normalizeBoolean(value: string | undefined, defaultTrue: boolean): boolean {
@@ -99,6 +101,8 @@ export const env: EnvConfig = {
   redisDebug: normalizeBoolean(process.env.REDIS_DEBUG, false),
   // Auth
   authStrictRevocation: normalizeBoolean(process.env.AUTH_STRICT_REVOCATION, false),
+  // Local services
+  scoreLocal: (process.env.SCORE_LOCAL ? String(process.env.SCORE_LOCAL).trim() : undefined)?.replace(/\/$/, ''),
 };
 
 

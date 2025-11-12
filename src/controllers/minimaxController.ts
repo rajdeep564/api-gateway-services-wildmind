@@ -13,11 +13,14 @@ import { authRepository } from '../repository/auth/authRepository';
 
 async function generate(req: Request, res: Response, next: NextFunction) {
   try {
-    const { prompt, aspect_ratio, width, height, response_format, seed, n, prompt_optimizer, subject_reference, generationType, style } = req.body || {};
+    // Forward the full body for extensibility (visibility/isPublic/tags/nsfw etc.)
+    const payload = req.body || {};
     const uid = req.uid;
     const ctx = (req as any).context || {};
     logger.info({ uid, ctx }, '[CREDITS][MINIMAX] Enter generate with context');
-    const result = await minimaxService.generate(uid, { prompt, aspect_ratio, width, height, response_format, seed, n, prompt_optimizer, subject_reference, generationType, style });
+    // Log incoming public/visibility flags for debugging
+    logger.info({ uid, isPublic: Boolean((payload as any).isPublic), visibility: (payload as any).visibility }, '[MINIMAX] Generate request flags');
+    const result = await minimaxService.generate(uid, payload as any);
     const debitOutcome = await postSuccessDebit(uid, result, ctx, 'minimax', 'generate');
     res.json(formatApiResponse('success', 'Images generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
   } catch (err) {

@@ -17,6 +17,9 @@ import { uploadFromUrlToZata, uploadDataUriToZata } from "../utils/storage/zataU
 import { env } from "../config/env";
 import sharp from "sharp";
 import { syncToMirror, updateMirror } from "../utils/mirrorHelper";
+import { aestheticScoreService } from "./aestheticScoreService";
+import { publicVisibilityEnforcer } from "../utils/publicVisibilityEnforcer";
+import { markGenerationCompleted } from "./generationHistoryService";
 
 // Normalize input (URL | data URI | raw base64) to a base64 string without a data URI prefix
 // Returns base64 plus metadata (mime, width, height)
@@ -158,12 +161,16 @@ async function generate(
   if (!ALLOWED_MODELS.includes(model))
     throw new ApiError("Unsupported model", 400);
 
+  // Enforce public visibility for free plan users
+  const { isPublic: enforcedIsPublic, visibility: enforcedVisibility } = 
+    await publicVisibilityEnforcer.enforcePublicVisibility(uid, isPublic);
+
   // create legacy generation record (existing repo)
   const creator = await authRepository.getUserById(uid);
   console.log("creator", creator);
   const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
   const legacyId = await bflRepository.createGenerationRecord(
-    { ...payload, isPublic: (payload as any).isPublic === true },
+    { ...payload, isPublic: enforcedIsPublic },
     createdBy
   );
   // create authoritative history first
@@ -171,10 +178,10 @@ async function generate(
     prompt,
     model,
     generationType: (payload as any).generationType || "text-to-image",
-    visibility: (payload as any).visibility || "private",
+    visibility: enforcedVisibility,
     tags: (payload as any).tags,
     nsfw: (payload as any).nsfw,
-    isPublic: (payload as any).isPublic === true,
+    isPublic: enforcedIsPublic,
     createdBy,
   });
 
@@ -320,18 +327,31 @@ async function generate(
         }
       })
     );
+
+    // Score the images for aesthetic quality
+    const scoredImages = await aestheticScoreService.scoreImages(storedImages);
+    const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
     await bflRepository.updateGenerationRecord(legacyId, {
       status: "completed",
-      images: storedImages,
+      images: scoredImages as any, // BFL repo uses older GeneratedImage type
       frameSize,
     });
-    // update authoritative history and mirror
+    // update authoritative history and mirror with aesthetic scores
     await generationHistoryRepository.update(uid, historyId, {
       status: "completed",
-      images: storedImages,
+      images: scoredImages,
+      aestheticScore: highestScore,
       // persist optional fields
       ...(frameSize ? { frameSize: frameSize as any } : {}),
     } as Partial<GenerationHistoryItem>);
+    
+    // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+    markGenerationCompleted(uid, historyId, {
+      status: "completed",
+      images: scoredImages,
+    }).catch(err => console.error('[BFL] Image optimization failed:', err));
+    
     // Robust mirror sync with retry logic
     await syncToMirror(uid, historyId);
     return {
@@ -339,10 +359,11 @@ async function generate(
       prompt,
       model,
       generationType: (payload as any).generationType || "text-to-image",
-      visibility: (payload as any).visibility || "private",
-      isPublic: (payload as any).isPublic === true,
+      visibility: enforcedVisibility,
+      isPublic: enforcedIsPublic,
       createdBy,
-      images: storedImages,
+      images: scoredImages,
+      aestheticScore: highestScore,
       status: "completed",
     } as any;
   } catch (err: any) {
@@ -421,9 +442,15 @@ async function fill(uid: string, body: any) {
     }/image/${historyId}`,
     fileName: "image-1",
   });
+
+  const images = [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }];
+  const scoredImages = await aestheticScoreService.scoreImages(images);
+  const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
   await generationHistoryRepository.update(uid, historyId, {
     status: "completed",
-    images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+    images: scoredImages,
+    aestheticScore: highestScore,
   } as any);
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
@@ -435,7 +462,8 @@ async function fill(uid: string, body: any) {
     visibility: "private",
     isPublic: body?.isPublic === true,
     createdBy,
-      images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+      images: scoredImages,
+      aestheticScore: highestScore,
       status: "completed",
     } as any;
 }
@@ -478,9 +506,15 @@ async function expand(uid: string, body: any) {
     }/image/${historyId}`,
     fileName: "image-1",
   });
+
+  const images = [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }];
+  const scoredImages = await aestheticScoreService.scoreImages(images);
+  const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
   await generationHistoryRepository.update(uid, historyId, {
     status: "completed",
-    images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+    images: scoredImages,
+    aestheticScore: highestScore,
   } as any);
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
@@ -489,12 +523,13 @@ async function expand(uid: string, body: any) {
     prompt: body?.prompt || "",
     model: "flux-pro-1.0-expand",
     generationType: body?.generationType || "text-to-image",
-      visibility: "private",
+    visibility: "private",
     isPublic: body?.isPublic === true,
-      createdBy,
-      images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
-      status: "completed",
-    } as any;
+    createdBy,
+    images: scoredImages,
+    aestheticScore: highestScore,
+    status: "completed",
+  } as any;
 }
 
 async function canny(uid: string, body: any) {
@@ -531,9 +566,15 @@ async function canny(uid: string, body: any) {
     }/image/${historyId}`,
     fileName: "image-1",
   });
+
+  const images = [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }];
+  const scoredImages = await aestheticScoreService.scoreImages(images);
+  const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
   await generationHistoryRepository.update(uid, historyId, {
     status: "completed",
-    images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+    images: scoredImages,
+    aestheticScore: highestScore,
   } as any);
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
@@ -542,12 +583,13 @@ async function canny(uid: string, body: any) {
     prompt: body?.prompt || "",
     model: "flux-pro-1.0-canny",
     generationType: body?.generationType || "text-to-image",
-      visibility: "private",
+    visibility: "private",
     isPublic: body?.isPublic === true,
-      createdBy,
-      images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
-      status: "completed",
-    } as any;
+    createdBy,
+    images: scoredImages,
+    aestheticScore: highestScore,
+    status: "completed",
+  } as any;
 }
 
 async function depth(uid: string, body: any) {
@@ -584,9 +626,15 @@ async function depth(uid: string, body: any) {
     }/image/${historyId}`,
     fileName: "image-1",
   });
+
+  const images = [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }];
+  const scoredImages = await aestheticScoreService.scoreImages(images);
+  const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
   await generationHistoryRepository.update(uid, historyId, {
     status: "completed",
-    images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+    images: scoredImages,
+    aestheticScore: highestScore,
   } as any);
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
@@ -595,12 +643,13 @@ async function depth(uid: string, body: any) {
     prompt: body?.prompt || "",
     model: "flux-pro-1.0-depth",
     generationType: body?.generationType || "text-to-image",
-      visibility: "private",
+    visibility: "private",
     isPublic: body?.isPublic === true,
-      createdBy,
-      images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
-      status: "completed",
-    } as any;
+    createdBy,
+    images: scoredImages,
+    aestheticScore: highestScore,
+    status: "completed",
+  } as any;
 }
 
 // Expansion using FLUX Fill - generates mask from expansion margins
@@ -740,10 +789,15 @@ async function expandWithFill(uid: string, body: any) {
     keyPrefix: `users/${creator?.username || uid}/image/${historyId}`,
     fileName: "image-1",
   });
+
+  const images = [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }];
+  const scoredImages = await aestheticScoreService.scoreImages(images);
+  const highestScore = aestheticScoreService.getHighestScore(scoredImages);
   
   await generationHistoryRepository.update(uid, historyId, {
     status: "completed",
-    images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+    images: scoredImages,
+    aestheticScore: highestScore,
   } as any);
   
   // Robust mirror sync with retry logic
@@ -757,7 +811,8 @@ async function expandWithFill(uid: string, body: any) {
     visibility: body?.isPublic === true ? "public" : "private",
     isPublic: body?.isPublic === true,
     createdBy,
-    images: [{ id, url: publicUrl, storagePath: key, originalUrl: imageUrl }],
+    images: scoredImages,
+    aestheticScore: highestScore,
     status: "completed",
   } as any;
 }
