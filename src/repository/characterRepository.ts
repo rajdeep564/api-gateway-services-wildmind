@@ -1,4 +1,4 @@
-import { adminDb } from '../config/firebase';
+import { adminDb, admin } from '../config/firebaseAdmin';
 import { logger } from '../utils/logger';
 
 export interface CharacterDoc {
@@ -73,7 +73,7 @@ export async function listCharacters(uid: string, limit: number = 50): Promise<A
       .limit(limit)
       .get();
     
-    return snap.docs.map((d) => ({ id: d.id, data: d.data() as CharacterDoc }));
+    return snap.docs.map((d: FirebaseFirestore.QueryDocumentSnapshot) => ({ id: d.id, data: d.data() as CharacterDoc }));
   } catch (err: any) {
     logger.error({ uid, err }, '[Character] Failed to list characters');
     return [];
