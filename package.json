@@ -13,6 +13,7 @@
     "sync:optimized-to-mirror": "ts-node scripts/syncOptimizedToMirror.ts"
     ,"migrate:aesthetic-scores": "ts-node scripts/migrateAestheticScores.ts"
   ,"migrate:normalize-images": "ts-node scripts/normalizeLegacyImages.ts"
+  ,"migrate:feed-scores": "ts-node scripts/migrateFeedRankingScores.ts"
     ,"mirror:worker": "ts-node src/workers/mirrorQueueWorker.ts"
   },
   "dependencies": {
