@@ -28,8 +28,12 @@
  * - Uses exponential backoff on transient Firestore failures.
  */
 
+import * as dotenv from 'dotenv';
+dotenv.config();
+
 import { adminDb } from '../src/config/firebaseAdmin';
-import { GenerationHistoryItem } from '../src/types/generate';
+import { GenerationHistoryItem, ImageMedia, VideoMedia } from '../src/types/generate';
+import { aestheticScoreService } from '../src/services/aestheticScoreService';
 
 interface Args {
   limit: number;
@@ -56,7 +60,7 @@ function parseArgs(): Args {
 
 function clamp(n: number, min: number, max: number) { return Math.min(max, Math.max(min, n)); }
 
-function computeScore(doc: FirebaseFirestore.QueryDocumentSnapshot, halfLifeHours: number): { feedScore: number; detail: any } {
+async function computeScore(doc: FirebaseFirestore.QueryDocumentSnapshot, halfLifeHours: number): Promise<{ feedScore: number; detail: any; needsAestheticUpdate?: boolean; aestheticUpdates?: Partial<GenerationHistoryItem> }> {
   const data = doc.data() as any as GenerationHistoryItem & {
     likeCount?: number; bookmarkCount?: number; viewCount?: number; feedScore?: number;
   };
@@ -72,11 +76,80 @@ function computeScore(doc: FirebaseFirestore.QueryDocumentSnapshot, halfLifeHour
   const ageHours = (Date.now() - createdAtMs) / (1000 * 60 * 60);
   const freshnessDecay = Math.exp(-ageHours / halfLifeHours);
 
-  const images = Array.isArray(data.images) ? data.images : [];
-  const videos = Array.isArray(data.videos) ? data.videos : [];
+  let images = Array.isArray(data.images) ? data.images : [];
+  let videos = Array.isArray(data.videos) ? data.videos : [];
   const audios = Array.isArray(data.audios) ? data.audios : [];
 
-  const aesthetic = typeof data.aestheticScore === 'number' ? clamp(data.aestheticScore, 0, 10) : 5.5; // median fallback
+  // Check if we need to score images/videos
+  let needsScoring = false;
+  if (typeof data.aestheticScore !== 'number') {
+    // Check if images/videos have scores
+    const hasImageScores = images.some((im: any) => typeof im?.aestheticScore === 'number');
+    const hasVideoScores = videos.some((v: any) => typeof v?.aestheticScore === 'number');
+    if (!hasImageScores && !hasVideoScores) {
+      needsScoring = true;
+    }
+  }
+
+  let aesthetic: number;
+  let aestheticUpdates: Partial<GenerationHistoryItem> | undefined;
+
+  if (typeof data.aestheticScore === 'number') {
+    // Use existing document-level score
+    aesthetic = clamp(data.aestheticScore, 0, 10);
+  } else {
+    // Try to get from images/videos first
+    const allAssets = [...images, ...videos];
+    const existingScores = allAssets
+      .map((asset: any) => typeof asset?.aestheticScore === 'number' ? asset.aestheticScore : null)
+      .filter((score): score is number => score !== null);
+    
+    if (existingScores.length > 0) {
+      aesthetic = Math.max(...existingScores);
+    } else if (needsScoring && (images.length > 0 || videos.length > 0)) {
+      // Need to score - call API
+      console.log('[FeedScoreMigration] Scoring missing aesthetic scores for doc', doc.id);
+      
+      // Score images that don't have scores
+      const imagesToScore = images.filter((im: any) => typeof im?.aestheticScore !== 'number');
+      if (imagesToScore.length > 0) {
+        const scoredImages = await Promise.all(imagesToScore.map(async (img: ImageMedia) => {
+          const score = await aestheticScoreService.scoreImage(img.url);
+          return { ...img, aestheticScore: score !== null ? score : undefined };
+        }));
+        // Merge scored images back
+        const scoredMap = new Map(scoredImages.map(im => [im.id, im]));
+        images = images.map((im: ImageMedia) => scoredMap.get(im.id) || im);
+      }
+
+      // Score videos that don't have scores
+      const videosToScore = videos.filter((v: any) => typeof v?.aestheticScore !== 'number');
+      if (videosToScore.length > 0) {
+        const scoredVideos = await Promise.all(videosToScore.map(async (vid: VideoMedia) => {
+          const score = await aestheticScoreService.scoreVideo(vid.url);
+          return { ...vid, aestheticScore: score !== null ? score : undefined };
+        }));
+        // Merge scored videos back
+        const scoredMap = new Map(scoredVideos.map(v => [v.id, v]));
+        videos = videos.map((v: VideoMedia) => scoredMap.get(v.id) || v);
+      }
+
+      // Get highest score from all assets
+      const highest = aestheticScoreService.getHighestScore([...images, ...videos]);
+      aesthetic = highest !== undefined ? clamp(highest, 0, 10) : 5.5; // Only use fallback if API completely fails
+      
+      // Prepare updates to save back to document
+      aestheticUpdates = {
+        images,
+        videos,
+        aestheticScore: highest,
+      } as Partial<GenerationHistoryItem>;
+    } else {
+      // No media to score, use fallback
+      aesthetic = 5.5;
+    }
+  }
+
   const baseAesthetic = aesthetic / 10;
 
   const optimizedCount = images.filter(im => im?.thumbnailUrl || im?.avifUrl).length;
@@ -116,7 +189,9 @@ function computeScore(doc: FirebaseFirestore.QueryDocumentSnapshot, halfLifeHour
       likeCount,
       bookmarkCount,
       viewCount,
-    }
+    },
+    needsAestheticUpdate: needsScoring && aestheticUpdates !== undefined,
+    aestheticUpdates,
   };
 }
 
@@ -161,15 +236,23 @@ async function run() {
         skipped++;
         continue;
       }
-      const { feedScore, detail } = computeScore(doc, args.halfLifeHours);
+      const { feedScore, detail, needsAestheticUpdate, aestheticUpdates } = await computeScore(doc, args.halfLifeHours);
       processed++;
       console.log('[FeedScoreMigration] Doc', doc.id, 'score', feedScore, detail);
       if (!args.dry) {
-        batch.set(doc.ref, {
+        const updates: any = {
           feedScore,
           feedScoreComputedAt: Date.now(),
           feedScoreMeta: detail,
-        }, { merge: true });
+        };
+        
+        // If aesthetic scores were computed, include them in the update
+        if (needsAestheticUpdate && aestheticUpdates) {
+          Object.assign(updates, aestheticUpdates);
+          console.log('[FeedScoreMigration] Also updating aesthetic scores for doc', doc.id);
+        }
+        
+        batch.set(doc.ref, updates, { merge: true });
         writes++;
       }
     }
