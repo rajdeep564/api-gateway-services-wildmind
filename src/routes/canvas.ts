@@ -31,6 +31,7 @@ router.post('/projects/:id/snapshot', snapshotController.createSnapshot);
 
 // Generation (Canvas-specific)
 router.post('/generate', validateCanvasGenerate, generateController.generateForCanvas);
+router.post('/generate-video', requireAuth, generateController.generateVideoForCanvas);
 
 // Cursor Agent
 router.post('/agent/plan', cursorAgentController.planAgentActions);

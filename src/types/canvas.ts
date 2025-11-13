@@ -211,6 +211,7 @@ export interface CanvasGenerationRequest {
   model: string;
   width?: number;
   height?: number;
+  aspectRatio?: string; // Aspect ratio string like "16:9", "1:1", etc.
   seed?: number;
   options?: Record<string, any>;
   meta: {

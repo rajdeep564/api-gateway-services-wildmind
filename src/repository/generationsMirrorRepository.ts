@@ -24,14 +24,40 @@ export async function upsertFromHistory(uid: string, historyId: string, historyD
   }, { merge: true });
 }
 
+/**
+ * Remove undefined values from an object recursively
+ * Firestore doesn't allow undefined values
+ */
+function removeUndefinedValues(obj: any): any {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => removeUndefinedValues(item));
+  }
+  
+  const cleaned: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      cleaned[key] = removeUndefinedValues(value);
+    }
+  }
+  return cleaned;
+}
+
 export async function updateFromHistory(uid: string, historyId: string, updates: Partial<GenerationHistoryItem>): Promise<void> {
   try {
     // eslint-disable-next-line no-console
     console.log('[Mirror][Update]', { historyId, uid, isPublic: (updates as any)?.isPublic, visibility: (updates as any)?.visibility, generationType: (updates as any)?.generationType });
   } catch {}
   const ref = adminDb.collection('generations').doc(historyId);
+  
+  // Remove undefined values before saving to Firestore
+  const cleanedUpdates = removeUndefinedValues(updates);
+  
   await ref.set({
-    ...updates,
+    ...cleanedUpdates,
     uid,
     id: historyId,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),

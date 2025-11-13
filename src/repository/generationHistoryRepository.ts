@@ -92,10 +92,36 @@ export async function create(uid: string, data: {
   return { historyId: docRef.id };
 }
 
+/**
+ * Remove undefined values from an object recursively
+ * Firestore doesn't allow undefined values
+ */
+function removeUndefinedValues(obj: any): any {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => removeUndefinedValues(item));
+  }
+  
+  const cleaned: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      cleaned[key] = removeUndefinedValues(value);
+    }
+  }
+  return cleaned;
+}
+
 export async function update(uid: string, historyId: string, updates: Partial<GenerationHistoryItem>): Promise<void> {
   const ref = adminDb.collection('generationHistory').doc(uid).collection('items').doc(historyId);
+  
+  // Remove undefined values before saving to Firestore
+  const cleanedUpdates = removeUndefinedValues(updates);
+  
   await ref.update({
-    ...updates,
+    ...cleanedUpdates,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   } as any);
   // Invalidate cache for the single item and user lists

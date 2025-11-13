@@ -32,20 +32,33 @@ export async function appendOp(
       .collection('ops')
       .doc();
     
-    const opDoc = {
+    // Build op document, excluding undefined values
+    const opDoc: any = {
       id: opRef.id,
       projectId,
       opIndex,
       type: op.type,
-      elementId: op.elementId,
-      elementIds: op.elementIds,
       data: op.data,
-      inverse: op.inverse,
       actorUid: op.actorUid,
-      requestId: op.requestId,
-      clientTs: op.clientTs,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    } as any;
+    };
+    
+    // Only include optional fields if they are defined
+    if (op.elementId !== undefined) {
+      opDoc.elementId = op.elementId;
+    }
+    if (op.elementIds !== undefined) {
+      opDoc.elementIds = op.elementIds;
+    }
+    if (op.inverse !== undefined) {
+      opDoc.inverse = op.inverse;
+    }
+    if (op.requestId !== undefined) {
+      opDoc.requestId = op.requestId;
+    }
+    if (op.clientTs !== undefined) {
+      opDoc.clientTs = op.clientTs;
+    }
 
     transaction.set(opRef, opDoc);
 

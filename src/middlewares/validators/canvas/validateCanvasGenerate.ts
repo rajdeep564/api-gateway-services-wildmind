@@ -27,6 +27,12 @@ export const validateCanvasGenerate = [
     .isInt({ min: 64, max: 4096 })
     .withMessage('Height must be between 64 and 4096'),
   
+  body('aspectRatio')
+    .optional()
+    .isString()
+    .matches(/^\d+:\d+$/)
+    .withMessage('Aspect ratio must be in format "width:height" (e.g., "16:9")'),
+  
   body('seed')
     .optional()
     .isInt({ min: 0 })
