@@ -75,7 +75,39 @@ export async function markGenerationCompleted(
   const finalIsPublic = updates.isPublic === true ? true : (updates.isPublic === false ? false : (existing.isPublic === true));
 
   // Merge / hydrate fields before optimization
-  const baseImages = updates.images && updates.images.length > 0 ? updates.images : (existing.images || []);
+  // Normalize legacy image entries (strings or objects without id/url)
+  const rawImages = updates.images && updates.images.length > 0 ? updates.images : (existing.images || []);
+  const baseImages = Array.isArray(rawImages) ? rawImages.map((im: any, index: number) => {
+    // If string -> wrap
+    if (typeof im === 'string') {
+      return {
+        id: `${historyId}-img-${index}`,
+        url: im,
+        originalUrl: im,
+        optimized: false,
+      };
+    }
+    if (im && typeof im === 'object') {
+      const id = im.id || `${historyId}-img-${index}`;
+      const url = im.url || im.originalUrl || (typeof im.storagePath === 'string' ? im.storagePath : undefined);
+      return {
+        id,
+        url,
+        originalUrl: im.originalUrl || url,
+        storagePath: im.storagePath,
+        avifUrl: im.avifUrl,
+        thumbnailUrl: im.thumbnailUrl,
+        blurDataUrl: im.blurDataUrl,
+        optimized: im.optimized || false,
+        optimizedAt: im.optimizedAt,
+        aestheticScore: im.aestheticScore,
+        width: im.width,
+        height: im.height,
+        size: im.size,
+      };
+    }
+    return im;
+  }) : [];
   const next: Partial<GenerationHistoryItem> = {
     status: GenerationStatus.Completed,
     images: baseImages,
@@ -93,7 +125,16 @@ export async function markGenerationCompleted(
       console.warn('[markGenerationCompleted] Failed to update stats:', e);
     }
   }
-  await generationHistoryRepository.update(uid, historyId, next);
+  // Persist normalization early if anything changed shape (compare by presence of string entries)
+  const hadLegacyStrings = rawImages.some((r: any) => typeof r === 'string');
+  try {
+    await generationHistoryRepository.update(uid, historyId, {
+      ...next,
+      ...(hadLegacyStrings ? { images: baseImages } : {}),
+    });
+  } catch (e) {
+    console.warn('[markGenerationCompleted] Initial update (pre-optimization) failed:', e);
+  }
 
   // Inline (synchronous) optimization so caller immediately sees avif/thumbnail in history & mirror
   let optimizedImages = baseImages;
