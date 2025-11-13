@@ -27,6 +27,8 @@ const isProdEnv = process.env.NODE_ENV === 'production';
 const allowedOrigins = [
   // Common prod hosts for frontend
   ...(isProdEnv ? ['https://www.wildmindai.com', 'https://wildmindai.com'] : []),
+  // Default dev origins
+  ...(!isProdEnv ? ['http://localhost:3000', 'http://127.0.0.1:3000'] : []),
   process.env.FRONTEND_ORIGIN || '',
   ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : [])
 ].filter(Boolean);
@@ -59,7 +61,11 @@ const corsOptions: any = {
     'X-Device-Name',
     'X-Device-Info',
     'ngrok-skip-browser-warning',
-    'Range'
+    'Range',
+    // Allow client no-cache request headers used for fresh reads
+    'Cache-Control',
+    'Pragma',
+    'Expires'
   ],
   optionsSuccessStatus: 204,
   exposedHeaders: ['Content-Length', 'Content-Range']
@@ -90,7 +96,7 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD');
     res.header(
       'Access-Control-Allow-Headers',
-      'Content-Type, Authorization, X-Requested-With, X-Request-Id, X-Device-Id, X-Device-Name, X-Device-Info, ngrok-skip-browser-warning, Range'
+      'Content-Type, Authorization, X-Requested-With, X-Request-Id, X-Device-Id, X-Device-Name, X-Device-Info, ngrok-skip-browser-warning, Range, Cache-Control, Pragma, Expires'
     );
   }
   if (req.method === 'OPTIONS') {

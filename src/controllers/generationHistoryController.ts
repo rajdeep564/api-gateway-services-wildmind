@@ -33,6 +33,13 @@ async function updateStatus(req: Request, res: Response, next: NextFunction) {
 
 async function get(req: Request, res: Response, next: NextFunction) {
 	try {
+		// Ensure per-user freshness; do not allow browser/proxy caching for item reads
+		try {
+			res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+			res.setHeader('Pragma', 'no-cache');
+			res.setHeader('Expires', '0');
+			res.setHeader('Vary', 'Authorization, Cookie');
+		} catch {}
 		const uid = (req as any).uid;
 		const { historyId } = req.params as any;
 		const item = await generationHistoryService.getUserGeneration(uid, historyId);
@@ -45,6 +52,13 @@ async function get(req: Request, res: Response, next: NextFunction) {
 
 async function listMine(req: Request, res: Response, next: NextFunction) {
 	try {
+		// Ensure per-user freshness; do not allow browser/proxy caching for list reads
+		try {
+			res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+			res.setHeader('Pragma', 'no-cache');
+			res.setHeader('Expires', '0');
+			res.setHeader('Vary', 'Authorization, Cookie');
+		} catch {}
 		const uid = (req as any).uid;
 		const { limit = 20, cursor, nextCursor, status, generationType, sortBy, sortOrder, mode, dateStart, dateEnd, search, debug } = req.query as any;
 		
