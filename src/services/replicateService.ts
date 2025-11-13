@@ -305,6 +305,29 @@ export async function removeBackground(
     });
   } catch {}
 
+  // Trigger optimization and re-enqueue mirror update (non-blocking)
+  try {
+    console.log(
+      "[replicateService.removeBackground] triggering markGenerationCompleted",
+      { uid, historyId, isPublic: body?.isPublic === true }
+    );
+    markGenerationCompleted(uid, historyId, {
+      status: "completed",
+      images: scoredImages as any,
+      isPublic: body?.isPublic === true,
+    }).catch((e: any) =>
+      console.error(
+        "[replicateService.removeBackground] markGenerationCompleted failed",
+        e
+      )
+    );
+  } catch (e) {
+    console.warn(
+      "[replicateService.removeBackground] markGenerationCompleted call error",
+      e
+    );
+  }
+
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
 
