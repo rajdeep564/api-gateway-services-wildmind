@@ -17,7 +17,7 @@ async function testCache() {
   console.log('🧪 Testing Redis Cache for Generation API\n');
   console.log('═══════════════════════════════════════════\n');
 
-  // Check if token is set
+  // Check if token is setz
   if (TOKEN === 'YOUR_TOKEN_HERE') {
     console.log('❌ ERROR: Please set your TOKEN in the script');
     console.log('\n📝 How to get your token:');

@@ -1747,9 +1747,13 @@ export async function replicateQueueResult(
       storagePath,
       originalUrl: outputUrl,
     };
+    // Score queued video result
+    const scoredVideos = await aestheticScoreService.scoreVideos([videoItem]);
+    const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
     await generationHistoryRepository.update(uid, historyId, {
       status: "completed",
-      videos: [videoItem],
+      videos: scoredVideos,
+      aestheticScore: highestScore,
     } as any);
     // Robust mirror sync with retry logic
     await syncToMirror(uid, historyId);
@@ -1848,7 +1852,7 @@ export async function replicateQueueResult(
       }
     } catch {}
     return {
-      videos: [videoItem],
+      videos: scoredVideos,
       historyId,
       model: (located.item as any)?.model,
       requestId,
