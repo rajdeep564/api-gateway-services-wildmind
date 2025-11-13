@@ -5,7 +5,8 @@ import { publicGenerationsRepository } from '../repository/publicGenerationsRepo
 export interface FilterParams {
   limit?: number;
   page?: number;
-  cursor?: string;
+  cursor?: string; // LEGACY: document ID cursor
+  nextCursor?: string; // NEW: timestamp cursor
   generationType?: GenerationType | string | string[];
   status?: 'generating' | 'completed' | 'failed';
   sortBy?: 'createdAt' | 'updatedAt' | 'prompt';
@@ -19,7 +20,7 @@ export interface FilterParams {
 
 export interface PaginationMeta {
   limit: number;
-  nextCursor?: string;
+  nextCursor?: string | number | null;
   totalCount?: number;
   hasMore?: boolean;
 }
@@ -29,7 +30,8 @@ async function getUserGenerations(uid: string, params: FilterParams) {
   
   // Support both cursor and page-based pagination
   let cursor = params.cursor;
-  if (params.page && !cursor) {
+  let nextCursor = params.nextCursor;
+  if (params.page && !cursor && !nextCursor) {
     // For page-based pagination, we need to simulate with cursor
     // This is a simplified approach - for production, consider using offset-based pagination
     cursor = undefined; // Start from beginning for now
@@ -37,7 +39,8 @@ async function getUserGenerations(uid: string, params: FilterParams) {
   
   const result = await generationHistoryRepository.list(uid, {
     limit,
-    cursor,
+    cursor, // LEGACY: document ID cursor
+    nextCursor, // NEW: timestamp cursor
     generationType: params.generationType as any,
     status: params.status,
     sortBy: params.sortBy,
@@ -51,7 +54,7 @@ async function getUserGenerations(uid: string, params: FilterParams) {
     limit,
     nextCursor: result.nextCursor,
     totalCount: result.totalCount,
-    hasMore: !!result.nextCursor,
+    hasMore: result.hasMore !== undefined ? result.hasMore : !!result.nextCursor,
   };
   
   return {
@@ -81,6 +84,9 @@ async function getPublicGenerations(params: FilterParams) {
   }
 
   const limit = params.limit || 20;
+
+  // CACHING DISABLED for feed: always return fresh results to ensure new generations appear immediately.
+
   const result = await publicGenerationsRepository.listPublic({
     limit,
     cursor,
@@ -94,11 +100,45 @@ async function getPublicGenerations(params: FilterParams) {
     mode: params.mode,
     search: params.search,
   });
+  
+  // Enrich createdBy objects with photoURL if missing
+  const uidsToFetch = new Set<string>();
+  result.items.forEach(item => {
+    if (item.createdBy?.uid && !item.createdBy.photoURL) {
+      uidsToFetch.add(item.createdBy.uid);
+    }
+  });
+  
+  // Batch fetch user documents for missing photoURLs
+  if (uidsToFetch.size > 0) {
+    const { authRepository } = await import('../repository/auth/authRepository');
+    const userPromises = Array.from(uidsToFetch).map(uid => authRepository.getUserById(uid));
+    const users = await Promise.all(userPromises);
+    const userMap = new Map<string, { photoURL?: string }>();
+    users.forEach((user, index) => {
+      if (user) {
+        const uid = Array.from(uidsToFetch)[index];
+        userMap.set(uid, { photoURL: user.photoURL });
+      }
+    });
+    
+    // Enrich items with photoURL
+    result.items.forEach(item => {
+      if (item.createdBy?.uid && !item.createdBy.photoURL) {
+        const userData = userMap.get(item.createdBy.uid);
+        if (userData?.photoURL) {
+          item.createdBy.photoURL = userData.photoURL;
+        }
+      }
+    });
+  }
+  
   const meta: PaginationMeta = {
     limit,
     nextCursor: result.nextCursor,
     totalCount: result.totalCount,
-    hasMore: !!result.nextCursor,
+    // hasMore should be true if we have a cursor OR if we got a full page (might be more)
+    hasMore: !!result.nextCursor || (result.items.length >= limit),
   };
   return { items: result.items, meta };
 }

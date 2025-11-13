@@ -7,7 +7,8 @@ export type GenerationType =
   | 'mockup-generation'
   | 'product-generation'
   | 'ad-generation'
-  | 'live-chat';
+  | 'live-chat'
+  | 'text-to-character';
 
 export const GenerationTypes = {
   TextToImage: 'text-to-image' as const,
@@ -19,6 +20,7 @@ export const GenerationTypes = {
   Product: 'product-generation' as const,
   Ad: 'ad-generation' as const,
   LiveChat: 'live-chat' as const,
+  TextToCharacter: 'text-to-character' as const,
 } as const;
 
 export enum GenerationStatus {
@@ -36,8 +38,9 @@ export enum Visibility {
 export interface ImageMedia {
   id: string;
   url: string;
-  storagePath: string;
+  storagePath?: string;
   originalUrl?: string;
+  aestheticScore?: number;
 }
 
 export interface VideoMedia {
@@ -45,6 +48,7 @@ export interface VideoMedia {
   url: string;
   storagePath: string;
   thumbUrl?: string;
+  aestheticScore?: number;
 }
 
 export interface AudioMedia {
@@ -58,6 +62,7 @@ export interface GenerationHistoryItem {
   id: string;
   uid: string;
   prompt: string;
+  userPrompt?: string; // Original user-entered prompt (e.g., "@buddy is dancing with @emily")
   model: string;
   generationType: GenerationType;
   status: GenerationStatus;
@@ -67,6 +72,7 @@ export interface GenerationHistoryItem {
   images?: ImageMedia[];
   videos?: VideoMedia[];
   audios?: AudioMedia[];
+  aestheticScore?: number; // Highest score among all images/videos
   frameSize?: string;
   aspectRatio?: string;
   aspect_ratio?: string;
@@ -76,8 +82,12 @@ export interface GenerationHistoryItem {
   // soft delete flag; when true item should be hidden everywhere
   isDeleted?: boolean;
   error?: string;
+  // Character name for text-to-character generation type
+  characterName?: string;
   createdAt: any;
   updatedAt: any;
+  // Creator information
+  createdBy?: { uid: string; username?: string; email?: string; photoURL?: string };
 }
 
 export interface CreateGenerationPayload {

@@ -5,6 +5,7 @@ import { creditsController } from '../controllers/creditsController';
 const router = Router();
 
 router.get('/me', requireAuth, creditsController.me);
+router.post('/reconcile', requireAuth, creditsController.reconcile);
 
 export default router;
 

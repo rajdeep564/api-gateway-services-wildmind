@@ -45,4 +45,11 @@ export async function computeBflDepthCost(req: Request) {
   return { cost, pricingVersion: PRICING_VERSION, meta: { model: 'flux-pro-1.0-depth', n: 1 } };
 }
 
+export async function computeBflExpandWithFillCost(req: Request) {
+  const basePerImage = bflutils.getCreditsPerImage('flux-pro-1.0-fill');
+  if (basePerImage == null) throw new Error('Unsupported model');
+  const cost = Math.ceil(basePerImage * 1);
+  return { cost, pricingVersion: PRICING_VERSION, meta: { model: 'flux-pro-1.0-fill', n: 1 } };
+}
+
 

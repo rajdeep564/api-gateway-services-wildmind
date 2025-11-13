@@ -27,7 +27,7 @@ export const s3 = new S3Client({
   maxAttempts: 1,
   requestHandler: new NodeHttpHandler({
     connectionTimeout: 3000,   // time to establish TCP/TLS
-    requestTimeout: 8000,      // hard cap for the entire request (THIS is the important one)
+    requestTimeout: 120000,    // hard cap for the entire request (120 seconds for large image uploads)
     httpsAgent,
   }),
   credentials: {

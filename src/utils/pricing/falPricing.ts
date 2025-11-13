@@ -1,8 +1,14 @@
 import { Request } from 'express';
 import { creditDistributionData } from '../../data/creditDistribution';
 import { generationHistoryRepository } from '../../repository/generationHistoryRepository';
+import { probeVideoMeta } from '../media/probe';
+import { probeImageMeta } from '../media/imageProbe';
+import { uploadDataUriToZata } from '../storage/zataUpload';
 
 export const FAL_PRICING_VERSION = 'fal-v1';
+
+// Credits conversion: $1 ~= 2000 credits (since $0.05 => 100 credits)
+const CREDITS_PER_USD = 2000;
 
 function findCredits(modelName: string): number | null {
   const row = creditDistributionData.find(m => m.modelName.toLowerCase() === modelName.toLowerCase());
@@ -29,6 +35,63 @@ export async function computeFalImageCost(req: Request): Promise<{ cost: number;
   const count = Math.max(1, Math.min(10, Number(n)));
   const cost = Math.ceil(base * count);
   return { cost, pricingVersion: FAL_PRICING_VERSION, meta: { model: display, n: count } };
+}
+
+export async function computeFalOutpaintCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const body: any = req.body || {};
+  let url: string | undefined = typeof body.image_url === 'string' && body.image_url.length > 0 ? body.image_url : undefined;
+  if (!url && typeof body.image === 'string' && body.image.startsWith('data:')) {
+    try {
+      const uid = (req as any)?.uid || 'anon';
+      const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${uid}/pricing/outpaint/${Date.now()}`, fileName: 'source' });
+      url = stored.publicUrl;
+    } catch {
+      url = undefined;
+    }
+  }
+  if (!url) throw new Error('image_url is required');
+
+  const meta = await probeImageMeta(url);
+  const baseWidth = Number(meta?.width || 0);
+  const baseHeight = Number(meta?.height || 0);
+  if (!isFinite(baseWidth) || !isFinite(baseHeight) || baseWidth <= 0 || baseHeight <= 0) {
+    throw new Error('Unable to compute image dimensions for outpaint pricing');
+  }
+
+  const clampInt = (value: any, min: number, max: number, fallback: number) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    return Math.max(min, Math.min(max, Math.round(num)));
+  };
+
+  const expandLeft = clampInt(body?.expand_left, 0, 700, 0);
+  const expandRight = clampInt(body?.expand_right, 0, 700, 0);
+  const expandTop = clampInt(body?.expand_top, 0, 700, 0);
+  const expandBottom = clampInt(body?.expand_bottom, 0, 700, 400);
+  const requestedZoom = Number(body?.zoom_out_percentage ?? 20);
+  const zoomOut = Number.isFinite(requestedZoom) ? Math.max(0, Math.min(100, requestedZoom)) : 20;
+  const requestedImages = Number(body?.num_images ?? 1);
+  const numImages = Number.isFinite(requestedImages) ? Math.max(1, Math.min(4, Math.round(requestedImages))) : 1;
+
+  const outputWidth = baseWidth + expandLeft + expandRight;
+  const outputHeight = baseHeight + expandTop + expandBottom;
+  const totalMegapixels = (outputWidth * outputHeight * numImages) / 1_000_000;
+  const creditsPerMp = 70; // $0.035 * 2000 credits/USD
+  const credits = Math.max(1, Math.ceil(totalMegapixels * creditsPerMp));
+
+  return {
+    cost: credits,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: 'fal-ai/outpaint',
+      input: { width: baseWidth, height: baseHeight },
+      output: { width: outputWidth, height: outputHeight },
+      expansions: { left: expandLeft, right: expandRight, top: expandTop, bottom: expandBottom },
+      zoom_out_percentage: zoomOut,
+      num_images: numImages,
+      pricing: { megapixels: totalMegapixels, creditsPerMp, credits },
+    },
+  };
 }
 
 function resolveVeoDisplay(isFast: boolean, kind: 't2v' | 'i2v', duration?: string): string {
@@ -266,6 +329,292 @@ export function computeFalVeoCostFromModel(model: string, meta?: any): { cost: n
   const base = display ? findCredits(display) : null;
   if (base == null) throw new Error('Unsupported FAL Veo model');
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display } };
+}
+
+// Image utilities pricing
+export async function computeFalImage2SvgCost(_req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+  const display = 'fal-ai/image2svg';
+  const base = findCredits(display);
+  if (base == null) throw new Error('Unsupported FAL image2svg pricing');
+  return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display } };
+}
+
+export async function computeFalRecraftVectorizeCost(_req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+  const display = 'fal-ai/recraft/vectorize';
+  const base = findCredits(display);
+  if (base == null) throw new Error('Unsupported FAL recraft/vectorize pricing');
+  return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display } };
+}
+
+export async function computeFalBriaGenfillCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+  const display = 'fal-ai/bria/genfill';
+  const base = findCredits(display);
+  if (base == null) throw new Error('Unsupported FAL bria/genfill pricing');
+  const body: any = req.body || {};
+  const numImages = Number(body?.num_images ?? 1);
+  const count = Number.isFinite(numImages) && numImages >= 1 && numImages <= 4 ? Math.round(numImages) : 1;
+  return { cost: Math.ceil(base * count), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, num_images: count } };
+}
+
+// SeedVR2 Video Upscaler dynamic pricing
+// Rule: $0.001 per megapixel of upscaled video data (width x height x frames)
+export async function computeFalSeedVrUpscaleCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+  const body: any = req.body || {};
+  const url: string = body.video_url;
+  if (!url) throw new Error('video_url is required');
+  
+  // Use validator-stashed probe if available; otherwise probe now
+  let meta: any = (req as any).seedvrProbe;
+  if (!meta) {
+    try {
+      meta = await probeVideoMeta(url);
+    } catch (probeErr: any) {
+      console.warn('[computeFalSeedVrUpscaleCost] Video probe failed, using conservative defaults:', probeErr?.message || probeErr);
+      meta = {};
+    }
+  }
+  
+  const durationSec = Number(meta?.durationSec || 0);
+  const inW = Number(meta?.width || 0);
+  const inH = Number(meta?.height || 0);
+  let frames = Number(meta?.frames || 0);
+  const fps = Number(meta?.fps || 0);
+  
+  if ((!frames || !isFinite(frames)) && isFinite(durationSec) && isFinite(fps) && fps > 0) {
+    frames = Math.round(durationSec * fps);
+  }
+  
+  // If metadata is incomplete, use conservative defaults for pricing
+  // Default: assume 1080p video, 30fps, 10 seconds (max allowed)
+  const useDefaults = !isFinite(durationSec) || durationSec <= 0 || !isFinite(inW) || !isFinite(inH) || inW <= 0 || inH <= 0 || !isFinite(frames) || frames <= 0;
+  
+  if (useDefaults) {
+    console.warn('[computeFalSeedVrUpscaleCost] Using conservative default estimates for pricing (metadata unavailable)');
+    // Use conservative defaults: 1080p (1920x1080), 30fps, 10 seconds
+    const defaultW = 1920;
+    const defaultH = 1080;
+    const defaultFps = 30;
+    const defaultDuration = 10; // Conservative: assume 10 seconds
+    const defaultFrames = defaultDuration * defaultFps;
+    
+    // Use defaults for calculation
+    const mode: 'factor' | 'target' = (body.upscale_mode === 'target' ? 'target' : 'factor');
+    let outW = defaultW;
+    let outH = defaultH;
+    if (mode === 'factor') {
+      const factor = Number(body.upscale_factor ?? 2);
+      const f = Math.max(0.1, Math.min(10, isFinite(factor) ? factor : 2));
+      outW = Math.max(1, Math.round(defaultW * f));
+      outH = Math.max(1, Math.round(defaultH * f));
+    } else {
+      const target = String(body.target_resolution || '1080p').toLowerCase();
+      const map: Record<string, number> = { '720p': 720, '1080p': 1080, '1440p': 1440, '2160p': 2160 };
+      const targetH = map[target] || 1080;
+      outH = targetH;
+      outW = Math.max(1, Math.round(defaultW * (targetH / defaultH)));
+    }
+    const totalPixels = outW * outH * defaultFrames;
+    const megapixels = totalPixels / 1_000_000;
+    const dollars = megapixels * 0.001;
+    const credits = Math.max(1, Math.ceil(dollars * CREDITS_PER_USD));
+    
+    return {
+      cost: credits,
+      pricingVersion: FAL_PRICING_VERSION,
+      meta: {
+        model: 'fal-ai/seedvr/upscale/video',
+        input: { width: defaultW, height: defaultH, durationSec: defaultDuration, fps: defaultFps, frames: defaultFrames, estimated: true },
+        output: { width: outW, height: outH, frames: defaultFrames },
+        pricing: { megapixels, dollars, credits },
+        mode,
+        upscale_factor: mode === 'factor' ? Number(body.upscale_factor ?? 2) : undefined,
+        target_resolution: mode === 'target' ? (body.target_resolution || '1080p') : undefined,
+        note: 'Pricing based on conservative estimates (video metadata unavailable)'
+      }
+    };
+  }
+  
+  if (durationSec > 30.5) throw new Error('Input video too long. Maximum allowed duration is 30 seconds.');
+  // Compute output dimensions based on requested mode
+  const mode: 'factor' | 'target' = (body.upscale_mode === 'target' ? 'target' : 'factor');
+  let outW = inW;
+  let outH = inH;
+  if (mode === 'factor') {
+    const factor = Number(body.upscale_factor ?? 2);
+    const f = Math.max(0.1, Math.min(10, isFinite(factor) ? factor : 2));
+    outW = Math.max(1, Math.round(inW * f));
+    outH = Math.max(1, Math.round(inH * f));
+  } else {
+    const target = String(body.target_resolution || '1080p').toLowerCase();
+    const map: Record<string, number> = { '720p': 720, '1080p': 1080, '1440p': 1440, '2160p': 2160 };
+    const targetH = map[target] || 1080;
+    outH = targetH;
+    outW = Math.max(1, Math.round(inW * (targetH / inH)));
+  }
+  const totalPixels = outW * outH * frames;
+  const megapixels = totalPixels / 1_000_000;
+  const dollars = megapixels * 0.001;
+  const credits = Math.max(1, Math.ceil(dollars * CREDITS_PER_USD));
+  return {
+    cost: credits,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: 'fal-ai/seedvr/upscale/video',
+      input: { width: inW, height: inH, durationSec, fps, frames },
+      output: { width: outW, height: outH, frames },
+      pricing: { megapixels, dollars, credits },
+      mode,
+      upscale_factor: mode === 'factor' ? Number(body.upscale_factor ?? 2) : undefined,
+      target_resolution: mode === 'target' ? (body.target_resolution || '1080p') : undefined,
+    }
+  };
+}
+
+// BiRefNet v2 Background Removal pricing: similar to SeedVR (per output megapixel)
+export async function computeFalBirefnetVideoCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+  const body: any = req.body || {};
+  let url: string | undefined = body.video_url;
+  // Handle data URI videos: upload to Zata to get a public URL for probing
+  if (!url && typeof body.video === 'string' && body.video.startsWith('data:')) {
+    try {
+      const uid = (req as any)?.uid || 'anon';
+      const stored = await uploadDataUriToZata({ dataUri: body.video, keyPrefix: `users/${uid}/pricing/birefnet/${Date.now()}`, fileName: 'source' });
+      url = stored.publicUrl;
+    } catch {
+      url = undefined;
+    }
+  }
+  if (!url) throw new Error('video_url or video (data URI) is required');
+  
+  // Use validator-stashed probe if available; otherwise probe now
+  let meta: any = (req as any).birefnetProbe;
+  if (!meta) {
+    try {
+      meta = await probeVideoMeta(url);
+    } catch (probeErr: any) {
+      console.warn('[computeFalBirefnetVideoCost] Video probe failed, using conservative defaults:', probeErr?.message || probeErr);
+      meta = {};
+    }
+  }
+  
+  const durationSec = Number(meta?.durationSec || 0);
+  const inW = Number(meta?.width || 0);
+  const inH = Number(meta?.height || 0);
+  let frames = Number(meta?.frames || 0);
+  const fps = Number(meta?.fps || 0);
+  if ((!frames || !isFinite(frames)) && isFinite(durationSec) && isFinite(fps) && fps > 0) {
+    frames = Math.round(durationSec * fps);
+  }
+  
+  // If metadata is incomplete, use conservative defaults for pricing
+  // Default: assume 1080p video, 30fps, 10 seconds (max allowed)
+  const useDefaults = !isFinite(durationSec) || durationSec <= 0 || !isFinite(inW) || !isFinite(inH) || inW <= 0 || inH <= 0 || !isFinite(frames) || frames <= 0;
+  
+  if (useDefaults) {
+    console.warn('[computeFalBirefnetVideoCost] Using conservative default estimates for pricing (metadata unavailable)');
+    // Use conservative defaults: 1080p (1920x1080), 30fps, 10 seconds
+    const defaultW = 1920;
+    const defaultH = 1080;
+    const defaultFps = 30;
+    const defaultDuration = 10; // Conservative: assume 10 seconds
+    const defaultFrames = defaultDuration * defaultFps;
+    
+    // Assume output same resolution as input for pricing purposes
+    const outW = defaultW;
+    const outH = defaultH;
+    const totalPixels = outW * outH * defaultFrames;
+    const megapixels = totalPixels / 1_000_000;
+    const dollars = megapixels * 0.001;
+    const credits = Math.max(1, Math.ceil(dollars * CREDITS_PER_USD));
+    
+    return {
+      cost: credits,
+      pricingVersion: FAL_PRICING_VERSION,
+      meta: {
+        model: 'fal-ai/birefnet/v2/video',
+        input: { width: defaultW, height: defaultH, durationSec: defaultDuration, fps: defaultFps, frames: defaultFrames, estimated: true },
+        output: { width: outW, height: outH, frames: defaultFrames },
+        pricing: { megapixels, dollars, credits },
+        params: {
+          model: body.model,
+          operating_resolution: body.operating_resolution,
+          output_mask: body.output_mask,
+          refine_foreground: body.refine_foreground,
+          video_output_type: body.video_output_type,
+          video_quality: body.video_quality,
+          video_write_mode: body.video_write_mode,
+        },
+        note: 'Pricing based on conservative estimates (video metadata unavailable)'
+      }
+    };
+  }
+  
+  // Assume output same resolution as input for pricing purposes
+  const outW = inW;
+  const outH = inH;
+  const totalPixels = outW * outH * frames;
+  const megapixels = totalPixels / 1_000_000;
+  const dollars = megapixels * 0.001;
+  const credits = Math.max(1, Math.ceil(dollars * CREDITS_PER_USD));
+  return {
+    cost: credits,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: 'fal-ai/birefnet/v2/video',
+      input: { width: inW, height: inH, durationSec, fps, frames },
+      output: { width: outW, height: outH, frames },
+      pricing: { megapixels, dollars, credits },
+      params: {
+        model: body.model,
+        operating_resolution: body.operating_resolution,
+        output_mask: body.output_mask,
+        refine_foreground: body.refine_foreground,
+        video_output_type: body.video_output_type,
+        video_quality: body.video_quality,
+        video_write_mode: body.video_write_mode,
+      }
+    }
+  };
+}
+
+// Topaz Image Upscaler dynamic pricing
+// Rule: 70 credits per output megapixel (width x height / 1e6)
+export async function computeFalTopazUpscaleImageCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+  const body: any = req.body || {};
+  let url: string | undefined = body.image_url;
+  // Allow data URI input (image); upload to Zata to obtain a public URL for probing
+  if (!url && typeof body.image === 'string' && body.image.startsWith('data:')) {
+    try {
+      const uid = (req as any)?.uid || 'anon';
+      const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${uid}/pricing/topaz/${Date.now()}`, fileName: 'source' });
+      url = stored.publicUrl;
+    } catch {
+      url = undefined;
+    }
+  }
+  if (!url) throw new Error('image_url is required');
+  const meta = (req as any).topazImageProbe || await probeImageMeta(url);
+  const inW = Number(meta?.width || 0);
+  const inH = Number(meta?.height || 0);
+  if (!isFinite(inW) || !isFinite(inH) || inW <= 0 || inH <= 0) throw new Error('Unable to compute image dimensions for pricing');
+  const factor = Math.max(0.1, Math.min(10, Number(body.upscale_factor ?? 2)));
+  const outW = Math.max(1, Math.round(inW * factor));
+  const outH = Math.max(1, Math.round(inH * factor));
+  const megapixels = (outW * outH) / 1_000_000;
+  const creditsPerMp = 70;
+  const credits = Math.max(1, Math.ceil(megapixels * creditsPerMp));
+  return {
+    cost: credits,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: 'fal-ai/topaz/upscale/image',
+      input: { width: inW, height: inH },
+      output: { width: outW, height: outH },
+      pricing: { megapixels, creditsPerMp, credits },
+      upscale_factor: factor,
+      topaz_model: body.model,
+    },
+  };
 }
 
 

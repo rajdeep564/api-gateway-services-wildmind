@@ -9,6 +9,13 @@ const COST_BRIA_ERASER = 100; // Per sheet: user cost $0.05 -> 100 credits
 const COST_CLARITY_UPSCALER = 62;
 const COST_REAL_ESRGAN = 32.4;
 const COST_SWIN2SR = 43;
+// Crystal Upscaler per-resolution costs (credits)
+const COST_CRYSTAL_1080P = 220;
+const COST_CRYSTAL_1440P = 420;
+const COST_CRYSTAL_2160P = 820; // 4K/2160p
+const COST_CRYSTAL_6K = 1620;
+const COST_CRYSTAL_8K = 3220;
+const COST_CRYSTAL_12K = 6420;
 const COST_SEEDREAM4 = 90;
 const COST_IDEOGRAM_V3_TURBO = 90;
 const COST_MAGIC_IMAGE_REFINER = 84;
@@ -29,6 +36,39 @@ export async function computeReplicateUpscaleCost(req: Request): Promise<{ cost:
   const { model } = req.body || {};
   const normalized = String(model || '').toLowerCase();
   let cost: number;
+  // Crystal Upscaler has resolution-based pricing
+  if (normalized.includes('crystal')) {
+    const resRaw = String((req.body as any)?.resolution || '').toLowerCase();
+    // Normalize a few common forms (e.g., 1920x1080 -> 1080p)
+    const res = ((): string => {
+      if (!resRaw) return '1080p';
+      if (resRaw.includes('1080')) return '1080p';
+      if (resRaw.includes('1440')) return '1440p';
+      if (resRaw.includes('2160') || resRaw.includes('4k')) return '2160p';
+      if (resRaw.includes('6k')) return '6k';
+      if (resRaw.includes('8k')) return '8k';
+      if (resRaw.includes('12k')) return '12k';
+      // If numeric, map by thresholds (<=1080 => 1080p, <=1440 => 1440p, etc.)
+      const m = resRaw.match(/(\d{3,4})p/);
+      if (m) {
+        const p = Number(m[1]);
+        if (p <= 1080) return '1080p';
+        if (p <= 1440) return '1440p';
+        if (p <= 2160) return '2160p';
+      }
+      return '1080p';
+    })();
+    switch (res) {
+      case '1080p': cost = COST_CRYSTAL_1080P; break;
+      case '1440p': cost = COST_CRYSTAL_1440P; break;
+      case '2160p': cost = COST_CRYSTAL_2160P; break;
+      case '6k': cost = COST_CRYSTAL_6K; break;
+      case '8k': cost = COST_CRYSTAL_8K; break;
+      case '12k': cost = COST_CRYSTAL_12K; break;
+      default: cost = COST_CRYSTAL_1080P; break;
+    }
+    return { cost: Math.ceil(cost), pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: normalized, resolution: res } };
+  }
   if (normalized.includes('philz1337x/clarity-upscaler')) cost = COST_CLARITY_UPSCALER;
   else if (normalized.includes('fermatresearch/magic-image-refiner')) cost = COST_MAGIC_IMAGE_REFINER;
   else if (normalized.includes('nightmareai/real-esrgan')) cost = COST_REAL_ESRGAN;

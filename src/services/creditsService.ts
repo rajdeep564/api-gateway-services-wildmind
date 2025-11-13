@@ -93,6 +93,97 @@ export const creditsService = {
   ensureFreePlan,
   ensurePlansSeeded,
   ensureUserInit,
+  /**
+   * Recompute and correct user's creditBalance for current cycle.
+   * Uses the monthly reset grant timestamp as the lower bound and subtracts all confirmed debits since then.
+   */
+  async reconcileCurrentCycle(uid: string): Promise<{ cycle: string; newBalance: number; debitsSinceReset: number; planCredits: number }> {
+    // Determine current cycle key in UTC (YYYY-MM)
+    const now = new Date();
+    const cycle = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const reqId = `PLAN_MONTHLY_RESET_${cycle}`;
+
+    // Read the reset ledger to get createdAt and credits
+    const userRef = adminDb.collection('users').doc(uid);
+    const ledgerRef = userRef.collection('ledgers').doc(reqId);
+    const grantSnap = await ledgerRef.get();
+    // Resolve plan credits (fallback to current plan's credits)
+    const user = await creditsRepository.readUserInfo(uid);
+    const planCode = (user?.planCode as any) || 'FREE';
+    let planCredits = 0;
+    if (planCode === 'FREE') {
+      planCredits = 4120;
+    } else {
+      const planSnap = await adminDb.collection('plans').doc(planCode).get();
+      const pdata = planSnap.data() as any;
+      planCredits = Number(pdata?.credits ?? 0) || 0;
+    }
+
+    let lowerBound: FirebaseFirestore.Timestamp | null = null;
+    if (grantSnap.exists) {
+      const g = grantSnap.data() as any;
+      lowerBound = g?.createdAt || null;
+      // If ledger stored explicit amount, prefer that as planCredits
+      if (typeof g?.amount === 'number' && g.amount > 0) planCredits = g.amount;
+    }
+
+    // Query debits since reset (or since beginning of month if grant not found)
+    const ledgersCol = userRef.collection('ledgers');
+    let q: FirebaseFirestore.Query = ledgersCol.where('type', '==', 'DEBIT').where('status', '==', 'CONFIRMED');
+    if (lowerBound) q = q.where('createdAt', '>=', lowerBound);
+    const debitSnap = await q.get();
+    let debitsSinceReset = 0;
+    debitSnap.forEach((d) => {
+      const data = d.data() as any;
+      const amt = Number(data?.amount || 0);
+      // amount is stored negative for DEBIT – subtract absolute
+      debitsSinceReset += Math.abs(amt);
+    });
+
+    const newBalance = Math.max(0, planCredits - debitsSinceReset);
+    await userRef.set({ creditBalance: newBalance, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    return { cycle, newBalance, debitsSinceReset, planCredits };
+  },
+  /**
+   * Ensure a monthly reroll to the user's current plan credits.
+   * Idempotent per user per YYYY-MM cycle using a deterministic requestId.
+   * Overwrites balance to plan credits regardless of leftover.
+   */
+  async ensureMonthlyReroll(uid: string) {
+    // Ensure user exists and has a plan
+    const user = await creditsRepository.readUserInfo(uid);
+    const planCode = (user?.planCode as any) || 'FREE';
+    // Determine credits for the current plan from seeded plans
+    let planCredits: number;
+    if (planCode === 'FREE') {
+      planCredits = 4120;
+    } else {
+      const planSnap = await adminDb.collection('plans').doc(planCode).get();
+      const data = planSnap.data() as any;
+      planCredits = Number(data?.credits ?? 0);
+      if (!planSnap.exists || !planCredits) {
+        // Fallback to distribution map if plan doc missing
+        planCredits = (PLAN_CREDITS as any)[planCode] ?? 0;
+      }
+    }
+
+    // Compute current cycle key in UTC (YYYY-MM)
+    const now = new Date();
+    const cycle = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const reqId = `PLAN_MONTHLY_RESET_${cycle}`;
+
+    // Execute idempotent GRANT that overwrites balance to the plan credits
+    await creditsRepository.writeGrantAndSetPlanIfAbsent(
+      uid,
+      reqId,
+      planCredits,
+      planCode,
+      'plan.monthly_reroll',
+      { cycle, pricingVersion: 'plans-v1' }
+    );
+
+    return { cycle, planCode, creditBalance: planCredits };
+  },
   async switchPlan(uid: string, newPlanCode: 'FREE' | 'PLAN_A' | 'PLAN_B' | 'PLAN_C' | 'PLAN_D') {
     const credits = newPlanCode === 'FREE'
       ? 4120

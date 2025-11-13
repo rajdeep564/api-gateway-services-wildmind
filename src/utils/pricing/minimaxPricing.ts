@@ -34,6 +34,14 @@ export async function computeMinimaxVideoCost(req: Request): Promise<{ cost: num
     else if (res === '768P' && dur === '6') display = 'Minimax-Hailuo-02 768P 6s';
     else if (res === '768P' && dur === '10') display = 'Minimax-Hailuo-02 768P 10s';
     else if (res === '1080P' && dur === '6') display = 'Minimax-Hailuo-02 1080P 6s';
+  } else if (model === 'MiniMax-Hailuo-2.3' || model === 'MiniMax-Hailuo-2.3-Fast') {
+    // 2.3 pricing SKUs: differentiate Fast vs Standard for credits
+    const dur = String(duration || '').trim();
+    const res = String(resolution || '').toUpperCase();
+    const fastPrefix = model === 'MiniMax-Hailuo-2.3-Fast' ? ' Fast' : '';
+    if (res === '768P' && dur === '6') display = `Minimax-Hailuo-2.3${fastPrefix} 768P 6s`;
+    else if (res === '768P' && dur === '10') display = `Minimax-Hailuo-2.3${fastPrefix} 768P 10s`;
+    else if (res === '1080P' && dur === '6') display = `Minimax-Hailuo-2.3${fastPrefix} 1080P 6s`;
   } else if (model === 'T2V-01-Director') {
     display = 'T2V-01-Director';
   } else if (model === 'I2V-01-Director') {
@@ -41,7 +49,15 @@ export async function computeMinimaxVideoCost(req: Request): Promise<{ cost: num
   } else if (model === 'S2V-01') {
     display = 'S2V-01';
   }
-  const base = display ? findCreditsExact(display) : null;
+  // Try exact; if missing for 2.3, fallback to equivalent 02 SKU
+  let base = display ? findCreditsExact(display) : null;
+  if ((model === 'MiniMax-Hailuo-2.3' || model === 'MiniMax-Hailuo-2.3-Fast') && base == null) {
+    const dur = String(duration || '').trim();
+    const res = String(resolution || '').toUpperCase();
+    if (res === '768P' && dur === '6') base = findCreditsExact('Minimax-Hailuo-02 768P 6s');
+    else if (res === '768P' && dur === '10') base = findCreditsExact('Minimax-Hailuo-02 768P 10s');
+    else if (res === '1080P' && dur === '6') base = findCreditsExact('Minimax-Hailuo-02 1080P 6s');
+  }
   if (base == null) throw new Error('Unsupported Minimax video');
   return { cost: Math.ceil(base), pricingVersion: MINIMAX_PRICING_VERSION, meta: { model: display, duration: duration ?? undefined, resolution: resolution ?? undefined } };
 }
@@ -56,6 +72,13 @@ export async function computeMinimaxVideoCostFromParams(model: any, duration?: a
     else if (res === '768P' && dur === '6') display = 'Minimax-Hailuo-02 768P 6s';
     else if (res === '768P' && dur === '10') display = 'Minimax-Hailuo-02 768P 10s';
     else if (res === '1080P' && dur === '6') display = 'Minimax-Hailuo-02 1080P 6s';
+  } else if (model === 'MiniMax-Hailuo-2.3' || model === 'MiniMax-Hailuo-2.3-Fast') {
+    const dur = String(duration || '').trim();
+    const res = String(resolution || '').toUpperCase();
+    const fastPrefix = model === 'MiniMax-Hailuo-2.3-Fast' ? ' Fast' : '';
+    if (res === '768P' && dur === '6') display = `Minimax-Hailuo-2.3${fastPrefix} 768P 6s`;
+    else if (res === '768P' && dur === '10') display = `Minimax-Hailuo-2.3${fastPrefix} 768P 10s`;
+    else if (res === '1080P' && dur === '6') display = `Minimax-Hailuo-2.3${fastPrefix} 1080P 6s`;
   } else if (model === 'T2V-01-Director') {
     display = 'T2V-01-Director';
   } else if (model === 'I2V-01-Director') {
@@ -63,7 +86,14 @@ export async function computeMinimaxVideoCostFromParams(model: any, duration?: a
   } else if (model === 'S2V-01') {
     display = 'S2V-01';
   }
-  const base = display ? findCreditsExact(display) : null;
+  let base = display ? findCreditsExact(display) : null;
+  if ((model === 'MiniMax-Hailuo-2.3' || model === 'MiniMax-Hailuo-2.3-Fast') && base == null) {
+    const dur = String(duration || '').trim();
+    const res = String(resolution || '').toUpperCase();
+    if (res === '768P' && dur === '6') base = findCreditsExact('Minimax-Hailuo-02 768P 6s');
+    else if (res === '768P' && dur === '10') base = findCreditsExact('Minimax-Hailuo-02 768P 10s');
+    else if (res === '1080P' && dur === '6') base = findCreditsExact('Minimax-Hailuo-02 1080P 6s');
+  }
   if (base == null) throw new Error('Unsupported Minimax video');
   return { cost: Math.ceil(base), pricingVersion: MINIMAX_PRICING_VERSION, meta: { model: display, duration: duration ?? undefined, resolution: resolution ?? undefined } };
 }

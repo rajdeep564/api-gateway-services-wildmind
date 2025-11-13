@@ -46,23 +46,32 @@ async function get(req: Request, res: Response, next: NextFunction) {
 async function listMine(req: Request, res: Response, next: NextFunction) {
 	try {
 		const uid = (req as any).uid;
-		const { 	limit = 20, cursor, status, generationType, sortBy, sortOrder, mode, dateStart, dateEnd, search } = req.query as any;
+		const { limit = 20, cursor, nextCursor, status, generationType, sortBy, sortOrder, mode, dateStart, dateEnd, search, debug } = req.query as any;
+		
 		// Support grouped mode for convenience (e.g., mode=video)
 		let generationTypeFilter: string | string[] | undefined = generationType;
 		if (typeof mode === 'string' && mode.toLowerCase() === 'video') {
 			generationTypeFilter = ['text-to-video', 'image-to-video', 'video-to-video'];
 		}
+		
+		// Prefer optimized pagination: omit legacy sort fields unless explicitly provided.
+		// Frontend now passes nextCursor (millis) for createdAt DESC pagination.
 		const result = await generationHistoryService.listUserGenerations(uid, { 
-			limit: Number(limit), 
-			cursor, 
+			limit: Number(limit),
+			// Legacy cursor only if explicitly provided (kept for backward compatibility)
+			cursor: cursor || undefined,
+			nextCursor: nextCursor || undefined,
 			status, 
 			generationType: generationTypeFilter as any,
-			sortBy: sortBy || 'createdAt',
-			sortOrder: sortOrder || 'desc',
-			dateStart,
-			dateEnd,
-			search,
+			// Pass sortBy/sortOrder only if they were explicitly included to avoid disabling optimized path
+			sortBy: sortBy || undefined,
+			sortOrder: sortOrder || undefined,
+			dateStart: dateStart || undefined,
+			dateEnd: dateEnd || undefined,
+			search: search || undefined,
+			debug: debug || undefined,
 		});
+		
 		return res.json(formatApiResponse('success', 'OK', result));
 	} catch (err) {
 		return next(err);
@@ -73,8 +82,8 @@ async function softDelete(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid;
     const { historyId } = req.params as any;
-    await generationHistoryService.softDelete(uid, historyId);
-    return res.json(formatApiResponse('success', 'Deleted', {}));
+    const result = await generationHistoryService.softDelete(uid, historyId);
+    return res.json(formatApiResponse('success', 'Deleted', result));
   } catch (err) {
     return next(err);
   }
@@ -86,8 +95,8 @@ async function update(req: Request, res: Response, next: NextFunction) {
     const { historyId } = req.params as any;
     const updates = req.body as any;
     // Allow per-media privacy updates: image/video payloads are forwarded verbatim
-    await generationHistoryService.update(uid, historyId, updates);
-    return res.json(formatApiResponse('success', 'Updated', {}));
+    const result = await generationHistoryService.update(uid, historyId, updates);
+    return res.json(formatApiResponse('success', 'Updated', result));
   } catch (err) {
     return next(err);
   }

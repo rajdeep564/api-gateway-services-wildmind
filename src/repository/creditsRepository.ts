@@ -125,10 +125,10 @@ export async function writeGrantAndSetPlanIfAbsent(
         const data = existing.data() as any;
         if (data.type === 'GRANT' && data.status === 'CONFIRMED') {
           logger.info({ uid, requestId }, '[CREDITS] Plan switch grant already exists (idempotent)');
-          // Still ensure user doc reflects target plan and credits (idempotent set)
+          // IMPORTANT: Do NOT overwrite creditBalance again – previous debits this cycle would be lost.
+          // Only ensure planCode is correct and updatedAt refreshed.
           tx.set(userRef, {
             planCode: newPlanCode,
-            creditBalance: credits,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true });
           return;

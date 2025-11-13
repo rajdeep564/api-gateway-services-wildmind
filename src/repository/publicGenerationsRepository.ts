@@ -45,19 +45,42 @@ export async function listPublic(params: {
   const sortBy = params.sortBy || 'createdAt';
   const sortOrder = params.sortOrder || 'desc';
   
-  let q: FirebaseFirestore.Query = col.orderBy(sortBy, sortOrder);
+  // Projection: fetch only the fields needed for the feed to reduce payload size
+  const projectionFields: Array<keyof GenerationHistoryItem | string> = [
+    'prompt', 'model', 'generationType', 'status', 'visibility', 'tags', 'nsfw',
+    'images', 'videos', 'audios', 'createdBy', 'isPublic', 'isDeleted', 'createdAt', 'updatedAt',
+    'aspectRatio', 'frameSize', 'aspect_ratio'
+  ];
+  let q: FirebaseFirestore.Query = col.select(...projectionFields as any).orderBy(sortBy, sortOrder);
   
   // Only show public; we will exclude deleted after fetch so old docs without the flag still appear
   q = q.where('isPublic', '==', true);
   
   // Apply filters
-  // Prefer client-side filtering for generationType arrays to avoid Firestore 'in' index requirements
+  // Try server-side filtering for generationType if possible (<=10 values for 'in')
   let clientFilterTypes: string[] | undefined;
   if (params.generationType) {
     if (Array.isArray(params.generationType)) {
-      clientFilterTypes = params.generationType as string[];
+      const arr = (params.generationType as string[]).map(s => String(s));
+      if (arr.length > 0 && arr.length <= 10) {
+        try {
+          q = q.where('generationType', 'in', arr);
+          clientFilterTypes = undefined;
+        } catch {
+          // fall back to client-side
+          clientFilterTypes = arr;
+        }
+      } else {
+        clientFilterTypes = arr;
+      }
     } else {
-      clientFilterTypes = [String(params.generationType)];
+      // Single value can be server-side filtered
+      try {
+        q = q.where('generationType', '==', String(params.generationType));
+        clientFilterTypes = undefined;
+      } catch {
+        clientFilterTypes = [String(params.generationType)];
+      }
     }
   }
   
@@ -94,8 +117,22 @@ export async function listPublic(params: {
   let totalCount: number | undefined = undefined;
   
   // If we need to filter in-memory (generationType arrays OR mode !== 'all'), fetch a larger page to increase chances of filling the page
+  // When searching, fetch a very large batch to find all matching results
   const needsInMemoryFilter = Boolean(clientFilterTypes) || (params.mode && params.mode !== 'all') || Boolean(params.search);
-  const fetchLimit = needsInMemoryFilter ? Math.min(Math.max(params.limit * 5, params.limit), 200) : params.limit;
+  let fetchMultiplier: number;
+  let maxFetchLimit: number;
+  
+  if (params.search && params.search.trim().length > 0) {
+    // When searching, fetch a reasonable batch to find matches (same multiplier as normal browsing)
+    // Don't overfetch too much to prevent loading everything at once
+    fetchMultiplier = 3; // Fetch 3x the limit (60 items) when searching - same as clientFilterTypes
+    maxFetchLimit = 150; // Same max limit as normal browsing
+  } else {
+    fetchMultiplier = clientFilterTypes ? 3 : 2;
+    maxFetchLimit = 150;
+  }
+  
+  const fetchLimit = needsInMemoryFilter ? Math.min(Math.max(params.limit * fetchMultiplier, params.limit), maxFetchLimit) : params.limit;
   const snap = await q.limit(fetchLimit).get();
   
   let items: GenerationHistoryItem[] = snap.docs.map(d => normalizePublicItem(d.id, d.data() as any));
@@ -129,18 +166,32 @@ export async function listPublic(params: {
       const p = String((it as any).prompt || '').toLowerCase();
       return p.includes(needle);
     });
+    // No in-memory sorting - keep original Firestore order (createdAt DESC)
   }
+  
   // Exclude soft-deleted; treat missing as not deleted for old docs
   items = items.filter((it: any) => it.isDeleted !== true);
+  
+  // Return items up to limit (works for both search and normal browsing)
   const page = items.slice(0, params.limit);
-  // Compute next cursor: prefer the last of the returned page; if fewer than limit items but we fetched a full window, advance cursor by the last doc of the snapshot so the client can continue
+  
+  // Compute next cursor for pagination
+  // Enable pagination for both search and normal browsing
   let nextCursor: string | undefined;
   if (page.length === params.limit) {
+    // Full page returned - use last item's ID
     nextCursor = page[page.length - 1].id;
   } else if (snap.docs.length === fetchLimit) {
-    // We likely have more docs beyond our filter window; advance by last doc in snapshot
+    // We fetched max items from Firestore but filtered results are fewer
+    // Use last Firestore doc ID to continue from database position
+    // This ensures we don't skip items when continuing pagination
+    nextCursor = snap.docs[snap.docs.length - 1].id;
+  } else if (page.length > 0 && snap.docs.length > 0) {
+    // We have some filtered results but didn't hit fetch limit
+    // Still use last Firestore doc to continue properly
     nextCursor = snap.docs[snap.docs.length - 1].id;
   } else {
+    // No more items available
     nextCursor = undefined;
   }
   

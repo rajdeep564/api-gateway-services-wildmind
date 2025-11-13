@@ -101,10 +101,12 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
       }
     }
 
-    // Derive public-generation policy flags from plan (computed, not persisted)
+    // Derive public-generation policy flags from planCode (computed, not persisted)
+    // Only PLAN_C and PLAN_D can toggle public/private
+    // FREE, PLAN_A, PLAN_B must have all generations public
     try {
-      const planRaw = String((user as any)?.plan || '').toUpperCase();
-      const canToggle = /(^|\b)PLAN\s*C\b/.test(planRaw) || /(^|\b)PLAN\s*D\b/.test(planRaw) || planRaw === 'C' || planRaw === 'D';
+      const planCode = String((user as any)?.planCode || 'FREE').toUpperCase();
+      const canToggle = planCode === 'PLAN_C' || planCode === 'PLAN_D';
       (user as any).canTogglePublicGenerations = canToggle;
       (user as any).forcePublicGenerations = !canToggle;
     } catch {}
