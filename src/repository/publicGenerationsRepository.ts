@@ -136,6 +136,20 @@ export async function listPublic(params: {
   const snap = await q.limit(fetchLimit).get();
   
   let items: GenerationHistoryItem[] = snap.docs.map(d => normalizePublicItem(d.id, d.data() as any));
+  try {
+    // Lightweight visibility log for optimized fields presence across page
+    const imgCounts = items.map((it: any) => Array.isArray(it?.images) ? it.images.length : 0);
+    const optCounts = items.map((it: any) => Array.isArray(it?.images) ? it.images.filter((im: any) => im?.thumbnailUrl || im?.avifUrl).length : 0);
+    const totalImgs = imgCounts.reduce((a, b) => a + b, 0);
+    const totalOpt = optCounts.reduce((a, b) => a + b, 0);
+    if (items.length > 0) {
+      console.log('[Feed][Repo][listPublic] page stats', {
+        returnedItems: items.length,
+        totalImages: totalImgs,
+        imagesWithOptimized: totalOpt,
+      });
+    }
+  } catch {}
   if (clientFilterTypes) {
     items = items.filter((it: any) => clientFilterTypes!.includes(String(it.generationType || '').toLowerCase()));
   }
