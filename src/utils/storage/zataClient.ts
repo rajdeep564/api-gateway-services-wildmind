@@ -1,5 +1,5 @@
 // utils/storage/zataClient.ts
-import { S3Client } from "@aws-sdk/client-s3";
+import { S3Client, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { Agent as HttpsAgent } from "node:https";
 import { env } from "../../config/env";
@@ -40,4 +40,18 @@ export function makeZataPublicUrl(key: string): string {
   return `${ZATA_ENDPOINT}/${ZATA_BUCKET}/${encodeURI(key)}`;
 }
 
-export const __placeholder = 0;
+/**
+ * Delete a file from Zata storage
+ */
+export async function deleteFileFromZata(key: string): Promise<void> {
+  try {
+    const command = new DeleteObjectCommand({
+      Bucket: ZATA_BUCKET,
+      Key: key,
+    });
+    await s3.send(command);
+  } catch (error: any) {
+    console.error(`Failed to delete file from Zata: ${key}`, error);
+    throw error;
+  }
+}

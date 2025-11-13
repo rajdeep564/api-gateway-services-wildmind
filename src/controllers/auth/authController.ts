@@ -254,19 +254,30 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
   const sessionCookie = await admin
     .auth()
     .createSessionCookie(idToken, { expiresIn });
-  // Only include Domain attribute when it matches the current host suffix; otherwise browsers will drop it
+  
+  // In production, always use the cookie domain if set (for cross-subdomain sharing)
+  // In development, only use domain if it matches the current host
   const host = (req.hostname || '').toLowerCase();
   const dom = (cookieDomain || '').toLowerCase();
-  const domainMatches = dom && (host === dom.replace(/^\./, '') || host.endsWith(dom));
+  let shouldSetDomain = false;
+  
+  if (isProd && cookieDomain) {
+    // Production: always use domain for cross-subdomain cookie sharing
+    shouldSetDomain = true;
+  } else if (cookieDomain) {
+    // Development: only use domain if it matches the host
+    const domainMatches = !!(dom && (host === dom.replace(/^\./, '') || host.endsWith(dom)));
+    shouldSetDomain = domainMatches;
+  }
 
   res.cookie("app_session", sessionCookie, {
     httpOnly: true,
     // Cookies must be Secure when SameSite=None per Chrome requirements
-    secure: true,
-    sameSite: isProd ? "none" : "lax",
+    secure: isProd, // Secure only in production (HTTPS required)
+    sameSite: isProd ? "none" : "lax", // None for cross-subdomain, Lax for same-site
     maxAge: expiresIn,
     path: "/",
-    ...(domainMatches ? { domain: cookieDomain } : {}),
+    ...(shouldSetDomain ? { domain: cookieDomain } : {}),
   });
   return sessionCookie;
 }

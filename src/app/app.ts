@@ -26,7 +26,16 @@ app.use(securityHeaders);
 const isProdEnv = process.env.NODE_ENV === 'production';
 const allowedOrigins = [
   // Common prod hosts for frontend
-  ...(isProdEnv ? ['https://www.wildmindai.com', 'https://wildmindai.com'] : []),
+  ...(isProdEnv ? [
+    'https://www.wildmindai.com', 
+    'https://wildmindai.com',
+    'https://studio.wildmindai.com' // Canvas subdomain
+  ] : []),
+  // Development origins
+  ...(!isProdEnv ? [
+    'http://localhost:3000', // Main project dev
+    'http://localhost:3001', // Canvas dev
+  ] : []),
   process.env.FRONTEND_ORIGIN || '',
   ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : [])
 ].filter(Boolean);

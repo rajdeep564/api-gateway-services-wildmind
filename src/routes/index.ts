@@ -11,6 +11,7 @@ import redeemCodeRoutes from './redeemCodes';
 import proxyRoutes from './proxy';
 import stickerRoutes from './stickers';
 import replicateRoutes from './replicate';
+import canvasRoutes from './canvas';
 
 const router = Router();
 
@@ -26,5 +27,6 @@ router.use('/redeem-codes', redeemCodeRoutes);
 router.use('/proxy', proxyRoutes);
 router.use('/stickers', stickerRoutes);
 router.use('/replicate', replicateRoutes);
+router.use('/canvas', canvasRoutes);
 
 export default router;
