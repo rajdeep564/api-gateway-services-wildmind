@@ -137,7 +137,8 @@ async function getPublicGenerations(params: FilterParams) {
     limit,
     nextCursor: result.nextCursor,
     totalCount: result.totalCount,
-    hasMore: !!result.nextCursor,
+    // hasMore should be true if we have a cursor OR if we got a full page (might be more)
+    hasMore: !!result.nextCursor || (result.items.length >= limit),
   };
   return { items: result.items, meta };
 }
