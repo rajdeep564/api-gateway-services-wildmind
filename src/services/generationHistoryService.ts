@@ -90,27 +90,28 @@ export async function markGenerationCompleted(
     if (im && typeof im === 'object') {
       const id = im.id || `${historyId}-img-${index}`;
       const url = im.url || im.originalUrl || (typeof im.storagePath === 'string' ? im.storagePath : undefined);
-      return {
+      // Build sanitized image object without undefined values (Firestore rejects undefined)
+      const out: any = {
         id,
         url,
         originalUrl: im.originalUrl || url,
-        storagePath: im.storagePath,
-        avifUrl: im.avifUrl,
-        thumbnailUrl: im.thumbnailUrl,
-        blurDataUrl: im.blurDataUrl,
-        optimized: im.optimized || false,
-        optimizedAt: im.optimizedAt,
-        aestheticScore: im.aestheticScore,
-        width: im.width,
-        height: im.height,
-        size: im.size,
       };
+      if (im.storagePath) out.storagePath = im.storagePath;
+      if (im.avifUrl) out.avifUrl = im.avifUrl;
+      if (im.thumbnailUrl) out.thumbnailUrl = im.thumbnailUrl;
+      if (im.blurDataUrl) out.blurDataUrl = im.blurDataUrl;
+      if (typeof im.optimized === 'boolean') out.optimized = im.optimized;
+      if (im.optimizedAt) out.optimizedAt = im.optimizedAt;
+      if (typeof im.aestheticScore === 'number') out.aestheticScore = im.aestheticScore;
+      if (typeof im.width === 'number') out.width = im.width;
+      if (typeof im.height === 'number') out.height = im.height;
+      if (typeof im.size === 'number') out.size = im.size;
+      return out;
     }
     return im;
   }) : [];
   const next: Partial<GenerationHistoryItem> = {
     status: GenerationStatus.Completed,
-    images: baseImages,
     videos: updates.videos ?? existing.videos,
     isPublic: finalIsPublic,
     visibility: finalIsPublic ? Visibility.Public : Visibility.Private,
@@ -130,6 +131,7 @@ export async function markGenerationCompleted(
   try {
     await generationHistoryRepository.update(uid, historyId, {
       ...next,
+      // Only write images in the pre-optimization update if we actually transformed legacy strings
       ...(hadLegacyStrings ? { images: baseImages } : {}),
     });
   } catch (e) {
@@ -207,7 +209,7 @@ export async function markGenerationCompleted(
         return img;
       }
     }));
-    // Persist optimized images
+    // Persist optimized images and refresh caches immediately
     try {
       await generationHistoryRepository.update(uid, historyId, { images: optimizedImages } as any);
       console.log('[markGenerationCompleted] Persisted optimized images to history', { historyId, optimizedCount: optimizedImages.filter((i: any) => i.optimized).length });
@@ -220,6 +222,15 @@ export async function markGenerationCompleted(
           });
         }
       } catch {}
+      // Proactively refresh item cache with the up-to-date document to avoid stale GETs
+      try {
+        const freshItem = await generationHistoryRepository.get(uid, historyId);
+        if (freshItem) {
+          await setCachedItem(uid, historyId, freshItem);
+        }
+      } catch (e) {
+        console.warn('[markGenerationCompleted] Failed to refresh cache for item:', e);
+      }
     } catch {}
   }
 
