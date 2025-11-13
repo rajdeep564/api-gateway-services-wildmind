@@ -298,6 +298,7 @@ export async function removeBackground(
     images: scoredImages,
     aestheticScore: highestScore,
   } as any);
+  try { console.log('[Replicate.removeBackground] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch {}
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
       status: "completed",
@@ -554,6 +555,7 @@ export async function upscale(uid: string, body: any) {
     images: scoredImages as any,
     aestheticScore: highestScore,
   } as any);
+  try { console.log('[Replicate.upscale] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch {}
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
       status: "completed",
@@ -1093,6 +1095,7 @@ export async function generateImage(uid: string, body: any) {
     images: scoredImages as any,
     aestheticScore: highestScore,
   } as any);
+  try { console.log('[Replicate.generateImage] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch {}
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
       status: "completed",
@@ -1290,6 +1293,7 @@ export async function wanI2V(uid: string, body: any) {
     videos: scoredVideos,
     aestheticScore: highestScore,
   } as any);
+  try { console.log('[Replicate.wanI2V] Video history updated with scores', { historyId, videoCount: scoredVideos.length, highestScore }); } catch {}
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
       status: "completed",
@@ -1452,6 +1456,7 @@ export async function wanT2V(uid: string, body: any) {
     videos: scoredVideos,
     aestheticScore: highestScore,
   } as any);
+  try { console.log('[Replicate.wanT2V] Video history updated with scores', { historyId, videoCount: scoredVideos.length, highestScore }); } catch {}
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
       status: "completed",

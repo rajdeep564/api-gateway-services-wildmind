@@ -58,6 +58,15 @@ export async function markGenerationCompleted(
   historyId: string,
   updates: Omit<CompleteGenerationPayload, "status"> & { status: "completed" }
 ): Promise<void> {
+  try {
+    console.log('[markGenerationCompleted] Enter', {
+      uid,
+      historyId,
+      hasImages: Array.isArray((updates as any)?.images) ? (updates as any).images.length : 0,
+      hasVideos: Array.isArray((updates as any)?.videos) ? (updates as any).videos.length : 0,
+      incomingIsPublic: (updates as any)?.isPublic,
+    });
+  } catch {}
   const existing = await generationHistoryRepository.get(uid, historyId);
   if (!existing) throw new ApiError("History item not found", 404);
 
@@ -89,29 +98,46 @@ export async function markGenerationCompleted(
   // Inline (synchronous) optimization so caller immediately sees avif/thumbnail in history & mirror
   let optimizedImages = baseImages;
   if (Array.isArray(baseImages) && baseImages.length > 0) {
+    try {
+      console.log('[markGenerationCompleted] Starting optimization pass', {
+        historyId,
+        count: baseImages.length,
+      });
+    } catch {}
     optimizedImages = await Promise.all(baseImages.map(async (img: any, index: number) => {
       try {
         // If already optimized (idempotent) keep
         if (img.optimized && img.avifUrl && img.thumbnailUrl) return img;
         const url: string | undefined = img.url || img.originalUrl;
         if (!url) return img;
-        // Try to derive basePath/filename from url
-        const ZATA_PREFIXES = [
-          'https://idr01.zata.ai/devstoragev1/',
-          'https://idr01.zata.ai/prodstoragev1/',
-          'https://idr01.zata.ai/'
-        ];
-        let relative = '';
-        for (const p of ZATA_PREFIXES) if (url.startsWith(p)) { relative = url.substring(p.length); break; }
-        if (!relative) {
-          console.warn('[markGenerationCompleted] Non-Zata URL, skipping optimization:', url);
-          return img;
+        // Prefer reliable storagePath when present; fallback to URL parsing
+        let basePath = '';
+        let filename = '';
+        if (typeof img.storagePath === 'string' && img.storagePath.includes('/')) {
+          const sp: string = img.storagePath;
+          const lastSlash = sp.lastIndexOf('/');
+          basePath = sp.substring(0, lastSlash);
+          const rawFile = sp.substring(lastSlash + 1);
+          filename = rawFile.replace(/\.[^.]+$/, '').replace(/\.[^.]+$/, '');
+        } else {
+          // Try to derive basePath/filename from URL (handles various Zata URL shapes)
+          const match = url.match(/https?:\/\/[^/]+\/(?:devstoragev1|prodstoragev1)\/(.+)/);
+          let relative = match ? match[1] : '';
+          if (!relative) {
+            // Generic fallback: strip host leaving path
+            const m2 = url.match(/https?:\/\/[^/]+\/(.+)/);
+            relative = m2 ? m2[1] : '';
+          }
+          if (!relative) {
+            console.warn('[markGenerationCompleted] Non-Zata URL or unrecognized path, skipping optimization:', url);
+            return img;
+          }
+          const lastSlash = relative.lastIndexOf('/');
+          if (lastSlash < 0) return img;
+          basePath = relative.substring(0, lastSlash);
+          const rawFile = relative.substring(lastSlash + 1);
+          filename = rawFile.replace(/\.[^.]+$/, '').replace(/\.[^.]+$/, '');
         }
-        const lastSlash = relative.lastIndexOf('/');
-        if (lastSlash < 0) return img;
-        const basePath = relative.substring(0, lastSlash);
-        const rawFile = relative.substring(lastSlash + 1);
-        const filename = rawFile.replace(/\.[^.]+$/, '').replace(/\.[^.]+$/, '');
         if (!basePath || !filename) return img;
         const optimized = await imageOptimizationService.optimizeImage(url, basePath, filename, {
           maxWidth: 2048,
@@ -120,6 +146,13 @@ export async function markGenerationCompleted(
           thumbnailQuality: 80,
           thumbnailSize: 400,
         });
+        try {
+          console.log('[markGenerationCompleted] Optimized image', {
+            index,
+            avifUrl: optimized.avifUrl,
+            thumbnailUrl: optimized.thumbnailUrl,
+          });
+        } catch {}
         return {
           ...img,
           avifUrl: optimized.avifUrl,
@@ -134,13 +167,32 @@ export async function markGenerationCompleted(
       }
     }));
     // Persist optimized images
-    try { await generationHistoryRepository.update(uid, historyId, { images: optimizedImages } as any); } catch {}
+    try {
+      await generationHistoryRepository.update(uid, historyId, { images: optimizedImages } as any);
+      console.log('[markGenerationCompleted] Persisted optimized images to history', { historyId, optimizedCount: optimizedImages.filter((i: any) => i.optimized).length });
+      try {
+        const anyOpt = (optimizedImages as any[]).find((i: any) => i?.thumbnailUrl || i?.avifUrl);
+        if (anyOpt) {
+          console.log('[markGenerationCompleted] Verification: first optimized fields', {
+            sampleThumb: (anyOpt as any)?.thumbnailUrl,
+            sampleAvif: (anyOpt as any)?.avifUrl,
+          });
+        }
+      } catch {}
+    } catch {}
   }
 
   // Enqueue mirror upsert with optimized fields
   try {
     const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh) await mirrorQueueRepository.enqueueUpsert({ uid, historyId, itemSnapshot: fresh });
+    if (fresh) {
+      await mirrorQueueRepository.enqueueUpsert({ uid, historyId, itemSnapshot: fresh });
+      console.log('[markGenerationCompleted] Enqueued mirror upsert with optimized fields', {
+        historyId,
+        isPublic: (fresh as any)?.isPublic,
+        images: Array.isArray((fresh as any)?.images) ? (fresh as any)?.images.length : 0,
+      });
+    }
   } catch (e) {
     console.warn('[markGenerationCompleted] Failed to enqueue mirror upsert:', e);
   }

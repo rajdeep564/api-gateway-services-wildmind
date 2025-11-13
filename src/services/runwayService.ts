@@ -153,6 +153,7 @@ async function getStatus(uid: string, id: string): Promise<any> {
           const highestScore = aestheticScoreService.getHighestScore(scoredImages);
 
           await generationHistoryRepository.update(uid, found.id, { status: 'completed', images: scoredImages, aestheticScore: highestScore } as any);
+          try { console.log('[Runway] History updated with scores', { historyId: found.id, imageCount: scoredImages.length, highestScore }); } catch {}
           
           // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
           markGenerationCompleted(uid, found.id, {
@@ -183,6 +184,7 @@ async function getStatus(uid: string, id: string): Promise<any> {
           const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
 
           await generationHistoryRepository.update(uid, found.id, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
+          try { console.log('[Runway] Video history updated with scores', { historyId: found.id, videoCount: scoredVideos.length, highestScore }); } catch {}
           try {
             const { cost, pricingVersion, meta } = computeRunwayCostFromHistoryModel(found.item.model);
             await creditsRepository.writeDebitIfAbsent(uid, found.id, cost, 'runway.video', { ...meta, historyId: found.id, provider: 'runway', pricingVersion });
