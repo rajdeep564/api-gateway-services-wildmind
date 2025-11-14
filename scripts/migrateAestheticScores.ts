@@ -12,6 +12,7 @@ import { adminDb } from '../src/config/firebaseAdmin';
 import { aestheticScoreService } from '../src/services/aestheticScoreService';
 import { generationHistoryRepository } from '../src/repository/generationHistoryRepository';
 import { generationsMirrorRepository } from '../src/repository/generationsMirrorRepository';
+import { mirrorQueueRepository } from '../src/repository/mirrorQueueRepository';
 import { GenerationHistoryItem, ImageMedia, VideoMedia } from '../src/types/generate';
 // Use CommonJS-compatible imports to avoid ESM loader cycle issues when run with ts-node/register.
 const minimist = require('minimist');
@@ -75,8 +76,9 @@ async function scoreImagesMerge(images: ImageMedia[]): Promise<ImageMedia[]> {
   if (rescore) {
     // Parallel limit scoring to avoid flooding external API
     const scored = await Promise.all(images.map(img => assetLimit(async () => {
-      const score = await aestheticScoreService.scoreImage(img.url);
-      return { ...img, aestheticScore: score !== null ? score : img.aestheticScore };
+      const res = await aestheticScoreService.scoreImage(img.url);
+      if (res) return { ...img, aestheticScore: typeof res.score === 'number' ? res.score : img.aestheticScore, aesthetic: { score: res.score, raw_output: res.raw_output } };
+      return img;
     })));
     return scored;
   }
@@ -84,8 +86,9 @@ async function scoreImagesMerge(images: ImageMedia[]): Promise<ImageMedia[]> {
   const need = images.filter(im => typeof im.aestheticScore !== 'number');
   if (need.length === 0) return images;
   const scoredSubset = await Promise.all(need.map(img => assetLimit(async () => {
-    const score = await aestheticScoreService.scoreImage(img.url);
-    return { ...img, aestheticScore: score !== null ? score : img.aestheticScore };
+    const res = await aestheticScoreService.scoreImage(img.url);
+    if (res) return { ...img, aestheticScore: typeof res.score === 'number' ? res.score : img.aestheticScore, aesthetic: { score: res.score, raw_output: res.raw_output } };
+    return img;
   })));
   const map = new Map(scoredSubset.map(im => [im.id, im.aestheticScore]));
   return images.map(im => map.has(im.id) ? { ...im, aestheticScore: map.get(im.id) } : im);
@@ -95,16 +98,18 @@ async function scoreVideosMerge(videos: VideoMedia[]): Promise<VideoMedia[]> {
   if (!videos || videos.length === 0) return videos || [];
   if (rescore) {
     const scored = await Promise.all(videos.map(v => assetLimit(async () => {
-      const score = await aestheticScoreService.scoreVideo(v.url);
-      return { ...v, aestheticScore: score !== null ? score : v.aestheticScore };
+      const res = await aestheticScoreService.scoreVideo(v.url);
+      if (res) return { ...v, aestheticScore: typeof res.average_score === 'number' ? res.average_score : v.aestheticScore, aesthetic: { average_score: res.average_score, frame_scores: res.frame_scores, raw_outputs: res.raw_outputs, frames_sampled: res.frames_sampled } };
+      return v;
     })));
     return scored;
   }
   const need = videos.filter(v => typeof v.aestheticScore !== 'number');
   if (need.length === 0) return videos;
   const scoredSubset = await Promise.all(need.map(v => assetLimit(async () => {
-    const score = await aestheticScoreService.scoreVideo(v.url);
-    return { ...v, aestheticScore: score !== null ? score : v.aestheticScore };
+    const res = await aestheticScoreService.scoreVideo(v.url);
+    if (res) return { ...v, aestheticScore: typeof res.average_score === 'number' ? res.average_score : v.aestheticScore, aesthetic: { average_score: res.average_score, frame_scores: res.frame_scores, raw_outputs: res.raw_outputs, frames_sampled: res.frames_sampled } };
+    return v;
   })));
   const map = new Map(scoredSubset.map(v => [v.id, v.aestheticScore]));
   return videos.map(v => map.has(v.id) ? { ...v, aestheticScore: map.get(v.id) } : v);
@@ -139,8 +144,26 @@ async function processItem(uid: string, item: GenerationHistoryItem) {
       videos: updatedVideos,
       aestheticScore: highest,
     } as any;
+    // Persist to history first
     await generationHistoryRepository.update(uid, item.id, updates);
-    await generationsMirrorRepository.updateFromHistory(uid, item.id, updates);
+    // Fetch fresh snapshot so mirror queue upsert matches real generation behavior
+    let fresh: GenerationHistoryItem | null = null;
+    try {
+      const ref = await generationHistoryRepository.get(uid, item.id);
+      fresh = ref as any;
+    } catch {}
+    // Enqueue mirror queue task (preferred) falling back to direct update if queue fails
+    try {
+      if (fresh) {
+        await mirrorQueueRepository.enqueueUpsert({ uid, historyId: item.id, itemSnapshot: fresh });
+      } else {
+        await mirrorQueueRepository.enqueueUpdate({ uid, historyId: item.id, updates });
+      }
+    } catch (mqErr: any) {
+      const mqMsg = (mqErr && typeof mqErr === 'object' && 'message' in mqErr) ? (mqErr as any).message : String(mqErr);
+      warn('Mirror queue enqueue failed, falling back to direct mirror update', { id: item.id, error: mqMsg });
+      try { await generationsMirrorRepository.updateFromHistory(uid, item.id, updates); } catch {}
+    }
     stats.itemsUpdated++;
     log('UPDATED item', { uid, id: item.id, highest, imagesScoredCount, videosScoredCount });
   } catch (e: any) {
