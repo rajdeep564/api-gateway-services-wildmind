@@ -5,7 +5,7 @@ import { makeCreditCost } from '../middlewares/creditCostFactory';
 import { replicateController } from '../controllers/replicateController';
 import { computeReplicateBgRemoveCost, computeReplicateImageGenCost, computeReplicateUpscaleCost } from '../utils/pricing/replicatePricing';
 import { computeWanVideoCost } from '../utils/pricing/wanPricing';
-import { computeKlingVideoCost } from '../utils/pricing/klingPricing';
+import { computeKlingVideoCost, computeKlingLipsyncCost } from '../utils/pricing/klingPricing';
 import { computeSeedanceVideoCost } from '../utils/pricing/seedancePricing';
 import { computePixverseVideoCost } from '../utils/pricing/pixversePricing';
 import { validateRemoveBg } from '../middlewares/validators/replicate/validateRemoveBg';
@@ -15,6 +15,7 @@ import { validateWan25I2V } from '../middlewares/validators/replicate/validateWa
 import { validateWan25T2V } from '../middlewares/validators/replicate/validateWan25T2V';
 import { validateKlingT2V } from '../middlewares/validators/replicate/validateKlingT2V';
 import { validateKlingI2V } from '../middlewares/validators/replicate/validateKlingI2V';
+import { validateKlingLipsync } from '../middlewares/validators/replicate/validateKlingLipsync';
 import { validateSeedanceT2V } from '../middlewares/validators/replicate/validateSeedanceT2V';
 import { validateSeedanceI2V } from '../middlewares/validators/replicate/validateSeedanceI2V';
 import { validatePixverseT2V } from '../middlewares/validators/replicate/validatePixverseT2V';
@@ -124,6 +125,14 @@ router.post(
   validateKlingI2V,
   makeCreditCost('replicate', 'kling-i2v', computeKlingVideoCost),
   (replicateController as any).klingI2vSubmit
+);
+
+router.post(
+  '/kling-lipsync/submit',
+  requireAuth,
+  validateKlingLipsync,
+  makeCreditCost('replicate', 'kling-lipsync', computeKlingLipsyncCost),
+  (replicateController as any).klingLipsyncSubmit
 );
 
 router.get('/queue/status', requireAuth, replicateController.queueStatus as any);

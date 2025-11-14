@@ -139,6 +139,8 @@ export const validateFalSora2I2v = [
   body('aspect_ratio').optional().isIn(['auto','16:9','9:16']),
   body('duration').optional().isIn([4,8,12]).withMessage('duration must be 4, 8, or 12'),
   body('api_key').optional().isString(),
+  body('originalPrompt').optional().isString(), // Allow for history display
+  body('isPublic').optional().isBoolean(), // Allow for history visibility
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
@@ -154,6 +156,8 @@ export const validateFalSora2ProI2v = [
   body('aspect_ratio').optional().isIn(['auto','16:9','9:16']),
   body('duration').optional().isIn([4,8,12]).withMessage('duration must be 4, 8, or 12'),
   body('api_key').optional().isString(),
+  body('originalPrompt').optional().isString(), // Allow for history display
+  body('isPublic').optional().isBoolean(), // Allow for history visibility
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
@@ -213,6 +217,8 @@ export const validateFalSora2T2v = [
   body('aspect_ratio').optional().isIn(['16:9','9:16']),
   body('duration').optional().isIn([4,8,12]).withMessage('duration must be 4, 8, or 12'),
   body('api_key').optional().isString(),
+  body('originalPrompt').optional().isString(), // Allow for history display
+  body('isPublic').optional().isBoolean(), // Allow for history visibility
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
@@ -227,6 +233,8 @@ export const validateFalSora2ProT2v = [
   body('aspect_ratio').optional().isIn(['16:9','9:16']),
   body('duration').optional().isIn([4,8,12]).withMessage('duration must be 4, 8, or 12'),
   body('api_key').optional().isString(),
+  body('originalPrompt').optional().isString(), // Allow for history display
+  body('isPublic').optional().isBoolean(), // Allow for history visibility
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));

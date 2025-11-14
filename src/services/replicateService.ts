@@ -2046,6 +2046,96 @@ export async function klingI2vSubmit(
 
 Object.assign(replicateService, { klingT2vSubmit, klingI2vSubmit });
 
+// ============ Queue-style API for Replicate Kling Lipsync ============
+
+export async function klingLipsyncSubmit(
+  uid: string,
+  body: any
+): Promise<SubmitReturn> {
+  if (!body?.video_url && !body?.video_id) {
+    throw new ApiError("video_url or video_id is required", 400);
+  }
+  if (body.video_url && body.video_id) {
+    throw new ApiError("Cannot use both video_url and video_id", 400);
+  }
+  if (!body?.audio_file && !body?.text) {
+    throw new ApiError("text or audio_file is required", 400);
+  }
+
+  const replicate = ensureReplicate();
+  const modelBase = body.model && String(body.model).length > 0
+    ? String(body.model)
+    : "kwaivgi/kling-lip-sync";
+
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator
+    ? { uid, username: creator.username, email: (creator as any)?.email }
+    : ({ uid } as any);
+
+  // Create history record
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.text || body.audio_file ? "Lipsync generation" : "",
+    model: modelBase,
+    generationType: "video-to-video",
+    visibility: body.isPublic ? "public" : "private",
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    originalPrompt: body.text || "",
+  } as any);
+
+  const input: any = {};
+  
+  // Video input (either video_url or video_id)
+  if (body.video_url) {
+    input.video_url = String(body.video_url);
+  } else if (body.video_id) {
+    input.video_id = String(body.video_id);
+  }
+
+  // Audio or text input
+  if (body.audio_file) {
+    input.audio_file = String(body.audio_file);
+  } else if (body.text) {
+    input.text = String(body.text);
+    if (body.voice_id) {
+      input.voice_id = String(body.voice_id);
+    }
+    if (body.voice_speed !== undefined) {
+      input.voice_speed = Math.max(0.8, Math.min(2, Number(body.voice_speed)));
+    }
+  }
+
+  let predictionId = "";
+  try {
+    const version = await getLatestModelVersion(replicate, modelBase);
+    const pred = await replicate.predictions.create(
+      version ? { version, input } : { model: modelBase, input }
+    );
+    predictionId = (pred as any)?.id || "";
+    if (!predictionId) throw new Error("Missing prediction id");
+  } catch (e: any) {
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: e?.message || "Replicate submit failed",
+    } as any);
+    throw new ApiError("Failed to submit Kling Lipsync job", 502, e);
+  }
+
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: "replicate",
+    providerTaskId: predictionId,
+  } as any);
+
+  return {
+    requestId: predictionId,
+    historyId,
+    model: modelBase,
+    status: "submitted",
+  };
+}
+
+Object.assign(replicateService, { klingLipsyncSubmit });
+
 // ============ Queue-style API for Replicate Seedance ============
 
 export async function seedanceT2vSubmit(
