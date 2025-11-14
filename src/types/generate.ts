@@ -41,6 +41,11 @@ export interface ImageMedia {
   storagePath?: string;
   originalUrl?: string;
   aestheticScore?: number;
+  // Rich aesthetic details (new)
+  aesthetic?: {
+    score?: number; // same as aestheticScore for images
+    raw_output?: any; // provider-specific response payload
+  };
   // Optimization metadata (added during synchronous optimization step)
   avifUrl?: string;        // Optimized full-size AVIF variant
   thumbnailUrl?: string;   // Smaller square AVIF thumbnail
@@ -58,6 +63,13 @@ export interface VideoMedia {
   storagePath: string;
   thumbUrl?: string;
   aestheticScore?: number;
+  // Rich aesthetic details for videos (new)
+  aesthetic?: {
+    average_score?: number; // same as aestheticScore for videos
+    frame_scores?: number[];
+    raw_outputs?: any; // provider-specific frame outputs or metadata
+    frames_sampled?: number;
+  };
   // Future optimization metadata (reserved for parity with ImageMedia)
   posterUrl?: string;      // Generated poster frame
   thumbnailUrl?: string;   // Smaller square thumbnail (if generated)
