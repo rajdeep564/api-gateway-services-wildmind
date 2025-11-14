@@ -1650,23 +1650,54 @@ export const falQueueService = {
     if (!body?.image_url) throw new ApiError('image_url is required', 400);
     const model = 'fal-ai/sora-2/image-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    const { request_id } = await fal.queue.submit(model, {
-      input: {
-        api_key: body.api_key,
-        prompt: body.prompt,
-        image_url: body.image_url,
-        resolution: body.resolution ?? 'auto',
-        aspect_ratio: body.aspect_ratio ?? 'auto',
-        duration: body.duration ?? 8,
-      },
-    } as any);
+    
+    // Normalize duration to ensure it's a number and valid (4, 8, or 12)
+    let duration = body.duration ?? 8;
+    if (typeof duration !== 'number') {
+      duration = parseInt(String(duration), 10) || 8;
+    }
+    // Clamp to valid values
+    if (![4, 8, 12].includes(duration)) {
+      if (duration < 6) duration = 4;
+      else if (duration < 10) duration = 8;
+      else duration = 12;
+    }
+    
+    // Normalize resolution - Standard only supports 'auto' or '720p'
+    let resolution = body.resolution ?? 'auto';
+    if (resolution !== 'auto' && resolution !== '720p') {
+      resolution = 'auto';
+    }
+    
+    // Normalize aspect_ratio
+    let aspect_ratio = body.aspect_ratio ?? 'auto';
+    if (!['auto', '16:9', '9:16'].includes(aspect_ratio)) {
+      aspect_ratio = 'auto';
+    }
+    
+    const input: any = {
+      prompt: body.prompt,
+      image_url: body.image_url,
+      resolution,
+      aspect_ratio,
+      duration,
+    };
+    
+    // Only include api_key if provided
+    if (body.api_key) {
+      input.api_key = body.api_key;
+    }
+    
+    console.log('[sora2I2vSubmit] Submitting to FAL:', { model, input: { ...input, image_url: input.image_url?.substring(0, 100) + '...' } });
+    
+    const { request_id } = await fal.queue.submit(model, { input } as any);
     await generationHistoryRepository.update(uid, historyId, {
       provider: 'fal',
       providerTaskId: request_id,
-      // persist params for final debit mapping
-      duration: body.duration ?? 8,
-      resolution: body.resolution ?? 'auto',
-      aspect_ratio: body.aspect_ratio ?? 'auto',
+      // persist normalized params for final debit mapping
+      duration,
+      resolution,
+      aspect_ratio,
     } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
@@ -1678,22 +1709,54 @@ export const falQueueService = {
     if (!body?.image_url) throw new ApiError('image_url is required', 400);
     const model = 'fal-ai/sora-2/image-to-video/pro';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    const { request_id } = await fal.queue.submit(model, {
-      input: {
-        api_key: body.api_key,
-        prompt: body.prompt,
-        image_url: body.image_url,
-        resolution: body.resolution ?? 'auto',
-        aspect_ratio: body.aspect_ratio ?? 'auto',
-        duration: body.duration ?? 8,
-      },
-    } as any);
+    
+    // Normalize duration to ensure it's a number and valid (4, 8, or 12)
+    let duration = body.duration ?? 8;
+    if (typeof duration !== 'number') {
+      duration = parseInt(String(duration), 10) || 8;
+    }
+    // Clamp to valid values
+    if (![4, 8, 12].includes(duration)) {
+      if (duration < 6) duration = 4;
+      else if (duration < 10) duration = 8;
+      else duration = 12;
+    }
+    
+    // Normalize resolution - Pro supports 'auto', '720p', or '1080p'
+    let resolution = body.resolution ?? 'auto';
+    if (!['auto', '720p', '1080p'].includes(resolution)) {
+      resolution = 'auto';
+    }
+    
+    // Normalize aspect_ratio
+    let aspect_ratio = body.aspect_ratio ?? 'auto';
+    if (!['auto', '16:9', '9:16'].includes(aspect_ratio)) {
+      aspect_ratio = 'auto';
+    }
+    
+    const input: any = {
+      prompt: body.prompt,
+      image_url: body.image_url,
+      resolution,
+      aspect_ratio,
+      duration,
+    };
+    
+    // Only include api_key if provided
+    if (body.api_key) {
+      input.api_key = body.api_key;
+    }
+    
+    console.log('[sora2ProI2vSubmit] Submitting to FAL:', { model, input: { ...input, image_url: input.image_url?.substring(0, 100) + '...' } });
+    
+    const { request_id } = await fal.queue.submit(model, { input } as any);
     await generationHistoryRepository.update(uid, historyId, {
       provider: 'fal',
       providerTaskId: request_id,
-      duration: body.duration ?? 8,
-      resolution: body.resolution ?? 'auto',
-      aspect_ratio: body.aspect_ratio ?? 'auto',
+      // persist normalized params for final debit mapping
+      duration,
+      resolution,
+      aspect_ratio,
     } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
@@ -1741,21 +1804,53 @@ export const falQueueService = {
     if (!body?.prompt) throw new ApiError('Prompt is required', 400);
     const model = 'fal-ai/sora-2/text-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    const { request_id } = await fal.queue.submit(model, {
-      input: {
-        api_key: body.api_key,
-        prompt: body.prompt,
-        resolution: body.resolution ?? '720p',
-        aspect_ratio: body.aspect_ratio ?? '16:9',
-        duration: body.duration ?? 8,
-      },
-    } as any);
+    
+    // Normalize duration to ensure it's a number and valid (4, 8, or 12)
+    let duration = body.duration ?? 8;
+    if (typeof duration !== 'number') {
+      duration = parseInt(String(duration), 10) || 8;
+    }
+    // Clamp to valid values
+    if (![4, 8, 12].includes(duration)) {
+      if (duration < 6) duration = 4;
+      else if (duration < 10) duration = 8;
+      else duration = 12;
+    }
+    
+    // Normalize resolution - Standard only supports '720p'
+    let resolution = body.resolution ?? '720p';
+    if (resolution !== '720p') {
+      resolution = '720p';
+    }
+    
+    // Normalize aspect_ratio - Standard supports '16:9' or '9:16'
+    let aspect_ratio = body.aspect_ratio ?? '16:9';
+    if (!['16:9', '9:16'].includes(aspect_ratio)) {
+      aspect_ratio = '16:9';
+    }
+    
+    const input: any = {
+      prompt: body.prompt,
+      resolution,
+      aspect_ratio,
+      duration,
+    };
+    
+    // Only include api_key if provided
+    if (body.api_key) {
+      input.api_key = body.api_key;
+    }
+    
+    console.log('[sora2T2vSubmit] Submitting to FAL:', { model, input });
+    
+    const { request_id } = await fal.queue.submit(model, { input } as any);
     await generationHistoryRepository.update(uid, historyId, {
       provider: 'fal',
       providerTaskId: request_id,
-      duration: body.duration ?? 8,
-      resolution: body.resolution ?? '720p',
-      aspect_ratio: body.aspect_ratio ?? '16:9',
+      // persist normalized params for final debit mapping
+      duration,
+      resolution,
+      aspect_ratio,
     } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
@@ -1766,21 +1861,53 @@ export const falQueueService = {
     if (!body?.prompt) throw new ApiError('Prompt is required', 400);
     const model = 'fal-ai/sora-2/text-to-video/pro';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    const { request_id } = await fal.queue.submit(model, {
-      input: {
-        api_key: body.api_key,
-        prompt: body.prompt,
-        resolution: body.resolution ?? '1080p',
-        aspect_ratio: body.aspect_ratio ?? '16:9',
-        duration: body.duration ?? 8,
-      },
-    } as any);
+    
+    // Normalize duration to ensure it's a number and valid (4, 8, or 12)
+    let duration = body.duration ?? 8;
+    if (typeof duration !== 'number') {
+      duration = parseInt(String(duration), 10) || 8;
+    }
+    // Clamp to valid values
+    if (![4, 8, 12].includes(duration)) {
+      if (duration < 6) duration = 4;
+      else if (duration < 10) duration = 8;
+      else duration = 12;
+    }
+    
+    // Normalize resolution - Pro supports '720p' or '1080p'
+    let resolution = body.resolution ?? '1080p';
+    if (!['720p', '1080p'].includes(resolution)) {
+      resolution = '1080p';
+    }
+    
+    // Normalize aspect_ratio - Pro supports '16:9' or '9:16'
+    let aspect_ratio = body.aspect_ratio ?? '16:9';
+    if (!['16:9', '9:16'].includes(aspect_ratio)) {
+      aspect_ratio = '16:9';
+    }
+    
+    const input: any = {
+      prompt: body.prompt,
+      resolution,
+      aspect_ratio,
+      duration,
+    };
+    
+    // Only include api_key if provided
+    if (body.api_key) {
+      input.api_key = body.api_key;
+    }
+    
+    console.log('[sora2ProT2vSubmit] Submitting to FAL:', { model, input });
+    
+    const { request_id } = await fal.queue.submit(model, { input } as any);
     await generationHistoryRepository.update(uid, historyId, {
       provider: 'fal',
       providerTaskId: request_id,
-      duration: body.duration ?? 8,
-      resolution: body.resolution ?? '1080p',
-      aspect_ratio: body.aspect_ratio ?? '16:9',
+      // persist normalized params for final debit mapping
+      duration,
+      resolution,
+      aspect_ratio,
     } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
