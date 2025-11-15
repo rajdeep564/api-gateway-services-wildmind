@@ -188,4 +188,14 @@ export async function wanAnimateReplaceSubmit(req: Request, res: Response, next:
 
 Object.assign(replicateController, { wanAnimateReplaceSubmit });
 
+export async function wanAnimateAnimationSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).wanAnimateAnimationSubmit(uid, req.body || {});
+    res.json(formatApiResponse('success', 'Submitted', result));
+  } catch (e) { next(e); }
+}
+
+Object.assign(replicateController, { wanAnimateAnimationSubmit });
+
 
