@@ -2,6 +2,7 @@ import { adminDb, admin } from '../config/firebaseAdmin';
 import { GenerationHistoryItem, GenerationStatus, Visibility, GenerationType } from '../types/generate';
 import { logger } from '../utils/logger';
 import { invalidateUserLists, invalidateItem } from '../utils/generationCache';
+import { mirrorQueueRepository } from './mirrorQueueRepository';
 
 function toIso(value: any): any {
   try {
@@ -103,6 +104,21 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
     await invalidateItem(uid, historyId);
   } catch (e) {
     try { logger.warn({ uid, historyId, err: e }, '[generationHistoryRepository.update] Failed to invalidate cache'); } catch {}
+  }
+
+  // Enqueue mirror update asynchronously so public mirror reflects repository changes.
+  // Do not block caller on mirror queue failures.
+  try {
+    // Only enqueue if there are meaningful updates (avoid noise). For simplicity,
+    // enqueue when updates contains images, videos, isPublic, visibility, status, or error fields.
+    const interesting = ['images', 'videos', 'isPublic', 'visibility', 'status', 'error'];
+    const hasInteresting = Object.keys(updates || {}).some(k => interesting.includes(k));
+    if (hasInteresting) {
+      // Fire-and-forget
+      mirrorQueueRepository.enqueueUpdate({ uid, historyId, updates });
+    }
+  } catch (e) {
+    try { logger.warn({ uid, historyId, err: e }, '[generationHistoryRepository.update] Failed to enqueue mirror update'); } catch {}
   }
 }
 

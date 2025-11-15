@@ -44,11 +44,8 @@ export async function startGeneration(
   }
   
   // OPTIMIZATION: Enqueue mirror upsert instead of blocking request
-  try {
-    await mirrorQueueRepository.enqueueUpsert({ uid, historyId, itemSnapshot: item });
-  } catch (e) {
-    console.warn('[startGeneration] Failed to enqueue mirror upsert:', e);
-  }
+  // Note: do not enqueue mirror upsert here to avoid writing pre-optimized snapshots to the public mirror.
+  // Mirror upserts will be enqueued once the generation is completed and optimized.
   
   return { historyId, item };
 }
@@ -238,12 +235,21 @@ export async function markGenerationCompleted(
   try {
     const fresh = await generationHistoryRepository.get(uid, historyId);
     if (fresh) {
-      await mirrorQueueRepository.enqueueUpsert({ uid, historyId, itemSnapshot: fresh });
-      console.log('[markGenerationCompleted] Enqueued mirror upsert with optimized fields', {
-        historyId,
-        isPublic: (fresh as any)?.isPublic,
-        images: Array.isArray((fresh as any)?.images) ? (fresh as any)?.images.length : 0,
-      });
+      // Immediately write to public mirror so feed reflects optimized fields without waiting
+      try {
+        const creator = await authRepository.getUserById(uid);
+        await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+          uid,
+          username: creator?.username,
+          displayName: (creator as any)?.displayName,
+          photoURL: creator?.photoURL,
+        });
+        console.log('[markGenerationCompleted] Wrote optimized snapshot to mirror (sync)', { historyId, isPublic: (fresh as any)?.isPublic });
+      } catch (e) {
+        console.warn('[markGenerationCompleted] Immediate mirror upsert failed, falling back to queue:', e);
+        // Fallback: enqueue for async processing
+        try { await mirrorQueueRepository.enqueueUpsert({ uid, historyId, itemSnapshot: fresh }); } catch (ee) { console.warn('[markGenerationCompleted] enqueueUpsert fallback failed:', ee); }
+      }
     }
   } catch (e) {
     console.warn('[markGenerationCompleted] Failed to enqueue mirror upsert:', e);
