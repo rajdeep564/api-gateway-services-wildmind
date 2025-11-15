@@ -1854,6 +1854,29 @@ export async function replicateQueueResult(
           `replicate.queue.pixverse-${modeGuess}`,
           { ...meta, historyId, provider: "replicate", pricingVersion }
         );
+      } else if (model.includes("wan-2.2-animate-replace")) {
+        const { computeWanAnimateReplaceCost } = await import(
+          "../utils/pricing/wanAnimatePricing"
+        );
+        // Estimate runtime from video duration if available, otherwise use default
+        const estimatedRuntime = (fresh as any)?.video_duration || (fresh as any)?.duration || 5;
+        const fakeReq = {
+          body: {
+            estimated_runtime: estimatedRuntime,
+            runtime: estimatedRuntime,
+            video_duration: estimatedRuntime,
+          },
+        } as any;
+        const { cost, pricingVersion, meta } = await computeWanAnimateReplaceCost(
+          fakeReq as any
+        );
+        await creditsRepository.writeDebitIfAbsent(
+          uid,
+          historyId,
+          cost,
+          `replicate.queue.wan-animate-replace`,
+          { ...meta, historyId, provider: "replicate", pricingVersion }
+        );
       }
     } catch {}
     return {
@@ -2135,6 +2158,111 @@ export async function klingLipsyncSubmit(
 }
 
 Object.assign(replicateService, { klingLipsyncSubmit });
+
+// ============ Queue-style API for Replicate WAN 2.2 Animate Replace ============
+
+export async function wanAnimateReplaceSubmit(
+  uid: string,
+  body: any
+): Promise<SubmitReturn> {
+  if (!body?.video) {
+    throw new ApiError("video is required", 400);
+  }
+  if (!body?.character_image) {
+    throw new ApiError("character_image is required", 400);
+  }
+
+  const replicate = ensureReplicate();
+  const modelBase = body.model && String(body.model).length > 0
+    ? String(body.model)
+    : "wan-video/wan-2.2-animate-replace";
+
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator
+    ? { uid, username: creator.username, email: (creator as any)?.email }
+    : ({ uid } as any);
+
+  // Create history record
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt || "Animate Replace generation",
+    model: modelBase,
+    generationType: "video-to-video",
+    visibility: body.isPublic ? "public" : "private",
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    originalPrompt: body.prompt || "",
+  } as any);
+
+  const input: any = {
+    video: String(body.video),
+    character_image: String(body.character_image),
+  };
+
+  // Optional parameters
+  if (body.seed != null && Number.isInteger(Number(body.seed))) {
+    input.seed = Number(body.seed);
+  }
+  if (typeof body.go_fast === 'boolean') {
+    input.go_fast = body.go_fast;
+  } else {
+    input.go_fast = true; // Default
+  }
+  if (body.refert_num === 1 || body.refert_num === 5) {
+    input.refert_num = Number(body.refert_num);
+  } else {
+    input.refert_num = 1; // Default
+  }
+  if (body.resolution === '720' || body.resolution === '480') {
+    input.resolution = String(body.resolution);
+  } else {
+    input.resolution = '720'; // Default
+  }
+  if (typeof body.merge_audio === 'boolean') {
+    input.merge_audio = body.merge_audio;
+  } else {
+    input.merge_audio = true; // Default
+  }
+  if (body.frames_per_second != null) {
+    const fps = Number(body.frames_per_second);
+    if (fps >= 5 && fps <= 60) {
+      input.frames_per_second = fps;
+    } else {
+      input.frames_per_second = 24; // Default
+    }
+  } else {
+    input.frames_per_second = 24; // Default
+  }
+
+  let predictionId = "";
+  try {
+    const version = await getLatestModelVersion(replicate, modelBase);
+    const pred = await replicate.predictions.create(
+      version ? { version, input } : { model: modelBase, input }
+    );
+    predictionId = (pred as any)?.id || "";
+    if (!predictionId) throw new Error("Missing prediction id");
+  } catch (e: any) {
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: e?.message || "Replicate submit failed",
+    } as any);
+    throw new ApiError("Failed to submit WAN Animate Replace job", 502, e);
+  }
+
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: "replicate",
+    providerTaskId: predictionId,
+  } as any);
+
+  return {
+    requestId: predictionId,
+    historyId,
+    model: modelBase,
+    status: "submitted",
+  };
+}
+
+Object.assign(replicateService, { wanAnimateReplaceSubmit });
 
 // ============ Queue-style API for Replicate Seedance ============
 

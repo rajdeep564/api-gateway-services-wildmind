@@ -177,4 +177,15 @@ export async function klingLipsyncSubmit(req: Request, res: Response, next: Next
 
 Object.assign(replicateController, { klingLipsyncSubmit });
 
+// WAN Animate Replace queue handler
+export async function wanAnimateReplaceSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).wanAnimateReplaceSubmit(uid, req.body || {});
+    res.json(formatApiResponse('success', 'Submitted', result));
+  } catch (e) { next(e); }
+}
+
+Object.assign(replicateController, { wanAnimateReplaceSubmit });
+
 
