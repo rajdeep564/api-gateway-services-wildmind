@@ -56,10 +56,22 @@ async function videoGenerate(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+async function characterPerformance(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid;
+    const ctx = (req as any).context || {};
+    const result = await runwayService.characterPerformance(uid, req.body);
+    res.json(formatApiResponse('success', 'Runway character performance task created', { ...result, expectedDebit: ctx.creditCost }));
+  } catch (err) {
+    next(err);
+  }
+}
+
 export const runwayController = {
   textToImage,
   getStatus,
-  videoGenerate
+  videoGenerate,
+  characterPerformance,
 };
 
 

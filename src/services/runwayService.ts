@@ -386,8 +386,122 @@ async function videoGenerate(
   );
 }
 
+async function characterPerformance(
+  uid: string,
+  body: any
+): Promise<{
+  success: boolean;
+  taskId: string;
+  historyId?: string;
+}> {
+  const client = getRunwayClient();
+  const { model, character, reference, ratio, seed, bodyControl, expressionIntensity, contentModeration } = body || {};
+  
+  if (model !== 'act_two') {
+    throw new ApiError("Model must be 'act_two' for character performance", 400);
+  }
+  
+  if (!character || !character.type || !character.uri) {
+    throw new ApiError("Character is required with type and uri", 400);
+  }
+  
+  if (!reference || !reference.type || reference.type !== 'video' || !reference.uri) {
+    throw new ApiError("Reference video is required with type 'video' and uri", 400);
+  }
+  
+  // Build the request payload
+  const payload: any = {
+    model: 'act_two',
+    character: {
+      type: character.type,
+      uri: character.uri,
+    },
+    reference: {
+      type: 'video',
+      uri: reference.uri,
+    },
+    ratio: ratio || '1280:720',
+  };
+  
+  if (seed !== undefined) payload.seed = seed;
+  if (bodyControl !== undefined) payload.bodyControl = bodyControl;
+  if (expressionIntensity !== undefined) payload.expressionIntensity = expressionIntensity;
+  if (contentModeration) {
+    payload.contentModeration = {
+      publicFigureThreshold: contentModeration.publicFigureThreshold || 'auto',
+    };
+  }
+  
+  const created = await client.characterPerformance.create(payload);
+  
+  const prompt = body?.promptText || 'Character Performance generation';
+  const historyModel = body?.model || 'runway_act_two';
+  const generationType = body?.generationType || 'video-to-video';
+  
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt,
+    model: historyModel,
+    generationType,
+    visibility: (body as any)?.visibility || (((body as any)?.isPublic === true) ? 'public' : 'private'),
+    tags: (body as any)?.tags,
+    nsfw: (body as any)?.nsfw,
+    isPublic: (body as any)?.isPublic === true,
+    ...(ratio ? { ratio } : {}),
+  } as any);
+  
+  await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
+  
+  // Persist input character and reference
+  try {
+    const creator = await authRepository.getUserById(uid);
+    const username = (creator?.username || uid) as string;
+    const base = `users/${username}/input/${historyId}`;
+    const updates: any = {};
+    
+    // Store character (image or video)
+    if (character && character.uri) {
+      try {
+        const stored = /^data:/i.test(character.uri)
+          ? (character.type === 'image' 
+              ? await uploadDataUriToZata({ dataUri: character.uri, keyPrefix: base, fileName: 'character-1' })
+              : await uploadDataUriToZata({ dataUri: character.uri, keyPrefix: base, fileName: 'character-video-1' }))
+          : await uploadFromUrlToZata({ sourceUrl: character.uri, keyPrefix: base, fileName: character.type === 'image' ? 'character-1' : 'character-video-1' });
+        
+        if (character.type === 'image') {
+          updates.inputImages = [{ id: `${created.id}-char-1`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: character.uri }];
+        } else {
+          updates.inputVideos = [{ id: `${created.id}-char-video-1`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: character.uri }];
+        }
+      } catch {}
+    }
+    
+    // Store reference video
+    if (reference && reference.uri) {
+      try {
+        const stored = /^data:/i.test(reference.uri)
+          ? await uploadDataUriToZata({ dataUri: reference.uri, keyPrefix: base, fileName: 'reference-video-1' })
+          : await uploadFromUrlToZata({ sourceUrl: reference.uri, keyPrefix: base, fileName: 'reference-video-1' });
+        
+        if (!updates.inputVideos) updates.inputVideos = [];
+        updates.inputVideos.push({ id: `${created.id}-ref-video-1`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: reference.uri });
+      } catch {}
+    }
+    
+    if (Object.keys(updates).length > 0) {
+      await generationHistoryRepository.update(uid, historyId, updates);
+    }
+  } catch {}
+  
+  return {
+    success: true,
+    taskId: created.id,
+    historyId,
+  };
+}
+
 export const runwayService = {
   textToImage,
   getStatus,
   videoGenerate,
+  characterPerformance,
 };
