@@ -148,6 +148,25 @@ export async function listPublic(params: {
         totalImages: totalImgs,
         imagesWithOptimized: totalOpt,
       });
+
+      // Log per-item sample for debugging: first image's optimized fields (limit 10)
+      try {
+        const samples = items.slice(0, 10).map((it: any) => {
+          const first = Array.isArray(it.images) && it.images.length > 0 ? it.images[0] : null;
+          return {
+            id: it.id,
+            isPublic: it.isPublic,
+            imagesCount: Array.isArray(it.images) ? it.images.length : 0,
+            firstHasThumbnail: !!(first && first.thumbnailUrl),
+            firstHasAvif: !!(first && first.avifUrl),
+            firstThumbnail: first && typeof first.thumbnailUrl === 'string' ? first.thumbnailUrl : undefined,
+            firstAvif: first && typeof first.avifUrl === 'string' ? first.avifUrl : undefined,
+          };
+        });
+        console.log('[Feed][Repo][listPublic] item samples', samples);
+      } catch (e) {
+        // ignore
+      }
     }
   } catch {}
   if (clientFilterTypes) {

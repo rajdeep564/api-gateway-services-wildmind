@@ -28,19 +28,25 @@ export async function processMirrorTask(taskId: string, task: any): Promise<void
     }
     
     if (op === 'upsert') {
-      // Get fresh item if not provided in snapshot
+      // Prefer the freshest item from generationHistory to avoid writing pre-optimized snapshots.
+      // If a fresh read fails, fall back to the snapshot provided in the task (if any).
       let item = itemSnapshot;
-      if (!item && uid && historyId) {
-        item = await generationHistoryRepository.get(uid, historyId);
+      try {
+        if (uid && historyId) {
+          const fresh = await generationHistoryRepository.get(uid, historyId);
+          if (fresh) item = fresh;
+        }
+      } catch (e) {
+        // Non-blocking: we'll fall back to the provided snapshot below.
       }
-      
+
       if (!item) {
         throw new Error('Item not found for upsert operation');
       }
-      
+
       // Get creator metadata
       const creator = await authRepository.getUserById(uid);
-      
+
       await generationsMirrorRepository.upsertFromHistory(uid, historyId, item, {
         uid,
         username: creator?.username,
