@@ -34,6 +34,9 @@ dotenv.config();
 import { adminDb } from '../src/config/firebaseAdmin';
 import { GenerationHistoryItem, ImageMedia, VideoMedia } from '../src/types/generate';
 import { aestheticScoreService } from '../src/services/aestheticScoreService';
+// Concurrency limiter for stable scoring calls
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const pLimit = require('p-limit');
 
 interface Args {
   limit: number;
@@ -41,6 +44,7 @@ interface Args {
   dry: boolean;
   skipExisting: boolean;
   halfLifeHours: number;
+  assetConcurrency: number;
 }
 
 function parseArgs(): Args {
@@ -55,12 +59,13 @@ function parseArgs(): Args {
     dry: argv.includes('--dry'),
     skipExisting: argv.includes('--skip-existing'),
     halfLifeHours: Number(get('--half-life-hours', '72')), // 3 day half-life default
+    assetConcurrency: Number(get('--assetConcurrency', '4')),
   };
 }
 
 function clamp(n: number, min: number, max: number) { return Math.min(max, Math.max(min, n)); }
 
-async function computeScore(doc: FirebaseFirestore.QueryDocumentSnapshot, halfLifeHours: number): Promise<{ feedScore: number; detail: any; needsAestheticUpdate?: boolean; aestheticUpdates?: Partial<GenerationHistoryItem> }> {
+async function computeScore(doc: FirebaseFirestore.QueryDocumentSnapshot, halfLifeHours: number, assetConcurrency: number): Promise<{ feedScore: number; detail: any; needsAestheticUpdate?: boolean; aestheticUpdates?: Partial<GenerationHistoryItem> }> {
   const data = doc.data() as any as GenerationHistoryItem & {
     likeCount?: number; bookmarkCount?: number; viewCount?: number; feedScore?: number;
   };
@@ -109,14 +114,18 @@ async function computeScore(doc: FirebaseFirestore.QueryDocumentSnapshot, halfLi
     } else if (needsScoring && (images.length > 0 || videos.length > 0)) {
       // Need to score - call API
       console.log('[FeedScoreMigration] Scoring missing aesthetic scores for doc', doc.id);
+      const limiter = pLimit(Math.max(1, assetConcurrency));
       
       // Score images that don't have scores
       const imagesToScore = images.filter((im: any) => typeof im?.aestheticScore !== 'number');
       if (imagesToScore.length > 0) {
-        const scoredImages = await Promise.all(imagesToScore.map(async (img: ImageMedia) => {
-          const score = await aestheticScoreService.scoreImage(img.url);
-          return { ...img, aestheticScore: score !== null ? score : undefined };
-        }));
+        const scoredImages = await Promise.all(imagesToScore.map((img: ImageMedia) => limiter(async () => {
+          const res = await aestheticScoreService.scoreImage(img.url);
+          if (res) {
+            return { ...img, aestheticScore: typeof res.score === 'number' ? res.score : img.aestheticScore, aesthetic: { score: res.score, raw_output: res.raw_output } } as ImageMedia;
+          }
+          return img;
+        })));
         // Merge scored images back
         const scoredMap = new Map(scoredImages.map(im => [im.id, im]));
         images = images.map((im: ImageMedia) => scoredMap.get(im.id) || im);
@@ -125,10 +134,23 @@ async function computeScore(doc: FirebaseFirestore.QueryDocumentSnapshot, halfLi
       // Score videos that don't have scores
       const videosToScore = videos.filter((v: any) => typeof v?.aestheticScore !== 'number');
       if (videosToScore.length > 0) {
-        const scoredVideos = await Promise.all(videosToScore.map(async (vid: VideoMedia) => {
-          const score = await aestheticScoreService.scoreVideo(vid.url);
-          return { ...vid, aestheticScore: score !== null ? score : undefined };
-        }));
+        const scoredVideos = await Promise.all(videosToScore.map((vid: VideoMedia) => limiter(async () => {
+          const res = await aestheticScoreService.scoreVideo(vid.url);
+          if (res) {
+            const avg = res.average_score;
+            return {
+              ...vid,
+              aestheticScore: typeof avg === 'number' ? avg : vid.aestheticScore,
+              aesthetic: {
+                average_score: res.average_score,
+                frame_scores: res.frame_scores,
+                raw_outputs: res.raw_outputs,
+                frames_sampled: res.frames_sampled,
+              },
+            } as VideoMedia;
+          }
+          return vid;
+        })));
         // Merge scored videos back
         const scoredMap = new Map(scoredVideos.map(v => [v.id, v]));
         videos = videos.map((v: VideoMedia) => scoredMap.get(v.id) || v);
@@ -236,7 +258,7 @@ async function run() {
         skipped++;
         continue;
       }
-      const { feedScore, detail, needsAestheticUpdate, aestheticUpdates } = await computeScore(doc, args.halfLifeHours);
+      const { feedScore, detail, needsAestheticUpdate, aestheticUpdates } = await computeScore(doc, args.halfLifeHours, args.assetConcurrency);
       processed++;
       console.log('[FeedScoreMigration] Doc', doc.id, 'score', feedScore, detail);
       if (!args.dry) {
