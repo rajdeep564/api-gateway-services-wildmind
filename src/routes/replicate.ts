@@ -20,6 +20,10 @@ import { validateSeedanceT2V } from '../middlewares/validators/replicate/validat
 import { validateSeedanceI2V } from '../middlewares/validators/replicate/validateSeedanceI2V';
 import { validatePixverseT2V } from '../middlewares/validators/replicate/validatePixverseT2V';
 import { validatePixverseI2V } from '../middlewares/validators/replicate/validatePixverseI2V';
+import { computeWanAnimateReplaceCost } from '../utils/pricing/wanAnimatePricing';
+import { validateWanAnimateReplace } from '../middlewares/validators/replicate/validateWanAnimateReplace';
+import { computeWanAnimateAnimationCost } from '../utils/pricing/wanAnimateAnimationPricing';
+import { validateWanAnimateAnimation } from '../middlewares/validators/replicate/validateWanAnimateAnimation';
 
 const router = Router();
 
@@ -133,6 +137,24 @@ router.post(
   validateKlingLipsync,
   makeCreditCost('replicate', 'kling-lipsync', computeKlingLipsyncCost),
   (replicateController as any).klingLipsyncSubmit
+);
+
+// ============ Queue-style endpoints for Replicate WAN 2.2 Animate Replace ============
+router.post(
+  '/wan-2-2-animate-replace/submit',
+  requireAuth,
+  validateWanAnimateReplace,
+  makeCreditCost('replicate', 'wan-animate-replace', computeWanAnimateReplaceCost),
+  (replicateController as any).wanAnimateReplaceSubmit
+);
+
+// ============ Queue-style endpoints for Replicate WAN 2.2 Animate Animation ============
+router.post(
+  '/wan-2-2-animate-animation/submit',
+  requireAuth,
+  validateWanAnimateAnimation,
+  makeCreditCost('replicate', 'wan-animate-animation', computeWanAnimateAnimationCost),
+  (replicateController as any).wanAnimateAnimationSubmit
 );
 
 router.get('/queue/status', requireAuth, replicateController.queueStatus as any);
