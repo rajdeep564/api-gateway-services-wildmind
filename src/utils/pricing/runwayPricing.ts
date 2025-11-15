@@ -39,9 +39,26 @@ export function computeRunwayCostFromSku(sku: string): { cost: number; pricingVe
 }
 
 export async function computeRunwayVideoCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
-  const { sku } = req.body || {};
-  if (typeof sku !== 'string' || sku.length === 0) throw new Error('sku is required for Runway video pricing');
-  return computeRunwayCostFromSku(sku);
+  const { sku, model } = req.body || {};
+  
+  // If SKU is provided, use it
+  if (typeof sku === 'string' && sku.length > 0) {
+    return computeRunwayCostFromSku(sku);
+  }
+  
+  // Otherwise, derive SKU from model
+  let display = '';
+  if (model === 'act_two') {
+    // Character Performance (Act Two) model
+    display = 'Runway Character Performance (Act Two)';
+  } else {
+    // For other video models, SKU is required
+    throw new Error('sku is required for Runway video pricing (or provide model=act_two)');
+  }
+  
+  const base = display ? findCreditsExact(display) : null;
+  if (base == null) throw new Error(`Unsupported Runway video model: ${display}. Please add this SKU to creditDistribution.`);
+  return { cost: Math.ceil(base), pricingVersion: RUNWAY_PRICING_VERSION, meta: { model: display } };
 }
 
 
