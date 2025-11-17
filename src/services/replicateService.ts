@@ -640,6 +640,7 @@ export async function generateImage(uid: string, body: any) {
   try {
     const { model: _m, isPublic: _p, ...rest } = body || {};
     const input: any = { prompt: body.prompt };
+    let replicateModelBase = modelBase;
     // Seedream schema mapping
     if (modelBase === "bytedance/seedream-4") {
       // size handling
@@ -834,12 +835,16 @@ export async function generateImage(uid: string, body: any) {
         input.style_reference_images = rest.style_reference_images
           .slice(0, 10)
           .map(String);
+      // Replicate exposes a single ideogram-v3 model with a 'mode' input controlling Turbo vs Quality
+      input.mode = modelBase.endsWith("-quality") ? "quality" : "turbo";
+      replicateModelBase = "ideogram-ai/ideogram-v3";
       // No additional clamping required; validator enforces enumerations and limits
     }
-    const modelSpec = composeModelSpec(modelBase, body.version);
+    const modelSpec = composeModelSpec(replicateModelBase, body.version);
     // eslint-disable-next-line no-console
     console.log("[replicateService.generateImage] run", {
-      modelSpec,
+      requestedModel: modelBase,
+      resolvedModelSpec: modelSpec,
       hasImage: !!rest.image,
       inputKeys: Object.keys(input),
     });
