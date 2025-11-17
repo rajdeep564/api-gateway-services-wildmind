@@ -107,7 +107,7 @@ export const validateRunwayVideoUpscale = [
 const ACT_TWO_RATIOS = new Set(['1280:720', '720:1280', '960:960', '1104:832', '832:1104', '1584:672']);
 export const validateRunwayCharacterPerformance = [
   body('model').equals('act_two'),
-  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
+  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','video-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
   body('character').isObject().custom((value) => {
     if (!value.type || !['image', 'video'].includes(value.type)) return false;
     if (!value.uri || typeof value.uri !== 'string') return false;

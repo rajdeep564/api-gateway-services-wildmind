@@ -2646,6 +2646,22 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 0.6134969325,
     },
   },
+  // Runway Character Performance (Act Two)
+  {
+    srNo: 143,
+    modelName: "Runway Character Performance (Act Two)",
+    priceToPay: 0.5,
+    overCharge: 0.01,
+    userCost: 0.51,
+    creditsPerGeneration: 1020,
+    plans: {
+      planA: 12.11764706,
+      planB: 24.23529412,
+      planC: 60.58823529,
+      planD: 193.8823529,
+      free: 1.960784314,
+    },
+  },
 ];
 
 // Helper functions for easy access
