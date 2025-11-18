@@ -135,6 +135,35 @@ export async function saveSnapshot(
   await batch.commit();
 }
 
+// Overwrite-style snapshot (no op index). Stored under a fixed doc id 'current'.
+export async function saveCurrentSnapshot(
+  projectId: string,
+  snapshot: Omit<CanvasSnapshot, 'snapshotOpIndex'> & { snapshotOpIndex?: number }
+): Promise<void> {
+  const batch = adminDb.batch();
+
+  const snapshotRef = adminDb
+    .collection('canvasProjects')
+    .doc(projectId)
+    .collection('snapshots')
+    .doc('current');
+  // Ensure a numeric field exists for compatibility, but not used
+  const toSave: CanvasSnapshot = {
+    projectId,
+    snapshotOpIndex: typeof snapshot.snapshotOpIndex === 'number' ? snapshot.snapshotOpIndex : -1,
+    elements: snapshot.elements as any,
+    metadata: snapshot.metadata as any,
+  };
+  batch.set(snapshotRef, toSave);
+
+  const projectRef = adminDb.collection('canvasProjects').doc(projectId);
+  batch.update(projectRef, {
+    lastSnapshotAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  await batch.commit();
+}
+
 export async function getSnapshot(
   projectId: string,
   snapshotOpIndex: number
@@ -156,6 +185,17 @@ export async function getLatestSnapshot(projectId: string): Promise<CanvasSnapsh
   if (!project || !project.lastSnapshotOpIndex) return null;
   
   return getSnapshot(projectId, project.lastSnapshotOpIndex);
+}
+
+export async function getCurrentSnapshot(projectId: string): Promise<CanvasSnapshot | null> {
+  const snapshotRef = adminDb
+    .collection('canvasProjects')
+    .doc(projectId)
+    .collection('snapshots')
+    .doc('current');
+  const snap = await snapshotRef.get();
+  if (!snap.exists) return null;
+  return snap.data() as CanvasSnapshot;
 }
 
 export async function listUserProjects(uid: string, limit: number = 20): Promise<CanvasProject[]> {
@@ -209,8 +249,10 @@ export const projectRepository = {
   updateProject,
   addCollaborator,
   saveSnapshot,
+  saveCurrentSnapshot,
   getSnapshot,
   getLatestSnapshot,
+  getCurrentSnapshot,
   listUserProjects,
 };
 

@@ -87,7 +87,7 @@ export async function generateForCanvas(req: Request, res: Response) {
       );
     }
 
-    const { prompt, model, width, height, aspectRatio, seed, options, meta } = req.body;
+    const { prompt, model, width, height, aspectRatio, seed, options, imageCount, meta } = req.body;
 
     console.log('[generateForCanvas] Request received:', {
       userId,
@@ -95,6 +95,7 @@ export async function generateForCanvas(req: Request, res: Response) {
       hasPrompt: !!prompt,
       hasMeta: !!meta,
       projectId: meta?.projectId,
+      imageCount,
     });
 
     if (!prompt) {
@@ -126,6 +127,7 @@ export async function generateForCanvas(req: Request, res: Response) {
       aspectRatio, // Pass aspectRatio for proper model mapping
       seed,
       options,
+      imageCount,
       meta: {
         source: 'canvas',
         projectId: meta.projectId,

@@ -92,6 +92,10 @@ export async function queueStatus(req: Request, res: Response, next: NextFunctio
     const uid = (req as any).uid as string;
     const requestId = (req.query.requestId as string) || (req.body?.requestId as string);
     if (!requestId) return res.status(400).json(formatApiResponse('error', 'requestId is required', null as any));
+    // Disable caching for polling endpoints
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     const result = await (replicateService as any).replicateQueueStatus(uid, requestId);
     res.json(formatApiResponse('success', 'Status', result));
   } catch (e) { next(e); }
@@ -102,6 +106,10 @@ export async function queueResult(req: Request, res: Response, next: NextFunctio
     const uid = (req as any).uid as string;
     const requestId = (req.query.requestId as string) || (req.body?.requestId as string);
     if (!requestId) return res.status(400).json(formatApiResponse('error', 'requestId is required', null as any));
+    // Disable caching for polling endpoints
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     const result = await (replicateService as any).replicateQueueResult(uid, requestId);
     res.json(formatApiResponse('success', 'Result', result));
   } catch (e) { next(e); }

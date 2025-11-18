@@ -184,6 +184,12 @@ async function generate(
     isPublic: enforcedIsPublic,
     createdBy,
   });
+  const imageFileNameForIndex = (index: number) => {
+    if (historyId) {
+      return `${historyId}-image-${index + 1}`;
+    }
+    return `image-${Date.now()}-${index + 1}-${Math.random().toString(36).slice(2, 6)}`;
+  };
 
   // Persist user uploaded input images (if any)
   try {
@@ -275,9 +281,25 @@ async function generate(
             errorPayload = { message: text };
           } catch {}
         }
+        
+        // Enhanced error logging for 403 Forbidden
+        if (response.status === 403) {
+          console.error(`[BFL Service] 403 Forbidden Error Details:`, {
+            endpoint,
+            model: normalizedModel,
+            apiKeyPresent: !!apiKey,
+            apiKeyLength: apiKey?.length || 0,
+            apiKeyPrefix: apiKey ? `${apiKey.substring(0, 8)}...` : 'missing',
+            errorPayload,
+            responseHeaders: response.headers,
+          });
+        }
+        
         const reason =
-          (errorPayload && (errorPayload.message || errorPayload.error)) ||
-          "Unknown error";
+          (errorPayload && (errorPayload.message || errorPayload.error || errorPayload.detail)) ||
+          (response.status === 403 
+            ? "API key may be invalid, expired, or lacks access to this model. Please check your BFL_API_KEY environment variable."
+            : "Unknown error");
         throw new ApiError(
           `Failed to initiate image generation: ${reason}`,
           response.status,
@@ -303,11 +325,11 @@ async function generate(
         try {
           const { key, publicUrl } = await uploadFromUrlToZata({
             sourceUrl: img.url,
-            // Username-scoped minimal layout
-            keyPrefix: `users/${
+            // Allow canvas override to avoid duplicate storage paths
+            keyPrefix: (payload as any)?.storageKeyPrefixOverride || `users/${
               (await authRepository.getUserById(uid))?.username || uid
             }/image/${historyId}`,
-            fileName: `image-${index + 1}`,
+            fileName: imageFileNameForIndex(index),
           });
           return {
             id: img.id,

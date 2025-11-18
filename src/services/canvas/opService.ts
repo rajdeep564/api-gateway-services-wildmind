@@ -124,6 +124,40 @@ async function applyOpToElements(projectId: string, op: CanvasOp): Promise<void>
         batch.push(connector);
       }
       break;
+    case 'group':
+      if (op.data.element) {
+        // Upsert the group element
+        batch.push(op.data.element);
+        // Also set meta.groupId on member elements if provided
+        const memberIds: string[] = op.data.element.meta?.memberElementIds || [];
+        for (const mid of memberIds) {
+          const existing = await elementRepository.getElement(projectId, mid);
+          if (existing) {
+            const updated = { ...existing, meta: { ...(existing.meta || {}), groupId: op.elementId } };
+            batch.push(updated);
+          }
+        }
+      }
+      break;
+    case 'ungroup':
+      // Remove group element and clear groupId from member elements
+      if (op.elementId) {
+        const groupEl = await elementRepository.getElement(projectId, op.elementId);
+        if (groupEl) {
+          const memberIds: string[] = groupEl.meta?.memberElementIds || [];
+          for (const mid of memberIds) {
+            const existing = await elementRepository.getElement(projectId, mid);
+            if (existing) {
+              const updatedMeta = { ...(existing.meta || {}) };
+              if (updatedMeta.groupId) delete updatedMeta.groupId;
+              batch.push({ ...existing, meta: updatedMeta });
+            }
+          }
+          // Delete group element document
+          await elementRepository.deleteElement(projectId, op.elementId);
+        }
+      }
+      break;
   }
 
   if (batch.length > 0) {
@@ -186,6 +220,20 @@ export function computeInverseOp(op: CanvasOp): CanvasOp | undefined {
         ...op,
         data: {
           updates: op.data.previousState,
+        },
+      } as CanvasOp;
+    case 'group':
+      return {
+        ...op,
+        type: 'ungroup',
+        data: {},
+      } as CanvasOp;
+    case 'ungroup':
+      return {
+        ...op,
+        type: 'group',
+        data: {
+          element: op.data.elementSnapshot,
         },
       } as CanvasOp;
     

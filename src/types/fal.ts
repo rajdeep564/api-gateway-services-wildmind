@@ -23,6 +23,10 @@ export interface FalGenerateRequest {
   nsfw?: boolean;
   visibility?: string;
   isPublic?: boolean;
+  // Optional: override output storage location (e.g., users/{username}/canvas/{projectId})
+  storageKeyPrefixOverride?: string;
+  // If true, force synchronous Zata upload (useful for canvas so we have storagePath immediately)
+  forceSyncUpload?: boolean;
 }
 
 export interface FalGeneratedImage {

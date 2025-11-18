@@ -18,6 +18,13 @@ import { syncToMirror, updateMirror, ensureMirrorSync } from "../utils/mirrorHel
 import { aestheticScoreService } from "./aestheticScoreService";
 import { markGenerationCompleted } from "./generationHistoryService";
 
+const buildGenerationImageFileName = (historyId?: string, index: number = 0) => {
+  if (historyId) {
+    return `${historyId}-image-${index + 1}`;
+  }
+  return `image-${Date.now()}-${index + 1}-${Math.random().toString(36).slice(2, 6)}`;
+};
+
 async function generate(
   uid: string,
   payload: FalGenerateRequest
@@ -173,6 +180,7 @@ async function generate(
   }
 
   try {
+    const fileNameForIndex = (index: number) => buildGenerationImageFileName(historyId, index);
     const imagePromises = Array.from({ length: imagesRequested }, async (_, index) => {
   const input: any = { prompt: finalPrompt, output_format, num_images: 1 };
       // Seedream expects image_size instead of aspect_ratio; allow explicit image_size override
@@ -261,8 +269,8 @@ async function generate(
           try {
             const { key, publicUrl } = await uploadFromUrlToZata({
               sourceUrl: img.url,
-              keyPrefix: `users/${username}/${outputFolder}/${historyId}`,
-              fileName: `image-${index + 1}`,
+              keyPrefix: (payload as any)?.storageKeyPrefixOverride || `users/${username}/${outputFolder}/${historyId}`,
+              fileName: fileNameForIndex(index),
             });
             return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
           } catch (e) {
@@ -320,6 +328,30 @@ async function generate(
       
       return { images: storedImages as any, historyId, model, status: 'completed' };
     } else {
+      // For canvas flows, force synchronous upload using override (so we have storagePath immediately)
+      if ((payload as any)?.forceSyncUpload === true || (payload as any)?.storageKeyPrefixOverride) {
+        const storedImages = await Promise.all(
+          images.map(async (img, index) => {
+            try {
+              const { key, publicUrl } = await uploadFromUrlToZata({
+                sourceUrl: img.url,
+                keyPrefix: (payload as any)?.storageKeyPrefixOverride || `users/${username}/${outputFolder}/${historyId}`,
+                fileName: fileNameForIndex(index),
+              });
+              return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
+            } catch {
+              return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url } as any;
+            }
+          })
+        );
+        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
+        await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: storedImages, frameSize: resolvedAspect } as any);
+        await ensureMirrorSync(uid, historyId);
+        try {
+          markGenerationCompleted(uid, historyId, { status: 'completed', images: storedImages, isPublic: (payload as any).isPublic === true }).catch(() => {});
+        } catch {}
+        return { images: storedImages as any, historyId, model, status: 'completed' };
+      }
       // For non-character generation, use background upload for faster response
       const quickImages = images.map((img) => ({ id: img.id, url: img.url, originalUrl: img.originalUrl || img.url, storagePath: '' } as any));
       // Mark history completed with provider URLs for instant UX
@@ -341,7 +373,7 @@ async function generate(
                 const { key, publicUrl } = await uploadFromUrlToZata({
                   sourceUrl: img.url,
                   keyPrefix: `users/${username}/${outputFolder}/${historyId}`,
-                  fileName: `image-${index + 1}`,
+                  fileName: fileNameForIndex(index),
                 });
                 return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
               } catch {
@@ -1406,17 +1438,53 @@ async function veoI2vSubmit(uid: string, body: any, fast = false): Promise<Submi
   return { requestId: request_id, historyId, model, status: 'submitted' };
 }
 
-async function queueStatus(_uid: string, model: string, requestId: string): Promise<any> {
+async function queueStatus(uid: string, model: string | undefined, requestId: string): Promise<any> {
   const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   fal.config({ credentials: falKey });
-  const status = await fal.queue.status(model, { requestId, logs: true } as any);
+  
+  // If model is not provided, look it up from generation history
+  let resolvedModel = model;
+  if (!resolvedModel && requestId) {
+    try {
+      const located = await generationHistoryRepository.findByProviderTaskId(uid, 'fal', requestId);
+      if (located?.item?.model) {
+        resolvedModel = located.item.model;
+      }
+    } catch (e) {
+      console.warn('[queueStatus] Failed to lookup model from history', e);
+    }
+  }
+  
+  if (!resolvedModel) {
+    throw new ApiError('Model is required. Either provide it in the request or ensure the requestId exists in generation history.', 400);
+  }
+  
+  const status = await fal.queue.status(resolvedModel, { requestId, logs: true } as any);
   return status;
 }
 
-async function queueResult(uid: string, model: string, requestId: string): Promise<any> {
+async function queueResult(uid: string, model: string | undefined, requestId: string): Promise<any> {
   const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   fal.config({ credentials: falKey });
-  const result = await fal.queue.result(model, { requestId } as any);
+  
+  // If model is not provided, look it up from generation history
+  let resolvedModel = model;
+  if (!resolvedModel && requestId) {
+    try {
+      const located = await generationHistoryRepository.findByProviderTaskId(uid, 'fal', requestId);
+      if (located?.item?.model) {
+        resolvedModel = located.item.model;
+      }
+    } catch (e) {
+      console.warn('[queueResult] Failed to lookup model from history', e);
+    }
+  }
+  
+  if (!resolvedModel) {
+    throw new ApiError('Model is required. Either provide it in the request or ensure the requestId exists in generation history.', 400);
+  }
+  
+  const result = await fal.queue.result(resolvedModel, { requestId } as any);
   const located = await generationHistoryRepository.findByProviderTaskId(uid, 'fal', requestId);
   if (result?.data?.video?.url && located) {
     const providerUrl: string = result.data.video.url as string;
@@ -1454,10 +1522,10 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
       originalUrl: v.originalUrl || providerUrl,
     }));
     try {
-      const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(model, (located as any)?.item);
+      const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(resolvedModel, (located as any)?.item);
       await creditsRepository.writeDebitIfAbsent(uid, located.id, cost, 'fal.queue.veo', { ...meta, historyId: located.id, provider: 'fal', pricingVersion });
     } catch {}
-    return { videos: enrichedVideos, historyId: located.id, model, requestId, status: 'completed' } as any;
+    return { videos: enrichedVideos, historyId: located.id, model: resolvedModel, requestId, status: 'completed' } as any;
   }
   // Handle image outputs (T2I/I2I)
   if (located && (result?.data?.images?.length || result?.data?.image?.url)) {
@@ -1470,7 +1538,7 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
         : [];
     const stored = await Promise.all(providerImages.map(async (img, index) => {
       try {
-        const up = await uploadFromUrlToZata({ sourceUrl: img.url, keyPrefix, fileName: `image-${index+1}` });
+        const up = await uploadFromUrlToZata({ sourceUrl: img.url, keyPrefix, fileName: buildGenerationImageFileName(located?.id, index) });
         return { id: `${requestId}-${index+1}`, url: up.publicUrl, storagePath: up.key, originalUrl: img.url } as any;
       } catch {
         return { id: `${requestId}-${index+1}`, url: img.url, originalUrl: img.url } as any;
@@ -1478,7 +1546,7 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
     }));
     await generationHistoryRepository.update(uid, located.id, { status: 'completed', images: stored } as any);
     try {
-      const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(model, (located as any)?.item);
+      const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(resolvedModel, (located as any)?.item);
       await creditsRepository.writeDebitIfAbsent(uid, located.id, cost, 'fal.queue.image', { ...meta, historyId: located.id, provider: 'fal', pricingVersion });
     } catch {}
     
@@ -1490,7 +1558,7 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
     
     // Sync to mirror with retries
     await syncToMirror(uid, located.id);
-    return { images: stored, historyId: located.id, model, requestId, status: 'completed' } as any;
+    return { images: stored, historyId: located.id, model: resolvedModel, requestId, status: 'completed' } as any;
   }
   return result;
 }
@@ -1779,8 +1847,64 @@ export const falQueueService = {
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   // LTX V2 - Image to Video wrappers
-  async ltx2ProI2vSubmit(uid: string, body: any): Promise<SubmitReturn> { return this.ltx2I2vSubmit(uid, body, false); },
-  async ltx2FastI2vSubmit(uid: string, body: any): Promise<SubmitReturn> { return this.ltx2I2vSubmit(uid, body, true); },
+  async ltx2ProI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+    if (!body?.image_url) throw new ApiError('image_url is required', 400);
+    const model = 'fal-ai/ltxv-2/image-to-video';
+    const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    const { request_id } = await fal.queue.submit(model, {
+      input: {
+        prompt: body.prompt,
+        image_url: body.image_url,
+        resolution: body.resolution ?? '1080p',
+        aspect_ratio: body.aspect_ratio ?? 'auto',
+        duration: body.duration ?? 8,
+        fps: body.fps ?? 25,
+        generate_audio: body.generate_audio ?? true,
+      },
+    } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: 'fal',
+      providerTaskId: request_id,
+      duration: body.duration ?? 8,
+      resolution: body.resolution ?? '1080p',
+      aspect_ratio: body.aspect_ratio ?? 'auto',
+      fps: body.fps ?? 25,
+      generate_audio: body.generate_audio ?? true,
+    } as any);
+    return { requestId: request_id, historyId, model, status: 'submitted' };
+  },
+  async ltx2FastI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+    if (!body?.image_url) throw new ApiError('image_url is required', 400);
+    const model = 'fal-ai/ltxv-2/image-to-video/fast';
+    const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    const { request_id } = await fal.queue.submit(model, {
+      input: {
+        prompt: body.prompt,
+        image_url: body.image_url,
+        resolution: body.resolution ?? '1080p',
+        aspect_ratio: body.aspect_ratio ?? 'auto',
+        duration: body.duration ?? 8,
+        fps: body.fps ?? 25,
+        generate_audio: body.generate_audio ?? true,
+      },
+    } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: 'fal',
+      providerTaskId: request_id,
+      duration: body.duration ?? 8,
+      resolution: body.resolution ?? '1080p',
+      aspect_ratio: body.aspect_ratio ?? 'auto',
+      fps: body.fps ?? 25,
+      generate_audio: body.generate_audio ?? true,
+    } as any);
+    return { requestId: request_id, historyId, model, status: 'submitted' };
+  },
   // LTX V2 - Text to Video (shared)
   async ltx2T2vSubmit(uid: string, body: any, fast = false): Promise<SubmitReturn> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
@@ -1810,8 +1934,60 @@ export const falQueueService = {
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   // LTX V2 - Text to Video wrappers
-  async ltx2ProT2vSubmit(uid: string, body: any): Promise<SubmitReturn> { return this.ltx2T2vSubmit(uid, body, false); },
-  async ltx2FastT2vSubmit(uid: string, body: any): Promise<SubmitReturn> { return this.ltx2T2vSubmit(uid, body, true); },
+  async ltx2ProT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+    const model = 'fal-ai/ltxv-2/text-to-video';
+    const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    const { request_id } = await fal.queue.submit(model, {
+      input: {
+        prompt: body.prompt,
+        duration: body.duration ?? 8,
+        resolution: body.resolution ?? '1080p',
+        aspect_ratio: body.aspect_ratio ?? '16:9',
+        fps: body.fps ?? 25,
+        generate_audio: body.generate_audio ?? true,
+      },
+    } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: 'fal',
+      providerTaskId: request_id,
+      duration: body.duration ?? 8,
+      resolution: body.resolution ?? '1080p',
+      aspect_ratio: body.aspect_ratio ?? '16:9',
+      fps: body.fps ?? 25,
+      generate_audio: body.generate_audio ?? true,
+    } as any);
+    return { requestId: request_id, historyId, model, status: 'submitted' };
+  },
+  async ltx2FastT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+    const model = 'fal-ai/ltxv-2/text-to-video/fast';
+    const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    const { request_id } = await fal.queue.submit(model, {
+      input: {
+        prompt: body.prompt,
+        duration: body.duration ?? 8,
+        resolution: body.resolution ?? '1080p',
+        aspect_ratio: body.aspect_ratio ?? '16:9',
+        fps: body.fps ?? 25,
+        generate_audio: body.generate_audio ?? true,
+      },
+    } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: 'fal',
+      providerTaskId: request_id,
+      duration: body.duration ?? 8,
+      resolution: body.resolution ?? '1080p',
+      aspect_ratio: body.aspect_ratio ?? '16:9',
+      fps: body.fps ?? 25,
+      generate_audio: body.generate_audio ?? true,
+    } as any);
+    return { requestId: request_id, historyId, model, status: 'submitted' };
+  },
   queueStatus,
   queueResult,
 };

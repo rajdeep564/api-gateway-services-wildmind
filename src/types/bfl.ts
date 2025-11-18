@@ -26,6 +26,8 @@ export interface BflGenerateRequest {
   nsfw?: boolean;
   visibility?: string;
   isPublic?: boolean;
+  // Optional: override output storage location (e.g., users/{username}/canvas/{projectId})
+  storageKeyPrefixOverride?: string;
 }
 
 export interface GeneratedImage {

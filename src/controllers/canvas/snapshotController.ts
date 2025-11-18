@@ -135,3 +135,81 @@ export async function createSnapshot(req: Request, res: Response) {
   }
 }
 
+// Overwrite current snapshot (no op-index semantics). Accepts full canvas state.
+export async function setCurrentSnapshot(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+
+    const { id: projectId } = req.params;
+    const body = req.body || {};
+
+    // Verify access (owner/editor can overwrite snapshot)
+    const project = await projectRepository.getProject(projectId);
+    if (!project) {
+      throw new ApiError('Project not found', 404);
+    }
+
+    const userRole = project.ownerUid === userId
+      ? 'owner'
+      : project.collaborators.find(c => c.uid === userId)?.role;
+    if (userRole !== 'owner' && userRole !== 'editor') {
+      throw new ApiError('Only owners and editors can update snapshot', 403);
+    }
+
+    // Expect body: { elements: Record<string, any>, metadata?: { version?: string } }
+    const elements = body.elements || {};
+    const metadata = body.metadata || {};
+
+    const snapshot: CanvasSnapshot = {
+      projectId,
+      snapshotOpIndex: -1,
+      elements,
+      metadata: {
+        version: metadata.version || '1.0',
+        createdAt: admin.firestore.Timestamp.now(),
+      },
+    };
+
+    await projectRepository.saveCurrentSnapshot(projectId, snapshot);
+    res.json(formatApiResponse('success', 'Current snapshot updated', { snapshot }));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to update snapshot', null)
+    );
+  }
+}
+
+// Get the current snapshot (overwrite model). Returns null if not set yet.
+export async function getCurrentSnapshot(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+    const { id: projectId } = req.params;
+
+    // Verify access (owner, collaborator viewer/editor)
+    const project = await projectRepository.getProject(projectId);
+    if (!project) {
+      throw new ApiError('Project not found', 404);
+    }
+
+    const hasAccess =
+      project.ownerUid === userId ||
+      project.collaborators.some(c => c.uid === userId);
+    if (!hasAccess) {
+      throw new ApiError('Access denied', 403);
+    }
+
+    const snapshot = await projectRepository.getCurrentSnapshot(projectId);
+    res.json(formatApiResponse('success', 'Current snapshot retrieved', { snapshot }));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to get snapshot', null)
+    );
+  }
+}
+
