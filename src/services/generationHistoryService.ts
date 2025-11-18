@@ -308,6 +308,86 @@ export async function getUserGeneration(
     console.warn('[getUserGeneration] Cache read failed, falling back to DB:', e);
   }
   const item = await generationHistoryRepository.get(uid, historyId);
+  
+  // Backfill inputImages for older Seedream generations that don't have them
+  if (item && (!(item as any).inputImages || !Array.isArray((item as any).inputImages) || (item as any).inputImages.length === 0)) {
+    const model = (item as any).model || '';
+    const isSeedream = model.includes('seedream') || model.includes('seedream-4') || model.includes('bytedance/seedream');
+    
+    if (isSeedream) {
+      try {
+        const creator = await authRepository.getUserById(uid);
+        const username = creator?.username || uid;
+        const zataPrefix = (process.env.ZATA_PREFIX || process.env.NEXT_PUBLIC_ZATA_PREFIX || 'https://idr01.zata.ai/devstoragev1/').replace(/\/$/, '') + '/';
+        
+        // Try common input file patterns for Seedream (more comprehensive list)
+        const commonInputPatterns = [
+          // Seedream-specific patterns
+          `users/${username}/input/${historyId}/seedream-ref-1.jpg`,
+          `users/${username}/input/${historyId}/seedream-ref-1.png`,
+          `users/${username}/input/${historyId}/seedream-ref-1.jpeg`,
+          `users/${username}/input/${historyId}/seedream-ref-fixed-1.jpg`,
+          `users/${username}/input/${historyId}/seedream-ref-fixed-1.png`,
+          // Generic input patterns
+          `users/${username}/input/${historyId}/input-1.jpg`,
+          `users/${username}/input/${historyId}/input-1.png`,
+          `users/${username}/input/${historyId}/input-1.jpeg`,
+          // Try without extension (some uploads might not have extensions)
+          `users/${username}/input/${historyId}/seedream-ref-1`,
+          `users/${username}/input/${historyId}/input-1`,
+        ];
+        
+        const foundInputImages: any[] = [];
+        console.log('[getUserGeneration] Attempting to backfill inputImages for Seedream generation', { historyId, username, patternsToCheck: commonInputPatterns.length });
+        
+        for (const pattern of commonInputPatterns) {
+          const testUrl = `${zataPrefix}${pattern}`;
+          try {
+            // Try to fetch the file to see if it exists (with timeout)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 3000);
+            const response = await fetch(testUrl, { 
+              method: 'HEAD', 
+              signal: controller.signal,
+              headers: {
+                'Accept': 'image/*',
+              }
+            });
+            clearTimeout(timeoutId);
+            if (response.ok && response.status === 200) {
+              foundInputImages.push({
+                id: `in-${foundInputImages.length + 1}`,
+                url: testUrl,
+                storagePath: pattern,
+                originalUrl: testUrl,
+              });
+              console.log('[getUserGeneration] Found input image via backfill', { historyId, pattern, url: testUrl });
+              break; // Found at least one, that's enough
+            }
+          } catch (err: any) {
+            // File doesn't exist or not accessible, continue
+            if (err.name !== 'AbortError') {
+              // Only log non-timeout errors for debugging
+              console.debug('[getUserGeneration] Input image check failed', { pattern, error: err.message });
+            }
+          }
+        }
+        
+        // If we found input images, save them to the database
+        if (foundInputImages.length > 0) {
+          await generationHistoryRepository.update(uid, historyId, { inputImages: foundInputImages } as any);
+          (item as any).inputImages = foundInputImages;
+          console.log('[getUserGeneration] Successfully backfilled inputImages for Seedream generation', { historyId, count: foundInputImages.length });
+        } else {
+          console.log('[getUserGeneration] No input images found for Seedream generation (may not have been uploaded to storage)', { historyId });
+        }
+      } catch (e: any) {
+        // Log error but don't block the request
+        console.warn('[getUserGeneration] Failed to backfill inputImages:', { historyId, error: e?.message || e });
+      }
+    }
+  }
+  
   try {
     if (item) await setCachedItem(uid, historyId, item);
   } catch (e) {
