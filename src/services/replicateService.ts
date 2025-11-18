@@ -675,6 +675,8 @@ export async function generateImage(uid: string, body: any) {
         : [];
       if (!images.length && typeof rest.image === "string" && rest.image.length)
         images = [rest.image];
+      // Track input images for saving to database
+      const inputPersisted: any[] = [];
       if (images.length > 0) {
         const resolved: string[] = [];
         for (let i = 0; i < images.length; i++) {
@@ -687,11 +689,31 @@ export async function generateImage(uid: string, body: any) {
                 fileName: `seedream-ref-${i + 1}`,
               });
               resolved.push(uploaded.publicUrl);
+              // Track for database persistence
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: uploaded.publicUrl,
+                storagePath: (uploaded as any).key,
+                originalUrl: img,
+              });
             } else if (typeof img === "string") {
               resolved.push(img);
+              // Track external URLs (will be normalized and potentially re-uploaded)
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: img,
+                originalUrl: img,
+              });
             }
           } catch {
-            if (typeof img === "string") resolved.push(img);
+            if (typeof img === "string") {
+              resolved.push(img);
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: img,
+                originalUrl: img,
+              });
+            }
           }
         }
         // Normalize any out-of-range aspect ratios to Seedream's allowed bounds (0.33–3.0)
@@ -741,6 +763,15 @@ export async function generateImage(uid: string, body: any) {
                 keyPrefix: `users/${username}/input/${historyId}`,
                 fileName: `seedream-ref-fixed-${idx + 1}.jpg`,
               });
+              // Update tracked input image with fixed version
+              if (inputPersisted[idx]) {
+                inputPersisted[idx] = {
+                  id: `in-${idx + 1}`,
+                  url: uploaded.publicUrl,
+                  storagePath: (uploaded as any).key,
+                  originalUrl: inputPersisted[idx].originalUrl || url,
+                };
+              }
               return uploaded.publicUrl;
             } else {
               // ratio < minR => too tall; pad width
@@ -763,6 +794,15 @@ export async function generateImage(uid: string, body: any) {
                 keyPrefix: `users/${username}/input/${historyId}`,
                 fileName: `seedream-ref-fixed-${idx + 1}.jpg`,
               });
+              // Update tracked input image with fixed version
+              if (inputPersisted[idx]) {
+                inputPersisted[idx] = {
+                  id: `in-${idx + 1}`,
+                  url: uploaded.publicUrl,
+                  storagePath: (uploaded as any).key,
+                  originalUrl: inputPersisted[idx].originalUrl || url,
+                };
+              }
               return uploaded.publicUrl;
             }
           } catch {
@@ -772,9 +812,23 @@ export async function generateImage(uid: string, body: any) {
         const fixed: string[] = [];
         for (let i = 0; i < resolved.length; i++) {
           // eslint-disable-next-line no-await-in-loop
-          fixed.push(await normalizeIfNeeded(resolved[i], i));
+          const fixedUrl = await normalizeIfNeeded(resolved[i], i);
+          fixed.push(fixedUrl);
+          // Update URL in tracked input if it was normalized
+          if (inputPersisted[i] && fixedUrl !== resolved[i]) {
+            inputPersisted[i].url = fixedUrl;
+          }
         }
         if (fixed.length > 0) input.image_input = fixed;
+        // Save input images to database
+        if (inputPersisted.length > 0) {
+          try {
+            await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+            console.log('[replicateService.generateImage] Saved inputImages to database', { historyId, count: inputPersisted.length });
+          } catch (e) {
+            console.warn('[replicateService.generateImage] Failed to save inputImages:', e);
+          }
+        }
       }
       // Enforce total images cap when auto: input_count + max_images <= 15
       if (input.sequential_image_generation === "auto") {

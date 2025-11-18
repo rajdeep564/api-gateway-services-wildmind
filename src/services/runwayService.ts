@@ -107,6 +107,32 @@ async function textToImage(
   } catch {}
   // Store provider identifiers on history
   await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
+  
+  // Persist user uploaded input images (if any)
+  if (uploadedImages && uploadedImages.length > 0) {
+    try {
+      const username = creator?.username || uid;
+      const keyPrefix = `users/${username}/input/${historyId}`;
+      const inputPersisted: any[] = [];
+      let idx = 0;
+      for (const src of uploadedImages) {
+        if (!src || typeof src !== 'string') continue;
+        try {
+          const stored = /^data:/i.test(src)
+            ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
+            : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+          inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+        } catch {}
+      }
+      if (inputPersisted.length > 0) {
+        await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+        console.log('[runwayService.textToImage] Saved inputImages to database', { historyId, count: inputPersisted.length });
+      }
+    } catch (e) {
+      console.warn('[runwayService.textToImage] Failed to save inputImages:', e);
+    }
+  }
+  
   return { taskId: created.id, status: "pending", historyId };
 }
 
