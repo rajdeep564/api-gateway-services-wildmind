@@ -865,6 +865,24 @@ export async function generateImage(uid: string, body: any) {
       if (input.steps != null)
         input.steps = Math.max(1, Math.min(100, Number(input.steps)));
       if (!input.resolution) input.resolution = "1024";
+      // Magic Image Refiner uses input.image - save it as inputImages
+      if (rest.image && typeof rest.image === 'string') {
+        try {
+          const username = creator?.username || uid;
+          const keyPrefix = `users/${username}/input/${historyId}`;
+          const inputPersisted: any[] = [];
+          const stored = /^data:/i.test(rest.image)
+            ? await uploadDataUriToZata({ dataUri: rest.image, keyPrefix, fileName: 'input-1' })
+            : await uploadFromUrlToZata({ sourceUrl: rest.image, keyPrefix, fileName: 'input-1' });
+          inputPersisted.push({ id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: rest.image });
+          if (inputPersisted.length > 0) {
+            await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+            console.log('[replicateService.generateImage] Saved inputImages for Magic Image Refiner', { historyId });
+          }
+        } catch (e) {
+          console.warn('[replicateService.generateImage] Failed to save inputImages for Magic Image Refiner:', e);
+        }
+      }
     }
     // Ideogram v3 (Turbo/Quality) mapping
     if (
@@ -892,6 +910,40 @@ export async function generateImage(uid: string, body: any) {
       // Replicate exposes a single ideogram-v3 model with a 'mode' input controlling Turbo vs Quality
       input.mode = modelBase.endsWith("-quality") ? "quality" : "turbo";
       replicateModelBase = "ideogram-ai/ideogram-v3";
+      // Save input images for Ideogram (rest.image and rest.style_reference_images)
+      try {
+        const username = creator?.username || uid;
+        const keyPrefix = `users/${username}/input/${historyId}`;
+        const inputPersisted: any[] = [];
+        let idx = 0;
+        // Save main input image
+        if (rest.image && typeof rest.image === 'string') {
+          try {
+            const stored = /^data:/i.test(rest.image)
+              ? await uploadDataUriToZata({ dataUri: rest.image, keyPrefix, fileName: `input-${++idx}` })
+              : await uploadFromUrlToZata({ sourceUrl: rest.image, keyPrefix, fileName: `input-${++idx}` });
+            inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: rest.image });
+          } catch {}
+        }
+        // Save style reference images
+        if (Array.isArray(rest.style_reference_images) && rest.style_reference_images.length > 0) {
+          for (const refImg of rest.style_reference_images.slice(0, 10)) {
+            if (!refImg || typeof refImg !== 'string') continue;
+            try {
+              const stored = /^data:/i.test(refImg)
+                ? await uploadDataUriToZata({ dataUri: refImg, keyPrefix, fileName: `input-${++idx}` })
+                : await uploadFromUrlToZata({ sourceUrl: refImg, keyPrefix, fileName: `input-${++idx}` });
+              inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: refImg });
+            } catch {}
+          }
+        }
+        if (inputPersisted.length > 0) {
+          await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+          console.log('[replicateService.generateImage] Saved inputImages for Ideogram', { historyId, count: inputPersisted.length });
+        }
+      } catch (e) {
+        console.warn('[replicateService.generateImage] Failed to save inputImages for Ideogram:', e);
+      }
       // No additional clamping required; validator enforces enumerations and limits
     }
     const modelSpec = composeModelSpec(replicateModelBase, body.version);
@@ -1149,11 +1201,18 @@ export async function generateImage(uid: string, body: any) {
   // Score the images for aesthetic quality (generateImage function)
   const scoredImages = await aestheticScoreService.scoreImages(uploadedImages);
   const highestScore = aestheticScoreService.getHighestScore(scoredImages);
-  await generationHistoryRepository.update(uid, historyId, {
+  // Preserve inputImages if they were already saved (don't overwrite them)
+  const existing = await generationHistoryRepository.get(uid, historyId);
+  const updateData: any = {
     status: "completed",
     images: scoredImages as any,
     aestheticScore: highestScore,
-  } as any);
+  };
+  // Preserve inputImages if they exist
+  if (existing && Array.isArray((existing as any).inputImages) && (existing as any).inputImages.length > 0) {
+    updateData.inputImages = (existing as any).inputImages;
+  }
+  await generationHistoryRepository.update(uid, historyId, updateData);
   try { console.log('[Replicate.generateImage] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch {}
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
