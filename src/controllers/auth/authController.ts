@@ -10,6 +10,9 @@ import "../../types/http";
 import { cacheSession, deleteCachedSession, decodeJwtPayload, getCachedSession } from "../../utils/sessionStore";
 import { isRedisEnabled } from "../../config/redisClient";
 
+// Module-level log to confirm file is loaded
+console.log('[AUTH][authController] Module loaded at', new Date().toISOString());
+
 async function checkUsername(req: Request, res: Response, next: NextFunction) {
   try {
     const username = String(req.query.username || "");
@@ -22,11 +25,23 @@ async function checkUsername(req: Request, res: Response, next: NextFunction) {
 
 async function createSession(req: Request, res: Response, next: NextFunction) {
   try {
+    console.log('[AUTH][createSession] Function called', {
+      hasIdToken: !!req.body?.idToken,
+      idTokenLength: req.body?.idToken?.length || 0,
+      origin: req.headers.origin,
+      hostname: req.hostname
+    });
+    
     const { idToken } = req.body;
-  const user = await authService.createSession(idToken);
+    console.log('[AUTH][createSession] Creating session with authService...');
+    
+    const user = await authService.createSession(idToken);
+    console.log('[AUTH][createSession] Session created, user:', { uid: user?.uid, username: user?.username });
 
-  // Set session cookie (safely handle domain so browsers don't drop it in prod)
-  const sessionCookie = await setSessionCookie(req, res, idToken);
+    // Set session cookie (safely handle domain so browsers don't drop it in prod)
+    console.log('[AUTH][createSession] About to call setSessionCookie...');
+    const sessionCookie = await setSessionCookie(req, res, idToken);
+    console.log('[AUTH][createSession] setSessionCookie completed, cookie length:', sessionCookie?.length || 0);
     // Cache session in Redis for quick lookups
     try {
       const payload: any = decodeJwtPayload(sessionCookie) || {};
@@ -260,12 +275,32 @@ async function resolveEmail(req: Request, res: Response, next: NextFunction) {
 }
 
 async function setSessionCookie(req: Request, res: Response, idToken: string) {
+  // Log function entry immediately
+  console.log('[AUTH][setSessionCookie] Function called', {
+    hasIdToken: !!idToken,
+    idTokenLength: idToken?.length || 0,
+    hostname: req.hostname,
+    origin: req.headers.origin
+  });
+  
   const isProd = process.env.NODE_ENV === "production";
   const cookieDomain = process.env.COOKIE_DOMAIN; // e.g., .wildmindai.com when API runs on api.wildmindai.com
   const expiresIn = 1000 * 60 * 60 * 24 * 7; // 7 days
+  
+  console.log('[AUTH][setSessionCookie] Before creating session cookie', {
+    isProd,
+    cookieDomain: cookieDomain || '(not set in env)',
+    expiresIn
+  });
+  
   const sessionCookie = await admin
     .auth()
     .createSessionCookie(idToken, { expiresIn });
+  
+  console.log('[AUTH][setSessionCookie] Session cookie created', {
+    cookieLength: sessionCookie?.length || 0,
+    hasCookie: !!sessionCookie
+  });
   
   // In production, always use the cookie domain if set (for cross-subdomain sharing)
   // In development, only use domain if it matches the current host
@@ -293,15 +328,14 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     ...(shouldSetDomain ? { domain: cookieDomain } : {}),
   };
 
-  // Debug logging for cookie setting
-  console.log('[AUTH][setSessionCookie] Setting cookie', {
+  // Debug logging for cookie setting - use both console.log and logger for visibility
+  const logData = {
     isProd,
-    cookieDomain,
+    cookieDomain: cookieDomain || '(not set)',
     shouldSetDomain,
     host,
     origin,
     cookieOptions: {
-      ...cookieOptions,
       domain: cookieOptions.domain || '(not set)',
       sameSite: cookieOptions.sameSite,
       secure: cookieOptions.secure,
@@ -309,9 +343,28 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
       path: cookieOptions.path,
       maxAge: cookieOptions.maxAge
     }
-  });
+  };
+  
+  // Use console.log (always visible) and logger (structured logging)
+  console.log('[AUTH][setSessionCookie] Setting cookie', JSON.stringify(logData, null, 2));
+  try {
+    const { logger } = await import('../../utils/logger');
+    logger.info(logData, '[AUTH][setSessionCookie] Setting cookie');
+  } catch (e) {
+    // Logger not available, console.log is enough
+  }
 
+  // Actually set the cookie
   res.cookie("app_session", sessionCookie, cookieOptions);
+  
+  // Log the actual Set-Cookie header that will be sent
+  const setCookieHeader = res.getHeader('Set-Cookie');
+  console.log('[AUTH][setSessionCookie] Set-Cookie header:', setCookieHeader);
+  
+  // Also log what the browser should receive
+  const cookieString = `app_session=${sessionCookie}; Domain=${cookieOptions.domain || '(no domain)'}; Path=${cookieOptions.path}; Max-Age=${cookieOptions.maxAge}; SameSite=${cookieOptions.sameSite}; Secure=${cookieOptions.secure}; HttpOnly=${cookieOptions.httpOnly}`;
+  console.log('[AUTH][setSessionCookie] Cookie string that will be sent:', cookieString);
+  
   return sessionCookie;
 }
 
@@ -360,13 +413,25 @@ async function loginWithEmailPassword(
     }
 
     // If we have an ID token from password login, set the session cookie now so the client doesn't need to call session explicitly
+    console.log('[AUTH][loginEmail] Checking for passwordLoginIdToken', {
+      hasPasswordLoginIdToken: !!result.passwordLoginIdToken,
+      tokenLength: result.passwordLoginIdToken?.length || 0
+    });
+    
     try {
       if (result.passwordLoginIdToken) {
+        console.log('[AUTH][loginEmail] About to call setSessionCookie with passwordLoginIdToken...');
         await setSessionCookie(req, res, result.passwordLoginIdToken);
+        console.log('[AUTH][loginEmail] setSessionCookie completed successfully');
+      } else {
+        console.log('[AUTH][loginEmail] No passwordLoginIdToken, skipping setSessionCookie');
       }
     } catch (e) {
       // Non-fatal; client still has customToken fallback
-      console.warn('[CONTROLLER][loginEmail] session cookie create failed', (e as any)?.message);
+      console.error('[CONTROLLER][loginEmail] session cookie create failed', {
+        error: (e as any)?.message,
+        stack: (e as any)?.stack
+      });
     }
 
     // Return user data and custom token (frontend can signInWithCustomToken to sync Firebase client state)
@@ -404,12 +469,25 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
         console.error('[CREDITS][googleSignIn:needsUsername] Init error', { uid: (result.user as any)?.uid, err: e?.message });
       }
       // Set session cookie immediately so client doesn't need a follow-up session call
+      console.log('[AUTH][googleSignIn:needsUsername] Checking idToken for setSessionCookie', {
+        hasIdToken: !!idToken,
+        idTokenType: typeof idToken,
+        idTokenLength: idToken?.length || 0
+      });
+      
       try {
         if (typeof idToken === 'string' && idToken.length > 0) {
+          console.log('[AUTH][googleSignIn:needsUsername] About to call setSessionCookie...');
           await setSessionCookie(req, res, idToken);
+          console.log('[AUTH][googleSignIn:needsUsername] setSessionCookie completed successfully');
+        } else {
+          console.log('[AUTH][googleSignIn:needsUsername] Invalid idToken, skipping setSessionCookie');
         }
       } catch (cookieErr) {
-        console.warn('[CONTROLLER][googleSignIn:needsUsername] session cookie create failed', (cookieErr as any)?.message);
+        console.error('[CONTROLLER][googleSignIn:needsUsername] session cookie create failed', {
+          error: (cookieErr as any)?.message,
+          stack: (cookieErr as any)?.stack
+        });
       }
       // New user needs to set username
       res.json(
@@ -432,12 +510,25 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
         console.error('[CREDITS][googleSignIn:existing] Init error', { uid: (result.user as any)?.uid, err: e?.message });
       }
       // Set session cookie immediately for existing users too
+      console.log('[AUTH][googleSignIn:existing] Checking idToken for setSessionCookie', {
+        hasIdToken: !!idToken,
+        idTokenType: typeof idToken,
+        idTokenLength: idToken?.length || 0
+      });
+      
       try {
         if (typeof idToken === 'string' && idToken.length > 0) {
+          console.log('[AUTH][googleSignIn:existing] About to call setSessionCookie...');
           await setSessionCookie(req, res, idToken);
+          console.log('[AUTH][googleSignIn:existing] setSessionCookie completed successfully');
+        } else {
+          console.log('[AUTH][googleSignIn:existing] Invalid idToken, skipping setSessionCookie');
         }
       } catch (cookieErr) {
-        console.warn('[CONTROLLER][googleSignIn:existing] session cookie create failed', (cookieErr as any)?.message);
+        console.error('[CONTROLLER][googleSignIn:existing] session cookie create failed', {
+          error: (cookieErr as any)?.message,
+          stack: (cookieErr as any)?.stack
+        });
       }
       res.json(
         formatApiResponse("success", "Google sign-in successful", {
