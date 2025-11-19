@@ -184,6 +184,12 @@ async function generate(
     isPublic: enforcedIsPublic,
     createdBy,
   });
+  const imageFileNameForIndex = (index: number) => {
+    if (historyId) {
+      return `${historyId}-image-${index + 1}`;
+    }
+    return `image-${Date.now()}-${index + 1}-${Math.random().toString(36).slice(2, 6)}`;
+  };
 
   // Persist user uploaded input images (if any)
   try {
@@ -275,9 +281,25 @@ async function generate(
             errorPayload = { message: text };
           } catch {}
         }
+        
+        // Enhanced error logging for 403 Forbidden
+        if (response.status === 403) {
+          console.error(`[BFL Service] 403 Forbidden Error Details:`, {
+            endpoint,
+            model: normalizedModel,
+            apiKeyPresent: !!apiKey,
+            apiKeyLength: apiKey?.length || 0,
+            apiKeyPrefix: apiKey ? `${apiKey.substring(0, 8)}...` : 'missing',
+            errorPayload,
+            responseHeaders: response.headers,
+          });
+        }
+        
         const reason =
-          (errorPayload && (errorPayload.message || errorPayload.error)) ||
-          "Unknown error";
+          (errorPayload && (errorPayload.message || errorPayload.error || errorPayload.detail)) ||
+          (response.status === 403 
+            ? "API key may be invalid, expired, or lacks access to this model. Please check your BFL_API_KEY environment variable."
+            : "Unknown error");
         throw new ApiError(
           `Failed to initiate image generation: ${reason}`,
           response.status,
@@ -303,11 +325,11 @@ async function generate(
         try {
           const { key, publicUrl } = await uploadFromUrlToZata({
             sourceUrl: img.url,
-            // Username-scoped minimal layout
-            keyPrefix: `users/${
+            // Allow canvas override to avoid duplicate storage paths
+            keyPrefix: (payload as any)?.storageKeyPrefixOverride || `users/${
               (await authRepository.getUserById(uid))?.username || uid
             }/image/${historyId}`,
-            fileName: `image-${index + 1}`,
+            fileName: imageFileNameForIndex(index),
           });
           return {
             id: img.id,
@@ -332,19 +354,30 @@ async function generate(
     const scoredImages = await aestheticScoreService.scoreImages(storedImages);
     const highestScore = aestheticScoreService.getHighestScore(scoredImages);
 
+    // Clean images array to remove undefined aestheticScore values
+    const cleanedImages = scoredImages.map(img => {
+      const { aestheticScore, ...rest } = img as any;
+      return aestheticScore !== undefined ? { ...rest, aestheticScore } : rest;
+    });
+
     await bflRepository.updateGenerationRecord(legacyId, {
       status: "completed",
-      images: scoredImages as any, // BFL repo uses older GeneratedImage type
+      images: cleanedImages as any, // BFL repo uses older GeneratedImage type
       frameSize,
     });
     // update authoritative history and mirror with aesthetic scores
-    await generationHistoryRepository.update(uid, historyId, {
+    // Only include aestheticScore if it's not undefined
+    const updateData: any = {
       status: "completed",
-      images: scoredImages,
-      aestheticScore: highestScore,
+      images: cleanedImages,
       // persist optional fields
       ...(frameSize ? { frameSize: frameSize as any } : {}),
-    } as Partial<GenerationHistoryItem>);
+    };
+    if (highestScore !== undefined) {
+      updateData.aestheticScore = highestScore;
+    }
+    
+    await generationHistoryRepository.update(uid, historyId, updateData as Partial<GenerationHistoryItem>);
     
     // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
     markGenerationCompleted(uid, historyId, {
@@ -354,7 +387,7 @@ async function generate(
     
     // Robust mirror sync with retry logic
     await syncToMirror(uid, historyId);
-    return {
+    const returnData: any = {
       historyId,
       prompt,
       model,
@@ -362,10 +395,13 @@ async function generate(
       visibility: enforcedVisibility,
       isPublic: enforcedIsPublic,
       createdBy,
-      images: scoredImages,
-      aestheticScore: highestScore,
+      images: cleanedImages,
       status: "completed",
-    } as any;
+    };
+    if (highestScore !== undefined) {
+      returnData.aestheticScore = highestScore;
+    }
+    return returnData as any;
   } catch (err: any) {
     const message = err?.message || "Failed to generate images";
     // eslint-disable-next-line no-console
@@ -447,11 +483,17 @@ async function fill(uid: string, body: any) {
   const scoredImages = await aestheticScoreService.scoreImages(images);
   const highestScore = aestheticScoreService.getHighestScore(scoredImages);
 
-  await generationHistoryRepository.update(uid, historyId, {
+  // Clean images array to remove undefined aestheticScore values
+  const cleanedImages = scoredImages.map(img => {
+    const { aestheticScore, ...rest } = img as any;
+    return aestheticScore !== undefined ? { ...rest, aestheticScore } : rest;
+  });
+
+  const updateData: any = {
     status: "completed",
     images: scoredImages,
     aestheticScore: highestScore,
-  } as any);
+  } as any;
   // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
   try {
     console.log('[BFL.fill] Triggering markGenerationCompleted for optimization', { uid, historyId });
@@ -464,7 +506,7 @@ async function fill(uid: string, body: any) {
   }
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
-  return {
+  const returnData: any = {
     historyId,
     prompt: body?.prompt || "",
     model: "flux-pro-1.0-fill",
@@ -472,10 +514,13 @@ async function fill(uid: string, body: any) {
     visibility: "private",
     isPublic: body?.isPublic === true,
     createdBy,
-      images: scoredImages,
-      aestheticScore: highestScore,
-      status: "completed",
-    } as any;
+    images: cleanedImages,
+    status: "completed",
+  };
+  if (highestScore !== undefined) {
+    returnData.aestheticScore = highestScore;
+  }
+  return returnData as any;
 }
 
 async function expand(uid: string, body: any) {
@@ -521,11 +566,17 @@ async function expand(uid: string, body: any) {
   const scoredImages = await aestheticScoreService.scoreImages(images);
   const highestScore = aestheticScoreService.getHighestScore(scoredImages);
 
-  await generationHistoryRepository.update(uid, historyId, {
+  // Clean images array to remove undefined aestheticScore values
+  const cleanedImages = scoredImages.map(img => {
+    const { aestheticScore, ...rest } = img as any;
+    return aestheticScore !== undefined ? { ...rest, aestheticScore } : rest;
+  });
+
+  const updateData: any = {
     status: "completed",
     images: scoredImages,
     aestheticScore: highestScore,
-  } as any);
+  } as any;
   // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
   try {
     console.log('[BFL.expand] Triggering markGenerationCompleted for optimization', { uid, historyId });
@@ -538,7 +589,7 @@ async function expand(uid: string, body: any) {
   }
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
-  return {
+  const returnData: any = {
     historyId,
     prompt: body?.prompt || "",
     model: "flux-pro-1.0-expand",
@@ -546,10 +597,13 @@ async function expand(uid: string, body: any) {
     visibility: "private",
     isPublic: body?.isPublic === true,
     createdBy,
-    images: scoredImages,
-    aestheticScore: highestScore,
+    images: cleanedImages,
     status: "completed",
-  } as any;
+  };
+  if (highestScore !== undefined) {
+    returnData.aestheticScore = highestScore;
+  }
+  return returnData as any;
 }
 
 async function canny(uid: string, body: any) {
@@ -591,11 +645,17 @@ async function canny(uid: string, body: any) {
   const scoredImages = await aestheticScoreService.scoreImages(images);
   const highestScore = aestheticScoreService.getHighestScore(scoredImages);
 
-  await generationHistoryRepository.update(uid, historyId, {
+  // Clean images array to remove undefined aestheticScore values
+  const cleanedImages = scoredImages.map(img => {
+    const { aestheticScore, ...rest } = img as any;
+    return aestheticScore !== undefined ? { ...rest, aestheticScore } : rest;
+  });
+
+  const updateData: any = {
     status: "completed",
     images: scoredImages,
     aestheticScore: highestScore,
-  } as any);
+  } as any;
   // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
   try {
     console.log('[BFL.canny] Triggering markGenerationCompleted for optimization', { uid, historyId });
@@ -608,7 +668,7 @@ async function canny(uid: string, body: any) {
   }
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
-  return {
+  const returnData: any = {
     historyId,
     prompt: body?.prompt || "",
     model: "flux-pro-1.0-canny",
@@ -616,10 +676,13 @@ async function canny(uid: string, body: any) {
     visibility: "private",
     isPublic: body?.isPublic === true,
     createdBy,
-    images: scoredImages,
-    aestheticScore: highestScore,
+    images: cleanedImages,
     status: "completed",
-  } as any;
+  };
+  if (highestScore !== undefined) {
+    returnData.aestheticScore = highestScore;
+  }
+  return returnData as any;
 }
 
 async function depth(uid: string, body: any) {
@@ -661,11 +724,17 @@ async function depth(uid: string, body: any) {
   const scoredImages = await aestheticScoreService.scoreImages(images);
   const highestScore = aestheticScoreService.getHighestScore(scoredImages);
 
-  await generationHistoryRepository.update(uid, historyId, {
+  // Clean images array to remove undefined aestheticScore values
+  const cleanedImages = scoredImages.map(img => {
+    const { aestheticScore, ...rest } = img as any;
+    return aestheticScore !== undefined ? { ...rest, aestheticScore } : rest;
+  });
+
+  const updateData: any = {
     status: "completed",
     images: scoredImages,
     aestheticScore: highestScore,
-  } as any);
+  } as any;
   // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
   try {
     console.log('[BFL.depth] Triggering markGenerationCompleted for optimization', { uid, historyId });
@@ -678,7 +747,7 @@ async function depth(uid: string, body: any) {
   }
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
-  return {
+  const returnData: any = {
     historyId,
     prompt: body?.prompt || "",
     model: "flux-pro-1.0-depth",
@@ -686,10 +755,13 @@ async function depth(uid: string, body: any) {
     visibility: "private",
     isPublic: body?.isPublic === true,
     createdBy,
-    images: scoredImages,
-    aestheticScore: highestScore,
+    images: cleanedImages,
     status: "completed",
-  } as any;
+  };
+  if (highestScore !== undefined) {
+    returnData.aestheticScore = highestScore;
+  }
+  return returnData as any;
 }
 
 // Expansion using FLUX Fill - generates mask from expansion margins
@@ -834,11 +906,17 @@ async function expandWithFill(uid: string, body: any) {
   const scoredImages = await aestheticScoreService.scoreImages(images);
   const highestScore = aestheticScoreService.getHighestScore(scoredImages);
   
-  await generationHistoryRepository.update(uid, historyId, {
+  // Clean images array to remove undefined aestheticScore values
+  const cleanedImages = scoredImages.map(img => {
+    const { aestheticScore, ...rest } = img as any;
+    return aestheticScore !== undefined ? { ...rest, aestheticScore } : rest;
+  });
+
+  const updateData: any = {
     status: "completed",
     images: scoredImages,
     aestheticScore: highestScore,
-  } as any);
+  } as any;
   // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
   try {
     console.log('[BFL.expandWithFill] Triggering markGenerationCompleted for optimization', { uid, historyId });
@@ -853,7 +931,7 @@ async function expandWithFill(uid: string, body: any) {
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
   
-  return {
+  const returnData: any = {
     historyId,
     prompt: body?.prompt || "FLUX Fill Expansion",
     model: "flux-pro-1.0-fill",
@@ -861,10 +939,13 @@ async function expandWithFill(uid: string, body: any) {
     visibility: body?.isPublic === true ? "public" : "private",
     isPublic: body?.isPublic === true,
     createdBy,
-    images: scoredImages,
-    aestheticScore: highestScore,
+    images: cleanedImages,
     status: "completed",
-  } as any;
+  };
+  if (highestScore !== undefined) {
+    returnData.aestheticScore = highestScore;
+  }
+  return returnData as any;
 }
 
 export const bflService = {

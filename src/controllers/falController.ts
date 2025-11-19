@@ -261,6 +261,10 @@ export const falController = {
       const uid = req.uid;
       const model = (req.query.model as string) || (req.body?.model as string);
       const requestId = (req.query.requestId as string) || (req.body?.requestId as string);
+      // Disable caching for polling endpoints
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       const result = await falQueueService.queueStatus(uid, model, requestId);
       res.json(formatApiResponse('success', 'Status', result));
     } catch (err) { next(err); }
@@ -270,6 +274,10 @@ export const falController = {
       const uid = req.uid;
       const model = (req.query.model as string) || (req.body?.model as string);
       const requestId = (req.query.requestId as string) || (req.body?.requestId as string);
+      // Disable caching for polling endpoints
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       const result = await falQueueService.queueResult(uid, model, requestId);
       res.json(formatApiResponse('success', 'Result', result));
     } catch (err) { next(err); }

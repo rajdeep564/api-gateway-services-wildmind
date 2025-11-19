@@ -3,7 +3,6 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import routes from '../routes';
 import { errorHandler } from '../utils/errorHandler';
-import dotenv from 'dotenv';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { gzipCompression, httpParamPollution, requestId, securityHeaders, originCheck } from '../middlewares/security';
 import { httpLogger } from '../middlewares/logger';
@@ -11,7 +10,7 @@ import { adminDb, admin } from '../config/firebaseAdmin';
 import { env } from '../config/env';
 import { creditsService } from '../services/creditsService';
 import { getRedisClient, isRedisEnabled } from '../config/redisClient';
-dotenv.config();
+// Note: dotenv is loaded in index.ts, no need to load here
 
 const app = express();
 
@@ -26,9 +25,16 @@ app.use(securityHeaders);
 const isProdEnv = process.env.NODE_ENV === 'production';
 const allowedOrigins = [
   // Common prod hosts for frontend
-  ...(isProdEnv ? ['https://www.wildmindai.com', 'https://wildmindai.com'] : []),
-  // Default dev origins
-  ...(!isProdEnv ? ['http://localhost:3000', 'http://127.0.0.1:3000'] : []),
+  ...(isProdEnv ? [
+    'https://www.wildmindai.com', 
+    'https://wildmindai.com',
+    'https://studio.wildmindai.com' // Canvas subdomain
+  ] : []),
+  // Development origins
+  ...(!isProdEnv ? [
+    'http://localhost:3000', // Main project dev
+    'http://localhost:3001', // Canvas dev
+  ] : []),
   process.env.FRONTEND_ORIGIN || '',
   ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : [])
 ].filter(Boolean);

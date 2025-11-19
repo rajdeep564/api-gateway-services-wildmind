@@ -1,3 +1,5 @@
+import { mediaRepository } from "../repository/canvas/mediaRepository";
+import { generationHistoryRepository } from "../repository/generationHistoryRepository";
 // Use dynamic import signature to avoid type requirement during build-time
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const Replicate = require("replicate");
@@ -5,7 +7,6 @@ import sharp from "sharp";
 import util from "util";
 import { ApiError } from "../utils/errorHandler";
 import { env } from "../config/env";
-import { generationHistoryRepository } from "../repository/generationHistoryRepository";
 import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
 import { authRepository } from "../repository/auth/authRepository";
 import {
@@ -92,6 +93,13 @@ function extractFirstUrl(output: any): string {
   }
 }
 
+const buildReplicateImageFileName = (historyId?: string, index: number = 0) => {
+  if (historyId) {
+    return `${historyId}-image-${index + 1}`;
+  }
+  return `image-${Date.now()}-${index + 1}-${Math.random().toString(36).slice(2, 6)}`;
+};
+
 async function resolveItemUrl(item: any): Promise<string> {
   try {
     if (!item) return "";
@@ -161,6 +169,7 @@ export async function removeBackground(
   const replicate = new Replicate({ auth: key });
 
   const creator = await authRepository.getUserById(uid);
+  const storageKeyPrefixOverride: string | undefined = (body as any)?.storageKeyPrefixOverride;
   const legacyId = await replicateRepository.createGenerationRecord(
     {
       prompt: "[Remove background]",
@@ -785,7 +794,7 @@ export async function upscale(uid: string, body: any) {
           const uploaded = await uploadDataUriToZata({
             dataUri: dl.dataUri,
             keyPrefix: `users/${username}/image/${historyId}`,
-            fileName: `image-${idx}.${dl.ext}`,
+            fileName: `${buildReplicateImageFileName(historyId, idx - 1)}.${dl.ext}`,
           });
           uploadedImages.push({
             id: `replicate-${Date.now()}-${idx}`,
@@ -797,7 +806,7 @@ export async function upscale(uid: string, body: any) {
           const uploaded = await uploadFromUrlToZata({
             sourceUrl: out,
             keyPrefix: `users/${username}/image/${historyId}`,
-            fileName: `image-${idx}`,
+            fileName: buildReplicateImageFileName(historyId, idx - 1),
           });
           uploadedImages.push({
             id: `replicate-${Date.now()}-${idx}`,
@@ -903,6 +912,7 @@ export async function generateImage(uid: string, body: any) {
       : "bytedance/seedream-4"
   ).trim();
   const creator = await authRepository.getUserById(uid);
+  const storageKeyPrefixOverride: string | undefined = (body as any)?.storageKeyPrefixOverride;
   const aspectRatio = body.aspect_ratio || body.frameSize || null;
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
@@ -1402,8 +1412,8 @@ export async function generateImage(uid: string, body: any) {
             const dataUri = `data:image/png;base64,${b64}`; // best-effort default; Replicate images are typically PNG/JPG
             const uploaded = await uploadDataUriToZata({
               dataUri,
-              keyPrefix: `users/${username}/image/${historyId}`,
-              fileName: `image-${i + 1}.png`,
+              keyPrefix: storageKeyPrefixOverride || `users/${username}/image/${historyId}`,
+              fileName: `${buildReplicateImageFileName(historyId, i)}.png`,
             });
             uploadedUrls.push(uploaded.publicUrl);
           }
@@ -1457,8 +1467,8 @@ export async function generateImage(uid: string, body: any) {
       try {
         const uploaded = await uploadFromUrlToZata({
           sourceUrl: out,
-          keyPrefix: `users/${username}/image/${historyId}`,
-          fileName: `image-${idx}`,
+          keyPrefix: storageKeyPrefixOverride || `users/${username}/image/${historyId}`,
+          fileName: buildReplicateImageFileName(historyId, idx - 1),
         });
         uploadedImages.push({
           id: `replicate-${Date.now()}-${idx}`,
@@ -2116,7 +2126,37 @@ export async function replicateQueueStatus(
     const status = await replicate.predictions.get(requestId);
     return status;
   } catch (e: any) {
-    throw new ApiError(e?.message || "Failed to fetch Replicate status", 502);
+    // eslint-disable-next-line no-console
+    console.error("[replicateQueueStatus] Error fetching prediction", {
+      requestId,
+      error: e?.message || e,
+      status: e?.status || e?.statusCode,
+      response: e?.response?.data,
+    });
+    
+    // Handle 404 specifically - prediction not found
+    const statusCode = e?.status || e?.statusCode || e?.response?.status;
+    if (statusCode === 404) {
+      throw new ApiError(
+        `Prediction not found. The prediction ID "${requestId}" may be invalid, expired, or the prediction may have been deleted.`,
+        404,
+        e
+      );
+    }
+    
+    // Extract error message from response
+    let errorMessage = e?.message || "Failed to fetch Replicate status";
+    if (e?.response?.data) {
+      if (typeof e.response.data === 'string') {
+        errorMessage = e.response.data;
+      } else if (e.response.data.detail) {
+        errorMessage = e.response.data.detail;
+      } else if (e.response.data.message) {
+        errorMessage = e.response.data.message;
+      }
+    }
+    
+    throw new ApiError(errorMessage, statusCode || 502, e);
   }
 }
 
@@ -2141,12 +2181,20 @@ export async function replicateQueueResult(
     if (!outputUrl) return result;
     let storedUrl = outputUrl;
     let storagePath = "";
+    let canvasProjectId: string | undefined;
+    try {
+      const freshHistory = await generationHistoryRepository.get(uid, historyId);
+      canvasProjectId = (freshHistory as any)?.canvasProjectId || (located.item as any)?.canvasProjectId;
+    } catch {}
     try {
       const creator = await authRepository.getUserById(uid);
       const username = creator?.username || uid;
+      const basePrefix = canvasProjectId
+        ? `users/${username}/canvas/${canvasProjectId}/${historyId}`
+        : `users/${username}/video/${historyId}`;
       const uploaded = await uploadFromUrlToZata({
         sourceUrl: outputUrl,
-        keyPrefix: `users/${username}/video/${historyId}`,
+        keyPrefix: basePrefix,
         fileName: "video-1",
       });
       storedUrl = uploaded.publicUrl;
@@ -2165,7 +2213,24 @@ export async function replicateQueueResult(
       status: "completed",
       videos: scoredVideos,
       aestheticScore: highestScore,
+      ...(canvasProjectId ? { canvasProjectId } : {}),
     } as any);
+
+    // If this originates from a canvas project, also create a canvas media record
+    if (canvasProjectId && storagePath && storedUrl) {
+      try {
+        await mediaRepository.createMedia({
+          url: storedUrl,
+          storagePath,
+          origin: "canvas",
+          projectId: canvasProjectId,
+          referencedByCount: 0,
+          metadata: { format: "mp4" },
+        });
+      } catch (e) {
+        console.warn("[replicateQueueResult] Failed to create canvas media record", e);
+      }
+    }
     // Robust mirror sync with retry logic
     await syncToMirror(uid, historyId);
     // Compute and write debit (use stored history fields)
@@ -2386,18 +2451,119 @@ export async function klingT2vSubmit(
 
   let predictionId = "";
   try {
-    const version = await getLatestModelVersion(replicate, modelBase);
+    // Try to get version, but if model doesn't exist, we'll get a better error message
+    let version: string | null = null;
+    try {
+      version = await getLatestModelVersion(replicate, modelBase);
+      // eslint-disable-next-line no-console
+      console.log("[klingT2vSubmit] Model version lookup", {
+        modelBase,
+        version: version || "not found",
+      });
+    } catch (versionError: any) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[klingT2vSubmit] Version lookup failed, will try direct model",
+        { modelBase, error: versionError?.message }
+      );
+      // Continue without version - will try direct model usage
+    }
+
+    // eslint-disable-next-line no-console
+    console.log("[klingT2vSubmit] Creating prediction", {
+      modelBase,
+      version: version || "latest",
+      input,
+    });
     const pred = await replicate.predictions.create(
       version ? { version, input } : { model: modelBase, input }
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
+    // eslint-disable-next-line no-console
+    console.log("[klingT2vSubmit] Prediction created", { predictionId });
   } catch (e: any) {
+    // eslint-disable-next-line no-console
+    console.error("[klingT2vSubmit] Error creating prediction", {
+      modelBase,
+      error: e?.message || e,
+      stack: e?.stack,
+      response: e?.response,
+      status: e?.status,
+      data: e?.data,
+      statusCode: e?.statusCode,
+    });
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
       error: e?.message || "Replicate submit failed",
     } as any);
-    throw new ApiError("Failed to submit Kling T2V job", 502, e);
+
+    // Extract error message from various sources
+    let errorMessage = e?.message || "Replicate API error";
+    const statusCode = e?.statusCode || e?.response?.status || e?.status;
+    
+    // Check if error message contains HTML (Cloudflare error page)
+    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
+      // Try to extract meaningful info from HTML error
+      if (errorMessage.includes('500: Internal server error') || errorMessage.includes('Error code 500')) {
+        errorMessage = "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else if (errorMessage.includes('502') || errorMessage.includes('Bad Gateway')) {
+        errorMessage = "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else {
+        errorMessage = "Replicate service returned an error. Please try again in a few minutes.";
+      }
+    } else {
+      // Try to extract from response data
+      if (e?.response?.data) {
+        if (typeof e.response.data === 'string') {
+          // If it's an HTML string, use generic message
+          if (e.response.data.includes('<!DOCTYPE html>')) {
+            errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+          } else {
+            errorMessage = e.response.data;
+          }
+        } else if (e.response.data.detail) {
+          errorMessage = e.response.data.detail;
+        } else if (e.response.data.message) {
+          errorMessage = e.response.data.message;
+        }
+      }
+    }
+
+    // Provide a more helpful error message for 404s
+    if (
+      statusCode === 404 ||
+      (errorMessage && errorMessage.includes("404"))
+    ) {
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${
+        errorMessage || "Model not found"
+      }`;
+      throw new ApiError(notFoundMessage, 404, e);
+    }
+
+    // Handle 500 errors specifically
+    if (statusCode === 500) {
+      throw new ApiError(
+        errorMessage || "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
+        502,
+        e
+      );
+    }
+
+    // Handle 502 errors specifically
+    if (statusCode === 502) {
+      throw new ApiError(
+        errorMessage || "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
+        502,
+        e
+      );
+    }
+
+    throw new ApiError(
+      `Failed to submit Kling T2V job: ${errorMessage}`,
+      502,
+      e
+    );
   }
   await generationHistoryRepository.update(uid, historyId, {
     provider: "replicate",
@@ -2921,23 +3087,67 @@ export async function seedanceT2vSubmit(
       error: e?.message || "Replicate submit failed",
     } as any);
 
-    // Provide a more helpful error message for 404s
-    if (
-      e?.statusCode === 404 ||
-      e?.response?.status === 404 ||
-      (e?.message && e.message.includes("404"))
-    ) {
-      const errorMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${
-        e?.message || e?.response?.data?.detail || "Model not found"
-      }`;
-      throw new ApiError(errorMessage, 404, e);
+    // Extract error message from various sources
+    let errorMessage = e?.message || "Replicate API error";
+    const statusCode = e?.statusCode || e?.response?.status || e?.status;
+    
+    // Check if error message contains HTML (Cloudflare error page)
+    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
+      // Try to extract meaningful info from HTML error
+      if (errorMessage.includes('500: Internal server error') || errorMessage.includes('Error code 500')) {
+        errorMessage = "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else if (errorMessage.includes('502') || errorMessage.includes('Bad Gateway')) {
+        errorMessage = "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else {
+        errorMessage = "Replicate service returned an error. Please try again in a few minutes.";
+      }
+    } else {
+      // Try to extract from response data
+      if (e?.response?.data) {
+        if (typeof e.response.data === 'string') {
+          // If it's an HTML string, use generic message
+          if (e.response.data.includes('<!DOCTYPE html>')) {
+            errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+          } else {
+            errorMessage = e.response.data;
+          }
+        } else if (e.response.data.detail) {
+          errorMessage = e.response.data.detail;
+        } else if (e.response.data.message) {
+          errorMessage = e.response.data.message;
+        }
+      }
     }
 
-    const errorMessage =
-      e?.message ||
-      e?.response?.data?.detail ||
-      e?.response?.data?.message ||
-      "Replicate API error";
+    // Provide a more helpful error message for 404s
+    if (
+      statusCode === 404 ||
+      (errorMessage && errorMessage.includes("404"))
+    ) {
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${
+        errorMessage || "Model not found"
+      }`;
+      throw new ApiError(notFoundMessage, 404, e);
+    }
+
+    // Handle 500 errors specifically
+    if (statusCode === 500) {
+      throw new ApiError(
+        errorMessage || "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
+        502,
+        e
+      );
+    }
+
+    // Handle 502 errors specifically
+    if (statusCode === 502) {
+      throw new ApiError(
+        errorMessage || "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
+        502,
+        e
+      );
+    }
+
     throw new ApiError(
       `Failed to submit Seedance T2V job: ${errorMessage}`,
       502,
@@ -3077,23 +3287,67 @@ export async function seedanceI2vSubmit(
       error: e?.message || "Replicate submit failed",
     } as any);
 
-    // Provide a more helpful error message for 404s
-    if (
-      e?.statusCode === 404 ||
-      e?.response?.status === 404 ||
-      (e?.message && e.message.includes("404"))
-    ) {
-      const errorMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${
-        e?.message || e?.response?.data?.detail || "Model not found"
-      }`;
-      throw new ApiError(errorMessage, 404, e);
+    // Extract error message from various sources
+    let errorMessage = e?.message || "Replicate API error";
+    const statusCode = e?.statusCode || e?.response?.status || e?.status;
+    
+    // Check if error message contains HTML (Cloudflare error page)
+    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
+      // Try to extract meaningful info from HTML error
+      if (errorMessage.includes('500: Internal server error') || errorMessage.includes('Error code 500')) {
+        errorMessage = "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else if (errorMessage.includes('502') || errorMessage.includes('Bad Gateway')) {
+        errorMessage = "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else {
+        errorMessage = "Replicate service returned an error. Please try again in a few minutes.";
+      }
+    } else {
+      // Try to extract from response data
+      if (e?.response?.data) {
+        if (typeof e.response.data === 'string') {
+          // If it's an HTML string, use generic message
+          if (e.response.data.includes('<!DOCTYPE html>')) {
+            errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+          } else {
+            errorMessage = e.response.data;
+          }
+        } else if (e.response.data.detail) {
+          errorMessage = e.response.data.detail;
+        } else if (e.response.data.message) {
+          errorMessage = e.response.data.message;
+        }
+      }
     }
 
-    const errorMessage =
-      e?.message ||
-      e?.response?.data?.detail ||
-      e?.response?.data?.message ||
-      "Replicate API error";
+    // Provide a more helpful error message for 404s
+    if (
+      statusCode === 404 ||
+      (errorMessage && errorMessage.includes("404"))
+    ) {
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${
+        errorMessage || "Model not found"
+      }`;
+      throw new ApiError(notFoundMessage, 404, e);
+    }
+
+    // Handle 500 errors specifically
+    if (statusCode === 500) {
+      throw new ApiError(
+        errorMessage || "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
+        502,
+        e
+      );
+    }
+
+    // Handle 502 errors specifically
+    if (statusCode === 502) {
+      throw new ApiError(
+        errorMessage || "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
+        502,
+        e
+      );
+    }
+
     throw new ApiError(
       `Failed to submit Seedance I2V job: ${errorMessage}`,
       502,
@@ -3168,18 +3422,131 @@ export async function pixverseT2vSubmit(
 
   let predictionId = "";
   try {
-    const version = await getLatestModelVersion(replicate, modelBase);
+    // Try to get version, but if model doesn't exist, we'll get a better error message
+    let version: string | null = null;
+    try {
+      version = await getLatestModelVersion(replicate, modelBase);
+      // eslint-disable-next-line no-console
+      console.log("[pixverseT2vSubmit] Model version lookup", {
+        modelBase,
+        version: version || "not found",
+      });
+    } catch (versionError: any) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[pixverseT2vSubmit] Version lookup failed, will try direct model",
+        { modelBase, error: versionError?.message }
+      );
+      // Continue without version - will try direct model usage
+    }
+
+    // Ensure no image/frame parameters are in input for T2V
+    const cleanInput: any = {
+      prompt: input.prompt,
+      duration: input.duration,
+      quality: input.quality,
+      aspect_ratio: input.aspect_ratio,
+    };
+    if (input.seed != null) cleanInput.seed = input.seed;
+    if (input.negative_prompt != null) cleanInput.negative_prompt = input.negative_prompt;
+    
+    // eslint-disable-next-line no-console
+    console.log("[pixverseT2vSubmit] Creating prediction", {
+      modelBase,
+      version: version || "latest",
+      input: cleanInput,
+      inputKeys: Object.keys(cleanInput),
+    });
+    
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input: cleanInput } : { model: modelBase, input: cleanInput }
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
+    // eslint-disable-next-line no-console
+    console.log("[pixverseT2vSubmit] Prediction created", { predictionId });
   } catch (e: any) {
+    // eslint-disable-next-line no-console
+    console.error("[pixverseT2vSubmit] Error creating prediction", {
+      modelBase,
+      error: e?.message || e,
+      stack: e?.stack,
+      response: e?.response,
+      status: e?.status,
+      data: e?.data,
+      statusCode: e?.statusCode,
+    });
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
       error: e?.message || "Replicate submit failed",
     } as any);
-    throw new ApiError("Failed to submit PixVerse T2V job", 502, e);
+
+    // Extract error message from various sources
+    let errorMessage = e?.message || "Replicate API error";
+    const statusCode = e?.statusCode || e?.response?.status || e?.status;
+    
+    // Check if error message contains HTML (Cloudflare error page)
+    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
+      // Try to extract meaningful info from HTML error
+      if (errorMessage.includes('500: Internal server error') || errorMessage.includes('Error code 500')) {
+        errorMessage = "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else if (errorMessage.includes('502') || errorMessage.includes('Bad Gateway')) {
+        errorMessage = "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else {
+        errorMessage = "Replicate service returned an error. Please try again in a few minutes.";
+      }
+    } else {
+      // Try to extract from response data
+      if (e?.response?.data) {
+        if (typeof e.response.data === 'string') {
+          // If it's an HTML string, use generic message
+          if (e.response.data.includes('<!DOCTYPE html>')) {
+            errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+          } else {
+            errorMessage = e.response.data;
+          }
+        } else if (e.response.data.detail) {
+          errorMessage = e.response.data.detail;
+        } else if (e.response.data.message) {
+          errorMessage = e.response.data.message;
+        }
+      }
+    }
+
+    // Provide a more helpful error message for 404s
+    if (
+      statusCode === 404 ||
+      (errorMessage && errorMessage.includes("404"))
+    ) {
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. The model may have been removed or renamed. Please verify the model name is correct. Error: ${
+        errorMessage || "Model not found"
+      }`;
+      throw new ApiError(notFoundMessage, 404, e);
+    }
+
+    // Handle 500 errors specifically
+    if (statusCode === 500) {
+      throw new ApiError(
+        errorMessage || "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
+        502,
+        e
+      );
+    }
+
+    // Handle 502 errors specifically
+    if (statusCode === 502) {
+      throw new ApiError(
+        errorMessage || "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
+        502,
+        e
+      );
+    }
+
+    throw new ApiError(
+      `Failed to submit PixVerse T2V job: ${errorMessage}`,
+      502,
+      e
+    );
   }
   await generationHistoryRepository.update(uid, historyId, {
     provider: "replicate",

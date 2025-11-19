@@ -18,6 +18,13 @@ import { syncToMirror, updateMirror, ensureMirrorSync } from "../utils/mirrorHel
 import { aestheticScoreService } from "./aestheticScoreService";
 import { markGenerationCompleted } from "./generationHistoryService";
 
+const buildGenerationImageFileName = (historyId?: string, index: number = 0) => {
+  if (historyId) {
+    return `${historyId}-image-${index + 1}`;
+  }
+  return `image-${Date.now()}-${index + 1}-${Math.random().toString(36).slice(2, 6)}`;
+};
+
 async function generate(
   uid: string,
   payload: FalGenerateRequest
@@ -172,7 +179,218 @@ async function generate(
     finalPrompt = `${finalPrompt}, passport photo style, front facing, looking directly at camera, neutral expression, head and shoulders visible, hands partially visible, preserve exact skin texture and details from reference image, natural looking, maintain identical skin tone and complexion, professional photography, high quality, photorealistic, square format, light neutral background, even studio lighting, no white borders, no white padding, no white margins, no frames, no white space, edge-to-edge, full frame character, seamless background integration`;
   }
 
+  // If the requested model is an ElevenLabs variant, detect whether it's TTS or Dialogue and handle as audio generation
+  const modelLowerRaw = String(model || '').toLowerCase();
+  const wantsEleven = modelLowerRaw.includes('eleven');
+  const wantsMaya = modelLowerRaw.includes('maya');
+  const wantsChatterbox = modelLowerRaw.includes('chatterbox') || modelLowerRaw.includes('multilingual');
+  // Heuristic: dialogue uses `inputs` array or mentions 'dialogue', TTS uses `text` or mentions 'tts'/'text-to-speech'
+  const hasInputsArray = Array.isArray((payload as any).inputs) && (payload as any).inputs.length > 0;
+  const hasText = typeof (payload as any).text === 'string' && (payload as any).text.trim().length > 0;
+  const isElevenDialogue = hasInputsArray || modelLowerRaw.includes('dialogue') || modelLowerRaw.includes('text-to-dialogue');
+  const isElevenTts = hasText || modelLowerRaw.includes('tts') || modelLowerRaw.includes('text-to-speech') || modelLowerRaw.includes('text-to-voice');
+  const isMayaTts = hasText || modelLowerRaw.includes('maya') || modelLowerRaw.includes('maya-1') || modelLowerRaw.includes('maya-1-voice');
+  const isChatterboxMultilingual = hasText || modelLowerRaw.includes('chatterbox') || modelLowerRaw.includes('multilingual');
+
+  if (wantsMaya && isMayaTts) {
+    // Maya TTS flow
+    const mayaEndpoint = 'fal-ai/maya';
+    try {
+      const inputBody: any = {
+        text: (payload as any).text || finalPrompt,
+      };
+      if ((payload as any).prompt) inputBody.prompt = (payload as any).prompt;
+      if ((payload as any).temperature != null) inputBody.temperature = (payload as any).temperature;
+      if ((payload as any).top_p != null) inputBody.top_p = (payload as any).top_p;
+      if ((payload as any).max_tokens != null) inputBody.max_tokens = (payload as any).max_tokens;
+      if ((payload as any).repetition_penalty != null) inputBody.repetition_penalty = (payload as any).repetition_penalty;
+      if ((payload as any).output_format) inputBody.output_format = (payload as any).output_format;
+
+      console.log('[falService.generate] Calling Maya TTS model:', { mayaEndpoint, input: { ...inputBody, text: String(inputBody.text).slice(0, 120) + (String(inputBody.text).length > 120 ? '...' : '') } });
+      const result = await fal.subscribe(mayaEndpoint as any, ({ input: inputBody, logs: true } as unknown) as any);
+
+      const audioUrl: string | undefined = (result as any)?.data?.audio?.url;
+      if (!audioUrl) throw new ApiError('No audio URL returned from FAL Maya API', 502);
+
+      const username = creator?.username || uid;
+      let stored: any;
+      try {
+        stored = await uploadFromUrlToZata({ sourceUrl: audioUrl, keyPrefix: `users/${username}/audio/${historyId}`, fileName: 'maya-tts' });
+      } catch (e) {
+        stored = { publicUrl: audioUrl, key: '' };
+      }
+
+      const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', audio: audioObj } as any);
+      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj } as any);
+      await syncToMirror(uid, historyId);
+
+      return { audio: audioObj, historyId, model: mayaEndpoint, status: 'completed' } as any;
+    } catch (err: any) {
+      const message = err?.message || 'Failed to generate audio with FAL Maya API';
+      try {
+        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message } as any);
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[falService.generate][maya] Failed to mirror error state:', mirrorErr);
+      }
+      throw new ApiError(message, 500);
+    }
+  }
+
+  // Chatterbox multilingual TTS flow
+  if (wantsChatterbox && isChatterboxMultilingual) {
+    const chatterEndpoint = 'fal-ai/chatterbox/text-to-speech/multilingual';
+    try {
+      const inputBody: any = {
+        text: (payload as any).text || finalPrompt,
+      };
+      if ((payload as any).voice) inputBody.voice = (payload as any).voice;
+      if ((payload as any).custom_audio_language) inputBody.custom_audio_language = (payload as any).custom_audio_language;
+      if ((payload as any).exaggeration != null) inputBody.exaggeration = (payload as any).exaggeration;
+      if ((payload as any).temperature != null) inputBody.temperature = (payload as any).temperature;
+      if ((payload as any).cfg_scale != null) inputBody.cfg_scale = (payload as any).cfg_scale;
+      if ((payload as any).seed != null) inputBody.seed = (payload as any).seed;
+      if ((payload as any).audio_url) inputBody.audio_url = (payload as any).audio_url;
+
+      console.log('[falService.generate] Calling Chatterbox multilingual TTS model:', { chatterEndpoint, input: { ...inputBody, text: String(inputBody.text).slice(0, 120) + (String(inputBody.text).length > 120 ? '...' : '') } });
+      const result = await fal.subscribe(chatterEndpoint as any, ({ input: inputBody, logs: true } as unknown) as any);
+
+      const audioUrl: string | undefined = (result as any)?.data?.audio?.url;
+      if (!audioUrl) throw new ApiError('No audio URL returned from FAL Chatterbox API', 502);
+
+      const username = creator?.username || uid;
+      let stored: any;
+      try {
+        stored = await uploadFromUrlToZata({ sourceUrl: audioUrl, keyPrefix: `users/${username}/audio/${historyId}`, fileName: 'chatterbox-multilingual' });
+      } catch (e) {
+        stored = { publicUrl: audioUrl, key: '' };
+      }
+
+      const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', audio: audioObj } as any);
+      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj } as any);
+      await syncToMirror(uid, historyId);
+
+      return { audio: audioObj, historyId, model: chatterEndpoint, status: 'completed' } as any;
+    } catch (err: any) {
+      const message = err?.message || 'Failed to generate audio with FAL Chatterbox API';
+      try {
+        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message } as any);
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[falService.generate][chatterbox] Failed to mirror error state:', mirrorErr);
+      }
+      throw new ApiError(message, 500);
+    }
+  }
+
+  if (wantsEleven && (isElevenDialogue || isElevenTts)) {
+    // Prefer explicit payload shape first
+    if (isElevenTts) {
+      // Text-to-Speech flow
+      const ttsEndpoint = 'fal-ai/elevenlabs/tts/eleven-v3';
+      try {
+        const inputBody: any = {
+          text: (payload as any).text || finalPrompt,
+        };
+        if ((payload as any).voice) inputBody.voice = (payload as any).voice;
+        if ((payload as any).stability != null) inputBody.stability = (payload as any).stability;
+        if ((payload as any).similarity_boost != null) inputBody.similarity_boost = (payload as any).similarity_boost;
+        if ((payload as any).style != null) inputBody.style = (payload as any).style;
+        if ((payload as any).speed != null) inputBody.speed = (payload as any).speed;
+        if ((payload as any).timestamps != null) inputBody.timestamps = (payload as any).timestamps;
+        if ((payload as any).language_code) inputBody.language_code = (payload as any).language_code;
+        if ((payload as any).output_format) inputBody.output_format = (payload as any).output_format;
+        if ((payload as any).sync_mode != null) inputBody.sync_mode = (payload as any).sync_mode;
+        if ((payload as any).seed != null) inputBody.seed = (payload as any).seed;
+
+        console.log('[falService.generate] Calling ElevenLabs TTS model:', { ttsEndpoint, input: { ...inputBody, text: String(inputBody.text).slice(0, 120) + (String(inputBody.text).length > 120 ? '...' : '') } });
+        const result = await fal.subscribe(ttsEndpoint as any, ({ input: inputBody, logs: true } as unknown) as any);
+
+        const audioUrl: string | undefined = (result as any)?.data?.audio?.url;
+        if (!audioUrl) throw new ApiError('No audio URL returned from FAL ElevenLabs TTS API', 502);
+
+        const username = creator?.username || uid;
+        let stored: any;
+        try {
+          stored = await uploadFromUrlToZata({ sourceUrl: audioUrl, keyPrefix: `users/${username}/audio/${historyId}`, fileName: 'eleven-tts' });
+        } catch (e) {
+          stored = { publicUrl: audioUrl, key: '' };
+        }
+
+        const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+
+        await generationHistoryRepository.update(uid, historyId, { status: 'completed', audio: audioObj } as any);
+        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj } as any);
+        await syncToMirror(uid, historyId);
+
+        return { audio: audioObj, historyId, model: ttsEndpoint, status: 'completed' } as any;
+      } catch (err: any) {
+        const message = err?.message || 'Failed to generate audio with FAL ElevenLabs TTS API';
+        try {
+          await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message } as any);
+          await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+          await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        } catch (mirrorErr) {
+          console.error('[falService.generate][eleven-tts] Failed to mirror error state:', mirrorErr);
+        }
+        throw new ApiError(message, 500);
+      }
+    }
+
+    if (isElevenDialogue) {
+      // Text-to-Dialogue flow
+      const dialogueEndpoint = 'fal-ai/elevenlabs/text-to-dialogue/eleven-v3';
+      try {
+        const inputs = (payload as any).inputs || [{ text: finalPrompt, voice: (payload as any).voice || 'Rachel' }];
+        const inputBody: any = { inputs };
+        if ((payload as any).stability != null) inputBody.stability = (payload as any).stability;
+        if ((payload as any).use_speaker_boost != null) inputBody.use_speaker_boost = (payload as any).use_speaker_boost;
+        if ((payload as any).pronunciation_dictionary_locators) inputBody.pronunciation_dictionary_locators = (payload as any).pronunciation_dictionary_locators;
+        if ((payload as any).seed != null) inputBody.seed = (payload as any).seed;
+
+        console.log('[falService.generate] Calling ElevenLabs dialogue model:', { dialogueEndpoint, input: { ...inputBody, inputs: `[${(inputs || []).length} items]` } });
+        const result = await fal.subscribe(dialogueEndpoint as any, ({ input: inputBody, logs: true } as unknown) as any);
+
+        const audioUrl: string | undefined = (result as any)?.data?.audio?.url;
+        if (!audioUrl) throw new ApiError('No audio URL returned from FAL ElevenLabs API', 502);
+
+        const username = creator?.username || uid;
+        let stored: any;
+        try {
+          stored = await uploadFromUrlToZata({ sourceUrl: audioUrl, keyPrefix: `users/${username}/audio/${historyId}`, fileName: 'eleven-dialogue' });
+        } catch (e) {
+          stored = { publicUrl: audioUrl, key: '' };
+        }
+
+        const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+
+        await generationHistoryRepository.update(uid, historyId, { status: 'completed', audio: audioObj } as any);
+        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj } as any);
+        await syncToMirror(uid, historyId);
+
+        return { audio: audioObj, historyId, model: dialogueEndpoint, status: 'completed' } as any;
+      } catch (err: any) {
+        const message = err?.message || 'Failed to generate audio with FAL ElevenLabs API';
+        try {
+          await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message } as any);
+          await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+          await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        } catch (mirrorErr) {
+          console.error('[falService.generate][eleven-dialogue] Failed to mirror error state:', mirrorErr);
+        }
+        throw new ApiError(message, 500);
+      }
+    }
+  }
+
   try {
+    const fileNameForIndex = (index: number) => buildGenerationImageFileName(historyId, index);
     const imagePromises = Array.from({ length: imagesRequested }, async (_, index) => {
   const input: any = { prompt: finalPrompt, output_format, num_images: 1 };
       // Seedream expects image_size instead of aspect_ratio; allow explicit image_size override
@@ -261,8 +479,8 @@ async function generate(
           try {
             const { key, publicUrl } = await uploadFromUrlToZata({
               sourceUrl: img.url,
-              keyPrefix: `users/${username}/${outputFolder}/${historyId}`,
-              fileName: `image-${index + 1}`,
+              keyPrefix: (payload as any)?.storageKeyPrefixOverride || `users/${username}/${outputFolder}/${historyId}`,
+              fileName: fileNameForIndex(index),
             });
             return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
           } catch (e) {
@@ -324,6 +542,30 @@ async function generate(
 
   return { images: scoredImages as any, historyId, model, status: 'completed' };
     } else {
+      // For canvas flows, force synchronous upload using override (so we have storagePath immediately)
+      if ((payload as any)?.forceSyncUpload === true || (payload as any)?.storageKeyPrefixOverride) {
+        const storedImages = await Promise.all(
+          images.map(async (img, index) => {
+            try {
+              const { key, publicUrl } = await uploadFromUrlToZata({
+                sourceUrl: img.url,
+                keyPrefix: (payload as any)?.storageKeyPrefixOverride || `users/${username}/${outputFolder}/${historyId}`,
+                fileName: fileNameForIndex(index),
+              });
+              return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
+            } catch {
+              return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url } as any;
+            }
+          })
+        );
+        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
+        await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: storedImages, frameSize: resolvedAspect } as any);
+        await ensureMirrorSync(uid, historyId);
+        try {
+          markGenerationCompleted(uid, historyId, { status: 'completed', images: storedImages, isPublic: (payload as any).isPublic === true }).catch(() => {});
+        } catch {}
+        return { images: storedImages as any, historyId, model, status: 'completed' };
+      }
       // For non-character generation, use background upload for faster response
       const quickImages = images.map((img) => ({ id: img.id, url: img.url, originalUrl: img.originalUrl || img.url, storagePath: '' } as any));
 
@@ -351,7 +593,7 @@ async function generate(
                 const { key, publicUrl } = await uploadFromUrlToZata({
                   sourceUrl: img.url,
                   keyPrefix: `users/${username}/${outputFolder}/${historyId}`,
-                  fileName: `image-${index + 1}`,
+                  fileName: fileNameForIndex(index),
                 });
                 return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url } as any;
               } catch {
@@ -1528,17 +1770,53 @@ async function veoI2vSubmit(uid: string, body: any, fast = false): Promise<Submi
   return { requestId: request_id, historyId, model, status: 'submitted' };
 }
 
-async function queueStatus(_uid: string, model: string, requestId: string): Promise<any> {
+async function queueStatus(uid: string, model: string | undefined, requestId: string): Promise<any> {
   const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   fal.config({ credentials: falKey });
-  const status = await fal.queue.status(model, { requestId, logs: true } as any);
+  
+  // If model is not provided, look it up from generation history
+  let resolvedModel = model;
+  if (!resolvedModel && requestId) {
+    try {
+      const located = await generationHistoryRepository.findByProviderTaskId(uid, 'fal', requestId);
+      if (located?.item?.model) {
+        resolvedModel = located.item.model;
+      }
+    } catch (e) {
+      console.warn('[queueStatus] Failed to lookup model from history', e);
+    }
+  }
+  
+  if (!resolvedModel) {
+    throw new ApiError('Model is required. Either provide it in the request or ensure the requestId exists in generation history.', 400);
+  }
+  
+  const status = await fal.queue.status(resolvedModel, { requestId, logs: true } as any);
   return status;
 }
 
-async function queueResult(uid: string, model: string, requestId: string): Promise<any> {
+async function queueResult(uid: string, model: string | undefined, requestId: string): Promise<any> {
   const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   fal.config({ credentials: falKey });
-  const result = await fal.queue.result(model, { requestId } as any);
+  
+  // If model is not provided, look it up from generation history
+  let resolvedModel = model;
+  if (!resolvedModel && requestId) {
+    try {
+      const located = await generationHistoryRepository.findByProviderTaskId(uid, 'fal', requestId);
+      if (located?.item?.model) {
+        resolvedModel = located.item.model;
+      }
+    } catch (e) {
+      console.warn('[queueResult] Failed to lookup model from history', e);
+    }
+  }
+  
+  if (!resolvedModel) {
+    throw new ApiError('Model is required. Either provide it in the request or ensure the requestId exists in generation history.', 400);
+  }
+  
+  const result = await fal.queue.result(resolvedModel, { requestId } as any);
   const located = await generationHistoryRepository.findByProviderTaskId(uid, 'fal', requestId);
   if (result?.data?.video?.url && located) {
     const providerUrl: string = result.data.video.url as string;
@@ -1576,10 +1854,10 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
       originalUrl: v.originalUrl || providerUrl,
     }));
     try {
-      const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(model, (located as any)?.item);
+      const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(resolvedModel, (located as any)?.item);
       await creditsRepository.writeDebitIfAbsent(uid, located.id, cost, 'fal.queue.veo', { ...meta, historyId: located.id, provider: 'fal', pricingVersion });
     } catch {}
-    return { videos: enrichedVideos, historyId: located.id, model, requestId, status: 'completed' } as any;
+    return { videos: enrichedVideos, historyId: located.id, model: resolvedModel, requestId, status: 'completed' } as any;
   }
   // Handle image outputs (T2I/I2I)
   if (located && (result?.data?.images?.length || result?.data?.image?.url)) {
@@ -1592,7 +1870,7 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
         : [];
     const stored = await Promise.all(providerImages.map(async (img, index) => {
       try {
-        const up = await uploadFromUrlToZata({ sourceUrl: img.url, keyPrefix, fileName: `image-${index+1}` });
+        const up = await uploadFromUrlToZata({ sourceUrl: img.url, keyPrefix, fileName: buildGenerationImageFileName(located?.id, index) });
         return { id: `${requestId}-${index+1}`, url: up.publicUrl, storagePath: up.key, originalUrl: img.url } as any;
       } catch {
         return { id: `${requestId}-${index+1}`, url: img.url, originalUrl: img.url } as any;
@@ -1600,7 +1878,7 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
     }));
     await generationHistoryRepository.update(uid, located.id, { status: 'completed', images: stored } as any);
     try {
-      const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(model, (located as any)?.item);
+      const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(resolvedModel, (located as any)?.item);
       await creditsRepository.writeDebitIfAbsent(uid, located.id, cost, 'fal.queue.image', { ...meta, historyId: located.id, provider: 'fal', pricingVersion });
     } catch {}
     
@@ -1612,7 +1890,7 @@ async function queueResult(uid: string, model: string, requestId: string): Promi
     
     // Sync to mirror with retries
     await syncToMirror(uid, located.id);
-    return { images: stored, historyId: located.id, model, requestId, status: 'completed' } as any;
+    return { images: stored, historyId: located.id, model: resolvedModel, requestId, status: 'completed' } as any;
   }
   return result;
 }
@@ -2028,8 +2306,64 @@ export const falQueueService = {
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   // LTX V2 - Image to Video wrappers
-  async ltx2ProI2vSubmit(uid: string, body: any): Promise<SubmitReturn> { return this.ltx2I2vSubmit(uid, body, false); },
-  async ltx2FastI2vSubmit(uid: string, body: any): Promise<SubmitReturn> { return this.ltx2I2vSubmit(uid, body, true); },
+  async ltx2ProI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+    if (!body?.image_url) throw new ApiError('image_url is required', 400);
+    const model = 'fal-ai/ltxv-2/image-to-video';
+    const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    const { request_id } = await fal.queue.submit(model, {
+      input: {
+        prompt: body.prompt,
+        image_url: body.image_url,
+        resolution: body.resolution ?? '1080p',
+        aspect_ratio: body.aspect_ratio ?? 'auto',
+        duration: body.duration ?? 8,
+        fps: body.fps ?? 25,
+        generate_audio: body.generate_audio ?? true,
+      },
+    } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: 'fal',
+      providerTaskId: request_id,
+      duration: body.duration ?? 8,
+      resolution: body.resolution ?? '1080p',
+      aspect_ratio: body.aspect_ratio ?? 'auto',
+      fps: body.fps ?? 25,
+      generate_audio: body.generate_audio ?? true,
+    } as any);
+    return { requestId: request_id, historyId, model, status: 'submitted' };
+  },
+  async ltx2FastI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+    if (!body?.image_url) throw new ApiError('image_url is required', 400);
+    const model = 'fal-ai/ltxv-2/image-to-video/fast';
+    const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    const { request_id } = await fal.queue.submit(model, {
+      input: {
+        prompt: body.prompt,
+        image_url: body.image_url,
+        resolution: body.resolution ?? '1080p',
+        aspect_ratio: body.aspect_ratio ?? 'auto',
+        duration: body.duration ?? 8,
+        fps: body.fps ?? 25,
+        generate_audio: body.generate_audio ?? true,
+      },
+    } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: 'fal',
+      providerTaskId: request_id,
+      duration: body.duration ?? 8,
+      resolution: body.resolution ?? '1080p',
+      aspect_ratio: body.aspect_ratio ?? 'auto',
+      fps: body.fps ?? 25,
+      generate_audio: body.generate_audio ?? true,
+    } as any);
+    return { requestId: request_id, historyId, model, status: 'submitted' };
+  },
   // LTX V2 - Text to Video (shared)
   async ltx2T2vSubmit(uid: string, body: any, fast = false): Promise<SubmitReturn> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
@@ -2059,8 +2393,60 @@ export const falQueueService = {
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   // LTX V2 - Text to Video wrappers
-  async ltx2ProT2vSubmit(uid: string, body: any): Promise<SubmitReturn> { return this.ltx2T2vSubmit(uid, body, false); },
-  async ltx2FastT2vSubmit(uid: string, body: any): Promise<SubmitReturn> { return this.ltx2T2vSubmit(uid, body, true); },
+  async ltx2ProT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+    const model = 'fal-ai/ltxv-2/text-to-video';
+    const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    const { request_id } = await fal.queue.submit(model, {
+      input: {
+        prompt: body.prompt,
+        duration: body.duration ?? 8,
+        resolution: body.resolution ?? '1080p',
+        aspect_ratio: body.aspect_ratio ?? '16:9',
+        fps: body.fps ?? 25,
+        generate_audio: body.generate_audio ?? true,
+      },
+    } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: 'fal',
+      providerTaskId: request_id,
+      duration: body.duration ?? 8,
+      resolution: body.resolution ?? '1080p',
+      aspect_ratio: body.aspect_ratio ?? '16:9',
+      fps: body.fps ?? 25,
+      generate_audio: body.generate_audio ?? true,
+    } as any);
+    return { requestId: request_id, historyId, model, status: 'submitted' };
+  },
+  async ltx2FastT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+    const model = 'fal-ai/ltxv-2/text-to-video/fast';
+    const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    const { request_id } = await fal.queue.submit(model, {
+      input: {
+        prompt: body.prompt,
+        duration: body.duration ?? 8,
+        resolution: body.resolution ?? '1080p',
+        aspect_ratio: body.aspect_ratio ?? '16:9',
+        fps: body.fps ?? 25,
+        generate_audio: body.generate_audio ?? true,
+      },
+    } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: 'fal',
+      providerTaskId: request_id,
+      duration: body.duration ?? 8,
+      resolution: body.resolution ?? '1080p',
+      aspect_ratio: body.aspect_ratio ?? '16:9',
+      fps: body.fps ?? 25,
+      generate_audio: body.generate_audio ?? true,
+    } as any);
+    return { requestId: request_id, historyId, model, status: 'submitted' };
+  },
   queueStatus,
   queueResult,
 };

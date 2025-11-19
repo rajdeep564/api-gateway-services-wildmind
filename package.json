@@ -8,18 +8,19 @@
     "build": "tsc",
     "postinstall": "npm run build",
     "start": "node dist/index.js",
-  "test": "jest --runInBand --config jest.config.js",
+    "test": "jest --runInBand --config jest.config.js",
     "migrate:optimize-images": "ts-node scripts/migrateImageOptimization.ts",
-    "sync:optimized-to-mirror": "ts-node scripts/syncOptimizedToMirror.ts"
-    ,"migrate:aesthetic-scores": "ts-node scripts/migrateAestheticScores.ts"
-  ,"migrate:normalize-images": "ts-node scripts/normalizeLegacyImages.ts"
-  ,"migrate:feed-scores": "ts-node scripts/migrateFeedRankingScores.ts"
-    ,"mirror:worker": "ts-node src/workers/mirrorQueueWorker.ts"
+    "sync:optimized-to-mirror": "ts-node scripts/syncOptimizedToMirror.ts",
+    "migrate:aesthetic-scores": "ts-node scripts/migrateAestheticScores.ts",
+    "migrate:normalize-images": "ts-node scripts/normalizeLegacyImages.ts",
+    "migrate:feed-scores": "ts-node scripts/migrateFeedRankingScores.ts",
+    "mirror:worker": "ts-node src/workers/mirrorQueueWorker.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.893.0",
     "@aws-sdk/s3-request-presigner": "^3.893.0",
     "@fal-ai/client": "^1.6.2",
+    "@google/genai": "^1.29.1",
     "@runwayml/sdk": "^2.10.0",
     "@types/multer": "^2.0.0",
     "adm-zip": "^0.5.16",
@@ -47,7 +48,8 @@
     "replicate": "^1.2.0",
     "sharp": "^0.34.4",
     "uuid": "^13.0.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.7",
@@ -62,6 +64,7 @@
     "@types/nodemailer": "^7.0.1",
     "@types/probe-image-size": "^7.2.5",
     "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.5.10",
     "nodemon": "^3.1.10",
     "pino-pretty": "^13.1.1",
     "ts-node": "^10.9.2",

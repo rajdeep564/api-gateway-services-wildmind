@@ -63,6 +63,14 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
 async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = req.uid as string;
+    console.log('[AuthController]/me request', {
+      uid,
+      cookiesPresent: Object.keys(req.cookies || {}),
+      origin: req.headers.origin,
+      host: req.headers.host,
+      userAgent: req.headers['user-agent'],
+      ip: req.ip,
+    });
     let user = await authService.getCurrentUser(uid);
 
     // Capture optional device headers from client
@@ -114,7 +122,9 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
     res.json(
       formatApiResponse("success", "User retrieved successfully", { user })
     );
+    console.log('[AuthController]/me success', { uid, username: user?.username, plan: (user as any)?.planCode });
   } catch (error) {
+    console.error('[AuthController]/me error', { uid: req.uid, cookies: Object.keys(req.cookies || {}) }, error);
     next(error);
   }
 }
@@ -256,20 +266,52 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
   const sessionCookie = await admin
     .auth()
     .createSessionCookie(idToken, { expiresIn });
-  // Only include Domain attribute when it matches the current host suffix; otherwise browsers will drop it
+  
+  // In production, always use the cookie domain if set (for cross-subdomain sharing)
+  // In development, only use domain if it matches the current host
   const host = (req.hostname || '').toLowerCase();
+  const origin = req.headers.origin || '';
   const dom = (cookieDomain || '').toLowerCase();
-  const domainMatches = dom && (host === dom.replace(/^\./, '') || host.endsWith(dom));
+  let shouldSetDomain = false;
+  
+  if (isProd && cookieDomain) {
+    // Production: always use domain for cross-subdomain cookie sharing
+    shouldSetDomain = true;
+  } else if (cookieDomain) {
+    // Development: only use domain if it matches the host
+    const domainMatches = !!(dom && (host === dom.replace(/^\./, '') || host.endsWith(dom)));
+    shouldSetDomain = domainMatches;
+  }
 
-  res.cookie("app_session", sessionCookie, {
+  const cookieOptions = {
     httpOnly: true,
     // Cookies must be Secure when SameSite=None per Chrome requirements
-    secure: true,
-    sameSite: isProd ? "none" : "lax",
+    secure: isProd, // Secure only in production (HTTPS required)
+    sameSite: (isProd ? "none" : "lax") as "none" | "lax" | "strict", // None for cross-subdomain, Lax for same-site
     maxAge: expiresIn,
     path: "/",
-    ...(domainMatches ? { domain: cookieDomain } : {}),
+    ...(shouldSetDomain ? { domain: cookieDomain } : {}),
+  };
+
+  // Debug logging for cookie setting
+  console.log('[AUTH][setSessionCookie] Setting cookie', {
+    isProd,
+    cookieDomain,
+    shouldSetDomain,
+    host,
+    origin,
+    cookieOptions: {
+      ...cookieOptions,
+      domain: cookieOptions.domain || '(not set)',
+      sameSite: cookieOptions.sameSite,
+      secure: cookieOptions.secure,
+      httpOnly: cookieOptions.httpOnly,
+      path: cookieOptions.path,
+      maxAge: cookieOptions.maxAge
+    }
   });
+
+  res.cookie("app_session", sessionCookie, cookieOptions);
   return sessionCookie;
 }
 
