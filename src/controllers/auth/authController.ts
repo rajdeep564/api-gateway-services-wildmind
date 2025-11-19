@@ -354,7 +354,17 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     // Logger not available, console.log is enough
   }
 
+  // Actually set the cookie
   res.cookie("app_session", sessionCookie, cookieOptions);
+  
+  // Log the actual Set-Cookie header that will be sent
+  const setCookieHeader = res.getHeader('Set-Cookie');
+  console.log('[AUTH][setSessionCookie] Set-Cookie header:', setCookieHeader);
+  
+  // Also log what the browser should receive
+  const cookieString = `app_session=${sessionCookie}; Domain=${cookieOptions.domain || '(no domain)'}; Path=${cookieOptions.path}; Max-Age=${cookieOptions.maxAge}; SameSite=${cookieOptions.sameSite}; Secure=${cookieOptions.secure}; HttpOnly=${cookieOptions.httpOnly}`;
+  console.log('[AUTH][setSessionCookie] Cookie string that will be sent:', cookieString);
+  
   return sessionCookie;
 }
 
