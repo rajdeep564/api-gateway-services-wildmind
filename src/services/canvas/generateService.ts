@@ -193,8 +193,8 @@ export async function generateForCanvas(
         imageStoragePath = allImages[0]?.storagePath;
       } else {
         // Single image (backward compatible)
-        imageUrl = result.images?.[0]?.url || result.images?.[0]?.originalUrl || '';
-        imageStoragePath = (result as any)?.images?.[0]?.storagePath;
+      imageUrl = result.images?.[0]?.url || result.images?.[0]?.originalUrl || '';
+      imageStoragePath = (result as any)?.images?.[0]?.storagePath;
       }
       
       generationId = result.historyId;
@@ -293,8 +293,8 @@ export async function generateForCanvas(
         imageStoragePath = allImages[0]?.storagePath;
       } else {
         // Single image (backward compatible)
-        imageUrl = result.images?.[0]?.url || result.images?.[0]?.originalUrl || '';
-        imageStoragePath = (result as any)?.images?.[0]?.storagePath;
+      imageUrl = result.images?.[0]?.url || result.images?.[0]?.originalUrl || '';
+      imageStoragePath = (result as any)?.images?.[0]?.storagePath;
       }
       
       generationId = result.historyId;
@@ -555,10 +555,10 @@ export async function generateVideoForCanvas(
 
       // Prepare Replicate payload
       const replicatePayload: any = {
-        prompt: request.prompt,
+      prompt: request.prompt,
         model: modelConfig.backendModel, // Pass backend model name (e.g., 'kwaivgi/kling-v2.1')
         duration: duration,
-        aspect_ratio: aspectRatio,
+      aspect_ratio: aspectRatio,
         isPublic: false,
       };
 
