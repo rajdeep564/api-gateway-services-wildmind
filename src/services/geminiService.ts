@@ -1,12 +1,34 @@
 import axios from "axios";
 import { GoogleGenAI } from "@google/genai";
+import { env } from "../config/env";
 
-const API_KEY =
-  process.env.GOOGLE_GENAI_API_KEY ||
-  process.env.GENAI_API_KEY ||
-  "";
+// Lazy function to get API key
+function getApiKey(): string {
+  const key = 
+    process.env.GOOGLE_GENAI_API_KEY ||
+    process.env.GENAI_API_KEY ||
+    env.googleGenAIApiKey || 
+    "";
+  
+  if (process.env.NODE_ENV !== 'production' && !key) {
+    console.warn('[Gemini Service] API key not found.');
+  }
+  
+  return key;
+}
 
-const DEFAULT_MODEL = process.env.DEFAULT_GENAI_MODEL || "gemini-2.5-flash";
+// UPDATED: Use specific version 'gemini-1.5-flash-002' or generic 'gemini-1.5-flash'
+// Avoid '-latest' as it is deprecated and causes 404s.
+const DEFAULT_MODEL = process.env.DEFAULT_GENAI_MODEL || "gemini-1.5-flash-002";
+
+// Fallback models - strictly valid, officially supported identifiers
+const FALLBACK_MODELS: string[] = [
+  "gemini-1.5-flash",     // Generic alias for stable flash
+  "gemini-1.5-flash-002", // Specific stable version
+  "gemini-1.5-pro",       // Generic alias for stable pro
+  "gemini-2.0-flash-exp"  // Experimental, if available
+];
+
 const DEFAULT_MAX_OUTPUT_TOKENS = Number(process.env.DEFAULT_GENAI_MAX_TOKENS || "256");
 const DEFAULT_TEMPERATURE = Number(process.env.DEFAULT_GENAI_TEMPERATURE || "0.6");
 
@@ -15,23 +37,39 @@ export async function enhancePrompt(
   model?: string,
   options?: { maxOutputTokens?: number; temperature?: number }
 ) {
+  const API_KEY = getApiKey();
   if (!API_KEY) throw new Error("GOOGLE_GENAI_API_KEY not configured");
   if (!prompt.trim()) throw new Error("Prompt required");
 
-  // Normalize incoming model names (frontend may send UI-friendly identifiers).
-  function normalizeModelName(m?: string) {
-    if (!m) return DEFAULT_MODEL;
-    const low = m.toLowerCase();
-    // Map common frontend identifiers to the GenAI model name
-    if (low.includes('gemini-25') || low.includes('gemini25') || low.includes('gemini-2-5')) {
-      return DEFAULT_MODEL; // prefer configured default for ambiguous gemini-25 variants
+  // --- FIX: Robust Normalization ---
+  function normalizeModelName(m?: string): string {
+    // Start with the provided model OR the default from env
+    let target = m || DEFAULT_MODEL;
+    
+    // Sanitize: remove whitespace and lowercase
+    target = target.trim().toLowerCase();
+
+    // 1. Handle Deprecated '-latest' suffix
+    // The API no longer supports 'gemini-1.5-flash-latest'. We map it to '-002'.
+    if (target.endsWith('-latest')) {
+      return target.replace(/-latest$/, '-002');
     }
-    // Strip '-image' suffixes that some frontends append
-    if (low.endsWith('-image')) return low.replace(/-image$/, '');
-    return m;
+
+    // 2. Handle Frontend/UI Aliases
+    // Strip '-image' suffix if present
+    if (target.endsWith('-image')) {
+      target = target.replace(/-image$/, '');
+    }
+
+    // Handle ambiguous 'gemini-2.5' references (map to default if not a real model yet)
+    if (target.includes('gemini-25') || target.includes('gemini25') || target.includes('gemini-2-5')) {
+      return "gemini-1.5-pro"; // or return DEFAULT_MODEL
+    }
+
+    return target;
   }
 
-  const modelToUse = normalizeModelName(model) || DEFAULT_MODEL;
+  const modelToUse = normalizeModelName(model);
   const maxOutputTokens = options?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
   const temperature = options?.temperature ?? DEFAULT_TEMPERATURE;
 
@@ -44,113 +82,122 @@ User prompt:
 ${prompt}
 `.trim();
 
-  // --- SDK call (Primary path) ---
-  // Try SDK with retries for transient errors (503/unavailable). If SDK isn't available
-  // or fails after retries, fall back to REST.
+  // --- REST Helper ---
+  async function restGenerate(mName: string, apiVersion: string = 'v1beta') {
+    const apiKey = getApiKey();
+    // URL encode the model name to handle special characters if any
+    const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${encodeURIComponent(mName)}:generateContent?key=${apiKey}`;
+    
+    try {
+      const resp = await axios.post(url, {
+        contents: [{ role: "user", parts: [{ text: instruction }] }],
+        generationConfig: { maxOutputTokens, temperature },
+      });
+      const text = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+      return { text, raw: resp.data };
+    } catch (err: any) {
+      // If v1beta fails with 404, try v1 as a last resort fallback for older models
+      if (apiVersion === 'v1beta' && (err?.response?.status === 404 || err?.response?.data?.error?.code === 404)) {
+        console.info(`[Gemini Service] Model ${mName} not found in v1beta, trying v1...`);
+        return restGenerate(mName, 'v1');
+      }
+      throw err;
+    }
+  }
+
+  // --- SDK Call (Primary) ---
   async function sdkGenerateWithRetries(mName: string) {
-    const ai: any = (GoogleGenAI ? new (GoogleGenAI as any)({ apiKey: API_KEY }) : null);
+    const apiKey = getApiKey();
+    // Initialize SDK safely
+    const ai: any = (GoogleGenAI ? new (GoogleGenAI as any)({ apiKey }) : null);
     if (!ai) throw new Error('SDK not available');
 
-    const maxAttempts = 3;
+    const maxAttempts = 2; // Reduced attempts for faster feedback
     let attempt = 0;
-    const baseDelay = 400; // ms
+    const baseDelay = 500;
 
     while (attempt < maxAttempts) {
       attempt += 1;
       try {
-        // Try canonical quickstart method first
-        if (ai.responses && typeof ai.responses.generate === 'function') {
-          const response: any = await ai.responses.generate({ model: mName, input: instruction, config: { maxOutputTokens, temperature } });
-          const text = (typeof response?.text === 'function') ? response.text()?.trim() : (response?.text?.trim?.() || '');
-          return { text, raw: response };
-        }
-
-        // Fallback shape: ai.models.generateContent
+        // Attempt generation using the "models" namespace (common in newer SDKs)
         if (ai.models && typeof ai.models.generateContent === 'function') {
-          const sdkResp: any = await ai.models.generateContent({ model: mName, contents: instruction, temperature, maxOutputTokens });
-          const text = sdkResp?.text || sdkResp?.response?.text || sdkResp?.content || (Array.isArray(sdkResp?.candidates) ? sdkResp.candidates[0]?.content : undefined) || '';
-          return { text: String(text || '').trim(), raw: sdkResp };
+            const sdkResp: any = await ai.models.generateContent({
+                model: mName,
+                contents: instruction,
+                config: { temperature, maxOutputTokens } // Note: check SDK docs for exact config param location
+            });
+            
+            // Parse response (handle different SDK version response shapes)
+            const text = sdkResp?.text || 
+                         sdkResp?.response?.text?.() || 
+                         sdkResp?.response?.text || 
+                         (Array.isArray(sdkResp?.candidates) ? sdkResp.candidates[0]?.content?.parts?.[0]?.text : '') || 
+                         '';
+                         
+            return { text: String(text || '').trim(), raw: sdkResp };
+        }
+        
+        // Fallback for older SDK structure
+        if (ai.responses && typeof ai.responses.generate === 'function') {
+           const response: any = await ai.responses.generate({ model: mName, input: instruction, config: { maxOutputTokens, temperature } });
+           const text = (typeof response?.text === 'function') ? response.text()?.trim() : (response?.text?.trim?.() || '');
+           return { text, raw: response };
         }
 
         throw new Error('No compatible SDK generation method found');
       } catch (sdkErr: any) {
         const msg = sdkErr?.message || sdkErr;
-        const status = sdkErr?.status || sdkErr?.response?.status || null;
-        // Treat 503 / UNAVAILABLE as transient and retry
-        const isTransient = status === 503 || String(msg).toLowerCase().includes('unavailable') || String(msg).toLowerCase().includes('temporar');
-        console.warn(`SDK attempt ${attempt} failed for model ${mName}:`, msg);
+        const status = sdkErr?.status || sdkErr?.response?.status;
+
+        // IMMEDIATE FAIL: If 404 (Not Found) or 400 (Bad Request), do not retry SDK.
+        if (status === 404 || String(msg).includes('not found')) {
+             throw new Error(`Model ${mName} not found (404)`);
+        }
+
+        // RETRY: Only for 503 (Unavailable) or 429 (Quota)
+        const isTransient = status === 503 || String(msg).toLowerCase().includes('unavailable') || status === 429;
+        
         if (attempt >= maxAttempts || !isTransient) {
           throw sdkErr;
         }
-        const delay = baseDelay * Math.pow(2, attempt - 1);
-        await new Promise((r) => setTimeout(r, delay));
+        console.warn(`[Gemini Service] SDK attempt ${attempt} failed for ${mName}. Retrying...`);
+        await new Promise((r) => setTimeout(r, baseDelay * attempt));
       }
     }
     throw new Error('SDK generation failed after retries');
   }
 
+  // --- Main Execution Logic ---
+  
+  // 1. Try Primary Model (SDK)
   try {
     const { text, raw } = await sdkGenerateWithRetries(modelToUse);
     return { enhancedPrompt: text, raw, model: modelToUse, sdk: true };
   } catch (sdkFinalErr: any) {
-    console.warn('SDK failed or unavailable; falling back to REST:', sdkFinalErr?.message || sdkFinalErr);
-  }
+    const errMsg = sdkFinalErr?.message || String(sdkFinalErr);
+    console.warn(`[Gemini Service] Primary SDK failed for ${modelToUse}: ${errMsg}. Switching to fallback strategy.`);
 
-  // --- REST fallback ---
-  // REST fallback with improved error handling + retry to default model if model unsupported
-  async function restGenerate(mName: string) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(mName)}:generateContent?key=${API_KEY}`;
-    const resp = await axios.post(url, {
-      contents: [{ role: "user", parts: [{ text: instruction }] }],
-      generationConfig: { maxOutputTokens, temperature },
-    });
-    const text = resp.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-    return { text, raw: resp.data };
-  }
+    // 2. Fallback Logic (Loop through reliable models via REST)
+    // We use REST for fallbacks to isolate SDK issues from API availability issues
+    const uniqueFallbacks = Array.from(new Set([modelToUse, ...FALLBACK_MODELS]));
 
-  try {
-    // REST retry loop for transient server-side errors (503, 500, 429)
-    const maxRestAttempts = 3;
-    let restAttempt = 0;
-    while (restAttempt < maxRestAttempts) {
-      restAttempt += 1;
+    for (const fallbackModel of uniqueFallbacks) {
+      // Skip the model we just tried if it failed with 404 (invalid)
+      if (fallbackModel === modelToUse && errMsg.includes('404')) continue;
+      
+      // Skip normalization for fallbacks as they are hardcoded valid strings
       try {
-        const { text, raw } = await restGenerate(modelToUse);
-        return { enhancedPrompt: text, raw, model: modelToUse, sdk: false };
-      } catch (restErrInner: any) {
-        const status = restErrInner?.response?.status;
-        const body = restErrInner?.response?.data;
-        const isTransient = status === 503 || status === 500 || status === 429 || (body && JSON.stringify(body).toLowerCase().includes('unavailable'));
-        console.warn(`REST attempt ${restAttempt} failed for model ${modelToUse}:`, restErrInner?.message || restErrInner?.response?.data || restErrInner);
-        if (!isTransient || restAttempt >= maxRestAttempts) {
-          throw restErrInner;
-        }
-        // Exponential backoff before retrying
-        const backoff = 300 * Math.pow(2, restAttempt - 1);
-        await new Promise((r) => setTimeout(r, backoff));
+        console.info(`[Gemini Service] Attempting fallback: ${fallbackModel}`);
+        const { text: fbText, raw: fbRaw } = await restGenerate(fallbackModel);
+        return { enhancedPrompt: fbText, raw: fbRaw, model: fallbackModel, sdk: false };
+      } catch (fallbackErr: any) {
+        console.warn(`[Gemini Service] Fallback ${fallbackModel} failed.`);
+        // Continue to next model
       }
     }
-  } catch (restErr: any) {
-    const message = restErr?.response?.data || restErr?.message || String(restErr);
-    console.warn('REST fallback failed for model', modelToUse, message);
-
-    // If the failure looks like model-not-found or unsupported, retry with the DEFAULT_MODEL
-    const status = restErr?.response?.status;
-    const body = restErr?.response?.data;
-    const isModelNotFound = status === 404 || (body && JSON.stringify(body).toLowerCase().includes('not found'));
-
-    if (isModelNotFound && modelToUse !== DEFAULT_MODEL) {
-      try {
-        console.info('Retrying REST fallback with default model:', DEFAULT_MODEL);
-        const { text: text2, raw: raw2 } = await restGenerate(DEFAULT_MODEL);
-        return { enhancedPrompt: text2, raw: raw2, model: DEFAULT_MODEL, sdk: false };
-      } catch (retryErr: any) {
-        console.error('Retry with default model failed:', retryErr?.response?.data || retryErr?.message || retryErr);
-        throw new Error('Enhancement failed: model not supported by GenAI');
-      }
-    }
-
-    throw new Error(restErr?.message || 'REST enhancement failed');
+    
+    // If all fallbacks fail
+    throw new Error(`Enhancement failed. All models (${uniqueFallbacks.join(', ')}) unavailable.`);
   }
 }
 

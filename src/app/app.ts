@@ -3,7 +3,6 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import routes from '../routes';
 import { errorHandler } from '../utils/errorHandler';
-import dotenv from 'dotenv';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { gzipCompression, httpParamPollution, requestId, securityHeaders, originCheck } from '../middlewares/security';
 import { httpLogger } from '../middlewares/logger';
@@ -11,7 +10,7 @@ import { adminDb, admin } from '../config/firebaseAdmin';
 import { env } from '../config/env';
 import { creditsService } from '../services/creditsService';
 import { getRedisClient, isRedisEnabled } from '../config/redisClient';
-dotenv.config();
+// Note: dotenv is loaded in index.ts, no need to load here
 
 const app = express();
 

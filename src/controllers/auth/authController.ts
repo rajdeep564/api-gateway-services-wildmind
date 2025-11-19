@@ -63,6 +63,14 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
 async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = req.uid as string;
+    console.log('[AuthController]/me request', {
+      uid,
+      cookiesPresent: Object.keys(req.cookies || {}),
+      origin: req.headers.origin,
+      host: req.headers.host,
+      userAgent: req.headers['user-agent'],
+      ip: req.ip,
+    });
     let user = await authService.getCurrentUser(uid);
 
     // Capture optional device headers from client
@@ -114,7 +122,9 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
     res.json(
       formatApiResponse("success", "User retrieved successfully", { user })
     );
+    console.log('[AuthController]/me success', { uid, username: user?.username, plan: (user as any)?.planCode });
   } catch (error) {
+    console.error('[AuthController]/me error', { uid: req.uid, cookies: Object.keys(req.cookies || {}) }, error);
     next(error);
   }
 }

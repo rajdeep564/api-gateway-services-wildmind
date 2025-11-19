@@ -1,4 +1,18 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import path from 'path';
+
+// Load .env file from project root
+// Use process.cwd() which points to the project root when server is started
+const envPath = path.resolve(process.cwd(), '.env');
+dotenv.config({ path: envPath });
+
+// Debug: Log if .env was loaded (only in development)
+if (process.env.NODE_ENV !== 'production') {
+  console.log(`[ENV] Loading .env from: ${envPath}`);
+  console.log(`[ENV] GOOGLE_GENAI_API_KEY exists: ${!!process.env.GOOGLE_GENAI_API_KEY}`);
+  console.log(`[ENV] GENAI_API_KEY exists: ${!!process.env.GENAI_API_KEY}`);
+}
+
 import app from './app/app';
 import type { Server as HttpServer } from 'http';
 import { startRealtimeServer } from './websocket/realtimeServer';
