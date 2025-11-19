@@ -27,6 +27,10 @@ import {
 } from "../utils/pricing/falPricing";
 import {
   validateFalGenerate,
+  validateFalElevenDialogue,
+  validateFalElevenTts,
+  validateFalMayaTts,
+  validateFalChatterboxMultilingual,
   validateFalQueueStatus,
   validateFalVeoTextToVideoSubmit,
   validateFalVeoTextToVideoFastSubmit,
@@ -63,6 +67,42 @@ router.post(
   validateFalGenerate,
   makeCreditCost("fal", "generate", computeFalImageCost),
   falController.generate
+);
+
+// ElevenLabs Text-to-Dialogue (explicit route)
+router.post(
+  "/eleven/dialogue",
+  requireAuth,
+  validateFalElevenDialogue as any,
+  makeCreditCost("fal", "generate", computeFalImageCost) as any,
+  falController.generate as any
+);
+
+// ElevenLabs Text-to-Speech (TTS)
+router.post(
+  "/eleven/tts",
+  requireAuth,
+  validateFalElevenTts as any,
+  makeCreditCost("fal", "generate", computeFalImageCost) as any,
+  falController.generate as any
+);
+
+// Maya Text-to-Speech (Maya-1-Voice)
+router.post(
+  "/maya/tts",
+  requireAuth,
+  validateFalMayaTts as any,
+  makeCreditCost("fal", "generate", computeFalImageCost) as any,
+  falController.generate as any
+);
+
+// Chatterbox Multilingual Text-to-Speech
+router.post(
+  "/chatterbox/multilingual",
+  requireAuth,
+  validateFalChatterboxMultilingual as any,
+  makeCreditCost("fal", "generate", computeFalImageCost) as any,
+  falController.generate as any
 );
 
 // Image utilities

@@ -179,6 +179,216 @@ async function generate(
     finalPrompt = `${finalPrompt}, passport photo style, front facing, looking directly at camera, neutral expression, head and shoulders visible, hands partially visible, preserve exact skin texture and details from reference image, natural looking, maintain identical skin tone and complexion, professional photography, high quality, photorealistic, square format, light neutral background, even studio lighting, no white borders, no white padding, no white margins, no frames, no white space, edge-to-edge, full frame character, seamless background integration`;
   }
 
+  // If the requested model is an ElevenLabs variant, detect whether it's TTS or Dialogue and handle as audio generation
+  const modelLowerRaw = String(model || '').toLowerCase();
+  const wantsEleven = modelLowerRaw.includes('eleven');
+  const wantsMaya = modelLowerRaw.includes('maya');
+  const wantsChatterbox = modelLowerRaw.includes('chatterbox') || modelLowerRaw.includes('multilingual');
+  // Heuristic: dialogue uses `inputs` array or mentions 'dialogue', TTS uses `text` or mentions 'tts'/'text-to-speech'
+  const hasInputsArray = Array.isArray((payload as any).inputs) && (payload as any).inputs.length > 0;
+  const hasText = typeof (payload as any).text === 'string' && (payload as any).text.trim().length > 0;
+  const isElevenDialogue = hasInputsArray || modelLowerRaw.includes('dialogue') || modelLowerRaw.includes('text-to-dialogue');
+  const isElevenTts = hasText || modelLowerRaw.includes('tts') || modelLowerRaw.includes('text-to-speech') || modelLowerRaw.includes('text-to-voice');
+  const isMayaTts = hasText || modelLowerRaw.includes('maya') || modelLowerRaw.includes('maya-1') || modelLowerRaw.includes('maya-1-voice');
+  const isChatterboxMultilingual = hasText || modelLowerRaw.includes('chatterbox') || modelLowerRaw.includes('multilingual');
+
+  if (wantsMaya && isMayaTts) {
+    // Maya TTS flow
+    const mayaEndpoint = 'fal-ai/maya';
+    try {
+      const inputBody: any = {
+        text: (payload as any).text || finalPrompt,
+      };
+      if ((payload as any).prompt) inputBody.prompt = (payload as any).prompt;
+      if ((payload as any).temperature != null) inputBody.temperature = (payload as any).temperature;
+      if ((payload as any).top_p != null) inputBody.top_p = (payload as any).top_p;
+      if ((payload as any).max_tokens != null) inputBody.max_tokens = (payload as any).max_tokens;
+      if ((payload as any).repetition_penalty != null) inputBody.repetition_penalty = (payload as any).repetition_penalty;
+      if ((payload as any).output_format) inputBody.output_format = (payload as any).output_format;
+
+      console.log('[falService.generate] Calling Maya TTS model:', { mayaEndpoint, input: { ...inputBody, text: String(inputBody.text).slice(0, 120) + (String(inputBody.text).length > 120 ? '...' : '') } });
+      const result = await fal.subscribe(mayaEndpoint as any, ({ input: inputBody, logs: true } as unknown) as any);
+
+      const audioUrl: string | undefined = (result as any)?.data?.audio?.url;
+      if (!audioUrl) throw new ApiError('No audio URL returned from FAL Maya API', 502);
+
+      const username = creator?.username || uid;
+      let stored: any;
+      try {
+        stored = await uploadFromUrlToZata({ sourceUrl: audioUrl, keyPrefix: `users/${username}/audio/${historyId}`, fileName: 'maya-tts' });
+      } catch (e) {
+        stored = { publicUrl: audioUrl, key: '' };
+      }
+
+      const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', audio: audioObj } as any);
+      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj } as any);
+      await syncToMirror(uid, historyId);
+
+      return { audio: audioObj, historyId, model: mayaEndpoint, status: 'completed' } as any;
+    } catch (err: any) {
+      const message = err?.message || 'Failed to generate audio with FAL Maya API';
+      try {
+        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message } as any);
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[falService.generate][maya] Failed to mirror error state:', mirrorErr);
+      }
+      throw new ApiError(message, 500);
+    }
+  }
+
+  // Chatterbox multilingual TTS flow
+  if (wantsChatterbox && isChatterboxMultilingual) {
+    const chatterEndpoint = 'fal-ai/chatterbox/text-to-speech/multilingual';
+    try {
+      const inputBody: any = {
+        text: (payload as any).text || finalPrompt,
+      };
+      if ((payload as any).voice) inputBody.voice = (payload as any).voice;
+      if ((payload as any).custom_audio_language) inputBody.custom_audio_language = (payload as any).custom_audio_language;
+      if ((payload as any).exaggeration != null) inputBody.exaggeration = (payload as any).exaggeration;
+      if ((payload as any).temperature != null) inputBody.temperature = (payload as any).temperature;
+      if ((payload as any).cfg_scale != null) inputBody.cfg_scale = (payload as any).cfg_scale;
+      if ((payload as any).seed != null) inputBody.seed = (payload as any).seed;
+      if ((payload as any).audio_url) inputBody.audio_url = (payload as any).audio_url;
+
+      console.log('[falService.generate] Calling Chatterbox multilingual TTS model:', { chatterEndpoint, input: { ...inputBody, text: String(inputBody.text).slice(0, 120) + (String(inputBody.text).length > 120 ? '...' : '') } });
+      const result = await fal.subscribe(chatterEndpoint as any, ({ input: inputBody, logs: true } as unknown) as any);
+
+      const audioUrl: string | undefined = (result as any)?.data?.audio?.url;
+      if (!audioUrl) throw new ApiError('No audio URL returned from FAL Chatterbox API', 502);
+
+      const username = creator?.username || uid;
+      let stored: any;
+      try {
+        stored = await uploadFromUrlToZata({ sourceUrl: audioUrl, keyPrefix: `users/${username}/audio/${historyId}`, fileName: 'chatterbox-multilingual' });
+      } catch (e) {
+        stored = { publicUrl: audioUrl, key: '' };
+      }
+
+      const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', audio: audioObj } as any);
+      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj } as any);
+      await syncToMirror(uid, historyId);
+
+      return { audio: audioObj, historyId, model: chatterEndpoint, status: 'completed' } as any;
+    } catch (err: any) {
+      const message = err?.message || 'Failed to generate audio with FAL Chatterbox API';
+      try {
+        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message } as any);
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      } catch (mirrorErr) {
+        console.error('[falService.generate][chatterbox] Failed to mirror error state:', mirrorErr);
+      }
+      throw new ApiError(message, 500);
+    }
+  }
+
+  if (wantsEleven && (isElevenDialogue || isElevenTts)) {
+    // Prefer explicit payload shape first
+    if (isElevenTts) {
+      // Text-to-Speech flow
+      const ttsEndpoint = 'fal-ai/elevenlabs/tts/eleven-v3';
+      try {
+        const inputBody: any = {
+          text: (payload as any).text || finalPrompt,
+        };
+        if ((payload as any).voice) inputBody.voice = (payload as any).voice;
+        if ((payload as any).stability != null) inputBody.stability = (payload as any).stability;
+        if ((payload as any).similarity_boost != null) inputBody.similarity_boost = (payload as any).similarity_boost;
+        if ((payload as any).style != null) inputBody.style = (payload as any).style;
+        if ((payload as any).speed != null) inputBody.speed = (payload as any).speed;
+        if ((payload as any).timestamps != null) inputBody.timestamps = (payload as any).timestamps;
+        if ((payload as any).language_code) inputBody.language_code = (payload as any).language_code;
+        if ((payload as any).output_format) inputBody.output_format = (payload as any).output_format;
+        if ((payload as any).sync_mode != null) inputBody.sync_mode = (payload as any).sync_mode;
+        if ((payload as any).seed != null) inputBody.seed = (payload as any).seed;
+
+        console.log('[falService.generate] Calling ElevenLabs TTS model:', { ttsEndpoint, input: { ...inputBody, text: String(inputBody.text).slice(0, 120) + (String(inputBody.text).length > 120 ? '...' : '') } });
+        const result = await fal.subscribe(ttsEndpoint as any, ({ input: inputBody, logs: true } as unknown) as any);
+
+        const audioUrl: string | undefined = (result as any)?.data?.audio?.url;
+        if (!audioUrl) throw new ApiError('No audio URL returned from FAL ElevenLabs TTS API', 502);
+
+        const username = creator?.username || uid;
+        let stored: any;
+        try {
+          stored = await uploadFromUrlToZata({ sourceUrl: audioUrl, keyPrefix: `users/${username}/audio/${historyId}`, fileName: 'eleven-tts' });
+        } catch (e) {
+          stored = { publicUrl: audioUrl, key: '' };
+        }
+
+        const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+
+        await generationHistoryRepository.update(uid, historyId, { status: 'completed', audio: audioObj } as any);
+        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj } as any);
+        await syncToMirror(uid, historyId);
+
+        return { audio: audioObj, historyId, model: ttsEndpoint, status: 'completed' } as any;
+      } catch (err: any) {
+        const message = err?.message || 'Failed to generate audio with FAL ElevenLabs TTS API';
+        try {
+          await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message } as any);
+          await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+          await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        } catch (mirrorErr) {
+          console.error('[falService.generate][eleven-tts] Failed to mirror error state:', mirrorErr);
+        }
+        throw new ApiError(message, 500);
+      }
+    }
+
+    if (isElevenDialogue) {
+      // Text-to-Dialogue flow
+      const dialogueEndpoint = 'fal-ai/elevenlabs/text-to-dialogue/eleven-v3';
+      try {
+        const inputs = (payload as any).inputs || [{ text: finalPrompt, voice: (payload as any).voice || 'Rachel' }];
+        const inputBody: any = { inputs };
+        if ((payload as any).stability != null) inputBody.stability = (payload as any).stability;
+        if ((payload as any).use_speaker_boost != null) inputBody.use_speaker_boost = (payload as any).use_speaker_boost;
+        if ((payload as any).pronunciation_dictionary_locators) inputBody.pronunciation_dictionary_locators = (payload as any).pronunciation_dictionary_locators;
+        if ((payload as any).seed != null) inputBody.seed = (payload as any).seed;
+
+        console.log('[falService.generate] Calling ElevenLabs dialogue model:', { dialogueEndpoint, input: { ...inputBody, inputs: `[${(inputs || []).length} items]` } });
+        const result = await fal.subscribe(dialogueEndpoint as any, ({ input: inputBody, logs: true } as unknown) as any);
+
+        const audioUrl: string | undefined = (result as any)?.data?.audio?.url;
+        if (!audioUrl) throw new ApiError('No audio URL returned from FAL ElevenLabs API', 502);
+
+        const username = creator?.username || uid;
+        let stored: any;
+        try {
+          stored = await uploadFromUrlToZata({ sourceUrl: audioUrl, keyPrefix: `users/${username}/audio/${historyId}`, fileName: 'eleven-dialogue' });
+        } catch (e) {
+          stored = { publicUrl: audioUrl, key: '' };
+        }
+
+        const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+
+        await generationHistoryRepository.update(uid, historyId, { status: 'completed', audio: audioObj } as any);
+        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj } as any);
+        await syncToMirror(uid, historyId);
+
+        return { audio: audioObj, historyId, model: dialogueEndpoint, status: 'completed' } as any;
+      } catch (err: any) {
+        const message = err?.message || 'Failed to generate audio with FAL ElevenLabs API';
+        try {
+          await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message } as any);
+          await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+          await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        } catch (mirrorErr) {
+          console.error('[falService.generate][eleven-dialogue] Failed to mirror error state:', mirrorErr);
+        }
+        throw new ApiError(message, 500);
+      }
+    }
+  }
+
   try {
     const fileNameForIndex = (index: number) => buildGenerationImageFileName(historyId, index);
     const imagePromises = Array.from({ length: imagesRequested }, async (_, index) => {

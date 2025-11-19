@@ -11,7 +11,21 @@ export const ALLOWED_FAL_MODELS = [
   // Imagen 4 image generation variants (frontend model keys)
   'imagen-4-ultra',
   'imagen-4',
-  'imagen-4-fast'
+  'imagen-4-fast',
+  // ElevenLabs / text-to-dialogue variants // all will call same model 
+  'eleven-v3',
+  'elevenlabs-text-to-dialogue',
+  'elevenlabs-text-to-dialogue-eleven-v3',
+  // ElevenLabs TTS variants // all will call same model but this is text to speech 
+  'elevenlabs-tts',
+  'elevenlabs-tts-eleven-v3',
+  // Maya TTS variants
+  'maya',
+  'maya-tts',
+  'maya-1-voice',
+  // Chatterbox multilingual TTS
+  'chatterbox-text-to-speech-multilingual',
+  'chatterbox-multilingual',
 ];
 
 export const validateFalGenerate = [
@@ -33,6 +47,38 @@ export const validateFalGenerate = [
   }
 ];
 
+// Maya TTS validator (Maya-1-Voice)
+export const validateFalMayaTts = [
+  body('text').isString().notEmpty().withMessage('text is required'),
+  body('prompt').optional().isString(),
+  body('temperature').optional().isFloat({ min: 0, max: 2 }).withMessage('temperature must be a number'),
+  body('top_p').optional().isFloat({ min: 0, max: 1 }).withMessage('top_p must be between 0 and 1'),
+  body('max_tokens').optional().isInt({ min: 1 }).withMessage('max_tokens must be an integer'),
+  body('repetition_penalty').optional().isFloat({ min: 0.1 }).withMessage('repetition_penalty must be a number'),
+  body('output_format').optional().isIn(['wav','mp3']).withMessage('output_format must be wav or mp3'),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
+// Chatterbox Multilingual TTS validator
+export const validateFalChatterboxMultilingual = [
+  body('text').isString().notEmpty().isLength({ max: 300 }).withMessage('text is required and must be <= 300 characters'),
+  body('voice').optional().isString().withMessage('voice must be a string'),
+  body('custom_audio_language').optional().isString().withMessage('custom_audio_language must be a valid enum string'),
+  body('exaggeration').optional().isFloat({ min: 0.25, max: 2.0 }).withMessage('exaggeration must be between 0.25 and 2.0'),
+  body('temperature').optional().isFloat({ min: 0.05, max: 5.0 }).withMessage('temperature must be between 0.05 and 5.0'),
+  body('cfg_scale').optional().isFloat({ min: 0, max: 1 }).withMessage('cfg_scale must be between 0 and 1'),
+  body('seed').optional().isInt(),
+  body('audio_url').optional().isString().withMessage('audio_url must be a string URL if provided'),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
 // Veo3 Text-to-Video (standard and fast)
 export const validateFalVeoTextToVideo = [
   body('prompt').isString().notEmpty(),
@@ -69,6 +115,42 @@ export const validateFalVeoImageToVideo = [
 ];
 
 export const validateFalVeoImageToVideoFast = validateFalVeoImageToVideo;
+
+// ElevenLabs Text-to-Dialogue validator
+export const validateFalElevenDialogue = [
+  body('inputs').isArray({ min: 1 }).withMessage('inputs must be a non-empty array'),
+  body('inputs.*.text').isString().notEmpty().withMessage('each input must contain text'),
+  body('inputs.*.voice').optional().isString(),
+  body('stability').optional().isFloat({ min: 0, max: 1 }).withMessage('stability must be between 0 and 1'),
+  body('use_speaker_boost').optional().isBoolean(),
+  body('pronunciation_dictionary_locators').optional().isArray({ max: 3 }),
+  body('seed').optional().isInt(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
+// ElevenLabs Text-to-Speech (TTS) validator
+export const validateFalElevenTts = [
+  body('text').isString().notEmpty().withMessage('text is required'),
+  body('voice').optional().isString(),
+  body('stability').optional().isFloat({ min: 0, max: 1 }).withMessage('stability must be between 0 and 1'),
+  body('similarity_boost').optional().isFloat({ min: 0, max: 1 }).withMessage('similarity_boost must be between 0 and 1'),
+  body('style').optional().isFloat({ min: 0, max: 1 }).withMessage('style must be between 0 and 1'),
+  body('speed').optional().isFloat({ min: 0.7, max: 1.2 }).withMessage('speed must be between 0.7 and 1.2'),
+  body('timestamps').optional().isBoolean(),
+  body('language_code').optional().isString(),
+  body('output_format').optional().isString(),
+  body('sync_mode').optional().isBoolean(),
+  body('seed').optional().isInt(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
 
 // Queue validators
 export const validateFalQueueStatus = [

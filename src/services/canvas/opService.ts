@@ -129,7 +129,7 @@ async function applyOpToElements(projectId: string, op: CanvasOp): Promise<void>
         // Upsert the group element
         batch.push(op.data.element);
         // Also set meta.groupId on member elements if provided
-        const memberIds: string[] = op.data.element.meta?.memberElementIds || [];
+        const memberIds: string[] = (op.data.element.meta as any)?.memberElementIds || [];
         for (const mid of memberIds) {
           const existing = await elementRepository.getElement(projectId, mid);
           if (existing) {
@@ -144,7 +144,7 @@ async function applyOpToElements(projectId: string, op: CanvasOp): Promise<void>
       if (op.elementId) {
         const groupEl = await elementRepository.getElement(projectId, op.elementId);
         if (groupEl) {
-          const memberIds: string[] = groupEl.meta?.memberElementIds || [];
+          const memberIds: string[] = (groupEl.meta as any)?.memberElementIds || [];
           for (const mid of memberIds) {
             const existing = await elementRepository.getElement(projectId, mid);
             if (existing) {
