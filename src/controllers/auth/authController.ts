@@ -10,6 +10,9 @@ import "../../types/http";
 import { cacheSession, deleteCachedSession, decodeJwtPayload, getCachedSession } from "../../utils/sessionStore";
 import { isRedisEnabled } from "../../config/redisClient";
 
+// Module-level log to confirm file is loaded
+console.log('[AUTH][authController] Module loaded at', new Date().toISOString());
+
 async function checkUsername(req: Request, res: Response, next: NextFunction) {
   try {
     const username = String(req.query.username || "");

@@ -5,10 +5,20 @@ import { ApiError } from '../utils/errorHandler';
 export const validateSession = [
   body('idToken').isString().notEmpty().withMessage('idToken is required'),
   (req: Request, _res: Response, next: NextFunction) => {
+    console.log('[VALIDATION][validateSession] Request received', {
+      hasIdToken: !!req.body?.idToken,
+      idTokenLength: req.body?.idToken?.length || 0,
+      origin: req.headers.origin,
+      method: req.method,
+      path: req.path
+    });
+    
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      console.log('[VALIDATION][validateSession] Validation failed', errors.array());
       return next(new ApiError('Validation failed', 400, errors.array()));
     }
+    console.log('[VALIDATION][validateSession] Validation passed, calling next()');
     next();
   }
 ];

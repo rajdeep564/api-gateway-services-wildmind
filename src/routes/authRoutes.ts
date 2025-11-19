@@ -7,6 +7,19 @@ import { validateSession, validateOtpStart, validateOtpVerify, validateUsername,
 
 const router = Router();
 
+// Log all requests to auth routes
+router.use((req, res, next) => {
+  console.log('[AUTH][ROUTE] Request received', {
+    method: req.method,
+    path: req.path,
+    url: req.url,
+    origin: req.headers.origin,
+    hasBody: !!req.body,
+    bodyKeys: req.body ? Object.keys(req.body) : []
+  });
+  next();
+});
+
 router.post('/session', validateSession, authController.createSession);
 router.post('/login', validateLogin, authController.loginWithEmailPassword);
 router.post('/google', validateGoogleSignIn, authController.googleSignIn);
