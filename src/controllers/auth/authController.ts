@@ -270,6 +270,7 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
   // In production, always use the cookie domain if set (for cross-subdomain sharing)
   // In development, only use domain if it matches the current host
   const host = (req.hostname || '').toLowerCase();
+  const origin = req.headers.origin || '';
   const dom = (cookieDomain || '').toLowerCase();
   let shouldSetDomain = false;
   
@@ -282,15 +283,35 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     shouldSetDomain = domainMatches;
   }
 
-  res.cookie("app_session", sessionCookie, {
+  const cookieOptions = {
     httpOnly: true,
     // Cookies must be Secure when SameSite=None per Chrome requirements
     secure: isProd, // Secure only in production (HTTPS required)
-    sameSite: isProd ? "none" : "lax", // None for cross-subdomain, Lax for same-site
+    sameSite: (isProd ? "none" : "lax") as "none" | "lax" | "strict", // None for cross-subdomain, Lax for same-site
     maxAge: expiresIn,
     path: "/",
     ...(shouldSetDomain ? { domain: cookieDomain } : {}),
+  };
+
+  // Debug logging for cookie setting
+  console.log('[AUTH][setSessionCookie] Setting cookie', {
+    isProd,
+    cookieDomain,
+    shouldSetDomain,
+    host,
+    origin,
+    cookieOptions: {
+      ...cookieOptions,
+      domain: cookieOptions.domain || '(not set)',
+      sameSite: cookieOptions.sameSite,
+      secure: cookieOptions.secure,
+      httpOnly: cookieOptions.httpOnly,
+      path: cookieOptions.path,
+      maxAge: cookieOptions.maxAge
+    }
   });
+
+  res.cookie("app_session", sessionCookie, cookieOptions);
   return sessionCookie;
 }
 
