@@ -125,16 +125,25 @@ async function processGoogleNanoBanana(
 
   const model = 'fal-ai/nano-banana/edit';
   
+  // Create an extremely strict prompt that emphasizes ONLY modifying the masked area
+  // This prevents the model from changing other parts of the image
+  // The prompt explicitly references the mask image to ensure only masked regions are changed
+  const strictPrompt = `STRICT INSTRUCTION: You must ONLY modify the white/masked regions shown in the second image (the mask). The user's request is: "${prompt.trim()}". Apply this change ONLY to the white areas in the mask image. CRITICAL RULES: 1) Do NOT modify any black/unmasked areas. 2) Keep all unmasked regions identical to the original image. 3) Only change pixels that correspond to white areas in the mask. 4) Preserve everything outside the mask exactly as it appears in the original image. 5) Do not apply the requested change to any area that is not white in the mask image.`;
+  
+  // Add comprehensive negative prompt to prevent changes outside mask
+  const negativePrompt = 'changing unmasked areas, modifying areas outside mask, altering non-masked regions, editing parts not in mask, changing anything outside the white mask area, modifying background, changing other objects, editing non-selected areas, altering black mask regions, modifying areas that are not white in mask, changing anything not explicitly masked, editing unmasked portions, modifying non-white mask areas';
+  
   // Nano Banana edit uses image_urls array for reference images
   // For mask-based editing, we use the original image as the primary input
   // The mask is included as a second image to provide context
   // Note: The model will use the prompt to edit based on the primary image
   const input: any = {
-    prompt: prompt.trim(),
+    prompt: strictPrompt,
     image_urls: [inputImageUrl], // Primary image for editing
     num_images: 1,
     aspect_ratio: 'auto',
     output_format: 'png',
+    negative_prompt: negativePrompt,
   };
   
   // If mask is provided and different from input, include it as additional context
@@ -262,11 +271,15 @@ async function processSeedream4(
   // Use Bria GenFill for inpainting as Seedream 4 text-to-image endpoint doesn't support masks
   const model = 'fal-ai/bria/genfill';
   
+  // Create an extremely strict prompt that emphasizes ONLY modifying the masked area
+  const strictPrompt = `STRICT INSTRUCTION: You must ONLY modify the masked regions (white areas in the mask). The user's request is: "${prompt.trim()}". Apply this change ONLY to the masked/white areas. CRITICAL RULES: 1) Do NOT modify any unmasked/black areas. 2) Keep all unmasked regions identical to the original image. 3) Only change pixels that are white in the mask. 4) Preserve everything outside the mask exactly as it appears in the original image. 5) Do not apply the requested change to any area that is not masked.`;
+  
   const input: any = {
-    prompt,
+    prompt: strictPrompt,
     image_url: inputImageUrl,
     mask_url: maskUrl,
     num_images: 1,
+    negative_prompt: 'changing unmasked areas, modifying areas outside mask, altering non-masked regions, editing parts not in mask, changing anything outside the mask area, modifying background, changing other objects, editing non-selected areas, altering black mask regions, modifying areas that are not white in mask, changing anything not explicitly masked, editing unmasked portions, modifying non-white mask areas',
   };
 
   console.log('[replaceService] Calling Seedream 4 (via Bria GenFill):', { 
