@@ -13,6 +13,7 @@ import stickerRoutes from './stickers';
 import replicateRoutes from './replicate';
 import canvasRoutes from './canvas';
 import geminiRoutes from './gemini';
+import replaceRoutes from './replace';
 
 const router = Router();
 
@@ -30,5 +31,6 @@ router.use('/stickers', stickerRoutes);
 router.use('/replicate', replicateRoutes);
 router.use('/canvas', canvasRoutes);
 router.use('/gemini', geminiRoutes);
+router.use('/replace', replaceRoutes);
 
 export default router;
