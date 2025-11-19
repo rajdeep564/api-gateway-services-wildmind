@@ -491,13 +491,19 @@ async function fill(uid: string, body: any) {
 
   const updateData: any = {
     status: "completed",
-    images: cleanedImages,
-  };
-  if (highestScore !== undefined) {
-    updateData.aestheticScore = highestScore;
+    images: scoredImages,
+    aestheticScore: highestScore,
+  } as any);
+  // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+  try {
+    console.log('[BFL.fill] Triggering markGenerationCompleted for optimization', { uid, historyId });
+    markGenerationCompleted(uid, historyId, {
+      status: 'completed',
+      images: scoredImages,
+    }).catch(err => console.error('[BFL.fill] Image optimization failed:', err));
+  } catch (optErr) {
+    console.warn('[BFL.fill] markGenerationCompleted invocation error:', optErr);
   }
-
-  await generationHistoryRepository.update(uid, historyId, updateData as any);
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
   const returnData: any = {
@@ -568,13 +574,19 @@ async function expand(uid: string, body: any) {
 
   const updateData: any = {
     status: "completed",
-    images: cleanedImages,
-  };
-  if (highestScore !== undefined) {
-    updateData.aestheticScore = highestScore;
+    images: scoredImages,
+    aestheticScore: highestScore,
+  } as any);
+  // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+  try {
+    console.log('[BFL.expand] Triggering markGenerationCompleted for optimization', { uid, historyId });
+    markGenerationCompleted(uid, historyId, {
+      status: 'completed',
+      images: scoredImages,
+    }).catch(err => console.error('[BFL.expand] Image optimization failed:', err));
+  } catch (optErr) {
+    console.warn('[BFL.expand] markGenerationCompleted invocation error:', optErr);
   }
-
-  await generationHistoryRepository.update(uid, historyId, updateData as any);
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
   const returnData: any = {
@@ -641,13 +653,19 @@ async function canny(uid: string, body: any) {
 
   const updateData: any = {
     status: "completed",
-    images: cleanedImages,
-  };
-  if (highestScore !== undefined) {
-    updateData.aestheticScore = highestScore;
+    images: scoredImages,
+    aestheticScore: highestScore,
+  } as any);
+  // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+  try {
+    console.log('[BFL.canny] Triggering markGenerationCompleted for optimization', { uid, historyId });
+    markGenerationCompleted(uid, historyId, {
+      status: 'completed',
+      images: scoredImages,
+    }).catch(err => console.error('[BFL.canny] Image optimization failed:', err));
+  } catch (optErr) {
+    console.warn('[BFL.canny] markGenerationCompleted invocation error:', optErr);
   }
-
-  await generationHistoryRepository.update(uid, historyId, updateData as any);
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
   const returnData: any = {
@@ -714,13 +732,19 @@ async function depth(uid: string, body: any) {
 
   const updateData: any = {
     status: "completed",
-    images: cleanedImages,
-  };
-  if (highestScore !== undefined) {
-    updateData.aestheticScore = highestScore;
+    images: scoredImages,
+    aestheticScore: highestScore,
+  } as any);
+  // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+  try {
+    console.log('[BFL.depth] Triggering markGenerationCompleted for optimization', { uid, historyId });
+    markGenerationCompleted(uid, historyId, {
+      status: 'completed',
+      images: scoredImages,
+    }).catch(err => console.error('[BFL.depth] Image optimization failed:', err));
+  } catch (optErr) {
+    console.warn('[BFL.depth] markGenerationCompleted invocation error:', optErr);
   }
-
-  await generationHistoryRepository.update(uid, historyId, updateData as any);
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
   const returnData: any = {
@@ -890,13 +914,19 @@ async function expandWithFill(uid: string, body: any) {
 
   const updateData: any = {
     status: "completed",
-    images: cleanedImages,
-  };
-  if (highestScore !== undefined) {
-    updateData.aestheticScore = highestScore;
+    images: scoredImages,
+    aestheticScore: highestScore,
+  } as any);
+  // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+  try {
+    console.log('[BFL.expandWithFill] Triggering markGenerationCompleted for optimization', { uid, historyId });
+    markGenerationCompleted(uid, historyId, {
+      status: 'completed',
+      images: scoredImages,
+    }).catch(err => console.error('[BFL.expandWithFill] Image optimization failed:', err));
+  } catch (optErr) {
+    console.warn('[BFL.expandWithFill] markGenerationCompleted invocation error:', optErr);
   }
-  
-  await generationHistoryRepository.update(uid, historyId, updateData as any);
   
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);

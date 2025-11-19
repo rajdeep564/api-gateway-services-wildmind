@@ -79,3 +79,37 @@ export function computeKlingCostFromSku(sku: string): { cost: number; pricingVer
   if (credits == null) throw new Error('Unsupported Kling SKU');
   return { cost: Math.ceil(credits), pricingVersion: KLING_PRICING_VERSION, meta: { model: sku } };
 }
+
+/**
+ * Compute cost for Kling Lipsync
+ * Pricing: $0.014 per second of output video (or ~71 seconds for $1)
+ * We'll use a credit conversion: 1 credit = $0.01, so $0.014 per second = 1.4 credits per second
+ * Round up to 2 credits per second for simplicity
+ */
+export async function computeKlingLipsyncCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const b = (req.body || {}) as Record<string, any>;
+  
+  // Kling Lipsync pricing is based on output video duration
+  // Default to 5 seconds if not specified (will be adjusted after generation)
+  // For pre-authorization, we'll estimate based on input video duration or default
+  const estimatedDuration = b.estimated_duration || b.duration || 5;
+  const durationSeconds = typeof estimatedDuration === 'number' ? estimatedDuration : parseInt(String(estimatedDuration), 10) || 5;
+  
+  // $0.014 per second = 1.4 credits per second, rounded up to 2 credits per second
+  // This gives us a buffer and makes calculation simpler
+  const costPerSecond = 2;
+  const totalCost = Math.ceil(durationSeconds * costPerSecond);
+  
+  // Minimum cost of 2 credits (for 1 second)
+  const finalCost = Math.max(2, totalCost);
+  
+  return {
+    cost: finalCost,
+    pricingVersion: 'kling-lipsync-v1',
+    meta: {
+      model: 'kling-lip-sync',
+      estimatedDuration: durationSeconds,
+      costPerSecond,
+    },
+  };
+}

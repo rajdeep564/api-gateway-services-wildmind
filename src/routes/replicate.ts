@@ -5,7 +5,7 @@ import { makeCreditCost } from '../middlewares/creditCostFactory';
 import { replicateController } from '../controllers/replicateController';
 import { computeReplicateBgRemoveCost, computeReplicateImageGenCost, computeReplicateUpscaleCost } from '../utils/pricing/replicatePricing';
 import { computeWanVideoCost } from '../utils/pricing/wanPricing';
-import { computeKlingVideoCost } from '../utils/pricing/klingPricing';
+import { computeKlingVideoCost, computeKlingLipsyncCost } from '../utils/pricing/klingPricing';
 import { computeSeedanceVideoCost } from '../utils/pricing/seedancePricing';
 import { computePixverseVideoCost } from '../utils/pricing/pixversePricing';
 import { validateRemoveBg } from '../middlewares/validators/replicate/validateRemoveBg';
@@ -15,10 +15,15 @@ import { validateWan25I2V } from '../middlewares/validators/replicate/validateWa
 import { validateWan25T2V } from '../middlewares/validators/replicate/validateWan25T2V';
 import { validateKlingT2V } from '../middlewares/validators/replicate/validateKlingT2V';
 import { validateKlingI2V } from '../middlewares/validators/replicate/validateKlingI2V';
+import { validateKlingLipsync } from '../middlewares/validators/replicate/validateKlingLipsync';
 import { validateSeedanceT2V } from '../middlewares/validators/replicate/validateSeedanceT2V';
 import { validateSeedanceI2V } from '../middlewares/validators/replicate/validateSeedanceI2V';
 import { validatePixverseT2V } from '../middlewares/validators/replicate/validatePixverseT2V';
 import { validatePixverseI2V } from '../middlewares/validators/replicate/validatePixverseI2V';
+import { computeWanAnimateReplaceCost } from '../utils/pricing/wanAnimatePricing';
+import { validateWanAnimateReplace } from '../middlewares/validators/replicate/validateWanAnimateReplace';
+import { computeWanAnimateAnimationCost } from '../utils/pricing/wanAnimateAnimationPricing';
+import { validateWanAnimateAnimation } from '../middlewares/validators/replicate/validateWanAnimateAnimation';
 
 const router = Router();
 
@@ -124,6 +129,32 @@ router.post(
   validateKlingI2V,
   makeCreditCost('replicate', 'kling-i2v', computeKlingVideoCost),
   (replicateController as any).klingI2vSubmit
+);
+
+router.post(
+  '/kling-lipsync/submit',
+  requireAuth,
+  validateKlingLipsync,
+  makeCreditCost('replicate', 'kling-lipsync', computeKlingLipsyncCost),
+  (replicateController as any).klingLipsyncSubmit
+);
+
+// ============ Queue-style endpoints for Replicate WAN 2.2 Animate Replace ============
+router.post(
+  '/wan-2-2-animate-replace/submit',
+  requireAuth,
+  validateWanAnimateReplace,
+  makeCreditCost('replicate', 'wan-animate-replace', computeWanAnimateReplaceCost),
+  (replicateController as any).wanAnimateReplaceSubmit
+);
+
+// ============ Queue-style endpoints for Replicate WAN 2.2 Animate Animation ============
+router.post(
+  '/wan-2-2-animate-animation/submit',
+  requireAuth,
+  validateWanAnimateAnimation,
+  makeCreditCost('replicate', 'wan-animate-animation', computeWanAnimateAnimationCost),
+  (replicateController as any).wanAnimateAnimationSubmit
 );
 
 router.get('/queue/status', requireAuth, replicateController.queueStatus as any);

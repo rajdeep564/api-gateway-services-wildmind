@@ -8,8 +8,13 @@
     "build": "tsc",
     "postinstall": "npm run build",
     "start": "node dist/index.js",
+  "test": "jest --runInBand --config jest.config.js",
     "migrate:optimize-images": "ts-node scripts/migrateImageOptimization.ts",
     "sync:optimized-to-mirror": "ts-node scripts/syncOptimizedToMirror.ts"
+    ,"migrate:aesthetic-scores": "ts-node scripts/migrateAestheticScores.ts"
+  ,"migrate:normalize-images": "ts-node scripts/normalizeLegacyImages.ts"
+  ,"migrate:feed-scores": "ts-node scripts/migrateFeedRankingScores.ts"
+    ,"mirror:worker": "ts-node src/workers/mirrorQueueWorker.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.893.0",

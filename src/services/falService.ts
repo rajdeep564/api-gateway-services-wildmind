@@ -279,42 +279,46 @@ async function generate(
           }
         })
       );
-      
-      // Mark history completed with Zata URLs
+
+      // Score images (character path)
+      const scoredImages = await aestheticScoreService.scoreImages(storedImages);
+      const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
+      // Mark history completed with scored images & Zata URLs
       await generationHistoryRepository.update(uid, historyId, {
         status: 'completed',
-        images: storedImages,
+        images: scoredImages,
         frameSize: resolvedAspect,
+        aestheticScore: highestScore,
       } as Partial<GenerationHistoryItem>);
-      
-      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
+
+      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: scoredImages });
       await syncToMirror(uid, historyId);
 
       // Trigger image optimization (AVIF + thumbnail + blur) in background for character generations
       try {
         markGenerationCompleted(uid, historyId, {
           status: 'completed',
-          images: storedImages,
+          images: scoredImages,
           isPublic: (payload as any).isPublic === true,
         }).catch(err => console.error('[falService.generate] markGenerationCompleted (character) failed:', err));
       } catch (optErr) {
         console.warn('[falService.generate] markGenerationCompleted invocation error (character):', optErr);
       }
-      
+
       // Save character to characters collection
-      if (characterName && storedImages.length > 0) {
+      if (characterName && scoredImages.length > 0) {
         try {
           const { characterRepository } = await import('../repository/characterRepository');
-          const generatedImage = storedImages[0];
+          const generatedImage = scoredImages[0];
           const historyEntry = await generationHistoryRepository.get(uid, historyId);
           const inputImages = (historyEntry as any)?.inputImages || [];
-          
+
           await characterRepository.createCharacter(uid, {
             characterName,
             historyId,
             frontImageUrl: generatedImage.url,
             frontImageStoragePath: generatedImage.storagePath,
-            // Store input images if available (left/right views)
             leftImageUrl: inputImages[1]?.url || undefined,
             leftImageStoragePath: inputImages[1]?.storagePath || undefined,
             rightImageUrl: inputImages[2]?.url || undefined,
@@ -322,11 +326,11 @@ async function generate(
           });
         } catch (charErr) {
           console.error('[falService.generate] Failed to save character:', charErr);
-          // Don't fail the whole request if character save fails
+          // Non-fatal
         }
       }
-      
-      return { images: storedImages as any, historyId, model, status: 'completed' };
+
+  return { images: scoredImages as any, historyId, model, status: 'completed' };
     } else {
       // For canvas flows, force synchronous upload using override (so we have storagePath immediately)
       if ((payload as any)?.forceSyncUpload === true || (payload as any)?.storageKeyPrefixOverride) {
@@ -354,17 +358,23 @@ async function generate(
       }
       // For non-character generation, use background upload for faster response
       const quickImages = images.map((img) => ({ id: img.id, url: img.url, originalUrl: img.originalUrl || img.url, storagePath: '' } as any));
-      // Mark history completed with provider URLs for instant UX
+
+      // Score quick images immediately using provider URLs
+      const scoredQuick = await aestheticScoreService.scoreImages(quickImages);
+      const quickHighest = aestheticScoreService.getHighestScore(scoredQuick);
+
+      // Mark history completed with provider URLs and aesthetic score for instant UX
       await generationHistoryRepository.update(uid, historyId, {
         status: 'completed',
-        images: quickImages,
+        images: scoredQuick,
         frameSize: resolvedAspect,
+        aestheticScore: quickHighest,
       } as Partial<GenerationHistoryItem>);
-      
+
       // Sync to mirror immediately with provider URLs
       await syncToMirror(uid, historyId);
-      
-      // Best-effort: background upload to Zata, then replace URLs in history/mirror
+
+      // Best-effort: background upload to Zata, then replace URLs in history/mirror and re-score
       setImmediate(async () => {
         try {
           const storedImages = await Promise.all(
@@ -381,9 +391,14 @@ async function generate(
               }
             })
           );
-          await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: storedImages });
-          await generationHistoryRepository.update(uid, historyId, { images: storedImages } as any);
-          
+
+          // Re-score with final storage URLs for consistency
+          const rescored = await aestheticScoreService.scoreImages(storedImages);
+          const finalHighest = aestheticScoreService.getHighestScore(rescored);
+
+          await falRepository.updateGenerationRecord(legacyId, { status: 'completed', images: rescored });
+          await generationHistoryRepository.update(uid, historyId, { images: rescored, aestheticScore: finalHighest } as any);
+
           // Ensure mirror sync after Zata upload with retries
           await ensureMirrorSync(uid, historyId);
 
@@ -391,7 +406,7 @@ async function generate(
           try {
             markGenerationCompleted(uid, historyId, {
               status: 'completed',
-              images: storedImages,
+              images: rescored,
               isPublic: (payload as any).isPublic === true,
             }).catch(err => console.error('[falService.generate] markGenerationCompleted (background upload) failed:', err));
           } catch (optErr) {
@@ -402,9 +417,9 @@ async function generate(
           try { await falRepository.updateGenerationRecord(legacyId, { status: 'completed' }); } catch {}
         }
       });
-      
-      // Respond quickly with provider URLs
-      return { images: quickImages as any, historyId, model, status: 'completed' };
+
+      // Respond quickly with provider URLs & initial aesthetic score
+  return { images: scoredQuick as any, historyId, model, status: 'completed' };
     }
   } catch (err: any) {
     const message = err?.message || "Failed to generate images with FAL API";
@@ -731,9 +746,13 @@ export const falService = {
 
       const username = creator?.username || uid;
       const { key, publicUrl } = await uploadFromUrlToZata({ sourceUrl: imgUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'bria-expand' });
-      const images: FalGeneratedImage[] = [ { id: (result as any)?.requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any ];
+  const images: FalGeneratedImage[] = [ { id: (result as any)?.requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any ];
 
-      await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
+  // Score images
+  const scoredImages = await aestheticScoreService.scoreImages(images as any);
+  const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
+  await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: scoredImages, aestheticScore: highestScore } as any);
       
       // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
       markGenerationCompleted(uid, historyId, {
@@ -744,7 +763,7 @@ export const falService = {
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
 
-      return { images, historyId, model, status: 'completed' };
+  return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const responseData = err?.response?.data;
       const detailedMessage = typeof responseData === 'string'
@@ -897,22 +916,27 @@ export const falService = {
         }
       }));
 
+      // Score images
+      const scoredImages = await aestheticScoreService.scoreImages(storedImages as any);
+      const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
       await generationHistoryRepository.update(uid, historyId, {
         status: 'completed',
-        images: storedImages,
+        images: scoredImages,
+        aestheticScore: highestScore,
         frameSize: body?.aspect_ratio,
       } as any);
       
       // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
       markGenerationCompleted(uid, historyId, {
         status: "completed",
-        images: storedImages,
+        images: scoredImages as any,
       }).catch(err => console.error('[FAL] Image optimization failed:', err));
       
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
 
-      return { images: storedImages, historyId, model, status: 'completed' };
+  return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const responseData = err?.response?.data;
       const detailedMessage = typeof responseData === 'string'
@@ -972,18 +996,21 @@ export const falService = {
       if (!imgUrl) throw new ApiError('No image URL returned from FAL API', 502);
       const username = creator?.username || uid;
       const { key, publicUrl } = await uploadFromUrlToZata({ sourceUrl: imgUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'upscaled' });
-      const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any ];
-      await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
+  const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any ];
+  // Score images
+  const scoredImages = await aestheticScoreService.scoreImages(images as any);
+  const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+  await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: scoredImages, aestheticScore: highestScore } as any);
       
       // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
       markGenerationCompleted(uid, historyId, {
         status: "completed",
-        images: images,
+        images: scoredImages as any,
       }).catch(err => console.error('[FAL] Image optimization failed:', err));
       
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
-      return { images, historyId, model, status: 'completed' };
+  return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const message = err?.message || 'Failed to upscale image with FAL API';
       try {
@@ -1051,10 +1078,13 @@ export const falService = {
         stored = { publicUrl: videoUrl, key: '' };
       }
       const videos: VideoMedia[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: videoUrl } as any ];
-      await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
+  // Score video
+  const scoredVideos = await aestheticScoreService.scoreVideos(videos as any);
+  const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
+  await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
-      return { videos, historyId, model, status: 'completed' };
+  return { videos: scoredVideos as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const message = err?.message || 'Failed to upscale video with FAL API';
       try {
@@ -1288,18 +1318,21 @@ export const falService = {
         }
       }));
 
-      await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: storedImages } as any);
+  // Score images
+  const scoredImages = await aestheticScoreService.scoreImages(storedImages as any);
+  const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+  await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: scoredImages, aestheticScore: highestScore } as any);
       
       // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
       markGenerationCompleted(uid, historyId, {
         status: "completed",
-        images: storedImages,
+        images: scoredImages as any,
       }).catch(err => console.error('[FAL] Image optimization failed:', err));
       
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
 
-      return { images: storedImages, historyId, model, status: 'completed' };
+  return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const responseData = err?.response?.data;
       const detailedMessage = typeof responseData === 'string'
@@ -1362,9 +1395,12 @@ export const falService = {
         stored = { publicUrl: videoUrl, key: '' };
       }
       const videos: VideoMedia[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: videoUrl } as any ];
-      await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos } as any);
+  // Score video
+  const scoredVideos = await aestheticScoreService.scoreVideos(videos as any);
+  const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
+  await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
       await syncToMirror(uid, historyId);
-      return { videos, historyId, model, status: 'completed' };
+  return { videos: scoredVideos as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const message = err?.message || 'Failed to remove background from video with FAL API';
       try {
@@ -1682,23 +1718,54 @@ export const falQueueService = {
     if (!body?.image_url) throw new ApiError('image_url is required', 400);
     const model = 'fal-ai/sora-2/image-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    const { request_id } = await fal.queue.submit(model, {
-      input: {
-        api_key: body.api_key,
-        prompt: body.prompt,
-        image_url: body.image_url,
-        resolution: body.resolution ?? 'auto',
-        aspect_ratio: body.aspect_ratio ?? 'auto',
-        duration: body.duration ?? 8,
-      },
-    } as any);
+    
+    // Normalize duration to ensure it's a number and valid (4, 8, or 12)
+    let duration = body.duration ?? 8;
+    if (typeof duration !== 'number') {
+      duration = parseInt(String(duration), 10) || 8;
+    }
+    // Clamp to valid values
+    if (![4, 8, 12].includes(duration)) {
+      if (duration < 6) duration = 4;
+      else if (duration < 10) duration = 8;
+      else duration = 12;
+    }
+    
+    // Normalize resolution - Standard only supports 'auto' or '720p'
+    let resolution = body.resolution ?? 'auto';
+    if (resolution !== 'auto' && resolution !== '720p') {
+      resolution = 'auto';
+    }
+    
+    // Normalize aspect_ratio
+    let aspect_ratio = body.aspect_ratio ?? 'auto';
+    if (!['auto', '16:9', '9:16'].includes(aspect_ratio)) {
+      aspect_ratio = 'auto';
+    }
+    
+    const input: any = {
+      prompt: body.prompt,
+      image_url: body.image_url,
+      resolution,
+      aspect_ratio,
+      duration,
+    };
+    
+    // Only include api_key if provided
+    if (body.api_key) {
+      input.api_key = body.api_key;
+    }
+    
+    console.log('[sora2I2vSubmit] Submitting to FAL:', { model, input: { ...input, image_url: input.image_url?.substring(0, 100) + '...' } });
+    
+    const { request_id } = await fal.queue.submit(model, { input } as any);
     await generationHistoryRepository.update(uid, historyId, {
       provider: 'fal',
       providerTaskId: request_id,
-      // persist params for final debit mapping
-      duration: body.duration ?? 8,
-      resolution: body.resolution ?? 'auto',
-      aspect_ratio: body.aspect_ratio ?? 'auto',
+      // persist normalized params for final debit mapping
+      duration,
+      resolution,
+      aspect_ratio,
     } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
@@ -1710,22 +1777,54 @@ export const falQueueService = {
     if (!body?.image_url) throw new ApiError('image_url is required', 400);
     const model = 'fal-ai/sora-2/image-to-video/pro';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    const { request_id } = await fal.queue.submit(model, {
-      input: {
-        api_key: body.api_key,
-        prompt: body.prompt,
-        image_url: body.image_url,
-        resolution: body.resolution ?? 'auto',
-        aspect_ratio: body.aspect_ratio ?? 'auto',
-        duration: body.duration ?? 8,
-      },
-    } as any);
+    
+    // Normalize duration to ensure it's a number and valid (4, 8, or 12)
+    let duration = body.duration ?? 8;
+    if (typeof duration !== 'number') {
+      duration = parseInt(String(duration), 10) || 8;
+    }
+    // Clamp to valid values
+    if (![4, 8, 12].includes(duration)) {
+      if (duration < 6) duration = 4;
+      else if (duration < 10) duration = 8;
+      else duration = 12;
+    }
+    
+    // Normalize resolution - Pro supports 'auto', '720p', or '1080p'
+    let resolution = body.resolution ?? 'auto';
+    if (!['auto', '720p', '1080p'].includes(resolution)) {
+      resolution = 'auto';
+    }
+    
+    // Normalize aspect_ratio
+    let aspect_ratio = body.aspect_ratio ?? 'auto';
+    if (!['auto', '16:9', '9:16'].includes(aspect_ratio)) {
+      aspect_ratio = 'auto';
+    }
+    
+    const input: any = {
+      prompt: body.prompt,
+      image_url: body.image_url,
+      resolution,
+      aspect_ratio,
+      duration,
+    };
+    
+    // Only include api_key if provided
+    if (body.api_key) {
+      input.api_key = body.api_key;
+    }
+    
+    console.log('[sora2ProI2vSubmit] Submitting to FAL:', { model, input: { ...input, image_url: input.image_url?.substring(0, 100) + '...' } });
+    
+    const { request_id } = await fal.queue.submit(model, { input } as any);
     await generationHistoryRepository.update(uid, historyId, {
       provider: 'fal',
       providerTaskId: request_id,
-      duration: body.duration ?? 8,
-      resolution: body.resolution ?? 'auto',
-      aspect_ratio: body.aspect_ratio ?? 'auto',
+      // persist normalized params for final debit mapping
+      duration,
+      resolution,
+      aspect_ratio,
     } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
@@ -1773,21 +1872,53 @@ export const falQueueService = {
     if (!body?.prompt) throw new ApiError('Prompt is required', 400);
     const model = 'fal-ai/sora-2/text-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    const { request_id } = await fal.queue.submit(model, {
-      input: {
-        api_key: body.api_key,
-        prompt: body.prompt,
-        resolution: body.resolution ?? '720p',
-        aspect_ratio: body.aspect_ratio ?? '16:9',
-        duration: body.duration ?? 8,
-      },
-    } as any);
+    
+    // Normalize duration to ensure it's a number and valid (4, 8, or 12)
+    let duration = body.duration ?? 8;
+    if (typeof duration !== 'number') {
+      duration = parseInt(String(duration), 10) || 8;
+    }
+    // Clamp to valid values
+    if (![4, 8, 12].includes(duration)) {
+      if (duration < 6) duration = 4;
+      else if (duration < 10) duration = 8;
+      else duration = 12;
+    }
+    
+    // Normalize resolution - Standard only supports '720p'
+    let resolution = body.resolution ?? '720p';
+    if (resolution !== '720p') {
+      resolution = '720p';
+    }
+    
+    // Normalize aspect_ratio - Standard supports '16:9' or '9:16'
+    let aspect_ratio = body.aspect_ratio ?? '16:9';
+    if (!['16:9', '9:16'].includes(aspect_ratio)) {
+      aspect_ratio = '16:9';
+    }
+    
+    const input: any = {
+      prompt: body.prompt,
+      resolution,
+      aspect_ratio,
+      duration,
+    };
+    
+    // Only include api_key if provided
+    if (body.api_key) {
+      input.api_key = body.api_key;
+    }
+    
+    console.log('[sora2T2vSubmit] Submitting to FAL:', { model, input });
+    
+    const { request_id } = await fal.queue.submit(model, { input } as any);
     await generationHistoryRepository.update(uid, historyId, {
       provider: 'fal',
       providerTaskId: request_id,
-      duration: body.duration ?? 8,
-      resolution: body.resolution ?? '720p',
-      aspect_ratio: body.aspect_ratio ?? '16:9',
+      // persist normalized params for final debit mapping
+      duration,
+      resolution,
+      aspect_ratio,
     } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
@@ -1798,21 +1929,53 @@ export const falQueueService = {
     if (!body?.prompt) throw new ApiError('Prompt is required', 400);
     const model = 'fal-ai/sora-2/text-to-video/pro';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    const { request_id } = await fal.queue.submit(model, {
-      input: {
-        api_key: body.api_key,
-        prompt: body.prompt,
-        resolution: body.resolution ?? '1080p',
-        aspect_ratio: body.aspect_ratio ?? '16:9',
-        duration: body.duration ?? 8,
-      },
-    } as any);
+    
+    // Normalize duration to ensure it's a number and valid (4, 8, or 12)
+    let duration = body.duration ?? 8;
+    if (typeof duration !== 'number') {
+      duration = parseInt(String(duration), 10) || 8;
+    }
+    // Clamp to valid values
+    if (![4, 8, 12].includes(duration)) {
+      if (duration < 6) duration = 4;
+      else if (duration < 10) duration = 8;
+      else duration = 12;
+    }
+    
+    // Normalize resolution - Pro supports '720p' or '1080p'
+    let resolution = body.resolution ?? '1080p';
+    if (!['720p', '1080p'].includes(resolution)) {
+      resolution = '1080p';
+    }
+    
+    // Normalize aspect_ratio - Pro supports '16:9' or '9:16'
+    let aspect_ratio = body.aspect_ratio ?? '16:9';
+    if (!['16:9', '9:16'].includes(aspect_ratio)) {
+      aspect_ratio = '16:9';
+    }
+    
+    const input: any = {
+      prompt: body.prompt,
+      resolution,
+      aspect_ratio,
+      duration,
+    };
+    
+    // Only include api_key if provided
+    if (body.api_key) {
+      input.api_key = body.api_key;
+    }
+    
+    console.log('[sora2ProT2vSubmit] Submitting to FAL:', { model, input });
+    
+    const { request_id } = await fal.queue.submit(model, { input } as any);
     await generationHistoryRepository.update(uid, historyId, {
       provider: 'fal',
       providerTaskId: request_id,
-      duration: body.duration ?? 8,
-      resolution: body.resolution ?? '1080p',
-      aspect_ratio: body.aspect_ratio ?? '16:9',
+      // persist normalized params for final debit mapping
+      duration,
+      resolution,
+      aspect_ratio,
     } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },

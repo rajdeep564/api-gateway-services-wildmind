@@ -107,6 +107,32 @@ async function textToImage(
   } catch {}
   // Store provider identifiers on history
   await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
+  
+  // Persist user uploaded input images (if any)
+  if (uploadedImages && uploadedImages.length > 0) {
+    try {
+      const username = creator?.username || uid;
+      const keyPrefix = `users/${username}/input/${historyId}`;
+      const inputPersisted: any[] = [];
+      let idx = 0;
+      for (const src of uploadedImages) {
+        if (!src || typeof src !== 'string') continue;
+        try {
+          const stored = /^data:/i.test(src)
+            ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
+            : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+          inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+        } catch {}
+      }
+      if (inputPersisted.length > 0) {
+        await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+        console.log('[runwayService.textToImage] Saved inputImages to database', { historyId, count: inputPersisted.length });
+      }
+    } catch (e) {
+      console.warn('[runwayService.textToImage] Failed to save inputImages:', e);
+    }
+  }
+  
   return { taskId: created.id, status: "pending", historyId };
 }
 
@@ -153,6 +179,7 @@ async function getStatus(uid: string, id: string): Promise<any> {
           const highestScore = aestheticScoreService.getHighestScore(scoredImages);
 
           await generationHistoryRepository.update(uid, found.id, { status: 'completed', images: scoredImages, aestheticScore: highestScore } as any);
+          try { console.log('[Runway] History updated with scores', { historyId: found.id, imageCount: scoredImages.length, highestScore }); } catch {}
           
           // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
           markGenerationCompleted(uid, found.id, {
@@ -183,6 +210,7 @@ async function getStatus(uid: string, id: string): Promise<any> {
           const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
 
           await generationHistoryRepository.update(uid, found.id, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
+          try { console.log('[Runway] Video history updated with scores', { historyId: found.id, videoCount: scoredVideos.length, highestScore }); } catch {}
           try {
             const { cost, pricingVersion, meta } = computeRunwayCostFromHistoryModel(found.item.model);
             await creditsRepository.writeDebitIfAbsent(uid, found.id, cost, 'runway.video', { ...meta, historyId: found.id, provider: 'runway', pricingVersion });
@@ -384,8 +412,185 @@ async function videoGenerate(
   );
 }
 
+async function characterPerformance(
+  uid: string,
+  body: any
+): Promise<{
+  success: boolean;
+  taskId: string;
+  historyId?: string;
+}> {
+  const client = getRunwayClient();
+  const { model, character, reference, ratio, seed, bodyControl, expressionIntensity, contentModeration } = body || {};
+  
+  if (model !== 'act_two') {
+    throw new ApiError("Model must be 'act_two' for character performance", 400);
+  }
+  
+  if (!character || !character.type || !character.uri) {
+    throw new ApiError("Character is required with type and uri", 400);
+  }
+  
+  if (!reference || !reference.type || reference.type !== 'video' || !reference.uri) {
+    throw new ApiError("Reference video is required with type 'video' and uri", 400);
+  }
+  
+  // Build the request payload
+  const payload: any = {
+    model: 'act_two',
+    character: {
+      type: character.type,
+      uri: character.uri,
+    },
+    reference: {
+      type: 'video',
+      uri: reference.uri,
+    },
+    ratio: ratio || '1280:720',
+  };
+  
+  if (seed !== undefined) payload.seed = seed;
+  if (bodyControl !== undefined) payload.bodyControl = bodyControl;
+  if (expressionIntensity !== undefined) payload.expressionIntensity = expressionIntensity;
+  if (contentModeration) {
+    payload.contentModeration = {
+      publicFigureThreshold: contentModeration.publicFigureThreshold || 'auto',
+    };
+  }
+  
+  console.log('[Runway Character Performance] Calling SDK with payload:', JSON.stringify(payload, null, 2));
+  console.log('[Runway Character Performance] Client methods available:', Object.keys(client || {}));
+  console.log('[Runway Character Performance] Client.characterPerformance exists:', !!client.characterPerformance);
+  
+  let created;
+  try {
+    // Check if characterPerformance method exists on the client
+    if (!client.characterPerformance) {
+      console.error('[Runway Character Performance] characterPerformance method not found on client. Available methods:', Object.keys(client));
+      // Try using tasks.create as fallback if characterPerformance doesn't exist
+      if (client.tasks && typeof client.tasks.create === 'function') {
+        console.log('[Runway Character Performance] Attempting to use tasks.create as fallback');
+        created = await client.tasks.create({
+          type: 'character_performance',
+          ...payload
+        });
+      } else {
+        throw new ApiError("Runway SDK does not support characterPerformance. Please update @runwayml/sdk to the latest version that supports Character Performance API (act_two model).", 500);
+      }
+    } else if (typeof client.characterPerformance.create !== 'function') {
+      throw new ApiError("Runway SDK characterPerformance.create is not a function. Please update @runwayml/sdk to the latest version.", 500);
+    } else {
+      created = await client.characterPerformance.create(payload);
+    }
+    
+    console.log('[Runway Character Performance] SDK response:', JSON.stringify(created, null, 2));
+    console.log('[Runway Character Performance] Response type:', typeof created);
+    console.log('[Runway Character Performance] Response has id:', !!created?.id);
+    
+    // Check if the response is just the payload (error case)
+    if (created && JSON.stringify(created) === JSON.stringify(payload)) {
+      throw new ApiError("Runway SDK returned the payload unchanged. This usually means the method doesn't exist or the SDK version doesn't support Character Performance. Please update @runwayml/sdk.", 500);
+    }
+    
+    if (!created || !created.id) {
+      console.error('[Runway Character Performance] Invalid response - missing task ID. Response:', created);
+      throw new ApiError(`Invalid response from Runway SDK: missing task ID. Response: ${JSON.stringify(created)}`, 500);
+    }
+  } catch (error: any) {
+    console.error('[Runway Character Performance] SDK error details:', {
+      message: error?.message,
+      stack: error?.stack,
+      code: error?.code,
+      status: error?.status,
+      response: error?.response
+    });
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    // Check if it's a method not found error
+    if (error?.message?.includes('characterPerformance') || 
+        error?.message?.includes('not a function') ||
+        error?.code === 'ERR_METHOD_NOT_FOUND' ||
+        error?.name === 'TypeError') {
+      throw new ApiError(`Runway SDK method 'characterPerformance' not found or not supported. Error: ${error?.message}. Please ensure @runwayml/sdk is updated to the latest version that supports Character Performance API (act_two model).`, 500);
+    }
+    // Check for API errors
+    if (error?.status || error?.response) {
+      const status = error.status || error.response?.status;
+      const message = error.response?.data?.message || error.message || 'Unknown error';
+      throw new ApiError(`Runway Character Performance API error (${status}): ${message}`, status || 500, error);
+    }
+    throw new ApiError(`Runway Character Performance API error: ${error?.message || 'Unknown error'}`, 500, error);
+  }
+  
+  const prompt = body?.promptText || 'Character Performance generation';
+  const historyModel = body?.model || 'runway_act_two';
+  const generationType = body?.generationType || 'video-to-video';
+  
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt,
+    model: historyModel,
+    generationType,
+    visibility: (body as any)?.visibility || (((body as any)?.isPublic === true) ? 'public' : 'private'),
+    tags: (body as any)?.tags,
+    nsfw: (body as any)?.nsfw,
+    isPublic: (body as any)?.isPublic === true,
+    ...(ratio ? { ratio } : {}),
+  } as any);
+  
+  await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
+  
+  // Persist input character and reference
+  try {
+    const creator = await authRepository.getUserById(uid);
+    const username = (creator?.username || uid) as string;
+    const base = `users/${username}/input/${historyId}`;
+    const updates: any = {};
+    
+    // Store character (image or video)
+    if (character && character.uri) {
+      try {
+        const stored = /^data:/i.test(character.uri)
+          ? (character.type === 'image' 
+              ? await uploadDataUriToZata({ dataUri: character.uri, keyPrefix: base, fileName: 'character-1' })
+              : await uploadDataUriToZata({ dataUri: character.uri, keyPrefix: base, fileName: 'character-video-1' }))
+          : await uploadFromUrlToZata({ sourceUrl: character.uri, keyPrefix: base, fileName: character.type === 'image' ? 'character-1' : 'character-video-1' });
+        
+        if (character.type === 'image') {
+          updates.inputImages = [{ id: `${created.id}-char-1`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: character.uri }];
+        } else {
+          updates.inputVideos = [{ id: `${created.id}-char-video-1`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: character.uri }];
+        }
+      } catch {}
+    }
+    
+    // Store reference video
+    if (reference && reference.uri) {
+      try {
+        const stored = /^data:/i.test(reference.uri)
+          ? await uploadDataUriToZata({ dataUri: reference.uri, keyPrefix: base, fileName: 'reference-video-1' })
+          : await uploadFromUrlToZata({ sourceUrl: reference.uri, keyPrefix: base, fileName: 'reference-video-1' });
+        
+        if (!updates.inputVideos) updates.inputVideos = [];
+        updates.inputVideos.push({ id: `${created.id}-ref-video-1`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: reference.uri });
+      } catch {}
+    }
+    
+    if (Object.keys(updates).length > 0) {
+      await generationHistoryRepository.update(uid, historyId, updates);
+    }
+  } catch {}
+  
+  return {
+    success: true,
+    taskId: created.id,
+    historyId,
+  };
+}
+
 export const runwayService = {
   textToImage,
   getStatus,
   videoGenerate,
+  characterPerformance,
 };

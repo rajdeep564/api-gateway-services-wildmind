@@ -44,11 +44,8 @@ export async function startGeneration(
   }
   
   // OPTIMIZATION: Enqueue mirror upsert instead of blocking request
-  try {
-    await mirrorQueueRepository.enqueueUpsert({ uid, historyId, itemSnapshot: item });
-  } catch (e) {
-    console.warn('[startGeneration] Failed to enqueue mirror upsert:', e);
-  }
+  // Note: do not enqueue mirror upsert here to avoid writing pre-optimized snapshots to the public mirror.
+  // Mirror upserts will be enqueued once the generation is completed and optimized.
   
   return { historyId, item };
 }
@@ -58,6 +55,15 @@ export async function markGenerationCompleted(
   historyId: string,
   updates: Omit<CompleteGenerationPayload, "status"> & { status: "completed" }
 ): Promise<void> {
+  try {
+    console.log('[markGenerationCompleted] Enter', {
+      uid,
+      historyId,
+      hasImages: Array.isArray((updates as any)?.images) ? (updates as any).images.length : 0,
+      hasVideos: Array.isArray((updates as any)?.videos) ? (updates as any).videos.length : 0,
+      incomingIsPublic: (updates as any)?.isPublic,
+    });
+  } catch {}
   const existing = await generationHistoryRepository.get(uid, historyId);
   if (!existing) throw new ApiError("History item not found", 404);
 
@@ -66,10 +72,43 @@ export async function markGenerationCompleted(
   const finalIsPublic = updates.isPublic === true ? true : (updates.isPublic === false ? false : (existing.isPublic === true));
 
   // Merge / hydrate fields before optimization
-  const baseImages = updates.images && updates.images.length > 0 ? updates.images : (existing.images || []);
+  // Normalize legacy image entries (strings or objects without id/url)
+  const rawImages = updates.images && updates.images.length > 0 ? updates.images : (existing.images || []);
+  const baseImages = Array.isArray(rawImages) ? rawImages.map((im: any, index: number) => {
+    // If string -> wrap
+    if (typeof im === 'string') {
+      return {
+        id: `${historyId}-img-${index}`,
+        url: im,
+        originalUrl: im,
+        optimized: false,
+      };
+    }
+    if (im && typeof im === 'object') {
+      const id = im.id || `${historyId}-img-${index}`;
+      const url = im.url || im.originalUrl || (typeof im.storagePath === 'string' ? im.storagePath : undefined);
+      // Build sanitized image object without undefined values (Firestore rejects undefined)
+      const out: any = {
+        id,
+        url,
+        originalUrl: im.originalUrl || url,
+      };
+      if (im.storagePath) out.storagePath = im.storagePath;
+      if (im.avifUrl) out.avifUrl = im.avifUrl;
+      if (im.thumbnailUrl) out.thumbnailUrl = im.thumbnailUrl;
+      if (im.blurDataUrl) out.blurDataUrl = im.blurDataUrl;
+      if (typeof im.optimized === 'boolean') out.optimized = im.optimized;
+      if (im.optimizedAt) out.optimizedAt = im.optimizedAt;
+      if (typeof im.aestheticScore === 'number') out.aestheticScore = im.aestheticScore;
+      if (typeof im.width === 'number') out.width = im.width;
+      if (typeof im.height === 'number') out.height = im.height;
+      if (typeof im.size === 'number') out.size = im.size;
+      return out;
+    }
+    return im;
+  }) : [];
   const next: Partial<GenerationHistoryItem> = {
     status: GenerationStatus.Completed,
-    images: baseImages,
     videos: updates.videos ?? existing.videos,
     isPublic: finalIsPublic,
     visibility: finalIsPublic ? Visibility.Public : Visibility.Private,
@@ -84,34 +123,61 @@ export async function markGenerationCompleted(
       console.warn('[markGenerationCompleted] Failed to update stats:', e);
     }
   }
-  await generationHistoryRepository.update(uid, historyId, next);
+  // Persist normalization early if anything changed shape (compare by presence of string entries)
+  const hadLegacyStrings = rawImages.some((r: any) => typeof r === 'string');
+  try {
+    await generationHistoryRepository.update(uid, historyId, {
+      ...next,
+      // Only write images in the pre-optimization update if we actually transformed legacy strings
+      ...(hadLegacyStrings ? { images: baseImages } : {}),
+    });
+  } catch (e) {
+    console.warn('[markGenerationCompleted] Initial update (pre-optimization) failed:', e);
+  }
 
   // Inline (synchronous) optimization so caller immediately sees avif/thumbnail in history & mirror
   let optimizedImages = baseImages;
   if (Array.isArray(baseImages) && baseImages.length > 0) {
+    try {
+      console.log('[markGenerationCompleted] Starting optimization pass', {
+        historyId,
+        count: baseImages.length,
+      });
+    } catch {}
     optimizedImages = await Promise.all(baseImages.map(async (img: any, index: number) => {
       try {
         // If already optimized (idempotent) keep
         if (img.optimized && img.avifUrl && img.thumbnailUrl) return img;
         const url: string | undefined = img.url || img.originalUrl;
         if (!url) return img;
-        // Try to derive basePath/filename from url
-        const ZATA_PREFIXES = [
-          'https://idr01.zata.ai/devstoragev1/',
-          'https://idr01.zata.ai/prodstoragev1/',
-          'https://idr01.zata.ai/'
-        ];
-        let relative = '';
-        for (const p of ZATA_PREFIXES) if (url.startsWith(p)) { relative = url.substring(p.length); break; }
-        if (!relative) {
-          console.warn('[markGenerationCompleted] Non-Zata URL, skipping optimization:', url);
-          return img;
+        // Prefer reliable storagePath when present; fallback to URL parsing
+        let basePath = '';
+        let filename = '';
+        if (typeof img.storagePath === 'string' && img.storagePath.includes('/')) {
+          const sp: string = img.storagePath;
+          const lastSlash = sp.lastIndexOf('/');
+          basePath = sp.substring(0, lastSlash);
+          const rawFile = sp.substring(lastSlash + 1);
+          filename = rawFile.replace(/\.[^.]+$/, '').replace(/\.[^.]+$/, '');
+        } else {
+          // Try to derive basePath/filename from URL (handles various Zata URL shapes)
+          const match = url.match(/https?:\/\/[^/]+\/(?:devstoragev1|prodstoragev1)\/(.+)/);
+          let relative = match ? match[1] : '';
+          if (!relative) {
+            // Generic fallback: strip host leaving path
+            const m2 = url.match(/https?:\/\/[^/]+\/(.+)/);
+            relative = m2 ? m2[1] : '';
+          }
+          if (!relative) {
+            console.warn('[markGenerationCompleted] Non-Zata URL or unrecognized path, skipping optimization:', url);
+            return img;
+          }
+          const lastSlash = relative.lastIndexOf('/');
+          if (lastSlash < 0) return img;
+          basePath = relative.substring(0, lastSlash);
+          const rawFile = relative.substring(lastSlash + 1);
+          filename = rawFile.replace(/\.[^.]+$/, '').replace(/\.[^.]+$/, '');
         }
-        const lastSlash = relative.lastIndexOf('/');
-        if (lastSlash < 0) return img;
-        const basePath = relative.substring(0, lastSlash);
-        const rawFile = relative.substring(lastSlash + 1);
-        const filename = rawFile.replace(/\.[^.]+$/, '').replace(/\.[^.]+$/, '');
         if (!basePath || !filename) return img;
         const optimized = await imageOptimizationService.optimizeImage(url, basePath, filename, {
           maxWidth: 2048,
@@ -120,6 +186,13 @@ export async function markGenerationCompleted(
           thumbnailQuality: 80,
           thumbnailSize: 400,
         });
+        try {
+          console.log('[markGenerationCompleted] Optimized image', {
+            index,
+            avifUrl: optimized.avifUrl,
+            thumbnailUrl: optimized.thumbnailUrl,
+          });
+        } catch {}
         return {
           ...img,
           avifUrl: optimized.avifUrl,
@@ -133,14 +206,51 @@ export async function markGenerationCompleted(
         return img;
       }
     }));
-    // Persist optimized images
-    try { await generationHistoryRepository.update(uid, historyId, { images: optimizedImages } as any); } catch {}
+    // Persist optimized images and refresh caches immediately
+    try {
+      await generationHistoryRepository.update(uid, historyId, { images: optimizedImages } as any);
+      console.log('[markGenerationCompleted] Persisted optimized images to history', { historyId, optimizedCount: optimizedImages.filter((i: any) => i.optimized).length });
+      try {
+        const anyOpt = (optimizedImages as any[]).find((i: any) => i?.thumbnailUrl || i?.avifUrl);
+        if (anyOpt) {
+          console.log('[markGenerationCompleted] Verification: first optimized fields', {
+            sampleThumb: (anyOpt as any)?.thumbnailUrl,
+            sampleAvif: (anyOpt as any)?.avifUrl,
+          });
+        }
+      } catch {}
+      // Proactively refresh item cache with the up-to-date document to avoid stale GETs
+      try {
+        const freshItem = await generationHistoryRepository.get(uid, historyId);
+        if (freshItem) {
+          await setCachedItem(uid, historyId, freshItem);
+        }
+      } catch (e) {
+        console.warn('[markGenerationCompleted] Failed to refresh cache for item:', e);
+      }
+    } catch {}
   }
 
   // Enqueue mirror upsert with optimized fields
   try {
     const fresh = await generationHistoryRepository.get(uid, historyId);
-    if (fresh) await mirrorQueueRepository.enqueueUpsert({ uid, historyId, itemSnapshot: fresh });
+    if (fresh) {
+      // Immediately write to public mirror so feed reflects optimized fields without waiting
+      try {
+        const creator = await authRepository.getUserById(uid);
+        await generationsMirrorRepository.upsertFromHistory(uid, historyId, fresh, {
+          uid,
+          username: creator?.username,
+          displayName: (creator as any)?.displayName,
+          photoURL: creator?.photoURL,
+        });
+        console.log('[markGenerationCompleted] Wrote optimized snapshot to mirror (sync)', { historyId, isPublic: (fresh as any)?.isPublic });
+      } catch (e) {
+        console.warn('[markGenerationCompleted] Immediate mirror upsert failed, falling back to queue:', e);
+        // Fallback: enqueue for async processing
+        try { await mirrorQueueRepository.enqueueUpsert({ uid, historyId, itemSnapshot: fresh }); } catch (ee) { console.warn('[markGenerationCompleted] enqueueUpsert fallback failed:', ee); }
+      }
+    }
   } catch (e) {
     console.warn('[markGenerationCompleted] Failed to enqueue mirror upsert:', e);
   }
@@ -198,6 +308,86 @@ export async function getUserGeneration(
     console.warn('[getUserGeneration] Cache read failed, falling back to DB:', e);
   }
   const item = await generationHistoryRepository.get(uid, historyId);
+  
+  // Backfill inputImages for older Seedream generations that don't have them
+  if (item && (!(item as any).inputImages || !Array.isArray((item as any).inputImages) || (item as any).inputImages.length === 0)) {
+    const model = (item as any).model || '';
+    const isSeedream = model.includes('seedream') || model.includes('seedream-4') || model.includes('bytedance/seedream');
+    
+    if (isSeedream) {
+      try {
+        const creator = await authRepository.getUserById(uid);
+        const username = creator?.username || uid;
+        const zataPrefix = (process.env.ZATA_PREFIX || process.env.NEXT_PUBLIC_ZATA_PREFIX || 'https://idr01.zata.ai/devstoragev1/').replace(/\/$/, '') + '/';
+        
+        // Try common input file patterns for Seedream (more comprehensive list)
+        const commonInputPatterns = [
+          // Seedream-specific patterns
+          `users/${username}/input/${historyId}/seedream-ref-1.jpg`,
+          `users/${username}/input/${historyId}/seedream-ref-1.png`,
+          `users/${username}/input/${historyId}/seedream-ref-1.jpeg`,
+          `users/${username}/input/${historyId}/seedream-ref-fixed-1.jpg`,
+          `users/${username}/input/${historyId}/seedream-ref-fixed-1.png`,
+          // Generic input patterns
+          `users/${username}/input/${historyId}/input-1.jpg`,
+          `users/${username}/input/${historyId}/input-1.png`,
+          `users/${username}/input/${historyId}/input-1.jpeg`,
+          // Try without extension (some uploads might not have extensions)
+          `users/${username}/input/${historyId}/seedream-ref-1`,
+          `users/${username}/input/${historyId}/input-1`,
+        ];
+        
+        const foundInputImages: any[] = [];
+        console.log('[getUserGeneration] Attempting to backfill inputImages for Seedream generation', { historyId, username, patternsToCheck: commonInputPatterns.length });
+        
+        for (const pattern of commonInputPatterns) {
+          const testUrl = `${zataPrefix}${pattern}`;
+          try {
+            // Try to fetch the file to see if it exists (with timeout)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 3000);
+            const response = await fetch(testUrl, { 
+              method: 'HEAD', 
+              signal: controller.signal,
+              headers: {
+                'Accept': 'image/*',
+              }
+            });
+            clearTimeout(timeoutId);
+            if (response.ok && response.status === 200) {
+              foundInputImages.push({
+                id: `in-${foundInputImages.length + 1}`,
+                url: testUrl,
+                storagePath: pattern,
+                originalUrl: testUrl,
+              });
+              console.log('[getUserGeneration] Found input image via backfill', { historyId, pattern, url: testUrl });
+              break; // Found at least one, that's enough
+            }
+          } catch (err: any) {
+            // File doesn't exist or not accessible, continue
+            if (err.name !== 'AbortError') {
+              // Only log non-timeout errors for debugging
+              console.debug('[getUserGeneration] Input image check failed', { pattern, error: err.message });
+            }
+          }
+        }
+        
+        // If we found input images, save them to the database
+        if (foundInputImages.length > 0) {
+          await generationHistoryRepository.update(uid, historyId, { inputImages: foundInputImages } as any);
+          (item as any).inputImages = foundInputImages;
+          console.log('[getUserGeneration] Successfully backfilled inputImages for Seedream generation', { historyId, count: foundInputImages.length });
+        } else {
+          console.log('[getUserGeneration] No input images found for Seedream generation (may not have been uploaded to storage)', { historyId });
+        }
+      } catch (e: any) {
+        // Log error but don't block the request
+        console.warn('[getUserGeneration] Failed to backfill inputImages:', { historyId, error: e?.message || e });
+      }
+    }
+  }
+  
   try {
     if (item) await setCachedItem(uid, historyId, item);
   } catch (e) {

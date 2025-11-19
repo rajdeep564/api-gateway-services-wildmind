@@ -133,30 +133,50 @@ export const validateFalVeo31ReferenceToVideo = [
 
 // Sora 2 Image-to-Video (Standard)
 export const validateFalSora2I2v = [
-  body('prompt').isString().notEmpty(),
-  body('image_url').isString().notEmpty(),
-  body('resolution').optional().isIn(['auto','720p']),
-  body('aspect_ratio').optional().isIn(['auto','16:9','9:16']),
-  body('duration').optional().isIn([4,8,12]).withMessage('duration must be 4, 8, or 12'),
-  body('api_key').optional().isString(),
+  body('prompt').isString().notEmpty().withMessage('prompt is required'),
+  body('image_url').isString().notEmpty().withMessage('image_url is required'),
+  body('resolution').optional({ nullable: true, checkFalsy: false }).isIn(['auto','720p']).withMessage('resolution must be auto or 720p'),
+  body('aspect_ratio').optional({ nullable: true, checkFalsy: false }).isIn(['auto','16:9','9:16']).withMessage('aspect_ratio must be auto, 16:9, or 9:16'),
+  body('duration').optional({ nullable: true, checkFalsy: false }).custom((value) => {
+    // Accept both number and string, but validate the value
+    const numValue = typeof value === 'number' ? value : parseInt(String(value), 10);
+    if (isNaN(numValue)) return false;
+    return [4, 8, 12].includes(numValue);
+  }).withMessage('duration must be 4, 8, or 12'),
+  body('api_key').optional({ nullable: true, checkFalsy: false }).isString(),
+  body('originalPrompt').optional({ nullable: true, checkFalsy: false }).isString(), // Allow for history display
+  body('isPublic').optional({ nullable: true, checkFalsy: false }).isBoolean(), // Allow for history visibility
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    if (!errors.isEmpty()) {
+      console.error('[validateFalSora2I2v] Validation errors:', errors.array());
+      return next(new ApiError('Validation failed', 400, errors.array()));
+    }
     next();
   }
 ];
 
 // Sora 2 Image-to-Video (Pro)
 export const validateFalSora2ProI2v = [
-  body('prompt').isString().notEmpty(),
-  body('image_url').isString().notEmpty(),
-  body('resolution').optional().isIn(['auto','720p','1080p']),
-  body('aspect_ratio').optional().isIn(['auto','16:9','9:16']),
-  body('duration').optional().isIn([4,8,12]).withMessage('duration must be 4, 8, or 12'),
-  body('api_key').optional().isString(),
+  body('prompt').isString().notEmpty().withMessage('prompt is required'),
+  body('image_url').isString().notEmpty().withMessage('image_url is required'),
+  body('resolution').optional({ nullable: true, checkFalsy: false }).isIn(['auto','720p','1080p']).withMessage('resolution must be auto, 720p, or 1080p'),
+  body('aspect_ratio').optional({ nullable: true, checkFalsy: false }).isIn(['auto','16:9','9:16']).withMessage('aspect_ratio must be auto, 16:9, or 9:16'),
+  body('duration').optional({ nullable: true, checkFalsy: false }).custom((value) => {
+    // Accept both number and string, but validate the value
+    const numValue = typeof value === 'number' ? value : parseInt(String(value), 10);
+    if (isNaN(numValue)) return false;
+    return [4, 8, 12].includes(numValue);
+  }).withMessage('duration must be 4, 8, or 12'),
+  body('api_key').optional({ nullable: true, checkFalsy: false }).isString(),
+  body('originalPrompt').optional({ nullable: true, checkFalsy: false }).isString(), // Allow for history display
+  body('isPublic').optional({ nullable: true, checkFalsy: false }).isBoolean(), // Allow for history visibility
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    if (!errors.isEmpty()) {
+      console.error('[validateFalSora2ProI2v] Validation errors:', errors.array());
+      return next(new ApiError('Validation failed', 400, errors.array()));
+    }
     next();
   }
 ];
@@ -208,28 +228,48 @@ export const validateFalLtx2FastI2v = validateFalLtx2I2vBase;
 
 // Sora 2 Text-to-Video (Standard)
 export const validateFalSora2T2v = [
-  body('prompt').isString().notEmpty(),
-  body('resolution').optional().isIn(['720p']),
-  body('aspect_ratio').optional().isIn(['16:9','9:16']),
-  body('duration').optional().isIn([4,8,12]).withMessage('duration must be 4, 8, or 12'),
-  body('api_key').optional().isString(),
+  body('prompt').isString().notEmpty().withMessage('prompt is required'),
+  body('resolution').optional({ nullable: true, checkFalsy: false }).isIn(['720p']).withMessage('resolution must be 720p'),
+  body('aspect_ratio').optional({ nullable: true, checkFalsy: false }).isIn(['16:9','9:16']).withMessage('aspect_ratio must be 16:9 or 9:16'),
+  body('duration').optional({ nullable: true, checkFalsy: false }).custom((value) => {
+    // Accept both number and string, but validate the value
+    const numValue = typeof value === 'number' ? value : parseInt(String(value), 10);
+    if (isNaN(numValue)) return false;
+    return [4, 8, 12].includes(numValue);
+  }).withMessage('duration must be 4, 8, or 12'),
+  body('api_key').optional({ nullable: true, checkFalsy: false }).isString(),
+  body('originalPrompt').optional({ nullable: true, checkFalsy: false }).isString(), // Allow for history display
+  body('isPublic').optional({ nullable: true, checkFalsy: false }).isBoolean(), // Allow for history visibility
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    if (!errors.isEmpty()) {
+      console.error('[validateFalSora2T2v] Validation errors:', errors.array());
+      return next(new ApiError('Validation failed', 400, errors.array()));
+    }
     next();
   }
 ];
 
 // Sora 2 Text-to-Video (Pro)
 export const validateFalSora2ProT2v = [
-  body('prompt').isString().notEmpty(),
-  body('resolution').optional().isIn(['720p','1080p']),
-  body('aspect_ratio').optional().isIn(['16:9','9:16']),
-  body('duration').optional().isIn([4,8,12]).withMessage('duration must be 4, 8, or 12'),
-  body('api_key').optional().isString(),
+  body('prompt').isString().notEmpty().withMessage('prompt is required'),
+  body('resolution').optional({ nullable: true, checkFalsy: false }).isIn(['720p','1080p']).withMessage('resolution must be 720p or 1080p'),
+  body('aspect_ratio').optional({ nullable: true, checkFalsy: false }).isIn(['16:9','9:16']).withMessage('aspect_ratio must be 16:9 or 9:16'),
+  body('duration').optional({ nullable: true, checkFalsy: false }).custom((value) => {
+    // Accept both number and string, but validate the value
+    const numValue = typeof value === 'number' ? value : parseInt(String(value), 10);
+    if (isNaN(numValue)) return false;
+    return [4, 8, 12].includes(numValue);
+  }).withMessage('duration must be 4, 8, or 12'),
+  body('api_key').optional({ nullable: true, checkFalsy: false }).isString(),
+  body('originalPrompt').optional({ nullable: true, checkFalsy: false }).isString(), // Allow for history display
+  body('isPublic').optional({ nullable: true, checkFalsy: false }).isBoolean(), // Allow for history visibility
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    if (!errors.isEmpty()) {
+      console.error('[validateFalSora2ProT2v] Validation errors:', errors.array());
+      return next(new ApiError('Validation failed', 400, errors.array()));
+    }
     next();
   }
 ];

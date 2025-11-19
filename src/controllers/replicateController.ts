@@ -174,4 +174,36 @@ export async function pixverseI2vSubmit(req: Request, res: Response, next: NextF
 
 Object.assign(replicateController, { pixverseT2vSubmit, pixverseI2vSubmit });
 
+// Kling Lipsync queue handler
+export async function klingLipsyncSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).klingLipsyncSubmit(uid, req.body || {});
+    res.json(formatApiResponse('success', 'Submitted', result));
+  } catch (e) { next(e); }
+}
+
+Object.assign(replicateController, { klingLipsyncSubmit });
+
+// WAN Animate Replace queue handler
+export async function wanAnimateReplaceSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).wanAnimateReplaceSubmit(uid, req.body || {});
+    res.json(formatApiResponse('success', 'Submitted', result));
+  } catch (e) { next(e); }
+}
+
+Object.assign(replicateController, { wanAnimateReplaceSubmit });
+
+export async function wanAnimateAnimationSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).wanAnimateAnimationSubmit(uid, req.body || {});
+    res.json(formatApiResponse('success', 'Submitted', result));
+  } catch (e) { next(e); }
+}
+
+Object.assign(replicateController, { wanAnimateAnimationSubmit });
+
 

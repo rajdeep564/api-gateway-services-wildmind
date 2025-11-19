@@ -32,5 +32,12 @@ if (!admin.apps.length) {
 }
 
 export const adminDb = admin.firestore();
+// Safety: ignore undefined properties globally to prevent accidental undefined field writes
+try {
+  // @ts-ignore - settings is available on Firestore instance
+  adminDb.settings({ ignoreUndefinedProperties: true });
+} catch {
+  // ignore if not supported in this SDK version
+}
 export { admin };
 

@@ -103,4 +103,35 @@ export const validateRunwayVideoUpscale = [
   runValidation
 ];
 
+// Character Performance (act_two)
+const ACT_TWO_RATIOS = new Set(['1280:720', '720:1280', '960:960', '1104:832', '832:1104', '1584:672']);
+export const validateRunwayCharacterPerformance = [
+  body('model').equals('act_two'),
+  body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','video-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
+  body('character').isObject().custom((value) => {
+    if (!value.type || !['image', 'video'].includes(value.type)) return false;
+    if (!value.uri || typeof value.uri !== 'string') return false;
+    // Validate URI format (data URI or HTTPS URL)
+    if (value.type === 'image') {
+      return value.uri.startsWith('data:image/') || value.uri.startsWith('https://');
+    }
+    if (value.type === 'video') {
+      return value.uri.startsWith('data:video/') || value.uri.startsWith('https://');
+    }
+    return false;
+  }),
+  body('reference').isObject().custom((value) => {
+    if (value.type !== 'video') return false;
+    if (!value.uri || typeof value.uri !== 'string') return false;
+    return value.uri.startsWith('data:video/') || value.uri.startsWith('https://');
+  }),
+  body('ratio').isString().custom(v => ACT_TWO_RATIOS.has(v)),
+  body('seed').optional().isInt({ min: 0, max: 4294967295 }),
+  body('bodyControl').optional().isBoolean(),
+  body('expressionIntensity').optional().isInt({ min: 1, max: 5 }),
+  body('contentModeration').optional().isObject(),
+  body('contentModeration.publicFigureThreshold').optional().isIn(['auto', 'low']),
+  runValidation
+];
+
 

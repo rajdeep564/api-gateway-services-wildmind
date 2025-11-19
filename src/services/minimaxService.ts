@@ -245,6 +245,7 @@ async function generate(
       aestheticScore: highestScore,
       provider: 'minimax',
     } as Partial<GenerationHistoryItem>);
+    try { console.log('[MiniMax] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch {}
     
     // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
     console.log('[MiniMax] Triggering markGenerationCompleted for optimization and mirror sync', { uid, historyId, isPublic: (payload as any).isPublic });
@@ -444,6 +445,7 @@ async function processVideoFile(
       aestheticScore: highestScore,
       provider: 'minimax',
     } as any);
+    try { console.log('[MiniMax] Video history updated with scores', { historyId, videoCount: scoredVideos.length, highestScore }); } catch {}
     // Attempt debit using stored params on history (model/duration/resolution)
     try {
       const freshForCost = await generationHistoryRepository.get(uid, historyId);
@@ -474,6 +476,7 @@ async function processVideoFile(
       aestheticScore: highestScore,
       provider: 'minimax',
     } as any);
+    try { console.log('[MiniMax] Video history updated (provider URL) with scores', { historyId, videoCount: scoredVideos.length, highestScore }); } catch {}
     // Attempt debit even if we used provider URL
     try {
       const freshForCost = await generationHistoryRepository.get(uid, historyId);
