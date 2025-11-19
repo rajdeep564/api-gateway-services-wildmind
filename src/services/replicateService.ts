@@ -357,7 +357,7 @@ export async function upscale(uid: string, body: any) {
   const modelBase = (
     body.model && body.model.length > 0
       ? String(body.model)
-      : "philz1337x/clarity-upscaler"
+      : "philz1337x/crystal-upscaler"
   ).trim();
   const creator = await authRepository.getUserById(uid);
   const { historyId } = await generationHistoryRepository.create(uid, {
@@ -378,17 +378,112 @@ export async function upscale(uid: string, body: any) {
       : { uid }
   );
 
+  // Track the original input image URL for saving to database
+  const originalInputImage = body.image;
+  let inputImageStoragePath: string | undefined;
+  let inputImageUrl: string | undefined;
+  
   // If we receive a data URI, persist to Zata and use the public URL for Replicate
+  // This is required because Replicate may not accept large data URIs or may timeout
   if (typeof body.image === "string" && body.image.startsWith("data:")) {
     try {
       const username = creator?.username || uid;
+      // Check data URI size (limit to ~10MB to avoid issues)
+      const dataUriSize = body.image.length;
+      const maxDataUriSize = 10 * 1024 * 1024; // 10MB
+      if (dataUriSize > maxDataUriSize) {
+        throw new ApiError(
+          `Image data URI is too large (${Math.round(dataUriSize / 1024 / 1024)}MB). Maximum size is 10MB.`,
+          400
+        );
+      }
       const stored = await uploadDataUriToZata({
         dataUri: body.image,
         keyPrefix: `users/${username}/input/${historyId}`,
         fileName: "source",
       });
+      if (!stored?.publicUrl) {
+        throw new Error("Failed to upload image to storage: no public URL returned");
+      }
       body.image = stored.publicUrl;
-    } catch {}
+      inputImageUrl = stored.publicUrl;
+      inputImageStoragePath = (stored as any).key;
+      // eslint-disable-next-line no-console
+      console.log("[replicateService.upscale] Uploaded data URI to Zata", {
+        historyId,
+        publicUrl: stored.publicUrl,
+      });
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.error("[replicateService.upscale] Failed to upload data URI to Zata", e?.message || e);
+      await generationHistoryRepository.update(uid, historyId, {
+        status: "failed",
+        error: e?.message || "Failed to upload image to storage",
+      } as any);
+      throw new ApiError(
+        e?.message || "Failed to upload image to storage. Please try again or use a smaller image.",
+        e?.statusCode || 500,
+        e
+      );
+    }
+  } else if (typeof body.image === "string" && body.image.trim().length > 0) {
+    // For URL inputs, try to upload to Zata for consistency and to ensure we have a storage path
+    try {
+      const username = creator?.username || uid;
+      // Check if it's already a Zata URL - if so, extract the storage path
+      const ZATA_PREFIX = process.env.ZATA_PREFIX || 'https://idr01.zata.ai/devstoragev1/';
+      if (body.image.startsWith(ZATA_PREFIX)) {
+        inputImageStoragePath = body.image.substring(ZATA_PREFIX.length);
+        inputImageUrl = body.image;
+      } else {
+        // Upload external URL to Zata for consistency
+        const stored = await uploadFromUrlToZata({
+          sourceUrl: body.image,
+          keyPrefix: `users/${username}/input/${historyId}`,
+          fileName: "source",
+        });
+        inputImageUrl = stored.publicUrl;
+        inputImageStoragePath = (stored as any).key;
+        body.image = stored.publicUrl; // Use the Zata URL for Replicate
+      }
+    } catch (e: any) {
+      // If upload fails, still use the original URL but log a warning
+      // eslint-disable-next-line no-console
+      console.warn("[replicateService.upscale] Failed to upload input URL to Zata, using original URL", e?.message || e);
+      inputImageUrl = body.image;
+    }
+  }
+  
+  // Validate that we have a valid image URL (not a data URI)
+  if (typeof body.image === "string" && body.image.startsWith("data:")) {
+    throw new ApiError(
+      "Image upload failed. Please try again or use a smaller image.",
+      400
+    );
+  }
+  
+  if (!body.image || typeof body.image !== "string" || body.image.trim().length === 0) {
+    throw new ApiError("Invalid image URL provided", 400);
+  }
+  
+  // Save input image to database
+  if (inputImageUrl) {
+    try {
+      const inputPersisted: any[] = [{
+        id: "in-1",
+        url: inputImageUrl,
+        originalUrl: originalInputImage,
+      }];
+      if (inputImageStoragePath) {
+        inputPersisted[0].storagePath = inputImageStoragePath;
+      }
+      await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+      // eslint-disable-next-line no-console
+      console.log("[replicateService.upscale] Saved inputImages to database", { historyId, count: inputPersisted.length });
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.warn("[replicateService.upscale] Failed to save inputImages:", e);
+    }
   }
   let outputUrls: string[] = [];
   try {
@@ -447,19 +542,137 @@ export async function upscale(uid: string, body: any) {
         if (!allowed.has(String(input.task))) input.task = "real_sr";
       }
     }
+    if (modelBase === "philz1337x/crystal-upscaler") {
+      // crystal-upscaler expects scale_factor (1-4) and optional output_format (png/jpg)
+      if (input.scale_factor != null) {
+        input.scale_factor = clamp(input.scale_factor, 1, 4);
+      } else {
+        input.scale_factor = 2; // Default scale factor
+      }
+      if (input.output_format) {
+        const allowedFormats = new Set(["png", "jpg", "jpeg"]);
+        if (!allowedFormats.has(String(input.output_format).toLowerCase())) {
+          input.output_format = "png"; // Default to PNG
+        } else {
+          input.output_format = String(input.output_format).toLowerCase();
+        }
+      }
+    }
     const modelSpec = composeModelSpec(modelBase, body.version);
     // eslint-disable-next-line no-console
     console.log("[replicateService.upscale] run", {
       modelSpec,
       inputKeys: Object.keys(input),
+      imageUrl: body.image?.substring?.(0, 100) || body.image, // Log first 100 chars of URL
     });
-    const output: any = await replicate.run(modelSpec as any, { input });
+    
+    // Add timeout wrapper for Replicate API call (5 minutes max)
+    const REPLICATE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("Replicate API call timed out after 5 minutes")), REPLICATE_TIMEOUT);
+    });
+    
+    // Retry logic with exponential backoff for transient errors (500, 502, 503, 504)
+    const MAX_RETRIES = 2;
+    let lastError: any = null;
+    let output: any = null;
+    
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        if (attempt > 0) {
+          // Exponential backoff: wait 1s, 2s, 4s
+          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+          // eslint-disable-next-line no-console
+          console.log(`[replicateService.upscale] Retry attempt ${attempt} after ${delay}ms delay`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+        
+        output = await Promise.race([
+          replicate.run(modelSpec as any, { input }),
+          timeoutPromise,
+        ]) as any;
+        
+        // Success - break out of retry loop
+        break;
+      } catch (retryError: any) {
+        lastError = retryError;
+        
+        // Extract HTTP status code from various error formats
+        const httpStatus = 
+          retryError?.statusCode ||
+          retryError?.response?.status ||
+          retryError?.$metadata?.httpStatusCode ||
+          retryError?.data?.$metadata?.httpStatusCode ||
+          (retryError?.message?.match(/status[:\s]+(\d{3})/i)?.[1] ? Number(retryError.message.match(/status[:\s]+(\d{3})/i)?.[1]) : null);
+        
+        // Check if this is a parsing/deserialization error (usually indicates HTML response from server)
+        const isParseError = 
+          retryError?.message?.includes("Deserialization error") ||
+          retryError?.message?.includes("Expected closing tag") ||
+          retryError?.message?.includes("to see the raw response") ||
+          (retryError?.$metadata && httpStatus >= 500);
+        
+        // Check if this is a retryable error (500, 502, 503, 504)
+        // Parse errors with 5xx status codes are also retryable
+        const isRetryable = 
+          httpStatus === 500 ||
+          httpStatus === 502 ||
+          httpStatus === 503 ||
+          httpStatus === 504 ||
+          (isParseError && httpStatus >= 500) ||
+          (retryError?.message && /50[0-4]/.test(retryError.message));
+        
+        // If it's the last attempt or not retryable, throw the error
+        if (attempt >= MAX_RETRIES || !isRetryable) {
+          // If crystal-upscaler failed and we haven't tried fallback yet, try fallback model
+          // Trigger fallback for retryable errors (5xx) or parse errors (which indicate server issues)
+          if (
+            modelBase === "philz1337x/crystal-upscaler" &&
+            attempt >= MAX_RETRIES &&
+            (isRetryable || isParseError) &&
+            !body.model // Only fallback if user didn't explicitly specify the model
+          ) {
+            // eslint-disable-next-line no-console
+            console.log("[replicateService.upscale] Crystal-upscaler failed, trying fallback model: philz1337x/clarity-upscaler");
+            try {
+              const fallbackModelSpec = composeModelSpec("philz1337x/clarity-upscaler", body.version);
+              const fallbackInput: any = { image: body.image };
+              // Copy relevant parameters from original input
+              if (input.scale_factor) fallbackInput.scale_factor = input.scale_factor;
+              if (input.dynamic != null) fallbackInput.dynamic = input.dynamic;
+              if (input.sharpen != null) fallbackInput.sharpen = input.sharpen;
+              
+              output = await Promise.race([
+                replicate.run(fallbackModelSpec as any, { input: fallbackInput }),
+                timeoutPromise,
+              ]) as any;
+              
+              // eslint-disable-next-line no-console
+              console.log("[replicateService.upscale] Fallback model succeeded");
+              break; // Success with fallback
+            } catch (fallbackError: any) {
+              // Fallback also failed, throw original error
+              throw lastError;
+            }
+          } else {
+            throw lastError;
+          }
+        }
+        // Continue to next retry attempt
+      }
+    }
+    
+    if (!output) {
+      throw lastError || new Error("Failed to get output from Replicate");
+    }
+    
     // eslint-disable-next-line no-console
     console.log(
       "[replicateService.upscale] output",
       typeof output,
       Array.isArray(output) ? output.length : "n/a"
     );
+    
     // Robustly resolve Replicate SDK file outputs (which may be objects with url())
     const urlsResolved = await resolveOutputUrls(output);
     if (urlsResolved && urlsResolved.length) {
@@ -469,22 +682,89 @@ export async function upscale(uid: string, body: any) {
       const one = extractFirstUrl(output);
       if (one) outputUrls = [one];
     }
-    if (!outputUrls.length)
-      throw new Error("No output URL returned by Replicate");
+    if (!outputUrls.length) {
+      // eslint-disable-next-line no-console
+      console.error("[replicateService.upscale] No output URL returned by Replicate", {
+        outputType: typeof output,
+        outputValue: output,
+      });
+      throw new Error("No output URL returned by Replicate. The model may have failed or returned an unexpected format.");
+    }
   } catch (e: any) {
+    // Extract HTTP status code for logging
+    const httpStatusForLog = 
+      e?.statusCode ||
+      e?.response?.status ||
+      e?.$metadata?.httpStatusCode ||
+      e?.data?.$metadata?.httpStatusCode ||
+      null;
+    
     // eslint-disable-next-line no-console
-    console.error("[replicateService.upscale] error", e?.message || e);
+    console.error("[replicateService.upscale] error", {
+      message: e?.message || e,
+      stack: e?.stack,
+      model: modelBase,
+      historyId,
+      statusCode: e?.statusCode,
+      responseStatus: e?.response?.status,
+      httpStatusCode: httpStatusForLog,
+      metadata: e?.$metadata || e?.data?.$metadata,
+      isParseError: e?.message?.includes("Deserialization error") || e?.message?.includes("Expected closing tag"),
+    });
+    
+    // Extract meaningful error message from HTML responses or API errors
+    let errorMessage = "Replicate generation failed";
+    
+    // Extract HTTP status code from various error formats
+    const httpStatus = 
+      e?.statusCode ||
+      e?.response?.status ||
+      e?.$metadata?.httpStatusCode ||
+      e?.data?.$metadata?.httpStatusCode ||
+      (e?.message?.match(/status[:\s]+(\d{3})/i)?.[1] ? Number(e.message.match(/status[:\s]+(\d{3})/i)?.[1]) : null);
+    
+    // Check if this is a parsing/deserialization error (usually indicates HTML response from server)
+    const isParseError = 
+      e?.message?.includes("Deserialization error") ||
+      e?.message?.includes("Expected closing tag") ||
+      e?.message?.includes("to see the raw response") ||
+      (e?.$metadata && httpStatus >= 500);
+    
+    // Check if error response contains HTML (Cloudflare error page)
+    const errorText = String(e?.message || e?.response?.data || e?.data || e || "");
+    if (isParseError || errorText.includes("<!DOCTYPE html>") || errorText.includes("Internal server error")) {
+      errorMessage = "Replicate service is temporarily unavailable (server error). Please try again in a few minutes.";
+    } else if (httpStatus === 500 || e?.statusCode === 500 || e?.response?.status === 500) {
+      errorMessage = "Replicate service encountered an internal error. Please try again in a few minutes.";
+    } else if (httpStatus === 502 || e?.statusCode === 502 || e?.response?.status === 502) {
+      errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+    } else if (httpStatus === 503 || e?.statusCode === 503 || e?.response?.status === 503) {
+      errorMessage = "Replicate service is temporarily overloaded. Please try again in a few minutes.";
+    } else if (httpStatus === 504 || e?.statusCode === 504 || e?.response?.status === 504) {
+      errorMessage = "Replicate service request timed out. Please try again.";
+    } else if (e?.message?.includes("timeout")) {
+      errorMessage = "The upscale operation timed out. Please try again with a smaller image or lower scale factor.";
+    } else if (e?.message?.includes("No output URL")) {
+      errorMessage = "The upscale model did not return a result. Please try again or use a different model.";
+    } else if (e?.response?.data?.detail) {
+      errorMessage = e.response.data.detail;
+    } else if (e?.response?.data?.message) {
+      errorMessage = e.response.data.message;
+    } else if (e?.message) {
+      errorMessage = e.message;
+    }
+    
     try {
       await replicateRepository.updateGenerationRecord(legacyId, {
         status: "failed",
-        error: e?.message || "Replicate failed",
+        error: errorMessage,
       });
     } catch {}
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
-      error: e?.message || "Replicate failed",
+      error: errorMessage,
     } as any);
-    throw new ApiError("Replicate generation failed", 502, e);
+    throw new ApiError(errorMessage, 502, e);
   }
 
   // Upload possibly multiple output URLs
@@ -550,11 +830,19 @@ export async function upscale(uid: string, body: any) {
   const scoredImages = await aestheticScoreService.scoreImages(uploadedImages);
   const highestScore = aestheticScoreService.getHighestScore(scoredImages);
 
-  await generationHistoryRepository.update(uid, historyId, {
+  // Preserve inputImages if they were already saved (don't overwrite them)
+  const existing = await generationHistoryRepository.get(uid, historyId);
+  const updateData: any = {
     status: "completed",
     images: scoredImages as any,
     aestheticScore: highestScore,
-  } as any);
+  };
+  // Preserve inputImages if they exist
+  if (existing && Array.isArray((existing as any).inputImages) && (existing as any).inputImages.length > 0) {
+    updateData.inputImages = (existing as any).inputImages;
+  }
+  
+  await generationHistoryRepository.update(uid, historyId, updateData);
   try { console.log('[Replicate.upscale] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch {}
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
@@ -640,6 +928,7 @@ export async function generateImage(uid: string, body: any) {
   try {
     const { model: _m, isPublic: _p, ...rest } = body || {};
     const input: any = { prompt: body.prompt };
+    let replicateModelBase = modelBase;
     // Seedream schema mapping
     if (modelBase === "bytedance/seedream-4") {
       // size handling
@@ -674,6 +963,8 @@ export async function generateImage(uid: string, body: any) {
         : [];
       if (!images.length && typeof rest.image === "string" && rest.image.length)
         images = [rest.image];
+      // Track input images for saving to database
+      const inputPersisted: any[] = [];
       if (images.length > 0) {
         const resolved: string[] = [];
         for (let i = 0; i < images.length; i++) {
@@ -686,11 +977,31 @@ export async function generateImage(uid: string, body: any) {
                 fileName: `seedream-ref-${i + 1}`,
               });
               resolved.push(uploaded.publicUrl);
+              // Track for database persistence
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: uploaded.publicUrl,
+                storagePath: (uploaded as any).key,
+                originalUrl: img,
+              });
             } else if (typeof img === "string") {
               resolved.push(img);
+              // Track external URLs (will be normalized and potentially re-uploaded)
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: img,
+                originalUrl: img,
+              });
             }
           } catch {
-            if (typeof img === "string") resolved.push(img);
+            if (typeof img === "string") {
+              resolved.push(img);
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: img,
+                originalUrl: img,
+              });
+            }
           }
         }
         // Normalize any out-of-range aspect ratios to Seedream's allowed bounds (0.33–3.0)
@@ -740,6 +1051,15 @@ export async function generateImage(uid: string, body: any) {
                 keyPrefix: `users/${username}/input/${historyId}`,
                 fileName: `seedream-ref-fixed-${idx + 1}.jpg`,
               });
+              // Update tracked input image with fixed version
+              if (inputPersisted[idx]) {
+                inputPersisted[idx] = {
+                  id: `in-${idx + 1}`,
+                  url: uploaded.publicUrl,
+                  storagePath: (uploaded as any).key,
+                  originalUrl: inputPersisted[idx].originalUrl || url,
+                };
+              }
               return uploaded.publicUrl;
             } else {
               // ratio < minR => too tall; pad width
@@ -762,6 +1082,15 @@ export async function generateImage(uid: string, body: any) {
                 keyPrefix: `users/${username}/input/${historyId}`,
                 fileName: `seedream-ref-fixed-${idx + 1}.jpg`,
               });
+              // Update tracked input image with fixed version
+              if (inputPersisted[idx]) {
+                inputPersisted[idx] = {
+                  id: `in-${idx + 1}`,
+                  url: uploaded.publicUrl,
+                  storagePath: (uploaded as any).key,
+                  originalUrl: inputPersisted[idx].originalUrl || url,
+                };
+              }
               return uploaded.publicUrl;
             }
           } catch {
@@ -771,9 +1100,23 @@ export async function generateImage(uid: string, body: any) {
         const fixed: string[] = [];
         for (let i = 0; i < resolved.length; i++) {
           // eslint-disable-next-line no-await-in-loop
-          fixed.push(await normalizeIfNeeded(resolved[i], i));
+          const fixedUrl = await normalizeIfNeeded(resolved[i], i);
+          fixed.push(fixedUrl);
+          // Update URL in tracked input if it was normalized
+          if (inputPersisted[i] && fixedUrl !== resolved[i]) {
+            inputPersisted[i].url = fixedUrl;
+          }
         }
         if (fixed.length > 0) input.image_input = fixed;
+        // Save input images to database
+        if (inputPersisted.length > 0) {
+          try {
+            await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+            console.log('[replicateService.generateImage] Saved inputImages to database', { historyId, count: inputPersisted.length });
+          } catch (e) {
+            console.warn('[replicateService.generateImage] Failed to save inputImages:', e);
+          }
+        }
       }
       // Enforce total images cap when auto: input_count + max_images <= 15
       if (input.sequential_image_generation === "auto") {
@@ -810,6 +1153,24 @@ export async function generateImage(uid: string, body: any) {
       if (input.steps != null)
         input.steps = Math.max(1, Math.min(100, Number(input.steps)));
       if (!input.resolution) input.resolution = "1024";
+      // Magic Image Refiner uses input.image - save it as inputImages
+      if (rest.image && typeof rest.image === 'string') {
+        try {
+          const username = creator?.username || uid;
+          const keyPrefix = `users/${username}/input/${historyId}`;
+          const inputPersisted: any[] = [];
+          const stored = /^data:/i.test(rest.image)
+            ? await uploadDataUriToZata({ dataUri: rest.image, keyPrefix, fileName: 'input-1' })
+            : await uploadFromUrlToZata({ sourceUrl: rest.image, keyPrefix, fileName: 'input-1' });
+          inputPersisted.push({ id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: rest.image });
+          if (inputPersisted.length > 0) {
+            await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+            console.log('[replicateService.generateImage] Saved inputImages for Magic Image Refiner', { historyId });
+          }
+        } catch (e) {
+          console.warn('[replicateService.generateImage] Failed to save inputImages for Magic Image Refiner:', e);
+        }
+      }
     }
     // Ideogram v3 (Turbo/Quality) mapping
     if (
@@ -834,12 +1195,50 @@ export async function generateImage(uid: string, body: any) {
         input.style_reference_images = rest.style_reference_images
           .slice(0, 10)
           .map(String);
+      // Replicate exposes a single ideogram-v3 model with a 'mode' input controlling Turbo vs Quality
+      input.mode = modelBase.endsWith("-quality") ? "quality" : "turbo";
+      replicateModelBase = "ideogram-ai/ideogram-v3";
+      // Save input images for Ideogram (rest.image and rest.style_reference_images)
+      try {
+        const username = creator?.username || uid;
+        const keyPrefix = `users/${username}/input/${historyId}`;
+        const inputPersisted: any[] = [];
+        let idx = 0;
+        // Save main input image
+        if (rest.image && typeof rest.image === 'string') {
+          try {
+            const stored = /^data:/i.test(rest.image)
+              ? await uploadDataUriToZata({ dataUri: rest.image, keyPrefix, fileName: `input-${++idx}` })
+              : await uploadFromUrlToZata({ sourceUrl: rest.image, keyPrefix, fileName: `input-${++idx}` });
+            inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: rest.image });
+          } catch {}
+        }
+        // Save style reference images
+        if (Array.isArray(rest.style_reference_images) && rest.style_reference_images.length > 0) {
+          for (const refImg of rest.style_reference_images.slice(0, 10)) {
+            if (!refImg || typeof refImg !== 'string') continue;
+            try {
+              const stored = /^data:/i.test(refImg)
+                ? await uploadDataUriToZata({ dataUri: refImg, keyPrefix, fileName: `input-${++idx}` })
+                : await uploadFromUrlToZata({ sourceUrl: refImg, keyPrefix, fileName: `input-${++idx}` });
+              inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: refImg });
+            } catch {}
+          }
+        }
+        if (inputPersisted.length > 0) {
+          await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+          console.log('[replicateService.generateImage] Saved inputImages for Ideogram', { historyId, count: inputPersisted.length });
+        }
+      } catch (e) {
+        console.warn('[replicateService.generateImage] Failed to save inputImages for Ideogram:', e);
+      }
       // No additional clamping required; validator enforces enumerations and limits
     }
-    const modelSpec = composeModelSpec(modelBase, body.version);
+    const modelSpec = composeModelSpec(replicateModelBase, body.version);
     // eslint-disable-next-line no-console
     console.log("[replicateService.generateImage] run", {
-      modelSpec,
+      requestedModel: modelBase,
+      resolvedModelSpec: modelSpec,
       hasImage: !!rest.image,
       inputKeys: Object.keys(input),
     });
@@ -1090,11 +1489,18 @@ export async function generateImage(uid: string, body: any) {
   // Score the images for aesthetic quality (generateImage function)
   const scoredImages = await aestheticScoreService.scoreImages(uploadedImages);
   const highestScore = aestheticScoreService.getHighestScore(scoredImages);
-  await generationHistoryRepository.update(uid, historyId, {
+  // Preserve inputImages if they were already saved (don't overwrite them)
+  const existing = await generationHistoryRepository.get(uid, historyId);
+  const updateData: any = {
     status: "completed",
     images: scoredImages as any,
     aestheticScore: highestScore,
-  } as any);
+  };
+  // Preserve inputImages if they exist
+  if (existing && Array.isArray((existing as any).inputImages) && (existing as any).inputImages.length > 0) {
+    updateData.inputImages = (existing as any).inputImages;
+  }
+  await generationHistoryRepository.update(uid, historyId, updateData);
   try { console.log('[Replicate.generateImage] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch {}
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
