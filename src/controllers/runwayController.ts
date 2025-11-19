@@ -98,12 +98,12 @@ async function characterPerformance(req: Request, res: Response, next: NextFunct
   try {
     const uid = (req as any).uid;
     const ctx = (req as any).context || {};
-    console.log('[Runway Controller] Character Performance request body:', JSON.stringify(req.body, null, 2));
+    console.log('[Runway Controller] Act-Two request body:', JSON.stringify(req.body, null, 2));
     const result = await runwayService.characterPerformance(uid, req.body);
-    console.log('[Runway Controller] Character Performance result:', JSON.stringify(result, null, 2));
-    res.json(formatApiResponse('success', 'Runway character performance task created', { ...result, expectedDebit: ctx.creditCost }));
+    console.log('[Runway Controller] Act-Two result:', JSON.stringify(result, null, 2));
+    res.json(formatApiResponse('success', 'Runway Act-Two task created', { ...result, expectedDebit: ctx.creditCost }));
   } catch (err: any) {
-    console.error('[Runway Controller] Character Performance error:', err);
+    console.error('[Runway Controller] Act-Two error:', err);
     next(err);
   }
 }

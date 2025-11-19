@@ -1122,7 +1122,50 @@ export const falService = {
         stored = { publicUrl: svgUrl, key: '' };
       }
       const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, originalUrl: svgUrl } as any ];
-      await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
+      
+      // Save input image to history (similar to upscale)
+      let inputImages: any[] = [];
+      try {
+        // If inputUrl is external, upload it to Zata for consistency
+        if (inputUrl && !inputUrl.includes(`users/${username}/input/${historyId}`)) {
+          try {
+            const inputStored = await uploadFromUrlToZata({ sourceUrl: inputUrl, keyPrefix: `users/${username}/input/${historyId}`, fileName: 'vectorize-input' });
+            inputImages = [{ id: 'in-1', url: inputStored.publicUrl, storagePath: inputStored.key, originalUrl: inputUrl }];
+          } catch {
+            // If upload fails, use the original URL
+            inputImages = [{ id: 'in-1', url: inputUrl, originalUrl: inputUrl }];
+          }
+        } else if (inputUrl) {
+          // Input already in Zata (from data URI upload above)
+          inputImages = [{ id: 'in-1', url: inputUrl, originalUrl: inputUrl }];
+        }
+      } catch (err) {
+        console.error('[image2svg] Failed to save input image:', err);
+      }
+      
+      // Preserve inputImages if they were already saved (don't overwrite them)
+      const existing = await generationHistoryRepository.get(uid, historyId);
+      const updateData: any = {
+        status: 'completed',
+        images,
+      };
+      // Add inputImages if we have them
+      if (inputImages.length > 0) {
+        updateData.inputImages = inputImages;
+      }
+      // Preserve existing inputImages if they exist
+      if (existing && Array.isArray((existing as any).inputImages) && (existing as any).inputImages.length > 0 && inputImages.length === 0) {
+        updateData.inputImages = (existing as any).inputImages;
+      }
+      
+      await generationHistoryRepository.update(uid, historyId, updateData);
+      
+      // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+      markGenerationCompleted(uid, historyId, {
+        status: "completed",
+        images: images as any,
+      }).catch(err => console.error('[FAL] Image optimization failed:', err));
+      
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
       return { images, historyId, model, status: 'completed' };
@@ -1182,7 +1225,50 @@ export const falService = {
       try { stored = await uploadFromUrlToZata({ sourceUrl: svgUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'vectorized' }); }
       catch { stored = { publicUrl: svgUrl, key: '' }; }
       const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, originalUrl: svgUrl } as any ];
-      await generationHistoryRepository.update(uid, historyId, { status: 'completed', images } as any);
+      
+      // Save input image to history (similar to upscale)
+      let inputImages: any[] = [];
+      try {
+        // If inputUrl is external, upload it to Zata for consistency
+        if (inputUrl && !inputUrl.includes(`users/${username}/input/${historyId}`)) {
+          try {
+            const inputStored = await uploadFromUrlToZata({ sourceUrl: inputUrl, keyPrefix: `users/${username}/input/${historyId}`, fileName: 'vectorize-input' });
+            inputImages = [{ id: 'in-1', url: inputStored.publicUrl, storagePath: inputStored.key, originalUrl: inputUrl }];
+          } catch {
+            // If upload fails, use the original URL
+            inputImages = [{ id: 'in-1', url: inputUrl, originalUrl: inputUrl }];
+          }
+        } else if (inputUrl) {
+          // Input already in Zata (from data URI upload above)
+          inputImages = [{ id: 'in-1', url: inputUrl, originalUrl: inputUrl }];
+        }
+      } catch (err) {
+        console.error('[recraftVectorize] Failed to save input image:', err);
+      }
+      
+      // Preserve inputImages if they were already saved (don't overwrite them)
+      const existing = await generationHistoryRepository.get(uid, historyId);
+      const updateData: any = {
+        status: 'completed',
+        images,
+      };
+      // Add inputImages if we have them
+      if (inputImages.length > 0) {
+        updateData.inputImages = inputImages;
+      }
+      // Preserve existing inputImages if they exist
+      if (existing && Array.isArray((existing as any).inputImages) && (existing as any).inputImages.length > 0 && inputImages.length === 0) {
+        updateData.inputImages = (existing as any).inputImages;
+      }
+      
+      await generationHistoryRepository.update(uid, historyId, updateData);
+      
+      // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+      markGenerationCompleted(uid, historyId, {
+        status: "completed",
+        images: images as any,
+      }).catch(err => console.error('[FAL] Image optimization failed:', err));
+      
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
       return { images, historyId, model, status: 'completed' };
