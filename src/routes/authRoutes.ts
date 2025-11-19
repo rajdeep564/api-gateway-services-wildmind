@@ -38,6 +38,34 @@ router.get('/can-toggle-public', requireAuth, publicVisibilityController.canTogg
 // Debug: check if current session cookie is cached in Redis
 router.get('/session-cache', requireAuth, sessionCacheStatus);
 
+// Debug endpoint to check cookie domain configuration (no auth required for debugging)
+router.get('/debug/cookie-config', (req, res) => {
+  const isProd = process.env.NODE_ENV === 'production';
+  const cookieDomain = process.env.COOKIE_DOMAIN;
+  
+  console.log('[AUTH][DEBUG] Cookie config check', {
+    isProd,
+    cookieDomain: cookieDomain || '(NOT SET - THIS IS THE PROBLEM!)',
+    nodeEnv: process.env.NODE_ENV,
+    allEnvKeys: Object.keys(process.env).filter(k => k.includes('COOKIE') || k.includes('DOMAIN'))
+  });
+  
+  res.json({
+    isProduction: isProd,
+    cookieDomain: cookieDomain || '(NOT SET)',
+    message: cookieDomain 
+      ? `Cookie domain is set to: ${cookieDomain}. Cookies should work across subdomains.`
+      : 'ERROR: COOKIE_DOMAIN is NOT SET in environment variables! Set it to ".wildmindai.com" in Render.com dashboard.',
+    instructions: [
+      '1. Go to Render.com dashboard',
+      '2. Select your API Gateway service',
+      '3. Go to Environment tab',
+      '4. Add: COOKIE_DOMAIN=.wildmindai.com',
+      '5. Restart the service'
+    ]
+  });
+});
+
 export default router;
 
 
