@@ -260,12 +260,32 @@ async function resolveEmail(req: Request, res: Response, next: NextFunction) {
 }
 
 async function setSessionCookie(req: Request, res: Response, idToken: string) {
+  // Log function entry immediately
+  console.log('[AUTH][setSessionCookie] Function called', {
+    hasIdToken: !!idToken,
+    idTokenLength: idToken?.length || 0,
+    hostname: req.hostname,
+    origin: req.headers.origin
+  });
+  
   const isProd = process.env.NODE_ENV === "production";
   const cookieDomain = process.env.COOKIE_DOMAIN; // e.g., .wildmindai.com when API runs on api.wildmindai.com
   const expiresIn = 1000 * 60 * 60 * 24 * 7; // 7 days
+  
+  console.log('[AUTH][setSessionCookie] Before creating session cookie', {
+    isProd,
+    cookieDomain: cookieDomain || '(not set in env)',
+    expiresIn
+  });
+  
   const sessionCookie = await admin
     .auth()
     .createSessionCookie(idToken, { expiresIn });
+  
+  console.log('[AUTH][setSessionCookie] Session cookie created', {
+    cookieLength: sessionCookie?.length || 0,
+    hasCookie: !!sessionCookie
+  });
   
   // In production, always use the cookie domain if set (for cross-subdomain sharing)
   // In development, only use domain if it matches the current host
@@ -293,15 +313,14 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     ...(shouldSetDomain ? { domain: cookieDomain } : {}),
   };
 
-  // Debug logging for cookie setting
-  console.log('[AUTH][setSessionCookie] Setting cookie', {
+  // Debug logging for cookie setting - use both console.log and logger for visibility
+  const logData = {
     isProd,
-    cookieDomain,
+    cookieDomain: cookieDomain || '(not set)',
     shouldSetDomain,
     host,
     origin,
     cookieOptions: {
-      ...cookieOptions,
       domain: cookieOptions.domain || '(not set)',
       sameSite: cookieOptions.sameSite,
       secure: cookieOptions.secure,
@@ -309,7 +328,16 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
       path: cookieOptions.path,
       maxAge: cookieOptions.maxAge
     }
-  });
+  };
+  
+  // Use console.log (always visible) and logger (structured logging)
+  console.log('[AUTH][setSessionCookie] Setting cookie', JSON.stringify(logData, null, 2));
+  try {
+    const { logger } = await import('../../utils/logger');
+    logger.info(logData, '[AUTH][setSessionCookie] Setting cookie');
+  } catch (e) {
+    // Logger not available, console.log is enough
+  }
 
   res.cookie("app_session", sessionCookie, cookieOptions);
   return sessionCookie;
