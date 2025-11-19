@@ -1,8 +1,6 @@
-declare module '@google/genai' {
-  const GoogleGenAIDefault: any;
-  export { GoogleGenAIDefault as GoogleGenAI };
-  export default GoogleGenAIDefault;
-}
+// Type declarations for @google/genai
+// Note: The package has its own type definitions at node_modules/@google/genai/dist/genai.d.ts
+// We only need to declare @google/generative-ai here
 
 declare module '@google/generative-ai' {
 	interface GoogleGenerativeAIOptions {
