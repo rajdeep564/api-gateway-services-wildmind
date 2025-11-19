@@ -9,6 +9,7 @@ import * as generateController from '../controllers/canvas/generateController';
 import * as cursorAgentController from '../controllers/canvas/cursorAgentController';
 import * as workersController from '../controllers/canvas/workersController';
 import * as presenceController from '../websocket/canvasPresenceServer';
+import * as mediaLibraryController from '../controllers/canvas/mediaLibraryController';
 
 const router = Router();
 
@@ -37,6 +38,10 @@ router.put('/projects/:id/snapshot/current', snapshotController.setCurrentSnapsh
 // Generation (Canvas-specific)
 router.post('/generate', validateCanvasGenerate, generateController.generateForCanvas);
 router.post('/generate-video', requireAuth, generateController.generateVideoForCanvas);
+
+// Media Library
+router.get('/media-library', mediaLibraryController.getMediaLibrary);
+router.post('/media-library/upload', mediaLibraryController.saveUploadedMedia);
 
 // Cursor Agent
 router.post('/agent/plan', cursorAgentController.planAgentActions);
