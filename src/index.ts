@@ -19,7 +19,7 @@ import { startRealtimeServer } from './websocket/realtimeServer';
 import { logger } from './utils/logger';
 import { env } from './config/env';
 
-const PORT = env.port || 5001;
+const PORT = env.port || 5000;
 
 const server: HttpServer = app.listen(PORT, () => {
   logger.info({ port: PORT }, 'API Gateway running');
