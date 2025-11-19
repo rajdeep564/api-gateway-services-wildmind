@@ -1,7 +1,7 @@
 import { adminDb, admin } from '../config/firebaseAdmin';
 import { PlanDoc, UserCreditsDoc } from '../types/credits';
 import { PLAN_CREDITS } from '../data/creditDistribution';
-import { creditsRepository } from '../repository/creditsRepository';
+import { creditsRepository, LedgerEntry } from '../repository/creditsRepository';
 
 const FREE_PLAN_CODE = 'FREE';
 
@@ -96,20 +96,25 @@ export const creditsService = {
   /**
    * Recompute and correct user's creditBalance for current cycle.
    * Uses the monthly reset grant timestamp as the lower bound and subtracts all confirmed debits since then.
+   * IMPORTANT: Now includes ALL grants (not just monthly reset) to preserve manual grants.
    */
   async reconcileCurrentCycle(uid: string): Promise<{ cycle: string; newBalance: number; debitsSinceReset: number; planCredits: number }> {
-    // Determine current cycle key in UTC (YYYY-MM)
-    const now = new Date();
-    const cycle = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-    const reqId = `PLAN_MONTHLY_RESET_${cycle}`;
-
-    // Read the reset ledger to get createdAt and credits
+    // Use the new reconcileBalanceFromLedgers which calculates from ALL ledger entries
+    const reconciled = await creditsRepository.reconcileBalanceFromLedgers(uid);
+    
+    // Update balance to match calculated value
     const userRef = adminDb.collection('users').doc(uid);
-    const ledgerRef = userRef.collection('ledgers').doc(reqId);
-    const grantSnap = await ledgerRef.get();
-    // Resolve plan credits (fallback to current plan's credits)
+    await userRef.set({ 
+      creditBalance: reconciled.calculatedBalance, 
+      updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+    }, { merge: true });
+    
+    // Get plan info for return value
     const user = await creditsRepository.readUserInfo(uid);
     const planCode = (user?.planCode as any) || 'FREE';
+    const now = new Date();
+    const cycle = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    
     let planCredits = 0;
     if (planCode === 'FREE') {
       planCredits = 4120;
@@ -118,36 +123,18 @@ export const creditsService = {
       const pdata = planSnap.data() as any;
       planCredits = Number(pdata?.credits ?? 0) || 0;
     }
-
-    let lowerBound: FirebaseFirestore.Timestamp | null = null;
-    if (grantSnap.exists) {
-      const g = grantSnap.data() as any;
-      lowerBound = g?.createdAt || null;
-      // If ledger stored explicit amount, prefer that as planCredits
-      if (typeof g?.amount === 'number' && g.amount > 0) planCredits = g.amount;
-    }
-
-    // Query debits since reset (or since beginning of month if grant not found)
-    const ledgersCol = userRef.collection('ledgers');
-    let q: FirebaseFirestore.Query = ledgersCol.where('type', '==', 'DEBIT').where('status', '==', 'CONFIRMED');
-    if (lowerBound) q = q.where('createdAt', '>=', lowerBound);
-    const debitSnap = await q.get();
-    let debitsSinceReset = 0;
-    debitSnap.forEach((d) => {
-      const data = d.data() as any;
-      const amt = Number(data?.amount || 0);
-      // amount is stored negative for DEBIT – subtract absolute
-      debitsSinceReset += Math.abs(amt);
-    });
-
-    const newBalance = Math.max(0, planCredits - debitsSinceReset);
-    await userRef.set({ creditBalance: newBalance, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-    return { cycle, newBalance, debitsSinceReset, planCredits };
+    
+    return { 
+      cycle, 
+      newBalance: reconciled.calculatedBalance, 
+      debitsSinceReset: reconciled.totalDebits, 
+      planCredits 
+    };
   },
   /**
    * Ensure a monthly reroll to the user's current plan credits.
    * Idempotent per user per YYYY-MM cycle using a deterministic requestId.
-   * Overwrites balance to plan credits regardless of leftover.
+   * IMPORTANT: Only resets if no manual grants exist this month to preserve test credits.
    */
   async ensureMonthlyReroll(uid: string) {
     // Ensure user exists and has a plan
@@ -172,6 +159,57 @@ export const creditsService = {
     const cycle = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
     const reqId = `PLAN_MONTHLY_RESET_${cycle}`;
 
+    // Check if monthly reset already done this month
+    const userRef = adminDb.collection('users').doc(uid);
+    const ledgerRef = userRef.collection('ledgers').doc(reqId);
+    const existingReset = await ledgerRef.get();
+    
+    if (existingReset.exists) {
+      // Monthly reset already done - don't overwrite (preserves manual grants)
+      return { cycle, planCode, creditBalance: user?.creditBalance || 0 };
+    }
+
+    // Check if there are any manual grants this month (TEST_GRANT, etc.)
+    // If yes, we should NOT overwrite the balance
+    const ledgersCol = userRef.collection('ledgers');
+    const monthStart = new Date(now.getUTCFullYear(), now.getUTCMonth(), 1);
+    const monthStartTimestamp = admin.firestore.Timestamp.fromDate(monthStart);
+    
+    // Check for manual grants this month (excluding monthly reset)
+    // Query without createdAt filter first to avoid index requirement, then filter in memory
+    const allGrantsSnap = await ledgersCol
+      .where('type', '==', 'GRANT')
+      .where('status', '==', 'CONFIRMED')
+      .get();
+    
+    const hasManualGrants = allGrantsSnap.docs.some(doc => {
+      const entry = doc.data() as LedgerEntry;
+      const reason = entry.reason || '';
+      const createdAt = entry.createdAt;
+      
+      // Check if it's within this month
+      const isThisMonth = createdAt && createdAt.toMillis && createdAt.toMillis() >= monthStart.getTime();
+      
+      // Check if it's a manual grant (not monthly reroll)
+      return doc.id !== reqId && isThisMonth && (
+        reason.includes('testing') || 
+        reason.includes('manual') || 
+        reason.includes('grant') ||
+        doc.id.startsWith('TEST_GRANT_')
+      );
+    });
+    
+    if (hasManualGrants) {
+      // User has manual grants this month - reconcile balance instead of resetting
+      const reconciled = await creditsRepository.reconcileBalanceFromLedgers(uid);
+      await userRef.set({ 
+        creditBalance: reconciled.calculatedBalance, 
+        updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+      }, { merge: true });
+      return { cycle, planCode, creditBalance: reconciled.calculatedBalance };
+    }
+
+    // No manual grants - safe to execute monthly reset
     // Execute idempotent GRANT that overwrites balance to the plan credits
     await creditsRepository.writeGrantAndSetPlanIfAbsent(
       uid,

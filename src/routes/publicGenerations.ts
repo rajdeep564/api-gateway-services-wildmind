@@ -27,6 +27,11 @@ router.get('/',
   publicGenerationsController.listPublic
 );
 
+// Random high-scored image endpoint (no authentication required)
+// Must come before /:generationId to avoid matching "random" as a generationId
+router.get('/random/high-scored', publicGenerationsController.getRandomHighScoredImage);
+router.options('/random/high-scored', (_req, res) => res.sendStatus(204));
+
 router.get('/:generationId', 
   validateGenerationId as any, 
   handleValidationErrors, 

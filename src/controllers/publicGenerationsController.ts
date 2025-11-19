@@ -46,7 +46,36 @@ async function getPublicById(req: Request, res: Response, next: NextFunction) {
 	}
 }
 
+async function getRandomHighScoredImage(req: Request, res: Response, next: NextFunction) {
+	try {
+		const result = await publicGenerationsRepository.getRandomHighScoredImage();
+		if (!result) {
+			return res.status(404).json(formatApiResponse('error', 'No high-scored images found', {}));
+		}
+		
+		// Enrich creator info if missing photoURL
+		if (result.creator && result.generationId) {
+			const item = await publicGenerationsRepository.getPublicById(result.generationId);
+			if (item?.createdBy?.uid && !result.creator.photoURL) {
+				const { authRepository } = await import('../repository/auth/authRepository');
+				const user = await authRepository.getUserById(item.createdBy.uid);
+				if (user?.photoURL) {
+					result.creator.photoURL = user.photoURL;
+				}
+				if (user?.username && !result.creator.username) {
+					result.creator.username = user.username;
+				}
+			}
+		}
+		
+		return res.json(formatApiResponse('success', 'OK', result));
+	} catch (err) {
+		return next(err);
+	}
+}
+
 export const publicGenerationsController = {
 	listPublic,
 	getPublicById,
+	getRandomHighScoredImage,
 };

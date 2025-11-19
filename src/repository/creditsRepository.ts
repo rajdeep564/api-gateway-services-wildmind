@@ -43,6 +43,47 @@ export async function listRecentLedgers(uid: string, limit: number = 10): Promis
   return snap.docs.map((d) => ({ id: d.id, entry: d.data() as LedgerEntry }));
 }
 
+/**
+ * Reconcile balance from all ledger entries
+ * Calculates the actual balance by summing all CONFIRMED ledger entries
+ */
+export async function reconcileBalanceFromLedgers(uid: string): Promise<{ calculatedBalance: number; totalGrants: number; totalDebits: number; ledgerCount: number }> {
+  const userRef = adminDb.collection('users').doc(uid);
+  const ledgersCol = userRef.collection('ledgers');
+  
+  // Get all CONFIRMED ledger entries (without orderBy to avoid index requirement)
+  // We'll sort in memory if needed
+  const snap = await ledgersCol
+    .where('status', '==', 'CONFIRMED')
+    .get();
+  
+  let totalGrants = 0;
+  let totalDebits = 0;
+  
+  snap.docs.forEach(doc => {
+    const entry = doc.data() as LedgerEntry;
+    const amount = Number(entry.amount || 0);
+    
+    if (entry.type === 'GRANT' || entry.type === 'REFUND') {
+      // GRANT and REFUND are positive amounts
+      totalGrants += Math.abs(amount);
+    } else if (entry.type === 'DEBIT' || entry.type === 'HOLD') {
+      // DEBIT and HOLD are negative amounts, but we store them as negative
+      totalDebits += Math.abs(amount);
+    }
+  });
+  
+  // Balance = grants - debits
+  const calculatedBalance = totalGrants - totalDebits;
+  
+  return {
+    calculatedBalance: Math.max(0, calculatedBalance), // Never go negative
+    totalGrants,
+    totalDebits,
+    ledgerCount: snap.docs.length
+  };
+}
+
 export async function writeDebitIfAbsent(uid: string, requestId: string, amount: number, reason: string, meta?: Record<string, any>): Promise<'SKIPPED' | 'WRITTEN'> {
   const userRef = adminDb.collection('users').doc(uid);
   const ledgerRef = userRef.collection('ledgers').doc(requestId);
@@ -120,6 +161,10 @@ export async function writeGrantAndSetPlanIfAbsent(
     };
     const metaClean = sanitize(meta || {});
     await adminDb.runTransaction(async (tx) => {
+      // Check if user document exists
+      const userSnap = await tx.get(userRef);
+      const userExists = userSnap.exists;
+      
       const existing = await tx.get(ledgerRef);
       if (existing.exists) {
         const data = existing.data() as any;
@@ -127,10 +172,18 @@ export async function writeGrantAndSetPlanIfAbsent(
           logger.info({ uid, requestId }, '[CREDITS] Plan switch grant already exists (idempotent)');
           // IMPORTANT: Do NOT overwrite creditBalance again – previous debits this cycle would be lost.
           // Only ensure planCode is correct and updatedAt refreshed.
-          tx.set(userRef, {
-            planCode: newPlanCode,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          }, { merge: true });
+          if (userExists) {
+            tx.update(userRef, {
+              planCode: newPlanCode,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          } else {
+            tx.set(userRef, {
+              planCode: newPlanCode,
+              creditBalance: credits, // Set balance if user doesn't exist
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+          }
           return;
         }
       }
@@ -143,11 +196,20 @@ export async function writeGrantAndSetPlanIfAbsent(
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       } as LedgerEntry);
       // OVERWRITE balance, do not carryforward
-      tx.set(userRef, {
-        planCode: newPlanCode,
-        creditBalance: credits,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
+      // Use update() if user exists, set() with merge if not
+      if (userExists) {
+        tx.update(userRef, {
+          planCode: newPlanCode,
+          creditBalance: credits,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } else {
+        tx.set(userRef, {
+          planCode: newPlanCode,
+          creditBalance: credits,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
       outcome = 'WRITTEN';
     });
     const verify = await ledgerRef.get();
@@ -165,6 +227,7 @@ export const creditsRepository = {
   listRecentLedgers,
   writeDebitIfAbsent,
   writeGrantAndSetPlanIfAbsent,
+  reconcileBalanceFromLedgers,
 };
 
 

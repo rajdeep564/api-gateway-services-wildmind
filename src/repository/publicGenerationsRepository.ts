@@ -243,7 +243,144 @@ export async function getPublicById(generationId: string): Promise<GenerationHis
   return normalizePublicItem(snap.id, data);
 }
 
+/**
+ * Get a random high-scored image from the public feed
+ * Returns an image with aestheticScore >= 9.5
+ */
+export async function getRandomHighScoredImage(): Promise<{ imageUrl: string; prompt?: string; generationId?: string; creator?: { username?: string; photoURL?: string } } | null> {
+  try {
+    const col = adminDb.collection('generations');
+    
+    // Query for public items with aestheticScore >= 9.5
+    // Note: Firestore doesn't support >= queries on aestheticScore directly if it's nested in images array
+    // So we'll fetch items with document-level aestheticScore >= 9.5 OR check image-level scores
+    let q = col
+      .where('isPublic', '==', true)
+      .where('isDeleted', '!=', true)
+      .where('aestheticScore', '>=', 9.5)
+      .limit(100); // Fetch up to 100 candidates for randomization
+    
+    const snap = await q.get();
+    
+    if (snap.empty) {
+      // Fallback: fetch public items and filter in memory
+      const fallbackQ = col
+        .where('isPublic', '==', true)
+        .limit(500);
+      const fallbackSnap = await fallbackQ.get();
+      
+      const candidates: Array<{ item: GenerationHistoryItem; image: any }> = [];
+      
+      fallbackSnap.docs.forEach(doc => {
+        const data = doc.data() as any;
+        if (data.isDeleted === true) return;
+        
+        const images = Array.isArray(data.images) ? data.images : [];
+        if (images.length === 0) return;
+        
+        // Check document-level aestheticScore
+        const docScore = typeof data.aestheticScore === 'number' ? data.aestheticScore : null;
+        
+        // Check image-level aestheticScore
+        for (const img of images) {
+          const imgScore = typeof img?.aestheticScore === 'number' ? img.aestheticScore : 
+                          (typeof img?.aesthetic?.score === 'number' ? img.aesthetic.score : null);
+          const score = imgScore || docScore;
+          
+          if (score !== null && score >= 9.5) {
+            candidates.push({
+              item: normalizePublicItem(doc.id, data),
+              image: img
+            });
+            break; // Only take first matching image per generation
+          }
+        }
+      });
+      
+      if (candidates.length === 0) return null;
+      
+      // Randomly select one
+      const random = candidates[Math.floor(Math.random() * candidates.length)];
+      const imageUrl = random.image?.avifUrl || random.image?.thumbnailUrl || random.image?.url;
+      
+      if (!imageUrl) return null;
+      
+      // Get creator info
+      const creator = random.item.createdBy || null;
+      
+      return {
+        imageUrl,
+        prompt: random.item.prompt,
+        generationId: random.item.id,
+        creator: creator ? {
+          username: creator.username,
+          photoURL: creator.photoURL
+        } : undefined
+      };
+    }
+    
+    // Filter items that have images and extract image URLs
+    const candidates: Array<{ item: GenerationHistoryItem; image: any }> = [];
+    
+    snap.docs.forEach(doc => {
+      const data = doc.data() as any;
+      if (data.isDeleted === true) return;
+      
+      const images = Array.isArray(data.images) ? data.images : [];
+      if (images.length === 0) return;
+      
+      // Document-level aestheticScore (already >= 9.5 from query)
+      const docScore = typeof data.aestheticScore === 'number' ? data.aestheticScore : null;
+      
+      // Prefer images with high scores, but accept document-level score >= 9.5
+      for (const img of images) {
+        const imgScore = typeof img?.aestheticScore === 'number' ? img.aestheticScore : 
+                        (typeof img?.aesthetic?.score === 'number' ? img.aesthetic.score : null);
+        
+        // Use image score if available, otherwise fall back to document score
+        const score = imgScore !== null ? imgScore : docScore;
+        
+        // If score >= 9.5, include it
+        if (score !== null && score >= 9.5) {
+          candidates.push({
+            item: normalizePublicItem(doc.id, data),
+            image: img
+          });
+          break; // Only take first matching image per generation
+        }
+      }
+    });
+    
+    if (candidates.length === 0) return null;
+    
+    // Randomly select one
+    const random = candidates[Math.floor(Math.random() * candidates.length)];
+    
+    // Prefer optimized URLs (avifUrl > thumbnailUrl > url)
+    const imageUrl = random.image?.avifUrl || random.image?.thumbnailUrl || random.image?.url;
+    
+    if (!imageUrl) return null;
+    
+    // Get creator info
+    const creator = random.item.createdBy || null;
+    
+    return {
+      imageUrl,
+      prompt: random.item.prompt,
+      generationId: random.item.id,
+      creator: creator ? {
+        username: creator.username,
+        photoURL: creator.photoURL
+      } : undefined
+    };
+  } catch (error) {
+    console.error('[publicGenerationsRepository] Error getting random high-scored image:', error);
+    return null;
+  }
+}
+
 export const publicGenerationsRepository = {
   listPublic,
   getPublicById,
+  getRandomHighScoredImage,
 };
