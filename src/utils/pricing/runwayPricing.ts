@@ -49,8 +49,8 @@ export async function computeRunwayVideoCost(req: Request): Promise<{ cost: numb
   // Otherwise, derive SKU from model
   let display = '';
   if (model === 'act_two') {
-    // Character Performance (Act Two) model
-    display = 'Runway Character Performance (Act Two)';
+    // Act-Two model
+    display = 'Runway Act-Two';
   } else {
     // For other video models, SKU is required
     throw new Error('sku is required for Runway video pricing (or provide model=act_two)');

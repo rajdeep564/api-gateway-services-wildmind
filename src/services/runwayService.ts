@@ -424,7 +424,7 @@ async function characterPerformance(
   const { model, character, reference, ratio, seed, bodyControl, expressionIntensity, contentModeration } = body || {};
   
   if (model !== 'act_two') {
-    throw new ApiError("Model must be 'act_two' for character performance", 400);
+    throw new ApiError("Model must be 'act_two' for Runway Act-Two", 400);
   }
   
   if (!character || !character.type || !character.uri) {
@@ -458,24 +458,24 @@ async function characterPerformance(
     };
   }
   
-  console.log('[Runway Character Performance] Calling SDK with payload:', JSON.stringify(payload, null, 2));
-  console.log('[Runway Character Performance] Client methods available:', Object.keys(client || {}));
-  console.log('[Runway Character Performance] Client.characterPerformance exists:', !!client.characterPerformance);
+  console.log('[Runway Act-Two] Calling SDK with payload:', JSON.stringify(payload, null, 2));
+  console.log('[Runway Act-Two] Client methods available:', Object.keys(client || {}));
+  console.log('[Runway Act-Two] Client.characterPerformance exists:', !!client.characterPerformance);
   
   let created;
   try {
     // Check if characterPerformance method exists on the client
     if (!client.characterPerformance) {
-      console.error('[Runway Character Performance] characterPerformance method not found on client. Available methods:', Object.keys(client));
+      console.error('[Runway Act-Two] characterPerformance method not found on client. Available methods:', Object.keys(client));
       // Try using tasks.create as fallback if characterPerformance doesn't exist
       if (client.tasks && typeof client.tasks.create === 'function') {
-        console.log('[Runway Character Performance] Attempting to use tasks.create as fallback');
+        console.log('[Runway Act-Two] Attempting to use tasks.create as fallback');
         created = await client.tasks.create({
           type: 'character_performance',
           ...payload
         });
       } else {
-        throw new ApiError("Runway SDK does not support characterPerformance. Please update @runwayml/sdk to the latest version that supports Character Performance API (act_two model).", 500);
+        throw new ApiError("Runway SDK does not support characterPerformance. Please update @runwayml/sdk to the latest version that supports Act-Two API (act_two model).", 500);
       }
     } else if (typeof client.characterPerformance.create !== 'function') {
       throw new ApiError("Runway SDK characterPerformance.create is not a function. Please update @runwayml/sdk to the latest version.", 500);
@@ -483,21 +483,21 @@ async function characterPerformance(
       created = await client.characterPerformance.create(payload);
     }
     
-    console.log('[Runway Character Performance] SDK response:', JSON.stringify(created, null, 2));
-    console.log('[Runway Character Performance] Response type:', typeof created);
-    console.log('[Runway Character Performance] Response has id:', !!created?.id);
+    console.log('[Runway Act-Two] SDK response:', JSON.stringify(created, null, 2));
+    console.log('[Runway Act-Two] Response type:', typeof created);
+    console.log('[Runway Act-Two] Response has id:', !!created?.id);
     
     // Check if the response is just the payload (error case)
     if (created && JSON.stringify(created) === JSON.stringify(payload)) {
-      throw new ApiError("Runway SDK returned the payload unchanged. This usually means the method doesn't exist or the SDK version doesn't support Character Performance. Please update @runwayml/sdk.", 500);
+      throw new ApiError("Runway SDK returned the payload unchanged. This usually means the method doesn't exist or the SDK version doesn't support Act-Two. Please update @runwayml/sdk.", 500);
     }
     
     if (!created || !created.id) {
-      console.error('[Runway Character Performance] Invalid response - missing task ID. Response:', created);
+      console.error('[Runway Act-Two] Invalid response - missing task ID. Response:', created);
       throw new ApiError(`Invalid response from Runway SDK: missing task ID. Response: ${JSON.stringify(created)}`, 500);
     }
   } catch (error: any) {
-    console.error('[Runway Character Performance] SDK error details:', {
+    console.error('[Runway Act-Two] SDK error details:', {
       message: error?.message,
       stack: error?.stack,
       code: error?.code,
@@ -512,18 +512,18 @@ async function characterPerformance(
         error?.message?.includes('not a function') ||
         error?.code === 'ERR_METHOD_NOT_FOUND' ||
         error?.name === 'TypeError') {
-      throw new ApiError(`Runway SDK method 'characterPerformance' not found or not supported. Error: ${error?.message}. Please ensure @runwayml/sdk is updated to the latest version that supports Character Performance API (act_two model).`, 500);
+      throw new ApiError(`Runway SDK method 'characterPerformance' not found or not supported. Error: ${error?.message}. Please ensure @runwayml/sdk is updated to the latest version that supports Act-Two API (act_two model).`, 500);
     }
     // Check for API errors
     if (error?.status || error?.response) {
       const status = error.status || error.response?.status;
       const message = error.response?.data?.message || error.message || 'Unknown error';
-      throw new ApiError(`Runway Character Performance API error (${status}): ${message}`, status || 500, error);
+      throw new ApiError(`Runway Act-Two API error (${status}): ${message}`, status || 500, error);
     }
-    throw new ApiError(`Runway Character Performance API error: ${error?.message || 'Unknown error'}`, 500, error);
+    throw new ApiError(`Runway Act-Two API error: ${error?.message || 'Unknown error'}`, 500, error);
   }
   
-  const prompt = body?.promptText || 'Character Performance generation';
+  const prompt = body?.promptText || 'Act-Two generation';
   const historyModel = body?.model || 'runway_act_two';
   const generationType = body?.generationType || 'video-to-video';
   
