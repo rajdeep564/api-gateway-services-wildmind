@@ -12,6 +12,7 @@ import proxyRoutes from './proxy';
 import stickerRoutes from './stickers';
 import replicateRoutes from './replicate';
 import replaceRoutes from './replace';
+import geminiRoutes from './gemini';
 
 const router = Router();
 
@@ -28,5 +29,6 @@ router.use('/proxy', proxyRoutes);
 router.use('/stickers', stickerRoutes);
 router.use('/replicate', replicateRoutes);
 router.use('/replace', replaceRoutes);
+router.use('/gemini', geminiRoutes);
 
 export default router;
