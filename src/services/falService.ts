@@ -1726,6 +1726,30 @@ async function queueCreateHistory(uid: string, data: { prompt: string; model: st
   return { historyId, creator };
 }
 
+// Helper to persist one or more input images (URLs or data URIs) to Zata and attach to history
+async function persistInputImagesFromUrls(uid: string, historyId: string, urls: Array<string | undefined>) {
+  try {
+    const creator = await authRepository.getUserById(uid);
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    const valid = (urls || []).filter((u): u is string => typeof u === 'string' && !!u);
+    if (valid.length === 0) return;
+    const inputPersisted: any[] = [];
+    let idx = 0;
+    for (const src of valid) {
+      try {
+        const stored = /^data:/i.test(src)
+          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
+          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+      } catch {}
+    }
+    if (inputPersisted.length > 0) {
+      await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+    }
+  } catch {}
+}
+
 async function veoTtvSubmit(uid: string, body: any, fast = false): Promise<SubmitReturn> {
   const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   fal.config({ credentials: falKey });
@@ -1756,6 +1780,8 @@ async function veoI2vSubmit(uid: string, body: any, fast = false): Promise<Submi
   if (!body?.image_url) throw new ApiError('image_url is required', 400);
   const model = fast ? 'fal-ai/veo3/fast/image-to-video' : 'fal-ai/veo3/image-to-video';
   const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+  // Persist input image to history
+  await persistInputImagesFromUrls(uid, historyId, [body.image_url]);
   const { request_id } = await fal.queue.submit(model, {
     input: {
       prompt: body.prompt,
@@ -1928,6 +1954,8 @@ export const falQueueService = {
     if (!body?.image_url) throw new ApiError('image_url is required', 400);
     const model = fast ? 'fal-ai/veo3.1/fast/image-to-video' : 'fal-ai/veo3.1/image-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    // Persist input image
+    await persistInputImagesFromUrls(uid, historyId, [body.image_url]);
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
@@ -1948,6 +1976,8 @@ export const falQueueService = {
     if (!Array.isArray(body?.image_urls) || body.image_urls.length === 0) throw new ApiError('image_urls is required and must contain at least one URL', 400);
     const model = 'fal-ai/veo3.1/reference-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    // Persist reference images
+    await persistInputImagesFromUrls(uid, historyId, Array.isArray(body.image_urls) ? body.image_urls : []);
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
@@ -1968,6 +1998,8 @@ export const falQueueService = {
     if (!body?.last_frame_image_url) throw new ApiError('last_frame_image_url is required', 400);
     const model = 'fal-ai/veo3.1/fast/image-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    // Persist first and last frame images
+    await persistInputImagesFromUrls(uid, historyId, [body.start_image_url, body.last_frame_image_url]);
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
@@ -1992,6 +2024,8 @@ export const falQueueService = {
     if (!lastUrl) throw new ApiError('last_frame_url is required', 400);
     const model = 'fal-ai/veo3.1/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    // Persist first and last frame images
+    await persistInputImagesFromUrls(uid, historyId, [firstUrl, lastUrl]);
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
@@ -2014,6 +2048,8 @@ export const falQueueService = {
     if (!body?.image_url) throw new ApiError('image_url is required', 400);
     const model = 'fal-ai/sora-2/image-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    // Persist input image
+    await persistInputImagesFromUrls(uid, historyId, [body.image_url]);
     
     // Normalize duration to ensure it's a number and valid (4, 8, or 12)
     let duration = body.duration ?? 8;
@@ -2073,6 +2109,8 @@ export const falQueueService = {
     if (!body?.image_url) throw new ApiError('image_url is required', 400);
     const model = 'fal-ai/sora-2/image-to-video/pro';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    // Persist input image
+    await persistInputImagesFromUrls(uid, historyId, [body.image_url]);
     
     // Normalize duration to ensure it's a number and valid (4, 8, or 12)
     let duration = body.duration ?? 8;
@@ -2283,6 +2321,8 @@ export const falQueueService = {
     if (!body?.image_url) throw new ApiError('image_url is required', 400);
     const model = fast ? 'fal-ai/ltxv-2/image-to-video/fast' : 'fal-ai/ltxv-2/image-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    // Persist input image
+    await persistInputImagesFromUrls(uid, historyId, [body.image_url]);
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
@@ -2313,6 +2353,8 @@ export const falQueueService = {
     if (!body?.image_url) throw new ApiError('image_url is required', 400);
     const model = 'fal-ai/ltxv-2/image-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    // Persist input image
+    await persistInputImagesFromUrls(uid, historyId, [body.image_url]);
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
@@ -2342,6 +2384,8 @@ export const falQueueService = {
     if (!body?.image_url) throw new ApiError('image_url is required', 400);
     const model = 'fal-ai/ltxv-2/image-to-video/fast';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    // Persist input image
+    await persistInputImagesFromUrls(uid, historyId, [body.image_url]);
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,

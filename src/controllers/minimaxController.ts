@@ -8,6 +8,7 @@ import { postSuccessDebit } from '../utils/creditDebit';
 import { logger } from '../utils/logger';
 import { generationHistoryRepository } from '../repository/generationHistoryRepository';
 import { authRepository } from '../repository/auth/authRepository';
+import { uploadFromUrlToZata, uploadDataUriToZata } from '../utils/storage/zataUpload';
 
 // Images
 
@@ -56,6 +57,43 @@ async function videoStart(req: Request, res: Response, next: NextFunction) {
     if (typeof (body as any)?.duration !== 'undefined') updates.duration = (body as any).duration;
     if (typeof (body as any)?.resolution !== 'undefined') updates.resolution = (body as any).resolution;
     await generationHistoryRepository.update(uid, historyId, updates);
+
+    // Persist any input images used for I2V flows so preview can show uploads
+    try {
+      const username = creator?.username || uid;
+      const keyPrefix = `users/${username}/input/${historyId}`;
+      const urls: string[] = [];
+      const pushIfString = (v: any) => { if (typeof v === 'string' && v) urls.push(v); };
+      pushIfString((body as any).first_frame_image);
+      pushIfString((body as any).first_frame);
+      pushIfString((body as any).first_frame_url);
+      pushIfString((body as any).start_image_url);
+      pushIfString((body as any).image_url);
+      if (Array.isArray((body as any).image_urls)) {
+        for (const u of (body as any).image_urls) if (typeof u === 'string') urls.push(u);
+      }
+      // Also handle subject_reference like MiniMax image API uses
+      if (Array.isArray((body as any).subject_reference)) {
+        for (const ref of (body as any).subject_reference) {
+          const file = ref?.image_file || (Array.isArray(ref?.image) ? ref.image[0] : undefined);
+          if (typeof file === 'string') urls.push(file);
+        }
+      }
+      const inputPersisted: any[] = [];
+      let idx = 0;
+      for (const src of urls) {
+        try {
+          const stored = /^data:/i.test(src)
+            ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
+            : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+          inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+        } catch {}
+      }
+      if (inputPersisted.length > 0) {
+        await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+      }
+    } catch {}
+
     res.json(formatApiResponse('success', 'Task created', { ...result, historyId, expectedDebit: ctx.creditCost }));
   } catch (err) {
     next(err);

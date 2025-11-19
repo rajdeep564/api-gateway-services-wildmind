@@ -398,6 +398,23 @@ async function videoGenerate(
       ...(videoUpscale?.ratio !== undefined ? { ratio: videoUpscale.ratio } : {}),
     } as any);
     await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
+
+    // Persist input video used for upscale so preview shows uploads
+    try {
+      const creator = await authRepository.getUserById(uid);
+      const username = (creator?.username || uid) as string;
+      const base = `users/${username}/input/${historyId}`;
+      const v = (videoUpscale as any)?.videoUri;
+      if (typeof v === 'string' && v) {
+        try {
+          const stored = /^data:/i.test(v)
+            ? await uploadDataUriToZata({ dataUri: v, keyPrefix: base, fileName: 'input-video-1' })
+            : await uploadFromUrlToZata({ sourceUrl: v, keyPrefix: base, fileName: 'input-video-1' });
+          const videos = [{ id: `${created.id}-vin-1`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: v }];
+          await generationHistoryRepository.update(uid, historyId, { inputVideos: videos } as any);
+        } catch {}
+      }
+    } catch {}
     return {
       success: true,
       taskId: created.id,

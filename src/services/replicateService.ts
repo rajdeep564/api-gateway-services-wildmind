@@ -1642,6 +1642,19 @@ export async function wanI2V(uid: string, body: any) {
     input.enable_prompt_expansion = Boolean(body.enable_prompt_expansion);
 
   let outputUrl = "";
+  // Persist input image to Zata so UI can show "Your Uploads"
+  try {
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    if (typeof body.image === 'string' && body.image.length > 0) {
+      const stored = /^data:/i.test(body.image)
+        ? await uploadDataUriToZata({ dataUri: body.image, keyPrefix, fileName: 'input-1' })
+        : await uploadFromUrlToZata({ sourceUrl: body.image, keyPrefix, fileName: 'input-1' });
+      await generationHistoryRepository.update(uid, historyId, {
+        inputImages: [ { id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.image } ],
+      } as any);
+    }
+  } catch {}
   try {
     const version = (body as any).version as string | undefined;
     const modelSpec = composeModelSpec(modelBase, version);
@@ -2620,6 +2633,27 @@ export async function klingI2vSubmit(
     })(),
   } as any);
 
+  // Persist input images (image/start_image/end_image) to history
+  try {
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    const urls: string[] = [];
+    if (typeof body.image === 'string' && body.image) urls.push(String(body.image));
+    if (typeof body.start_image === 'string' && body.start_image) urls.push(String(body.start_image));
+    if (typeof body.end_image === 'string' && body.end_image) urls.push(String(body.end_image));
+    const inputPersisted: any[] = [];
+    let idx = 0;
+    for (const src of urls) {
+      try {
+        const stored = /^data:/i.test(src)
+          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
+          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+      } catch {}
+    }
+    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+  } catch {}
+
   const input: any = { prompt: body.prompt, duration: durationSec };
   if (body.image) input.image = String(body.image);
   if (body.start_image) input.start_image = String(body.start_image);
@@ -2700,6 +2734,21 @@ export async function klingLipsyncSubmit(
     createdBy,
     originalPrompt: body.text || "",
   } as any);
+
+  // Persist input video URL (if provided) to history
+  try {
+    const creator2 = await authRepository.getUserById(uid);
+    const username = creator2?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    if (typeof body.video_url === 'string' && body.video_url) {
+      try {
+        const stored = /^data:/i.test(body.video_url)
+          ? await uploadDataUriToZata({ dataUri: body.video_url, keyPrefix, fileName: 'input-video-1' })
+          : await uploadFromUrlToZata({ sourceUrl: body.video_url, keyPrefix, fileName: 'input-video-1' });
+        await generationHistoryRepository.update(uid, historyId, { inputVideos: [ { id: 'vin-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.video_url } ] } as any);
+      } catch {}
+    }
+  } catch {}
 
   const input: any = {};
   
@@ -2787,6 +2836,30 @@ export async function wanAnimateReplaceSubmit(
     createdBy,
     originalPrompt: body.prompt || "",
   } as any);
+
+  // Persist input video and character image to history
+  try {
+    const username = creator?.username || uid;
+    const base = `users/${username}/input/${historyId}`;
+    const updates: any = {};
+    if (typeof body.video === 'string' && body.video) {
+      try {
+        const stored = /^data:/i.test(body.video)
+          ? await uploadDataUriToZata({ dataUri: body.video, keyPrefix: base, fileName: 'input-video-1' })
+          : await uploadFromUrlToZata({ sourceUrl: body.video, keyPrefix: base, fileName: 'input-video-1' });
+        updates.inputVideos = [ { id: 'vin-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.video } ];
+      } catch {}
+    }
+    if (typeof body.character_image === 'string' && body.character_image) {
+      try {
+        const stored = /^data:/i.test(body.character_image)
+          ? await uploadDataUriToZata({ dataUri: body.character_image, keyPrefix: base, fileName: 'input-1' })
+          : await uploadFromUrlToZata({ sourceUrl: body.character_image, keyPrefix: base, fileName: 'input-1' });
+        updates.inputImages = [ { id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.character_image } ];
+      } catch {}
+    }
+    if (Object.keys(updates).length > 0) await generationHistoryRepository.update(uid, historyId, updates);
+  } catch {}
 
   const input: any = {
     video: String(body.video),
@@ -2892,6 +2965,30 @@ export async function wanAnimateAnimationSubmit(
     createdBy,
     originalPrompt: body.prompt || "",
   } as any);
+
+  // Persist input video and character image to history
+  try {
+    const username = creator?.username || uid;
+    const base = `users/${username}/input/${historyId}`;
+    const updates: any = {};
+    if (typeof body.video === 'string' && body.video) {
+      try {
+        const stored = /^data:/i.test(body.video)
+          ? await uploadDataUriToZata({ dataUri: body.video, keyPrefix: base, fileName: 'input-video-1' })
+          : await uploadFromUrlToZata({ sourceUrl: body.video, keyPrefix: base, fileName: 'input-video-1' });
+        updates.inputVideos = [ { id: 'vin-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.video } ];
+      } catch {}
+    }
+    if (typeof body.character_image === 'string' && body.character_image) {
+      try {
+        const stored = /^data:/i.test(body.character_image)
+          ? await uploadDataUriToZata({ dataUri: body.character_image, keyPrefix: base, fileName: 'input-1' })
+          : await uploadFromUrlToZata({ sourceUrl: body.character_image, keyPrefix: base, fileName: 'input-1' });
+        updates.inputImages = [ { id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.character_image } ];
+      } catch {}
+    }
+    if (Object.keys(updates).length > 0) await generationHistoryRepository.update(uid, historyId, updates);
+  } catch {}
 
   const input: any = {
     video: String(body.video),
@@ -3009,6 +3106,25 @@ export async function seedanceT2vSubmit(
     duration: durationSec as any,
     resolution: res as any,
   } as any);
+
+  // Persist reference_images (if provided) as inputImages so preview shows uploads
+  try {
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    const refs = Array.isArray(body.reference_images) ? body.reference_images.slice(0, 4) : [];
+    const inputPersisted: any[] = [];
+    let idx = 0;
+    for (const src of refs) {
+      if (!src || typeof src !== 'string') continue;
+      try {
+        const stored = /^data:/i.test(src)
+          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
+          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+      } catch {}
+    }
+    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+  } catch {}
 
   const input: any = {
     prompt: body.prompt,
@@ -3204,6 +3320,29 @@ export async function seedanceI2vSubmit(
     duration: durationSec as any,
     resolution: res as any,
   } as any);
+
+  // Persist input image, last_frame_image, and reference_images to history
+  try {
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    const urls: string[] = [];
+    if (typeof body.image === 'string') urls.push(String(body.image));
+    if (typeof body.last_frame_image === 'string' && body.last_frame_image.length > 5) urls.push(String(body.last_frame_image));
+    if (Array.isArray(body.reference_images)) {
+      for (const r of body.reference_images.slice(0, 4)) if (typeof r === 'string') urls.push(r);
+    }
+    const inputPersisted: any[] = [];
+    let idx = 0;
+    for (const src of urls) {
+      try {
+        const stored = /^data:/i.test(src)
+          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
+          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+      } catch {}
+    }
+    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+  } catch {}
 
   const input: any = {
     prompt: body.prompt,
@@ -3596,6 +3735,19 @@ export async function pixverseI2vSubmit(
     duration: durationSec as any,
     resolution: quality as any,
   } as any);
+
+  // Persist input image to history so preview shows uploads
+  try {
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    const src = String(body.image);
+    if (src && src.length > 0) {
+      const stored = /^data:/i.test(src)
+        ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: 'input-1' })
+        : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: 'input-1' });
+      await generationHistoryRepository.update(uid, historyId, { inputImages: [ { id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src } ] } as any);
+    }
+  } catch {}
 
   const input: any = {
     prompt: body.prompt,
