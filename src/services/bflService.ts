@@ -493,7 +493,7 @@ async function fill(uid: string, body: any) {
     status: "completed",
     images: scoredImages,
     aestheticScore: highestScore,
-  } as any);
+  } as any;
   // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
   try {
     console.log('[BFL.fill] Triggering markGenerationCompleted for optimization', { uid, historyId });
@@ -576,7 +576,7 @@ async function expand(uid: string, body: any) {
     status: "completed",
     images: scoredImages,
     aestheticScore: highestScore,
-  } as any);
+  } as any;
   // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
   try {
     console.log('[BFL.expand] Triggering markGenerationCompleted for optimization', { uid, historyId });
@@ -655,7 +655,7 @@ async function canny(uid: string, body: any) {
     status: "completed",
     images: scoredImages,
     aestheticScore: highestScore,
-  } as any);
+  } as any;
   // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
   try {
     console.log('[BFL.canny] Triggering markGenerationCompleted for optimization', { uid, historyId });
@@ -734,7 +734,7 @@ async function depth(uid: string, body: any) {
     status: "completed",
     images: scoredImages,
     aestheticScore: highestScore,
-  } as any);
+  } as any;
   // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
   try {
     console.log('[BFL.depth] Triggering markGenerationCompleted for optimization', { uid, historyId });
@@ -916,7 +916,7 @@ async function expandWithFill(uid: string, body: any) {
     status: "completed",
     images: scoredImages,
     aestheticScore: highestScore,
-  } as any);
+  } as any;
   // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
   try {
     console.log('[BFL.expandWithFill] Triggering markGenerationCompleted for optimization', { uid, historyId });
