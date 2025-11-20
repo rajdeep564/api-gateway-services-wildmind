@@ -1,0 +1,174 @@
+{
+  "info": {
+    "name": "WildMind FAL - Canonical Models",
+    "_postman_id": "wildmind-fal-canonical-collection",
+    "description": "Collection with example requests for Eleven (dialogue & TTS), Maya TTS, Chatterbox multilingual TTS, Chatterbox STS, and queue status/result checks.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "ElevenLabs - Text-to-Dialogue (Generate)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{authToken}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json", "type": "text" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"inputs\": [\n    { \"text\": \"Hello! Welcome to WildMind. Please introduce yourself.\" }\n  ],\n  \"stability\": 0.5\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/fal/eleven/dialogue",
+          "host": ["{{baseUrl}}"],
+          "path": ["fal", "eleven", "dialogue"]
+        }
+      },
+      "response": [
+        {
+          "name": "Error - Missing Prompt",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"inputs\": [],\n  \"stability\": 0.5\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/fal/eleven/dialogue",
+              "host": ["{{baseUrl}}"],
+              "path": ["fal", "eleven", "dialogue"]
+            }
+          },
+          "status": "Bad Request",
+          "code": 400,
+          "body": "{\n  \"responseStatus\": \"error\",\n  \"message\": \"Prompt is required\",\n  \"data\": null\n}"
+        }
+      ]
+    },
+    {
+      "name": "ElevenLabs - Text-to-Speech (TTS)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{authToken}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json", "type": "text" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"text\": \"This is a short TTS test from WildMind.\",\n  \"voice\": \"alloy\",\n  \"speed\": 1.0\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/fal/eleven/tts",
+          "host": ["{{baseUrl}}"],
+          "path": ["fal", "eleven", "tts"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Maya - Text-to-Speech (Maya-1-Voice)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{authToken}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json", "type": "text" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"text\": \"Hello from Maya voice. This is a test.\",\n  \"output_format\": \"wav\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/fal/maya/tts",
+          "host": ["{{baseUrl}}"],
+          "path": ["fal", "maya", "tts"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chatterbox - Multilingual TTS",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{authToken}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json", "type": "text" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"text\": \"Hola, ¿cómo estás? Esto es una prueba de TTS multilingüe.\",\n  \"voice\": \"multilingual_v1\",\n  \"exaggeration\": 1.0\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/fal/chatterbox/multilingual",
+          "host": ["{{baseUrl}}"],
+          "path": ["fal", "chatterbox", "multilingual"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chatterbox - Speech-to-Speech (STS)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{authToken}}", "type": "text" },
+          { "key": "Content-Type", "value": "application/json", "type": "text" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"source_audio_url\": \"https://example.com/sample.wav\",\n  \"target_voice\": \"friendly_male\",\n  \"high_quality_audio\": true\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/fal/chatterbox/sts",
+          "host": ["{{baseUrl}}"],
+          "path": ["fal", "chatterbox", "sts"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Queue - Status (GET)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{authToken}}", "type": "text" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/fal/queue/status?requestId={{requestId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["fal", "queue", "status"],
+          "query": [
+            { "key": "requestId", "value": "{{requestId}}" }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Queue - Result (GET)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{authToken}}", "type": "text" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/fal/queue/result?requestId={{requestId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["fal", "queue", "result"],
+          "query": [
+            { "key": "requestId", "value": "{{requestId}}" }
+          ]
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "authToken", "value": "<JWT or API token>" },
+    { "key": "requestId", "value": "" }
+  ]
+}

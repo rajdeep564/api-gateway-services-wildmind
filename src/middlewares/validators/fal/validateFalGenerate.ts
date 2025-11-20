@@ -26,10 +26,14 @@ export const ALLOWED_FAL_MODELS = [
   // Chatterbox multilingual TTS
   'chatterbox-text-to-speech-multilingual',
   'chatterbox-multilingual',
+  // Chatterbox speech-to-speech (resemble-ai)
+  'resemble-ai/chatterboxhd/speech-to-speech',
+  'chatterbox-sts',
 ];
 
 export const validateFalGenerate = [
-  body('prompt').isString().notEmpty(),
+  // Make prompt optional at the base validator level; enforce conditionally below
+  body('prompt').optional().isString(),
   body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat','text-to-character']).withMessage('invalid generationType'),
   body('model').isString().isIn(ALLOWED_FAL_MODELS),
   body('aspect_ratio').optional().isIn(['1:1','16:9','9:16','3:4','4:3']),
@@ -43,6 +47,37 @@ export const validateFalGenerate = [
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+
+    // Conditional prompt requirement: only certain generation types require a textual `prompt`.
+    // Make a whitelist of generation types that must include `prompt`.
+    const genType: string | undefined = req.body?.generationType;
+    const requiresPrompt = new Set([
+      'text-to-image',
+      'logo',
+      'sticker-generation',
+      'text-to-video',
+      'mockup-generation',
+      'product-generation',
+      'ad-generation',
+      'live-chat',
+      'text-to-character'
+    ]);
+
+    // If generationType is not provided, keep backward compatibility and require prompt.
+    if (!genType) {
+      if (!req.body?.prompt || typeof req.body.prompt !== 'string' || req.body.prompt.trim().length === 0) {
+        return next(new ApiError('prompt is required', 400));
+      }
+    } else {
+      // If the chosen generation type requires a prompt, enforce it.
+      if (requiresPrompt.has(genType)) {
+        if (!req.body?.prompt || typeof req.body.prompt !== 'string' || req.body.prompt.trim().length === 0) {
+          return next(new ApiError(`prompt is required for generationType ${genType}`, 400));
+        }
+      }
+      // For generation types such as `text-to-music` we allow other fields and do not force `prompt`.
+    }
+
     next();
   }
 ];
@@ -79,6 +114,19 @@ export const validateFalChatterboxMultilingual = [
     next();
   }
 ];
+
+// Chatterbox Speech-to-Speech (STS) validator
+export const validateFalChatterboxSts = [
+  body('source_audio_url').isString().notEmpty().withMessage('source_audio_url is required'),
+  body('target_voice').optional().isString().withMessage('target_voice must be a string'),
+  body('target_voice_audio_url').optional().isString().withMessage('target_voice_audio_url must be a string'),
+  body('high_quality_audio').optional().isBoolean().withMessage('high_quality_audio must be boolean'),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
 // Veo3 Text-to-Video (standard and fast)
 export const validateFalVeoTextToVideo = [
   body('prompt').isString().notEmpty(),
@@ -104,7 +152,8 @@ export const validateFalVeoImageToVideo = [
   body('prompt').isString().notEmpty(),
   body('image_url').isString().notEmpty(),
   body('aspect_ratio').optional().isIn(['auto', '16:9', '9:16']),
-  body('duration').optional().isIn(['8s']),
+  // Allow 4s, 6s or 8s durations (was only '8s')
+  body('duration').optional().isIn(['4s','6s','8s']),
   body('generate_audio').optional().isBoolean(),
   body('resolution').optional().isIn(['720p', '1080p']),
   (req: Request, _res: Response, next: NextFunction) => {
