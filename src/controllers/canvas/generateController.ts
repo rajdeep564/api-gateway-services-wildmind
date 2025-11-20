@@ -88,7 +88,7 @@ export async function generateForCanvas(req: Request, res: Response) {
       );
     }
 
-    const { prompt, model, width, height, aspectRatio, seed, options, imageCount, meta } = req.body;
+    const { prompt, model, width, height, aspectRatio, seed, options, imageCount, sourceImageUrl, meta } = req.body;
 
     console.log('[generateForCanvas] Request received:', {
       userId,
@@ -97,6 +97,7 @@ export async function generateForCanvas(req: Request, res: Response) {
       hasMeta: !!meta,
       projectId: meta?.projectId,
       imageCount,
+      hasSourceImage: !!sourceImageUrl,
     });
 
     if (!prompt) {
@@ -129,6 +130,7 @@ export async function generateForCanvas(req: Request, res: Response) {
       seed,
       options,
       imageCount,
+      sourceImageUrl, // Pass sourceImageUrl for image-to-image generation
       meta: {
         source: 'canvas',
         projectId: meta.projectId,

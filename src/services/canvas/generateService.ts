@@ -222,14 +222,23 @@ export async function generateForCanvas(
       generationId = result.data?.historyId;
     } else {
       // Use FAL service (default for Google Nano Banana, Seedream v4, Imagen)
-      const result = await falService.generate(uid, {
+      // For image-to-image generation, pass sourceImageUrl as uploadedImages array
+      const falPayload: any = {
         prompt: request.prompt,
         model: backendModel, // Use mapped backend model name
         aspect_ratio: aspectRatio as any,
         num_images: clampedImageCount, // Pass imageCount to generate multiple images
         storageKeyPrefixOverride: canvasKeyPrefix,
         forceSyncUpload: true,
-      } as any);
+      };
+      
+      // If sourceImageUrl is provided, add it to uploadedImages array for image-to-image generation
+      const sourceImageUrl = (request as any).sourceImageUrl as string | undefined;
+      if (sourceImageUrl) {
+        falPayload.uploadedImages = [sourceImageUrl];
+      }
+      
+      const result = await falService.generate(uid, falPayload);
       
       // Handle multiple images from FAL
       // When imageCount > 1, FAL service returns all images in result.images array
