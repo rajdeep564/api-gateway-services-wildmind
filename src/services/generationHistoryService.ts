@@ -309,36 +309,53 @@ export async function getUserGeneration(
   }
   const item = await generationHistoryRepository.get(uid, historyId);
   
-  // Backfill inputImages for older Seedream generations that don't have them
+  // Backfill inputImages for older generations that don't have them
   if (item && (!(item as any).inputImages || !Array.isArray((item as any).inputImages) || (item as any).inputImages.length === 0)) {
     const model = (item as any).model || '';
+    const generationType = (item as any).generationType || '';
     const isSeedream = model.includes('seedream') || model.includes('seedream-4') || model.includes('bytedance/seedream');
+    const isReplaceEdit = generationType === 'image-edit' || model.includes('google-nano-banana') || model.includes('seedream-4');
     
-    if (isSeedream) {
+    if (isSeedream || isReplaceEdit) {
       try {
         const creator = await authRepository.getUserById(uid);
         const username = creator?.username || uid;
         const zataPrefix = (process.env.ZATA_PREFIX || process.env.NEXT_PUBLIC_ZATA_PREFIX || 'https://idr01.zata.ai/devstoragev1/').replace(/\/$/, '') + '/';
         
-        // Try common input file patterns for Seedream (more comprehensive list)
-        const commonInputPatterns = [
+        // Try common input file patterns
+        const commonInputPatterns: string[] = [];
+        
+        if (isReplaceEdit) {
+          // Replace/edit feature patterns
+          commonInputPatterns.push(
+            `users/${username}/input/${historyId}/replace-input.jpg`,
+            `users/${username}/input/${historyId}/replace-input.png`,
+            `users/${username}/input/${historyId}/replace-input.jpeg`,
+            `users/${username}/input/${historyId}/replace-input`, // Without extension
+          );
+        }
+        
+        if (isSeedream) {
           // Seedream-specific patterns
-          `users/${username}/input/${historyId}/seedream-ref-1.jpg`,
-          `users/${username}/input/${historyId}/seedream-ref-1.png`,
-          `users/${username}/input/${historyId}/seedream-ref-1.jpeg`,
-          `users/${username}/input/${historyId}/seedream-ref-fixed-1.jpg`,
-          `users/${username}/input/${historyId}/seedream-ref-fixed-1.png`,
-          // Generic input patterns
-          `users/${username}/input/${historyId}/input-1.jpg`,
-          `users/${username}/input/${historyId}/input-1.png`,
-          `users/${username}/input/${historyId}/input-1.jpeg`,
-          // Try without extension (some uploads might not have extensions)
-          `users/${username}/input/${historyId}/seedream-ref-1`,
-          `users/${username}/input/${historyId}/input-1`,
-        ];
+          commonInputPatterns.push(
+            `users/${username}/input/${historyId}/seedream-ref-1.jpg`,
+            `users/${username}/input/${historyId}/seedream-ref-1.png`,
+            `users/${username}/input/${historyId}/seedream-ref-1.jpeg`,
+            `users/${username}/input/${historyId}/seedream-ref-fixed-1.jpg`,
+            `users/${username}/input/${historyId}/seedream-ref-fixed-1.png`,
+            // Generic input patterns
+            `users/${username}/input/${historyId}/input-1.jpg`,
+            `users/${username}/input/${historyId}/input-1.png`,
+            `users/${username}/input/${historyId}/input-1.jpeg`,
+            // Try without extension (some uploads might not have extensions)
+            `users/${username}/input/${historyId}/seedream-ref-1`,
+            `users/${username}/input/${historyId}/input-1`,
+          );
+        }
         
         const foundInputImages: any[] = [];
-        console.log('[getUserGeneration] Attempting to backfill inputImages for Seedream generation', { historyId, username, patternsToCheck: commonInputPatterns.length });
+        const featureType = isReplaceEdit ? 'Replace/Edit' : 'Seedream';
+        console.log(`[getUserGeneration] Attempting to backfill inputImages for ${featureType} generation`, { historyId, username, patternsToCheck: commonInputPatterns.length });
         
         for (const pattern of commonInputPatterns) {
           const testUrl = `${zataPrefix}${pattern}`;
@@ -361,7 +378,7 @@ export async function getUserGeneration(
                 storagePath: pattern,
                 originalUrl: testUrl,
               });
-              console.log('[getUserGeneration] Found input image via backfill', { historyId, pattern, url: testUrl });
+              console.log(`[getUserGeneration] Found input image via backfill for ${featureType}`, { historyId, pattern, url: testUrl });
               break; // Found at least one, that's enough
             }
           } catch (err: any) {
@@ -377,9 +394,9 @@ export async function getUserGeneration(
         if (foundInputImages.length > 0) {
           await generationHistoryRepository.update(uid, historyId, { inputImages: foundInputImages } as any);
           (item as any).inputImages = foundInputImages;
-          console.log('[getUserGeneration] Successfully backfilled inputImages for Seedream generation', { historyId, count: foundInputImages.length });
+          console.log(`[getUserGeneration] Successfully backfilled inputImages for ${featureType} generation`, { historyId, count: foundInputImages.length });
         } else {
-          console.log('[getUserGeneration] No input images found for Seedream generation (may not have been uploaded to storage)', { historyId });
+          console.log(`[getUserGeneration] No input images found for ${featureType} generation (may not have been uploaded to storage)`, { historyId });
         }
       } catch (e: any) {
         // Log error but don't block the request
