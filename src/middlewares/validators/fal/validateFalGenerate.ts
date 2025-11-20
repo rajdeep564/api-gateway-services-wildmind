@@ -272,7 +272,7 @@ export const validateFalVeo31FirstLast = [
   body('start_image_url').optional().isString(),
   body('last_frame_image_url').optional().isString(),
   body('aspect_ratio').optional().isIn(['auto','16:9', '9:16', '1:1']),
-  body('duration').optional().isIn(['8s']),
+  body('duration').optional().isIn(['8s','4s','6s']),
   body('generate_audio').optional().isBoolean(),
   body('resolution').optional().isIn(['720p', '1080p']),
   (req: Request, _res: Response, next: NextFunction) => {
