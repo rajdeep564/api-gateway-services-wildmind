@@ -14,7 +14,7 @@ export async function generateVideoForCanvas(req: Request, res: Response) {
       );
     }
 
-    const { prompt, model, aspectRatio, duration, resolution, meta } = req.body;
+    const { prompt, model, aspectRatio, duration, resolution, meta, firstFrameUrl, lastFrameUrl } = req.body;
 
     console.log('[generateVideoForCanvas] Request received:', {
       userId,
@@ -45,8 +45,7 @@ export async function generateVideoForCanvas(req: Request, res: Response) {
       );
     }
 
-    const { generateVideoForCanvas: generateVideo } = await import('../../services/canvas/generateService');
-    const result = await generateVideo(userId, {
+    const result = await generateService.generateVideoForCanvas(userId, {
       prompt,
       model,
       aspectRatio,
@@ -54,6 +53,8 @@ export async function generateVideoForCanvas(req: Request, res: Response) {
       resolution,
       projectId: meta.projectId,
       elementId: meta.elementId,
+      firstFrameUrl,
+      lastFrameUrl,
     });
 
     console.log('[generateVideoForCanvas] Generation completed:', {
