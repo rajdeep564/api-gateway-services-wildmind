@@ -5,6 +5,7 @@ import { generationHistoryRepository } from '../repository/generationHistoryRepo
 import { authRepository } from '../repository/auth/authRepository';
 import { uploadFromUrlToZata, uploadDataUriToZata } from '../utils/storage/zataUpload';
 import { syncToMirror, updateMirror } from '../utils/mirrorHelper';
+import { markGenerationCompleted } from './generationHistoryService';
 import sharp from 'sharp';
 import axios from 'axios';
 
@@ -117,7 +118,7 @@ async function processGoogleNanoBanana(
   maskUrl: string,
   prompt: string,
   historyId: string
-): Promise<string> {
+): Promise<{ publicUrl: string; key: string }> {
   const falKey = env.falKey as string;
   if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
 
@@ -229,13 +230,13 @@ async function processGoogleNanoBanana(
     // Upload to Zata storage
     const creator = await authRepository.getUserById(uid);
     const username = creator?.username || uid;
-    const { publicUrl } = await uploadFromUrlToZata({
+    const { publicUrl, key } = await uploadFromUrlToZata({
       sourceUrl: editedImageUrl,
       keyPrefix: `users/${username}/image/${historyId}`,
       fileName: 'nano-banana-edit',
     });
 
-    return publicUrl;
+    return { publicUrl, key };
   } catch (error: any) {
     const details = error?.response?.data || error?.message || error;
     console.error('[replaceService] Google Nano Banana error:', JSON.stringify(details, null, 2));
@@ -344,8 +345,8 @@ export async function replaceImage(
 
   // Create history record
   const { historyId } = await generationHistoryRepository.create(uid, {
-    prompt: `${model}: ${prompt}`,
-    model: model === 'google_nano_banana' ? 'google-nano-banana' : 'seedream-4',
+    prompt: prompt.trim(), // Store only the user's prompt, without model prefix
+    model: model === 'google_nano_banana' ? 'google-nano-banana' : 'google-nano-banana', // Default to Google Nano Banana
     generationType: 'image-edit',
     visibility: 'private',
     isPublic: false,
@@ -353,8 +354,9 @@ export async function replaceImage(
   });
 
   try {
-    // Resolve input image URL
+    // Resolve input image URL and save to inputImages
     let inputImageUrl: string;
+    let inputImageStored: any = null;
     if (input_image.startsWith('data:')) {
       const username = creator?.username || uid;
       const stored = await uploadDataUriToZata({
@@ -363,8 +365,23 @@ export async function replaceImage(
         fileName: 'replace-input',
       });
       inputImageUrl = stored.publicUrl;
+      inputImageStored = { id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: input_image };
     } else {
       inputImageUrl = input_image;
+      // For URL inputs, try to upload to Zata for consistency
+      try {
+        const username = creator?.username || uid;
+        const stored = await uploadFromUrlToZata({
+          sourceUrl: input_image,
+          keyPrefix: `users/${username}/input/${historyId}`,
+          fileName: 'replace-input',
+        });
+        inputImageStored = { id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: input_image };
+        inputImageUrl = stored.publicUrl;
+      } catch {
+        // If upload fails, use original URL
+        inputImageStored = { id: 'in-1', url: input_image, originalUrl: input_image };
+      }
     }
 
     // Resolve and prepare mask
@@ -385,27 +402,40 @@ export async function replaceImage(
       maskUrl = masked_image;
     }
 
-    // Process based on model
-    let editedImageUrl: string;
-    if (model === 'google_nano_banana') {
-      editedImageUrl = await processGoogleNanoBanana(uid, inputImageUrl, maskUrl, prompt, historyId);
-    } else if (model === 'seedream_4') {
-      editedImageUrl = await processSeedream4(uid, inputImageUrl, maskUrl, prompt, historyId);
-    } else {
-      throw new ApiError(`Unsupported model: ${model}`, 400);
-    }
+    // Process based on model - default to Google Nano Banana
+    let editedImageResult: { publicUrl: string; key: string };
+    // Always use Google Nano Banana for replace feature
+    editedImageResult = await processGoogleNanoBanana(uid, inputImageUrl, maskUrl, prompt, historyId);
 
-    // Update history with result
-    await generationHistoryRepository.update(uid, historyId, {
+    // Update history with result and inputImages
+    // Set updatedAt to current time to ensure proper sorting by completion time
+    const images = [{ 
+      url: editedImageResult.publicUrl, 
+      storagePath: editedImageResult.key, 
+      originalUrl: editedImageResult.publicUrl 
+    }];
+    const updateData: any = {
       status: 'completed',
-      images: [{ url: editedImageUrl, storagePath: '', originalUrl: editedImageUrl }],
-    } as any);
+      images: images,
+      updatedAt: new Date().toISOString(), // Set completion time for proper sorting
+    };
+    // Save input image to inputImages so it appears in preview modal
+    if (inputImageStored) {
+      updateData.inputImages = [inputImageStored];
+    }
+    await generationHistoryRepository.update(uid, historyId, updateData);
+
+    // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+    markGenerationCompleted(uid, historyId, {
+      status: "completed",
+      images: images as any,
+    }).catch(err => console.error('[replaceService] Image optimization failed:', err));
 
     // Sync to mirror
     await syncToMirror(uid, historyId);
 
     return {
-      edited_image: editedImageUrl,
+      edited_image: editedImageResult.publicUrl,
       historyId,
       status: 'success',
     };

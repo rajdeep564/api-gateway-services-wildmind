@@ -306,6 +306,7 @@ export async function removeBackground(
     status: "completed",
     images: scoredImages,
     aestheticScore: highestScore,
+    updatedAt: new Date().toISOString(), // Set completion time for proper sorting
   } as any);
   try { console.log('[Replicate.removeBackground] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch {}
   try {
@@ -845,6 +846,7 @@ export async function upscale(uid: string, body: any) {
     status: "completed",
     images: scoredImages as any,
     aestheticScore: highestScore,
+    updatedAt: new Date().toISOString(), // Set completion time for proper sorting
   };
   // Preserve inputImages if they exist
   if (existing && Array.isArray((existing as any).inputImages) && (existing as any).inputImages.length > 0) {

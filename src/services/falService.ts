@@ -962,12 +962,17 @@ export const falService = {
   const scoredImages = await aestheticScoreService.scoreImages(images as any);
   const highestScore = aestheticScoreService.getHighestScore(scoredImages);
 
-  await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: scoredImages, aestheticScore: highestScore } as any);
+  await generationHistoryRepository.update(uid, historyId, { 
+    status: 'completed', 
+    images: scoredImages, 
+    aestheticScore: highestScore,
+    updatedAt: new Date().toISOString(), // Set completion time for proper sorting
+  } as any);
       
       // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
       markGenerationCompleted(uid, historyId, {
         status: "completed",
-        images: images,
+        images: scoredImages as any,
       }).catch(err => console.error('[FAL] Image optimization failed:', err));
       
       // Sync to mirror with retries
@@ -1210,7 +1215,12 @@ export const falService = {
   // Score images
   const scoredImages = await aestheticScoreService.scoreImages(images as any);
   const highestScore = aestheticScoreService.getHighestScore(scoredImages);
-  await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: scoredImages, aestheticScore: highestScore } as any);
+  await generationHistoryRepository.update(uid, historyId, { 
+    status: 'completed', 
+    images: scoredImages, 
+    aestheticScore: highestScore,
+    updatedAt: new Date().toISOString(), // Set completion time for proper sorting
+  } as any);
       
       // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
       markGenerationCompleted(uid, historyId, {
@@ -1617,7 +1627,12 @@ export const falService = {
   // Score images
   const scoredImages = await aestheticScoreService.scoreImages(storedImages as any);
   const highestScore = aestheticScoreService.getHighestScore(scoredImages);
-  await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: scoredImages, aestheticScore: highestScore } as any);
+  await generationHistoryRepository.update(uid, historyId, { 
+    status: 'completed', 
+    images: scoredImages, 
+    aestheticScore: highestScore,
+    updatedAt: new Date().toISOString(), // Set completion time for proper sorting
+  } as any);
       
       // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
       markGenerationCompleted(uid, historyId, {
