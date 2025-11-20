@@ -138,11 +138,13 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
       const inputImages = (item as any).inputImages;
       if (inputImages && Array.isArray(inputImages)) {
         inputImages.forEach((img: any) => {
+          // Use firebaseUrl if available (for wild project compatibility), otherwise use url
+          const mediaUrl = img.firebaseUrl || img.url || img.originalUrl || '';
           uploaded.push({
             id: `${item.id}-input-${img.id || Date.now()}`,
-            url: img.url || img.originalUrl || '',
+            url: mediaUrl,
             type: 'image',
-            thumbnail: img.url,
+            thumbnail: img.thumbnailUrl || img.avifUrl || img.firebaseUrl || img.url || img.originalUrl || '',
             prompt: item.prompt,
             model: item.model,
             createdAt: item.createdAt?.toString() || new Date().toISOString(),
@@ -156,11 +158,13 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
       const inputVideos = (item as any).inputVideos;
       if (inputVideos && Array.isArray(inputVideos)) {
         inputVideos.forEach((video: any) => {
+          // Use firebaseUrl if available (for wild project compatibility), otherwise use url
+          const mediaUrl = video.firebaseUrl || video.url || video.originalUrl || '';
           uploaded.push({
             id: `${item.id}-input-video-${video.id || Date.now()}`,
-            url: video.url || video.originalUrl || '',
+            url: mediaUrl,
             type: 'video',
-            thumbnail: video.thumbUrl || video.thumbnailUrl || video.url,
+            thumbnail: video.thumbUrl || video.thumbnailUrl || video.firebaseUrl || video.url || video.originalUrl || '',
             prompt: item.prompt,
             model: item.model,
             createdAt: item.createdAt?.toString() || new Date().toISOString(),
@@ -246,7 +250,7 @@ export async function saveUploadedMedia(req: Request, res: Response, next: NextF
     // Upload the file to Zata
     const isDataUri = /^data:/.test(url);
     const keyPrefix = `users/${username}/input/${historyId}`;
-    const fileName = `upload-${Date.now()}`;
+    const fileName = `upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     let stored: { key: string; publicUrl: string; storagePath?: string; originalUrl?: string };
     
@@ -277,32 +281,38 @@ export async function saveUploadedMedia(req: Request, res: Response, next: NextF
     }
 
     // Save to inputImages or inputVideos
+    // Match the structure expected by wild project (includes firebaseUrl for compatibility)
     const mediaItem = {
       id: `upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       url: stored.publicUrl,
+      firebaseUrl: stored.publicUrl, // Wild project expects firebaseUrl
       storagePath: stored.storagePath,
       originalUrl: stored.originalUrl || url,
     };
 
-    const updateData: any = {};
+    // Save inputImages/inputVideos directly to the repository
+    // (markGenerationCompleted doesn't handle inputImages/inputVideos)
+    const updateData: any = {
+      status: 'completed',
+    };
     if (type === 'image') {
       updateData.inputImages = [mediaItem];
     } else {
       updateData.inputVideos = [mediaItem];
     }
 
-    // Mark as completed and save uploaded media
-    await generationHistoryService.markGenerationCompleted(uid, historyId, {
-      status: 'completed',
-      ...updateData,
-    });
-
     // Add canvas project linkage if provided
     if (projectId) {
-      await generationHistoryRepository.update(uid, historyId, {
-        canvasProjectId: projectId,
-      } as any);
+      updateData.canvasProjectId = projectId;
     }
+
+    // Save directly to repository to ensure inputImages/inputVideos are persisted
+    await generationHistoryRepository.update(uid, historyId, updateData);
+
+    // Also call markGenerationCompleted for proper status handling and stats
+    await generationHistoryService.markGenerationCompleted(uid, historyId, {
+      status: 'completed',
+    });
 
     return res.json(
       formatApiResponse('success', 'Uploaded media saved', {

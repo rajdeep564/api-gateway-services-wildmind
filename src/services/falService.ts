@@ -18,6 +18,7 @@ import { syncToMirror, updateMirror, ensureMirrorSync } from "../utils/mirrorHel
 import { aestheticScoreService } from "./aestheticScoreService";
 import { markGenerationCompleted } from "./generationHistoryService";
 import { buildFalApiError } from "../utils/falErrorMapper";
+import fetch from "node-fetch";
 
 const buildGenerationImageFileName = (historyId?: string, index: number = 0) => {
   if (historyId) {
@@ -1942,6 +1943,67 @@ async function queueStatus(uid: string, model: string | undefined, requestId: st
   return status;
 }
 
+const extractFalVideoUrl = (payload: any): { url?: string; id?: string } => {
+  if (!payload) return {};
+
+  const sources = [
+    payload?.data?.video,
+    payload?.data?.videos?.[0],
+    payload?.video,
+    payload?.videos?.[0],
+    payload?.response?.video,
+    payload?.response?.videos?.[0],
+    payload?.response?.output?.video,
+    payload?.response?.output?.videos?.[0],
+  ].filter(Boolean);
+
+  for (const source of sources) {
+    if (source?.url) {
+      return { url: source.url as string, id: source?.id as string | undefined };
+    }
+  }
+
+  if (typeof payload?.output === 'string' && payload.output.startsWith('http')) {
+    return { url: payload.output };
+  }
+
+  if (Array.isArray(payload?.output)) {
+    const stringUrl = payload.output.find((item: any) => typeof item === 'string' && item.startsWith('http'));
+    if (stringUrl) {
+      return { url: stringUrl };
+    }
+    const objWithUrl = payload.output.find((item: any) => item?.url);
+    if (objWithUrl?.url) {
+      return { url: objWithUrl.url as string, id: objWithUrl?.id as string | undefined };
+    }
+  }
+
+  if (payload?.data?.response?.url) {
+    return { url: payload.data.response.url as string };
+  }
+
+  return {};
+};
+
+async function fetchFalQueueResponse(modelPath: string, requestId: string): Promise<any> {
+  const normalizedModel = modelPath.startsWith('fal-ai/') ? modelPath : `fal-ai/${modelPath}`;
+  const fallbackUrl = `https://queue.fal.run/${normalizedModel}/requests/${requestId}`;
+  const falKey = env.falKey as string;
+  if (!falKey) {
+    throw new ApiError('FAL AI API key not configured', 500);
+  }
+  const res = await fetch(fallbackUrl, {
+    headers: {
+      Authorization: `Key ${falKey}`,
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new ApiError(`Failed to fetch FAL queue response (${res.status}): ${text}`, res.status);
+  }
+  return res.json();
+}
+
 async function queueResult(uid: string, model: string | undefined, requestId: string): Promise<any> {
   const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   fal.config({ credentials: falKey });
@@ -1978,9 +2040,37 @@ async function queueResult(uid: string, model: string | undefined, requestId: st
     throw falError;
   }
   const located = await generationHistoryRepository.findByProviderTaskId(uid, 'fal', requestId);
-  if (result?.data?.video?.url && located) {
-    const providerUrl: string = result.data.video.url as string;
-    const providerVideoId: string | undefined = (result as any)?.data?.video_id || (result as any)?.data?.videoId;
+  let extractedVideo = extractFalVideoUrl(result);
+
+  const responseUrl = (result as any)?.response_url;
+  if (!extractedVideo.url && responseUrl) {
+    try {
+      const fallbackRes = await fetch(responseUrl);
+      const fallbackJson = await fallbackRes.json().catch(() => null);
+      if (fallbackJson) {
+        const fallbackVideo = extractFalVideoUrl(fallbackJson);
+        if (fallbackVideo.url) {
+          extractedVideo = fallbackVideo;
+          result = {
+            ...result,
+            data: {
+              ...(result?.data || {}),
+              video: { url: fallbackVideo.url },
+            },
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('[fal.queueResult] Failed to fetch response_url fallback', { requestId, err });
+    }
+  }
+
+  if (extractedVideo.url && located) {
+    const providerUrl: string = extractedVideo.url;
+    const providerVideoId: string | undefined =
+      extractedVideo.id ||
+      (result as any)?.data?.video_id ||
+      (result as any)?.data?.videoId;
     let videos: VideoMedia[] = [];
     try {
       const username = (await authRepository.getUserById(uid))?.username || uid;
@@ -2128,17 +2218,19 @@ export const falQueueService = {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     fal.config({ credentials: falKey });
     if (!body?.prompt) throw new ApiError('Prompt is required', 400);
-    if (!body?.start_image_url) throw new ApiError('start_image_url is required', 400);
-    if (!body?.last_frame_image_url) throw new ApiError('last_frame_image_url is required', 400);
-    const model = 'fal-ai/veo3.1/fast/image-to-video';
+    const firstUrl = body.first_frame_url || body.start_image_url;
+    const lastUrl = body.last_frame_url || body.last_frame_image_url;
+    if (!firstUrl) throw new ApiError('first_frame_url is required', 400);
+    if (!lastUrl) throw new ApiError('last_frame_url is required', 400);
+    const model = 'fal-ai/veo3.1/fast/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
     // Persist first and last frame images
     await persistInputImagesFromUrls(uid, historyId, [body.start_image_url, body.last_frame_image_url]);
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
-        image_url: body.start_image_url,
-        last_frame_image_url: body.last_frame_image_url,
+        first_frame_url: firstUrl,
+        last_frame_url: lastUrl,
         aspect_ratio: body.aspect_ratio ?? 'auto',
         duration: body.duration ?? '8s',
         generate_audio: body.generate_audio ?? true,
