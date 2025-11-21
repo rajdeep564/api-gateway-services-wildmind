@@ -183,17 +183,12 @@ export const validateFalElevenDialogue = [
 
 // ElevenLabs Text-to-Speech (TTS) validator
 export const validateFalElevenTts = [
-  body('text').isString().notEmpty().withMessage('text is required'),
-  body('voice').optional().isString(),
-  body('stability').optional().isFloat({ min: 0, max: 1 }).withMessage('stability must be between 0 and 1'),
-  body('similarity_boost').optional().isFloat({ min: 0, max: 1 }).withMessage('similarity_boost must be between 0 and 1'),
-  body('style').optional().isFloat({ min: 0, max: 1 }).withMessage('style must be between 0 and 1'),
-  body('speed').optional().isFloat({ min: 0.7, max: 1.2 }).withMessage('speed must be between 0.7 and 1.2'),
-  body('timestamps').optional().isBoolean(),
-  body('language_code').optional().isString(),
-  body('output_format').optional().isString(),
-  body('sync_mode').optional().isBoolean(),
-  body('seed').optional().isInt(),
+  body('text').isString().notEmpty().withMessage('text is required').isLength({ max: 300 }).withMessage('text must be at most 300 characters'),
+  body('voice').optional().isString().withMessage('voice must be a string'),
+  body('custom_audio_language').optional().isIn(['english', 'arabic', 'danish', 'german', 'greek', 'spanish', 'finnish', 'french', 'hebrew', 'hindi', 'italian', 'japanese', 'korean', 'malay', 'dutch', 'norwegian', 'polish', 'portuguese', 'russian', 'swedish', 'swahili', 'turkish', 'chinese']).withMessage('custom_audio_language must be one of the allowed values'),
+  body('exaggeration').optional().isFloat({ min: 0.25, max: 2.0 }).withMessage('exaggeration must be between 0.25 and 2.0'),
+  body('temperature').optional().isFloat({ min: 0.05, max: 5.0 }).withMessage('temperature must be between 0.05 and 5.0'),
+  body('cfg_scale').optional().isFloat({ min: 0.0, max: 1.0 }).withMessage('cfg_scale must be between 0.0 and 1.0'),
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
