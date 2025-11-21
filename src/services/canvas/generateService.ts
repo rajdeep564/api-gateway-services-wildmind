@@ -222,14 +222,23 @@ export async function generateForCanvas(
       generationId = result.data?.historyId;
     } else {
       // Use FAL service (default for Google Nano Banana, Seedream v4, Imagen)
-      const result = await falService.generate(uid, {
+      // For image-to-image generation, pass sourceImageUrl as uploadedImages array
+      const falPayload: any = {
         prompt: request.prompt,
         model: backendModel, // Use mapped backend model name
         aspect_ratio: aspectRatio as any,
         num_images: clampedImageCount, // Pass imageCount to generate multiple images
         storageKeyPrefixOverride: canvasKeyPrefix,
         forceSyncUpload: true,
-      } as any);
+      };
+      
+      // If sourceImageUrl is provided, add it to uploadedImages array for image-to-image generation
+      const sourceImageUrl = (request as any).sourceImageUrl as string | undefined;
+      if (sourceImageUrl) {
+        falPayload.uploadedImages = [sourceImageUrl];
+      }
+      
+      const result = await falService.generate(uid, falPayload);
       
       // Handle multiple images from FAL
       // When imageCount > 1, FAL service returns all images in result.images array
@@ -389,10 +398,10 @@ function mapVideoModelToBackend(frontendModel: string): VideoModelConfig {
   if (modelLower.includes('sora 2 pro') || modelLower === 'sora 2 pro') {
     return { service: 'fal', method: 'sora2ProT2vSubmit', backendModel: 'fal-ai/sora-2/text-to-video/pro' };
   }
-  if (modelLower.includes('veo 3.1 fast pro') || modelLower === 'veo 3.1 fast pro') {
+  if (modelLower.includes('veo 3.1 fast') || modelLower.includes('veo 3.1 fast') || modelLower === 'veo 3.1 fast') {
     return { service: 'fal', method: 'veo31TtvSubmit', backendModel: 'fal-ai/veo3.1/fast', isFast: true };
   }
-  if (modelLower.includes('veo 3.1 pro') || modelLower === 'veo 3.1 pro') {
+  if (modelLower.includes('veo 3.1') || modelLower.includes('veo 3.1') || modelLower === 'veo 3.1') {
     return { service: 'fal', method: 'veo31TtvSubmit', backendModel: 'fal-ai/veo3.1', isFast: false };
   }
   if (modelLower.includes('veo 3 fast pro') || modelLower === 'veo 3 fast pro') {
@@ -474,6 +483,8 @@ export async function generateVideoForCanvas(
     resolution?: string;
     projectId: string;
     elementId?: string;
+    firstFrameUrl?: string;
+    lastFrameUrl?: string;
   }
 ): Promise<{ mediaId: string; url: string; storagePath: string; generationId?: string; taskId?: string; provider?: string }> {
   if (!request.prompt) {
@@ -494,6 +505,8 @@ export async function generateVideoForCanvas(
     hasPrompt: !!request.prompt,
     hasMeta: !!(request.aspectRatio || request.duration || request.resolution),
     projectId: request.projectId,
+    hasFirstFrame: !!request.firstFrameUrl,
+    hasLastFrame: !!request.lastFrameUrl,
   });
 
   console.log('[generateVideoForCanvas] Model mapping:', {
@@ -505,6 +518,9 @@ export async function generateVideoForCanvas(
 
   try {
     let result: any;
+    const isVeo31Model = modelConfig.method?.startsWith('veo31');
+    const hasFirstLastFrames = Boolean(isVeo31Model && request.firstFrameUrl && request.lastFrameUrl);
+    const hasSingleFrame = Boolean(isVeo31Model && request.firstFrameUrl && !request.lastFrameUrl);
 
     // Route to appropriate service
     if (modelConfig.service === 'fal') {
@@ -533,9 +549,31 @@ export async function generateVideoForCanvas(
         falPayload.duration = `${duration}s`; // String for Veo models
       }
 
+      if (hasFirstLastFrames) {
+        falPayload.first_frame_url = request.firstFrameUrl;
+        falPayload.last_frame_url = request.lastFrameUrl;
+        falPayload.start_image_url = request.firstFrameUrl;
+        falPayload.last_frame_image_url = request.lastFrameUrl;
+      } else if (hasSingleFrame) {
+        falPayload.image_url = request.firstFrameUrl;
+      }
+
       // Call FAL service method
       // Some methods take fast parameter, others don't
-      if (modelConfig.method === 'veo31TtvSubmit' || modelConfig.method === 'veo31I2vSubmit') {
+      if (hasFirstLastFrames) {
+        const firstLastMethodName = modelConfig.isFast ? 'veo31FirstLastFastSubmit' : 'veo31FirstLastSubmit';
+        const firstLastMethod = falQueueService[firstLastMethodName as keyof typeof falQueueService];
+        if (!firstLastMethod) {
+          throw new ApiError(`FAL method ${firstLastMethodName} not available`, 500);
+        }
+        result = await (firstLastMethod as any)(uid, falPayload);
+      } else if (hasSingleFrame) {
+        const i2vMethod = falQueueService.veo31I2vSubmit;
+        if (!i2vMethod) {
+          throw new ApiError('FAL method veo31I2vSubmit not available', 500);
+        }
+        result = await (i2vMethod as any)(uid, falPayload, modelConfig.isFast ?? false);
+      } else if (modelConfig.method === 'veo31TtvSubmit' || modelConfig.method === 'veo31I2vSubmit') {
         // Veo 3.1 methods take fast parameter
         result = await (method as any)(uid, falPayload, modelConfig.isFast ?? false);
       } else if (modelConfig.method === 'veoTtvSubmit' || modelConfig.method === 'veoI2vSubmit') {

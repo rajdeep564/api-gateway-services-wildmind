@@ -31,6 +31,7 @@ import {
   validateFalElevenTts,
   validateFalMayaTts,
   validateFalChatterboxMultilingual,
+  validateFalChatterboxSts,
   validateFalQueueStatus,
   validateFalVeoTextToVideoSubmit,
   validateFalVeoTextToVideoFastSubmit,
@@ -101,6 +102,15 @@ router.post(
   "/chatterbox/multilingual",
   requireAuth,
   validateFalChatterboxMultilingual as any,
+  makeCreditCost("fal", "generate", computeFalImageCost) as any,
+  falController.generate as any
+);
+
+// Chatterbox Speech-to-Speech (resemble-ai/chatterboxhd)
+router.post(
+  "/chatterbox/sts",
+  requireAuth,
+  validateFalChatterboxSts as any,
   makeCreditCost("fal", "generate", computeFalImageCost) as any,
   falController.generate as any
 );

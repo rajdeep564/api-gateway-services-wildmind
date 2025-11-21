@@ -96,9 +96,34 @@ async function softDelete(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid;
     const { historyId } = req.params as any;
+    
+    console.log('[Controller][softDelete] Request received:', {
+      uid,
+      historyId,
+      method: req.method,
+      path: req.path,
+      timestamp: new Date().toISOString(),
+    });
+    
     const result = await generationHistoryService.softDelete(uid, historyId);
-    return res.json(formatApiResponse('success', 'Deleted', result));
-  } catch (err) {
+    
+    const response = formatApiResponse('success', 'Deleted', result);
+    console.log('[Controller][softDelete] Response:', {
+      status: 'success',
+      historyId,
+      itemId: result.item?.id,
+      isDeleted: result.item?.isDeleted,
+      isPublic: result.item?.isPublic,
+    });
+    
+    return res.json(response);
+  } catch (err: any) {
+    console.error('[Controller][softDelete] Error:', {
+      error: err?.message || err,
+      stack: err?.stack,
+      historyId: req.params?.historyId,
+      uid: (req as any)?.uid,
+    });
     return next(err);
   }
 }
@@ -108,10 +133,43 @@ async function update(req: Request, res: Response, next: NextFunction) {
     const uid = (req as any).uid;
     const { historyId } = req.params as any;
     const updates = req.body as any;
+    
+    console.log('[Controller][update] Request received:', {
+      uid,
+      historyId,
+      method: req.method,
+      path: req.path,
+      updates: {
+        isPublic: updates.isPublic,
+        visibility: updates.visibility,
+        hasImageUpdate: !!updates.image,
+        hasVideoUpdate: !!updates.video,
+        otherFields: Object.keys(updates).filter(k => !['isPublic', 'visibility', 'image', 'video'].includes(k)),
+      },
+      timestamp: new Date().toISOString(),
+    });
+    
     // Allow per-media privacy updates: image/video payloads are forwarded verbatim
     const result = await generationHistoryService.update(uid, historyId, updates);
-    return res.json(formatApiResponse('success', 'Updated', result));
-  } catch (err) {
+    
+    const response = formatApiResponse('success', 'Updated', result);
+    console.log('[Controller][update] Response:', {
+      status: 'success',
+      historyId,
+      itemId: result.item?.id,
+      isPublic: result.item?.isPublic,
+      visibility: result.item?.visibility,
+      isDeleted: result.item?.isDeleted,
+    });
+    
+    return res.json(response);
+  } catch (err: any) {
+    console.error('[Controller][update] Error:', {
+      error: err?.message || err,
+      stack: err?.stack,
+      historyId: req.params?.historyId,
+      uid: (req as any)?.uid,
+    });
     return next(err);
   }
 }

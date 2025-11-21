@@ -12,7 +12,7 @@ import proxyRoutes from './proxy';
 import stickerRoutes from './stickers';
 import replicateRoutes from './replicate';
 import canvasRoutes from './canvas';
-import geminiRoutes from './gemini';
+import promptEnhancerRoutes from './promptEnhancer';
 import replaceRoutes from './replace';
 
 const router = Router();
@@ -30,7 +30,7 @@ router.use('/proxy', proxyRoutes);
 router.use('/stickers', stickerRoutes);
 router.use('/replicate', replicateRoutes);
 router.use('/canvas', canvasRoutes);
-router.use('/gemini', geminiRoutes);
+router.use('/prompt-enhancer', promptEnhancerRoutes);
 router.use('/replace', replaceRoutes);
 
 export default router;

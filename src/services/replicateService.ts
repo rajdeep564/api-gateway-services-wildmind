@@ -1185,6 +1185,7 @@ export async function generateImage(uid: string, body: any) {
       }
     }
     // Ideogram v3 (Turbo/Quality) mapping
+    // Replicate has separate models for quality and turbo, not a single model with mode parameter
     if (
       modelBase === "ideogram-ai/ideogram-v3-quality" ||
       modelBase === "ideogram-ai/ideogram-v3-turbo"
@@ -1207,9 +1208,9 @@ export async function generateImage(uid: string, body: any) {
         input.style_reference_images = rest.style_reference_images
           .slice(0, 10)
           .map(String);
-      // Replicate exposes a single ideogram-v3 model with a 'mode' input controlling Turbo vs Quality
-      input.mode = modelBase.endsWith("-quality") ? "quality" : "turbo";
-      replicateModelBase = "ideogram-ai/ideogram-v3";
+      // Use the model name directly - Replicate has separate models for quality and turbo
+      // No need to set mode parameter, just use the correct model name
+      replicateModelBase = modelBase; // Use the model name as-is: ideogram-ai/ideogram-v3-quality or ideogram-ai/ideogram-v3-turbo
       // Save input images for Ideogram (rest.image and rest.style_reference_images)
       try {
         const username = creator?.username || uid;

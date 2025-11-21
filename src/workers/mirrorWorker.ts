@@ -34,7 +34,16 @@ export async function processMirrorTask(taskId: string, task: any): Promise<void
       try {
         if (uid && historyId) {
           const fresh = await generationHistoryRepository.get(uid, historyId);
-          if (fresh) item = fresh;
+          if (fresh) {
+            // CRITICAL: If fresh item is deleted, remove from mirror instead of upserting
+            if ((fresh as any)?.isDeleted === true) {
+              logger.info({ historyId, uid }, '[MirrorWorker] Fresh item is deleted - removing from mirror instead of upserting');
+              await generationsMirrorRepository.remove(historyId);
+              await mirrorQueueRepository.markCompleted(taskId);
+              return;
+            }
+            item = fresh;
+          }
         }
       } catch (e) {
         // Non-blocking: we'll fall back to the provided snapshot below.
@@ -42,6 +51,14 @@ export async function processMirrorTask(taskId: string, task: any): Promise<void
 
       if (!item) {
         throw new Error('Item not found for upsert operation');
+      }
+
+      // CRITICAL: Double-check item snapshot is not deleted before upserting
+      if ((item as any)?.isDeleted === true) {
+        logger.info({ historyId, uid }, '[MirrorWorker] Item snapshot is deleted - removing from mirror instead of upserting');
+        await generationsMirrorRepository.remove(historyId);
+        await mirrorQueueRepository.markCompleted(taskId);
+        return;
       }
 
       // Get creator metadata

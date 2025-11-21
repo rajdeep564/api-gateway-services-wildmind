@@ -134,7 +134,15 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
 
   // Enqueue mirror update asynchronously so public mirror reflects repository changes.
   // Do not block caller on mirror queue failures.
+  // CRITICAL: Do NOT enqueue mirror updates if item is being deleted - deletion is handled separately
   try {
+    const isBeingDeleted = (updates as any)?.isDeleted === true;
+    if (isBeingDeleted) {
+      // Item is being deleted - don't enqueue mirror update (deletion is handled by softDelete/update service)
+      try { logger.info({ uid, historyId }, '[generationHistoryRepository.update] Skipping mirror update - item is being deleted'); } catch {}
+      return;
+    }
+    
     // Only enqueue if there are meaningful updates (avoid noise). For simplicity,
     // enqueue when updates contains images, videos, isPublic, visibility, status, or error fields.
     const interesting = ['images', 'videos', 'isPublic', 'visibility', 'status', 'error'];

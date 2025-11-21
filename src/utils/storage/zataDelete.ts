@@ -72,29 +72,50 @@ export function extractKeyFromUrl(url: string): string | null {
 }
 
 /**
- * Delete all files associated with a generation item (images, videos, thumbnails, optimized versions)
+ * Delete all files associated with a generation item (images, videos, audio, thumbnails, optimized versions)
  */
 export async function deleteGenerationFiles(item: any): Promise<void> {
   const keysToDelete: string[] = [];
+  const fileTypes: { images: number; videos: number; audios: number; thumbnails: number; optimized: number } = {
+    images: 0,
+    videos: 0,
+    audios: 0,
+    thumbnails: 0,
+    optimized: 0,
+  };
+
+  console.log(`[Zata][Delete] Starting file deletion for generation ${item.id || 'unknown'}`);
 
   // Extract keys from images
   if (Array.isArray(item.images)) {
     for (const img of item.images) {
       if (img.url) {
         const key = extractKeyFromUrl(img.url);
-        if (key) keysToDelete.push(key);
+        if (key) {
+          keysToDelete.push(key);
+          fileTypes.images++;
+        }
       }
       if (img.avifUrl) {
         const key = extractKeyFromUrl(img.avifUrl);
-        if (key) keysToDelete.push(key);
+        if (key) {
+          keysToDelete.push(key);
+          fileTypes.optimized++;
+        }
       }
       if (img.webpUrl) {
         const key = extractKeyFromUrl(img.webpUrl);
-        if (key) keysToDelete.push(key);
+        if (key) {
+          keysToDelete.push(key);
+          fileTypes.optimized++;
+        }
       }
       if (img.thumbnailUrl) {
         const key = extractKeyFromUrl(img.thumbnailUrl);
-        if (key) keysToDelete.push(key);
+        if (key) {
+          keysToDelete.push(key);
+          fileTypes.thumbnails++;
+        }
       }
       if (img.storagePath) {
         keysToDelete.push(img.storagePath);
@@ -107,14 +128,44 @@ export async function deleteGenerationFiles(item: any): Promise<void> {
     for (const vid of item.videos) {
       if (vid.url) {
         const key = extractKeyFromUrl(vid.url);
-        if (key) keysToDelete.push(key);
+        if (key) {
+          keysToDelete.push(key);
+          fileTypes.videos++;
+        }
       }
       if (vid.thumbnailUrl) {
         const key = extractKeyFromUrl(vid.thumbnailUrl);
-        if (key) keysToDelete.push(key);
+        if (key) {
+          keysToDelete.push(key);
+          fileTypes.thumbnails++;
+        }
       }
       if (vid.storagePath) {
         keysToDelete.push(vid.storagePath);
+      }
+    }
+  }
+
+  // Extract keys from audio files
+  if (Array.isArray(item.audios)) {
+    for (const audio of item.audios) {
+      if (audio.url) {
+        const key = extractKeyFromUrl(audio.url);
+        if (key) {
+          keysToDelete.push(key);
+          fileTypes.audios++;
+        }
+      }
+      if (audio.storagePath) {
+        keysToDelete.push(audio.storagePath);
+      }
+      // Audio might have thumbnail/preview images
+      if (audio.thumbnailUrl) {
+        const key = extractKeyFromUrl(audio.thumbnailUrl);
+        if (key) {
+          keysToDelete.push(key);
+          fileTypes.thumbnails++;
+        }
       }
     }
   }
@@ -123,7 +174,22 @@ export async function deleteGenerationFiles(item: any): Promise<void> {
   const uniqueKeys = [...new Set(keysToDelete)];
 
   if (uniqueKeys.length > 0) {
-    console.log(`[Zata][Delete] Deleting ${uniqueKeys.length} files for generation ${item.id}`);
-    await deleteFiles(uniqueKeys);
+    console.log(`[Zata][Delete] Deleting ${uniqueKeys.length} files for generation ${item.id || 'unknown'}:`, fileTypes);
+    console.log(`[Zata][Delete] File keys (first 10):`, uniqueKeys.slice(0, 10));
+    
+    const result = await deleteFiles(uniqueKeys);
+    
+    console.log(`[Zata][Delete] Deletion result:`, {
+      totalRequested: uniqueKeys.length,
+      deleted: result.deleted.length,
+      failed: result.failed.length,
+      success: result.failed.length === 0,
+    });
+    
+    if (result.failed.length > 0) {
+      console.warn(`[Zata][Delete] Failed to delete ${result.failed.length} files:`, result.failed.slice(0, 5));
+    }
+  } else {
+    console.log(`[Zata][Delete] No files to delete for generation ${item.id || 'unknown'}`);
   }
 }

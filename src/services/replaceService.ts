@@ -1,4 +1,5 @@
 import { ApiError } from '../utils/errorHandler';
+import { buildFalApiError } from '../utils/falErrorMapper';
 import { env } from '../config/env';
 import { fal } from '@fal-ai/client';
 import { generationHistoryRepository } from '../repository/generationHistoryRepository';
@@ -238,18 +239,22 @@ async function processGoogleNanoBanana(
 
     return { publicUrl, key };
   } catch (error: any) {
-    const details = error?.response?.data || error?.message || error;
-    console.error('[replaceService] Google Nano Banana error:', JSON.stringify(details, null, 2));
+    const falError = buildFalApiError(error, {
+      fallbackMessage: 'Google Nano Banana API error',
+      context: 'replaceService.googleNanoBanana',
+      toastTitle: 'Image replace failed',
+    });
+    console.error('[replaceService] Google Nano Banana error:', JSON.stringify(falError.data, null, 2));
     
-    // Update history with error
     try {
       await generationHistoryRepository.update(uid, historyId, {
         status: 'failed',
-        error: typeof details === 'string' ? details : JSON.stringify(details),
+        error: falError.message,
+        falError: falError.data,
       } as any);
     } catch {}
     
-    throw new ApiError(`Google Nano Banana API error: ${JSON.stringify(details)}`, 500);
+    throw falError;
   }
 }
 
@@ -319,9 +324,13 @@ async function processSeedream4(
 
     return publicUrl;
   } catch (error: any) {
-    const details = error?.response?.data || error?.message || error;
-    console.error('[replaceService] Seedream 4 error:', JSON.stringify(details, null, 2));
-    throw new ApiError(`Seedream 4 API error: ${JSON.stringify(details)}`, 500);
+    const falError = buildFalApiError(error, {
+      fallbackMessage: 'Seedream 4 API error',
+      context: 'replaceService.seedream4',
+      toastTitle: 'Image replace failed',
+    });
+    console.error('[replaceService] Seedream 4 error:', JSON.stringify(falError.data, null, 2));
+    throw falError;
   }
 }
 

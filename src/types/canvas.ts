@@ -214,6 +214,7 @@ export interface CanvasGenerationRequest {
   aspectRatio?: string; // Aspect ratio string like "16:9", "1:1", etc.
   seed?: number;
   imageCount?: number; // Number of images to generate (default: 1)
+  sourceImageUrl?: string; // Source image URL for image-to-image generation
   options?: Record<string, any>;
   meta: {
     source: 'canvas';

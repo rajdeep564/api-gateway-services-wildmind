@@ -17,6 +17,8 @@ import { computeFalVeoCostFromModel } from "../utils/pricing/falPricing";
 import { syncToMirror, updateMirror, ensureMirrorSync } from "../utils/mirrorHelper";
 import { aestheticScoreService } from "./aestheticScoreService";
 import { markGenerationCompleted } from "./generationHistoryService";
+import { buildFalApiError } from "../utils/falErrorMapper";
+import fetch from "node-fetch";
 
 const buildGenerationImageFileName = (historyId?: string, index: number = 0) => {
   if (historyId) {
@@ -189,6 +191,7 @@ async function generate(
   const wantsEleven = modelLowerRaw.includes('eleven');
   const wantsMaya = modelLowerRaw.includes('maya');
   const wantsChatterbox = modelLowerRaw.includes('chatterbox') || modelLowerRaw.includes('multilingual');
+  const isChatterboxSts = typeof (payload as any).source_audio_url === 'string' && (payload as any).source_audio_url.length > 0 || modelLowerRaw.includes('speech-to-speech') || modelLowerRaw.includes('chatterboxhd');
   // Heuristic: dialogue uses `inputs` array or mentions 'dialogue', TTS uses `text` or mentions 'tts'/'text-to-speech'
   // SFX uses `text` and mentions 'sfx' or 'sound-effect' or 'sound-effects'
   const hasInputsArray = Array.isArray((payload as any).inputs) && (payload as any).inputs.length > 0;
@@ -244,15 +247,19 @@ async function generate(
 
       return { audio: audioObj, audios: audiosArray, historyId, model: mayaEndpoint, status: 'completed' } as any;
     } catch (err: any) {
-      const message = err?.message || 'Failed to generate audio with FAL Maya API';
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to generate audio with FAL Maya API',
+        context: 'falService.generate.mayaTts',
+        toastTitle: 'Maya TTS failed',
+      });
       try {
-        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message } as any);
-        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
       } catch (mirrorErr) {
         console.error('[falService.generate][maya] Failed to mirror error state:', mirrorErr);
       }
-      throw new ApiError(message, 500);
+      throw falError;
     }
   }
 
@@ -302,15 +309,68 @@ async function generate(
 
       return { audio: audioObj, audios: audiosArray, historyId, model: chatterEndpoint, status: 'completed' } as any;
     } catch (err: any) {
-      const message = err?.message || 'Failed to generate audio with FAL Chatterbox API';
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to generate audio with FAL Chatterbox API',
+        context: 'falService.generate.chatterboxMultilingual',
+        toastTitle: 'Chatterbox TTS failed',
+      });
       try {
-        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message } as any);
-        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
       } catch (mirrorErr) {
         console.error('[falService.generate][chatterbox] Failed to mirror error state:', mirrorErr);
       }
-      throw new ApiError(message, 500);
+      throw falError;
+    }
+  }
+
+  // Chatterbox speech-to-speech (resemble-ai/chatterboxhd) flow
+  if (isChatterboxSts) {
+    const stsEndpoint = 'resemble-ai/chatterboxhd/speech-to-speech';
+    try {
+      const inputBody: any = {
+        source_audio_url: (payload as any).source_audio_url,
+      };
+      if ((payload as any).target_voice) inputBody.target_voice = (payload as any).target_voice;
+      if ((payload as any).target_voice_audio_url) inputBody.target_voice_audio_url = (payload as any).target_voice_audio_url;
+      if ((payload as any).high_quality_audio != null) inputBody.high_quality_audio = (payload as any).high_quality_audio;
+
+      console.log('[falService.generate] Calling Chatterbox STS model:', { stsEndpoint, input: { ...inputBody } });
+      const result = await fal.subscribe(stsEndpoint as any, ({ input: inputBody, logs: true } as unknown) as any);
+
+      const audioUrl: string | undefined = (result as any)?.data?.audio?.url;
+      if (!audioUrl) throw new ApiError('No audio URL returned from FAL Chatterbox STS API', 502);
+
+      const username = creator?.username || uid;
+      let stored: any;
+      try {
+        stored = await uploadFromUrlToZata({ sourceUrl: audioUrl, keyPrefix: `users/${username}/audio/${historyId}`, fileName: 'chatterbox-sts' });
+      } catch (e) {
+        stored = { publicUrl: audioUrl, key: '' };
+      }
+
+      const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', audio: audioObj } as any);
+      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj } as any);
+      await syncToMirror(uid, historyId);
+
+      return { audio: audioObj, historyId, model: stsEndpoint, status: 'completed' } as any;
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to generate audio with FAL Chatterbox STS API',
+        context: 'falService.generate.chatterboxSts',
+        toastTitle: 'Chatterbox STS failed',
+      });
+      try {
+        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
+      } catch (mirrorErr) {
+        console.error('[falService.generate][chatterbox-sts] Failed to mirror error state:', mirrorErr);
+      }
+      throw falError;
     }
   }
 
@@ -415,15 +475,19 @@ async function generate(
 
         return { audio: audioObj, audios: audiosArray, historyId, model: ttsEndpoint, status: 'completed' } as any;
       } catch (err: any) {
-        const message = err?.message || 'Failed to generate audio with FAL ElevenLabs TTS API';
+        const falError = buildFalApiError(err, {
+          fallbackMessage: 'Failed to generate audio with FAL ElevenLabs TTS API',
+          context: 'falService.generate.elevenTts',
+          toastTitle: 'ElevenLabs TTS failed',
+        });
         try {
-          await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message } as any);
-          await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-          await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+          await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+          await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+          await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
         } catch (mirrorErr) {
           console.error('[falService.generate][eleven-tts] Failed to mirror error state:', mirrorErr);
         }
-        throw new ApiError(message, 500);
+        throw falError;
       }
     }
 
@@ -467,15 +531,19 @@ async function generate(
 
         return { audio: audioObj, audios: audiosArray, images: imagesArray, historyId, model: dialogueEndpoint, status: 'completed' } as any;
       } catch (err: any) {
-        const message = err?.message || 'Failed to generate audio with FAL ElevenLabs API';
+        const falError = buildFalApiError(err, {
+          fallbackMessage: 'Failed to generate audio with FAL ElevenLabs API',
+          context: 'falService.generate.elevenDialogue',
+          toastTitle: 'ElevenLabs dialogue failed',
+        });
         try {
-          await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message } as any);
-          await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-          await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+          await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+          await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+          await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
         } catch (mirrorErr) {
           console.error('[falService.generate][eleven-dialogue] Failed to mirror error state:', mirrorErr);
         }
-        throw new ApiError(message, 500);
+        throw falError;
       }
     }
   }
@@ -723,16 +791,19 @@ async function generate(
   return { images: scoredQuick as any, historyId, model, status: 'completed' };
     }
   } catch (err: any) {
-    const message = err?.message || "Failed to generate images with FAL API";
+    const falError = buildFalApiError(err, {
+      fallbackMessage: 'Failed to generate images with FAL API',
+      context: 'falService.generate.core',
+      toastTitle: 'Generation failed',
+    });
     try {
-      await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message });
-      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-      // Ensure failed generations are also mirrored
-      await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+      await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
     } catch (mirrorErr) {
       console.error('[falService.generate] Failed to mirror error state:', mirrorErr);
     }
-    throw new ApiError(message, 500);
+    throw falError;
   }
 }
 
@@ -792,14 +863,18 @@ async function veoTextToVideo(uid: string, payload: {
     await syncToMirror(uid, historyId);
     return { videos: scoredVideos, historyId, model: 'fal-ai/veo3', status: 'completed' };
   } catch (err: any) {
-    const message = err?.message || 'Failed to generate video with FAL API';
+    const falError = buildFalApiError(err, {
+      fallbackMessage: 'Failed to generate video with FAL API',
+      context: 'falService.veoTextToVideo',
+      toastTitle: 'Video generation failed',
+    });
     try {
-      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-      await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+      await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
     } catch (mirrorErr) {
       console.error('[veoTextToVideo] Failed to mirror error state:', mirrorErr);
     }
-    throw new ApiError(message, 500);
+    throw falError;
   }
 }
 
@@ -847,14 +922,18 @@ async function veoTextToVideoFast(uid: string, payload: Parameters<typeof veoTex
     await syncToMirror(uid, historyId);
     return { videos: scoredVideos, historyId, model: 'fal-ai/veo3/fast', status: 'completed' };
   } catch (err: any) {
-    const message = err?.message || 'Failed to generate video with FAL API';
+    const falError = buildFalApiError(err, {
+      fallbackMessage: 'Failed to generate video with FAL API',
+      context: 'falService.veoTextToVideoFast',
+      toastTitle: 'Video generation failed',
+    });
     try {
-      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-      await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+      await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
     } catch (mirrorErr) {
       console.error('[veoTextToVideoFast] Failed to mirror error state:', mirrorErr);
     }
-    throw new ApiError(message, 500);
+    throw falError;
   }
 }
 
@@ -908,14 +987,18 @@ async function veoImageToVideo(uid: string, payload: {
     await syncToMirror(uid, historyId);
     return { videos: scoredVideos, historyId, model: 'fal-ai/veo3/image-to-video', status: 'completed' };
   } catch (err: any) {
-    const message = err?.message || 'Failed to generate video with FAL API';
+    const falError = buildFalApiError(err, {
+      fallbackMessage: 'Failed to generate video with FAL API',
+      context: 'falService.veoImageToVideo',
+      toastTitle: 'Video generation failed',
+    });
     try {
-      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-      await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+      await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
     } catch (mirrorErr) {
       console.error('[veoImageToVideo] Failed to mirror error state:', mirrorErr);
     }
-    throw new ApiError(message, 500);
+    throw falError;
   }
 }
 
@@ -961,14 +1044,18 @@ async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoIm
     await syncToMirror(uid, historyId);
     return { videos: scoredVideos, historyId, model: 'fal-ai/veo3/fast/image-to-video', status: 'completed' };
   } catch (err: any) {
-    const message = err?.message || 'Failed to generate video with FAL API';
+    const falError = buildFalApiError(err, {
+      fallbackMessage: 'Failed to generate video with FAL API',
+      context: 'falService.veoImageToVideoFast',
+      toastTitle: 'Video generation failed',
+    });
     try {
-      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-      await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+      await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
     } catch (mirrorErr) {
       console.error('[veoImageToVideoFast] Failed to mirror error state:', mirrorErr);
     }
-    throw new ApiError(message, 500);
+    throw falError;
   }
 }
 
@@ -1071,18 +1158,18 @@ export const falService = {
 
   return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
-      const responseData = err?.response?.data;
-      const detailedMessage = typeof responseData === 'string'
-        ? responseData
-        : responseData?.error || responseData?.message || responseData?.detail;
-      const message = detailedMessage || err?.message || 'Failed to expand image with Bria API';
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to expand image with Bria API',
+        context: 'falService.briaExpandImage',
+        toastTitle: 'Bria expand failed',
+      });
       try {
-        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
       } catch (mirrorErr) {
         console.error('[briaExpandImage] Failed to mirror error state:', mirrorErr);
       }
-      throw new ApiError(message, 500);
+      throw falError;
     }
   },
   async outpaintImage(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
@@ -1244,18 +1331,18 @@ export const falService = {
 
   return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
-      const responseData = err?.response?.data;
-      const detailedMessage = typeof responseData === 'string'
-        ? responseData
-        : responseData?.error || responseData?.message || responseData?.detail;
-      const message = detailedMessage || err?.message || 'Failed to outpaint image with FAL API';
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to outpaint image with FAL API',
+        context: 'falService.outpaintImage',
+        toastTitle: 'Outpaint failed',
+      });
       try {
-        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
       } catch (mirrorErr) {
         console.error('[outpaintImage] Failed to mirror error state:', mirrorErr);
       }
-      throw new ApiError(message, 500);
+      throw falError;
     }
   },
   async topazUpscaleImage(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
@@ -1323,14 +1410,18 @@ export const falService = {
       await syncToMirror(uid, historyId);
   return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
-      const message = err?.message || 'Failed to upscale image with FAL API';
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to upscale image with FAL API',
+        context: 'falService.topazUpscaleImage',
+        toastTitle: 'Image upscale failed',
+      });
       try {
-        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
       } catch (mirrorErr) {
         console.error('[topazUpscaleImage] Failed to mirror error state:', mirrorErr);
       }
-      throw new ApiError(message, 500);
+      throw falError;
     }
   },
   async seedvrUpscale(uid: string, body: any): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }>{
@@ -1397,14 +1488,18 @@ export const falService = {
       await syncToMirror(uid, historyId);
   return { videos: scoredVideos as any, historyId, model, status: 'completed' };
     } catch (err: any) {
-      const message = err?.message || 'Failed to upscale video with FAL API';
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to upscale video with FAL API',
+        context: 'falService.seedvrUpscale',
+        toastTitle: 'Video upscale failed',
+      });
       try {
-        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
       } catch (mirrorErr) {
         console.error('[seedvrUpscale] Failed to mirror error state:', mirrorErr);
       }
-      throw new ApiError(message, 500);
+      throw falError;
     }
   },
   async image2svg(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }>{
@@ -1513,14 +1608,18 @@ export const falService = {
       await syncToMirror(uid, historyId);
       return { images, historyId, model, status: 'completed' };
     } catch (err: any) {
-      const message = err?.message || 'Failed to convert image to SVG with FAL API';
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to convert image to SVG with FAL API',
+        context: 'falService.image2svg',
+        toastTitle: 'Image to SVG failed',
+      });
       try {
-        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
       } catch (mirrorErr) {
         console.error('[image2svg] Failed to mirror error state:', mirrorErr);
       }
-      throw new ApiError(message, 500);
+      throw falError;
     }
   },
   async recraftVectorize(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }>{
@@ -1616,14 +1715,18 @@ export const falService = {
       await syncToMirror(uid, historyId);
       return { images, historyId, model, status: 'completed' };
     } catch (err: any) {
-      const message = err?.message || 'Failed to vectorize image with FAL API';
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to vectorize image with FAL API',
+        context: 'falService.recraftVectorize',
+        toastTitle: 'Vectorization failed',
+      });
       try {
-        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
       } catch (mirrorErr) {
         console.error('[recraftVectorize] Failed to mirror error state:', mirrorErr);
       }
-      throw new ApiError(message, 500);
+      throw falError;
     }
   },
   async briaGenfill(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
@@ -1736,18 +1839,18 @@ export const falService = {
 
   return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
-      const responseData = err?.response?.data;
-      const detailedMessage = typeof responseData === 'string'
-        ? responseData
-        : responseData?.error || responseData?.message || responseData?.detail;
-      const message = detailedMessage || err?.message || 'Failed to generate with Bria GenFill API';
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to generate with Bria GenFill API',
+        context: 'falService.briaGenfill',
+        toastTitle: 'Bria GenFill failed',
+      });
       try {
-        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
       } catch (mirrorErr) {
         console.error('[briaGenfill] Failed to mirror error state:', mirrorErr);
       }
-      throw new ApiError(message, 500);
+      throw falError;
     }
   },
   async birefnetVideo(uid: string, body: any): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }>{
@@ -1804,14 +1907,18 @@ export const falService = {
       await syncToMirror(uid, historyId);
   return { videos: scoredVideos as any, historyId, model, status: 'completed' };
     } catch (err: any) {
-      const message = err?.message || 'Failed to remove background from video with FAL API';
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to remove background from video with FAL API',
+        context: 'falService.birefnetVideo',
+        toastTitle: 'Background removal failed',
+      });
       try {
-        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
-        await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
       } catch (mirrorErr) {
         console.error('[birefnetVideo] Failed to mirror error state:', mirrorErr);
       }
-      throw new ApiError(message, 500);
+      throw falError;
     }
   }
 };
@@ -1927,6 +2034,67 @@ async function queueStatus(uid: string, model: string | undefined, requestId: st
   return status;
 }
 
+const extractFalVideoUrl = (payload: any): { url?: string; id?: string } => {
+  if (!payload) return {};
+
+  const sources = [
+    payload?.data?.video,
+    payload?.data?.videos?.[0],
+    payload?.video,
+    payload?.videos?.[0],
+    payload?.response?.video,
+    payload?.response?.videos?.[0],
+    payload?.response?.output?.video,
+    payload?.response?.output?.videos?.[0],
+  ].filter(Boolean);
+
+  for (const source of sources) {
+    if (source?.url) {
+      return { url: source.url as string, id: source?.id as string | undefined };
+    }
+  }
+
+  if (typeof payload?.output === 'string' && payload.output.startsWith('http')) {
+    return { url: payload.output };
+  }
+
+  if (Array.isArray(payload?.output)) {
+    const stringUrl = payload.output.find((item: any) => typeof item === 'string' && item.startsWith('http'));
+    if (stringUrl) {
+      return { url: stringUrl };
+    }
+    const objWithUrl = payload.output.find((item: any) => item?.url);
+    if (objWithUrl?.url) {
+      return { url: objWithUrl.url as string, id: objWithUrl?.id as string | undefined };
+    }
+  }
+
+  if (payload?.data?.response?.url) {
+    return { url: payload.data.response.url as string };
+  }
+
+  return {};
+};
+
+async function fetchFalQueueResponse(modelPath: string, requestId: string): Promise<any> {
+  const normalizedModel = modelPath.startsWith('fal-ai/') ? modelPath : `fal-ai/${modelPath}`;
+  const fallbackUrl = `https://queue.fal.run/${normalizedModel}/requests/${requestId}`;
+  const falKey = env.falKey as string;
+  if (!falKey) {
+    throw new ApiError('FAL AI API key not configured', 500);
+  }
+  const res = await fetch(fallbackUrl, {
+    headers: {
+      Authorization: `Key ${falKey}`,
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new ApiError(`Failed to fetch FAL queue response (${res.status}): ${text}`, res.status);
+  }
+  return res.json();
+}
+
 async function queueResult(uid: string, model: string | undefined, requestId: string): Promise<any> {
   const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   fal.config({ credentials: falKey });
@@ -1948,11 +2116,52 @@ async function queueResult(uid: string, model: string | undefined, requestId: st
     throw new ApiError('Model is required. Either provide it in the request or ensure the requestId exists in generation history.', 400);
   }
   
-  const result = await fal.queue.result(resolvedModel, { requestId } as any);
+  let result: any;
+  try {
+    result = await fal.queue.result(resolvedModel, { requestId } as any);
+  } catch (falErr: any) {
+    const falError = buildFalApiError(falErr, {
+      fallbackMessage: 'Failed to fetch FAL queue result',
+      context: 'falQueueService.queueResult',
+      toastTitle: 'Queue result failed',
+      defaultStatus: falErr?.response?.status || falErr?.statusCode || 422,
+      extraData: { operation: 'queue.result' },
+    });
+    console.error('[queueResult] FAL queue.result error:', JSON.stringify(falError.data, null, 2));
+    throw falError;
+  }
   const located = await generationHistoryRepository.findByProviderTaskId(uid, 'fal', requestId);
-  if (result?.data?.video?.url && located) {
-    const providerUrl: string = result.data.video.url as string;
-    const providerVideoId: string | undefined = (result as any)?.data?.video_id || (result as any)?.data?.videoId;
+  let extractedVideo = extractFalVideoUrl(result);
+
+  const responseUrl = (result as any)?.response_url;
+  if (!extractedVideo.url && responseUrl) {
+    try {
+      const fallbackRes = await fetch(responseUrl);
+      const fallbackJson = await fallbackRes.json().catch(() => null);
+      if (fallbackJson) {
+        const fallbackVideo = extractFalVideoUrl(fallbackJson);
+        if (fallbackVideo.url) {
+          extractedVideo = fallbackVideo;
+          result = {
+            ...result,
+            data: {
+              ...(result?.data || {}),
+              video: { url: fallbackVideo.url },
+            },
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('[fal.queueResult] Failed to fetch response_url fallback', { requestId, err });
+    }
+  }
+
+  if (extractedVideo.url && located) {
+    const providerUrl: string = extractedVideo.url;
+    const providerVideoId: string | undefined =
+      extractedVideo.id ||
+      (result as any)?.data?.video_id ||
+      (result as any)?.data?.videoId;
     let videos: VideoMedia[] = [];
     try {
       const username = (await authRepository.getUserById(uid))?.username || uid;
@@ -2100,17 +2309,19 @@ export const falQueueService = {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     fal.config({ credentials: falKey });
     if (!body?.prompt) throw new ApiError('Prompt is required', 400);
-    if (!body?.start_image_url) throw new ApiError('start_image_url is required', 400);
-    if (!body?.last_frame_image_url) throw new ApiError('last_frame_image_url is required', 400);
-    const model = 'fal-ai/veo3.1/fast/image-to-video';
+    const firstUrl = body.first_frame_url || body.start_image_url;
+    const lastUrl = body.last_frame_url || body.last_frame_image_url;
+    if (!firstUrl) throw new ApiError('first_frame_url is required', 400);
+    if (!lastUrl) throw new ApiError('last_frame_url is required', 400);
+    const model = 'fal-ai/veo3.1/fast/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
     // Persist first and last frame images
     await persistInputImagesFromUrls(uid, historyId, [body.start_image_url, body.last_frame_image_url]);
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
-        image_url: body.start_image_url,
-        last_frame_image_url: body.last_frame_image_url,
+        first_frame_url: firstUrl,
+        last_frame_url: lastUrl,
         aspect_ratio: body.aspect_ratio ?? 'auto',
         duration: body.duration ?? '8s',
         generate_audio: body.generate_audio ?? true,
