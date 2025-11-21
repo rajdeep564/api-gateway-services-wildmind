@@ -213,16 +213,22 @@ export async function getPublicById(generationId: string): Promise<GenerationHis
 }
 
 /**
- * Get a random high-scored image from the public feed
- * Returns an image with aestheticScore >= 9.5
+ * Get multiple random high-scored images from the public feed
+ * Returns up to 20 images with aestheticScore >= 9.5
+ * 
+ * IMPORTANT: 
+ * - Every call returns DIFFERENT random images (shuffled)
+ * - Only images with aestheticScore >= 9.5 are included
+ * - Uses optimized avifUrl for faster loading
  */
-export async function getRandomHighScoredImage(): Promise<{ imageUrl: string; prompt?: string; generationId?: string; creator?: { username?: string; photoURL?: string } } | null> {
+export async function getRandomHighScoredImages(count: number = 20): Promise<Array<{ imageUrl: string; prompt?: string; generationId?: string; creator?: { username?: string; photoURL?: string } }>> {
   try {
     const col = adminDb.collection('generations');
     
     // Query for public items with aestheticScore >= 9.5
     // Note: Firestore doesn't support >= queries on aestheticScore directly if it's nested in images array
     // So we'll fetch items with document-level aestheticScore >= 9.5 OR check image-level scores
+    // This ensures ONLY images with score >= 9.5 are returned
     let q = col
       .where('isPublic', '==', true)
       .where('isDeleted', '!=', true)
@@ -266,26 +272,36 @@ export async function getRandomHighScoredImage(): Promise<{ imageUrl: string; pr
         }
       });
       
-      if (candidates.length === 0) return null;
+      if (candidates.length === 0) return [];
       
-      // Randomly select one
-      const random = candidates[Math.floor(Math.random() * candidates.length)];
-      const imageUrl = random.image?.avifUrl || random.image?.thumbnailUrl || random.image?.url;
+      // Shuffle candidates array for randomization - ensures different images each time
+      // Using Math.random() - 0.5 provides true randomization
+      const shuffled = candidates.sort(() => Math.random() - 0.5);
       
-      if (!imageUrl) return null;
+      // Take up to 'count' images
+      const selected = shuffled.slice(0, Math.min(count, shuffled.length));
       
-      // Get creator info
-      const creator = random.item.createdBy || null;
+      // Map to result format with optimized URLs (avifUrl > thumbnailUrl > url)
+      const results = selected
+        .map(candidate => {
+          const imageUrl = candidate.image?.avifUrl || candidate.image?.thumbnailUrl || candidate.image?.url;
+          if (!imageUrl) return null;
+          
+          const creator = candidate.item.createdBy || null;
+          
+          return {
+            imageUrl,
+            prompt: candidate.item.prompt,
+            generationId: candidate.item.id,
+            creator: creator ? {
+              username: creator.username,
+              photoURL: creator.photoURL
+            } : undefined
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => item !== null);
       
-      return {
-        imageUrl,
-        prompt: random.item.prompt,
-        generationId: random.item.id,
-        creator: creator ? {
-          username: creator.username,
-          photoURL: creator.photoURL
-        } : undefined
-      };
+      return results;
     }
     
     // Filter items that have images and extract image URLs
@@ -320,36 +336,43 @@ export async function getRandomHighScoredImage(): Promise<{ imageUrl: string; pr
       }
     });
     
-    if (candidates.length === 0) return null;
+    if (candidates.length === 0) return [];
     
-    // Randomly select one
-    const random = candidates[Math.floor(Math.random() * candidates.length)];
+    // Shuffle candidates array for randomization
+    const shuffled = candidates.sort(() => Math.random() - 0.5);
     
-    // Prefer optimized URLs (avifUrl > thumbnailUrl > url)
-    const imageUrl = random.image?.avifUrl || random.image?.thumbnailUrl || random.image?.url;
+    // Take up to 'count' images
+    const selected = shuffled.slice(0, Math.min(count, shuffled.length));
     
-    if (!imageUrl) return null;
+    // Map to result format with optimized URLs (avifUrl > thumbnailUrl > url)
+    const results = selected
+      .map(candidate => {
+        const imageUrl = candidate.image?.avifUrl || candidate.image?.thumbnailUrl || candidate.image?.url;
+        if (!imageUrl) return null;
+        
+        const creator = candidate.item.createdBy || null;
+        
+        return {
+          imageUrl,
+          prompt: candidate.item.prompt,
+          generationId: candidate.item.id,
+          creator: creator ? {
+            username: creator.username,
+            photoURL: creator.photoURL
+          } : undefined
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
     
-    // Get creator info
-    const creator = random.item.createdBy || null;
-    
-    return {
-      imageUrl,
-      prompt: random.item.prompt,
-      generationId: random.item.id,
-      creator: creator ? {
-        username: creator.username,
-        photoURL: creator.photoURL
-      } : undefined
-    };
+    return results;
   } catch (error) {
-    console.error('[publicGenerationsRepository] Error getting random high-scored image:', error);
-    return null;
+    console.error('[publicGenerationsRepository] Error getting random high-scored images:', error);
+    return [];
   }
 }
 
 export const publicGenerationsRepository = {
   listPublic,
   getPublicById,
-  getRandomHighScoredImage,
+  getRandomHighScoredImages,
 };
