@@ -198,3 +198,72 @@ export async function setCachedItemsBatch(uid: string, items: GenerationHistoryI
     console.warn('[generationCache] setCachedItemsBatch error:', error);
   }
 }
+
+/**
+ * Get cached public feed results
+ */
+function getPublicFeedCacheKey(params: any): string {
+  const { limit = 20, cursor, mode, generationType, search, sortBy, sortOrder } = params;
+  const typeKey = Array.isArray(generationType) ? generationType.sort().join(',') : (generationType || 'all');
+  const modeKey = mode || 'all';
+  const searchKey = search ? `:search:${search.substring(0, 30)}` : '';
+  const sortKey = sortBy ? `:sort:${sortBy}:${sortOrder || 'desc'}` : '';
+  return `feed:public:${limit}:${cursor || 'start'}:${modeKey}:${typeKey}${searchKey}${sortKey}`;
+}
+
+export async function getCachedPublicFeed(params: any): Promise<any | null> {
+  try {
+    const client = getClient();
+    if (!client) {
+      return null;
+    }
+    const key = getPublicFeedCacheKey(params);
+    const cached = await client.get(key);
+    if (!cached) {
+      return null;
+    }
+    console.log(`[generationCache] ✅ PUBLIC FEED CACHE HIT: ${key}`);
+    return JSON.parse(cached);
+  } catch (error) {
+    console.warn('[generationCache] getCachedPublicFeed error:', error);
+    return null;
+  }
+}
+
+export async function setCachedPublicFeed(params: any, result: any): Promise<void> {
+  try {
+    const client = getClient();
+    if (!client) {
+      return;
+    }
+    const key = getPublicFeedCacheKey(params);
+    // Cache public feed for 2 minutes (same as list cache)
+    await client.setEx(key, LIST_CACHE_TTL, JSON.stringify(result));
+    console.log(`[generationCache] 💾 PUBLIC FEED CACHED: ${key} (TTL: ${LIST_CACHE_TTL}s, items: ${result.items?.length || 0})`);
+  } catch (error) {
+    console.warn('[generationCache] setCachedPublicFeed error:', error);
+  }
+}
+
+/**
+ * Invalidate all public feed cache entries
+ * This is called when items are deleted or updated to ensure feed reflects changes immediately
+ */
+export async function invalidatePublicFeedCache(): Promise<void> {
+  try {
+    const client = getClient();
+    if (!client) {
+      return;
+    }
+    // Delete all keys matching the public feed pattern
+    const pattern = 'feed:public:*';
+    const keys = await client.keys(pattern);
+    if (keys && keys.length > 0) {
+      // Delete keys - pass array directly, not spread
+      await client.del(keys);
+      console.log(`[generationCache] 🗑️  Invalidated ${keys.length} public feed cache entries`);
+    }
+  } catch (error) {
+    console.warn('[generationCache] invalidatePublicFeedCache error:', error);
+  }
+}

@@ -85,7 +85,23 @@ async function getPublicGenerations(params: FilterParams) {
 
   const limit = params.limit || 20;
 
-  // CACHING DISABLED for feed: always return fresh results to ensure new generations appear immediately.
+  // Try cache first (only for first page without cursor to ensure fresh pagination)
+  const cacheParams = { ...params, limit, cursor: params.cursor };
+  if (!params.cursor) {
+    const { getCachedPublicFeed } = await import('../utils/generationCache');
+    const cached = await getCachedPublicFeed(cacheParams);
+    if (cached) {
+      return {
+        items: cached.items || [],
+        meta: {
+          limit,
+          nextCursor: cached.nextCursor,
+          totalCount: cached.totalCount,
+          hasMore: !!cached.nextCursor || (cached.items?.length >= limit),
+        },
+      };
+    }
+  }
 
   const result = await publicGenerationsRepository.listPublic({
     limit,
@@ -130,6 +146,16 @@ async function getPublicGenerations(params: FilterParams) {
           item.createdBy.photoURL = userData.photoURL;
         }
       }
+    });
+  }
+  
+  // Cache the result (only for first page without cursor)
+  if (!params.cursor) {
+    const { setCachedPublicFeed } = await import('../utils/generationCache');
+    await setCachedPublicFeed(cacheParams, {
+      items: result.items,
+      nextCursor: result.nextCursor,
+      totalCount: result.totalCount,
     });
   }
   

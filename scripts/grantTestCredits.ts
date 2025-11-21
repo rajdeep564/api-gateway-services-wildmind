@@ -18,19 +18,36 @@ import { creditsRepository } from '../src/repository/creditsRepository';
 import { authRepository } from '../src/repository/auth/authRepository';
 import { creditsService } from '../src/services/creditsService';
 
-async function grantTestCredits(email: string, amount: number) {
+type ResolveUserInput =
+  | { type: 'email'; value: string }
+  | { type: 'username'; value: string };
+
+type ResolvedUser = { uid: string; user: any };
+
+async function resolveUserIdentifier(input: ResolveUserInput): Promise<ResolvedUser> {
+  if (input.type === 'email') {
+    const userResult = await authRepository.getUserByEmail(input.value);
+    if (!userResult) throw new Error(`User not found with email ${input.value}`);
+    return userResult;
+  }
+
+  if (typeof authRepository.getUserByUsername === 'function') {
+    const user = await authRepository.getUserByUsername(input.value);
+    if (!user) throw new Error(`User not found with username ${input.value}`);
+    return { uid: user.uid, user };
+  }
+
+  throw new Error('Username lookup is not supported in authRepository.');
+}
+
+async function grantTestCredits(userInput: ResolveUserInput, amount: number) {
   console.log('\n💰 ==== Grant Test Credits ====\n');
-  console.log(`Email: ${email}`);
+  console.log(userInput.type === 'email' ? `Email: ${userInput.value}` : `Username: ${userInput.value}`);
   console.log(`Amount: ${amount} credits`);
   console.log('-----------------------------------\n');
 
   try {
-    // Find user by email
-    const userResult = await authRepository.getUserByEmail(email);
-    if (!userResult) {
-      console.error('❌ User not found with email:', email);
-      process.exit(1);
-    }
+    const userResult = await resolveUserIdentifier(userInput);
 
     const userId = userResult.uid;
     console.log(`User ID: ${userId}`);
@@ -182,18 +199,36 @@ async function grantTestCredits(email: string, amount: number) {
 
 // Parse command line arguments
 const args = process.argv.slice(2);
-const email = args[0];
-const amount = parseInt(args[1] || '0', 10);
+let identifier: ResolveUserInput | null = null;
+let amount = 0;
 
-if (!email || !amount || amount <= 0) {
-  console.error('❌ Usage: npx ts-node scripts/grantTestCredits.ts <email> <amount>');
-  console.error('\nExample:');
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i];
+  if (arg === '-u' || arg === '--username') {
+    const value = args[i + 1];
+    if (!value) {
+      console.error('❌ Missing value for --username');
+      process.exit(1);
+    }
+    identifier = { type: 'username', value };
+    i++;
+  } else if (!identifier) {
+    identifier = { type: 'email', value: arg };
+  } else if (!amount) {
+    amount = parseInt(arg, 10);
+  }
+}
+
+if (!identifier || !amount || amount <= 0) {
+  console.error('❌ Usage: npx ts-node scripts/grantTestCredits.ts [--username <username> | <email>] <amount>');
+  console.error('\nExamples:');
   console.error('  npx ts-node scripts/grantTestCredits.ts user@example.com 10000');
+  console.error('  npx ts-node scripts/grantTestCredits.ts --username jane_doe 5000');
   process.exit(1);
 }
 
 // Run the script
-grantTestCredits(email, amount)
+grantTestCredits(identifier, amount)
   .then(() => {
     console.log('✅ Grant complete');
     process.exit(0);
