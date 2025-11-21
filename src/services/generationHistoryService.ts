@@ -486,37 +486,134 @@ export async function listUserGenerations(
 }
 
 export async function softDelete(uid: string, historyId: string): Promise<{ item: GenerationHistoryItem }> {
+  console.log('[softDelete] ========== STARTING DELETION ==========');
+  console.log('[softDelete] Request:', { uid, historyId, timestamp: new Date().toISOString() });
+  
+  // 1. Fetch existing item
   const existing = await generationHistoryRepository.get(uid, historyId);
-  if (!existing) throw new ApiError('History item not found', 404);
-  
-  console.log('[softDelete] Starting deletion:', { uid, historyId, isPublic: existing.isPublic });
-  
-  // 1. Mark as deleted in generationHistory
-  await generationHistoryRepository.update(uid, historyId, { isDeleted: true, isPublic: false } as any);
-  console.log('[softDelete] Marked as deleted in generationHistory');
-  
-  // 2. Cache invalidation removed
-  
-  // 3. Delete from publicGenerations mirror (generations collection)
-  try {
-    await generationsMirrorRepository.remove(historyId);
-    console.log('[softDelete] Deleted from publicGenerations mirror');
-  } catch (e) {
-    console.warn('[softDelete] Failed to delete from mirror:', e);
+  if (!existing) {
+    console.error('[softDelete] ❌ History item not found:', { uid, historyId });
+    throw new ApiError('History item not found', 404);
   }
   
-  // 4. Delete files from Zata storage (in background, non-blocking)
-  setImmediate(async () => {
-    try {
-      console.log('[softDelete] Starting Zata file deletion...');
-      await deleteGenerationFiles(existing);
-      console.log('[softDelete] Successfully deleted files from Zata storage');
-    } catch (e) {
-      console.error('[softDelete] Failed to delete files from Zata:', e);
-    }
+  const generationType = existing.generationType || 'unknown';
+  const hasImages = Array.isArray(existing.images) && existing.images.length > 0;
+  const hasVideos = Array.isArray(existing.videos) && existing.videos.length > 0;
+  const hasAudios = Array.isArray(existing.audios) && existing.audios.length > 0;
+  const imageCount = hasImages ? existing.images!.length : 0;
+  const videoCount = hasVideos ? existing.videos!.length : 0;
+  const audioCount = hasAudios ? existing.audios!.length : 0;
+  
+  console.log('[softDelete] Item details:', {
+    historyId,
+    uid,
+    generationType,
+    isPublic: existing.isPublic,
+    isDeleted: existing.isDeleted,
+    hasImages,
+    imageCount,
+    hasVideos,
+    videoCount,
+    hasAudios,
+    audioCount,
+    status: existing.status,
   });
   
-  console.log('[softDelete] Deletion completed');
+  // CRITICAL: Delete from public mirror FIRST and IMMEDIATELY (synchronous)
+  // This ensures the item disappears from ArtStation instantly, before Zata deletion
+  // We use Firebase Admin DB directly for instant deletion
+  console.log('[softDelete] Step 1: INSTANTLY deleting from public mirror repository (Firebase Admin DB)...');
+  let mirrorDeleteSuccess = false;
+  try {
+    // Delete directly from mirror using Firebase Admin DB - this is INSTANT and SYNCHRONOUS
+    await generationsMirrorRepository.remove(historyId);
+    mirrorDeleteSuccess = true;
+    console.log('[softDelete] ✅ Step 1: Successfully deleted from public mirror repository (INSTANT)');
+  } catch (e: any) {
+    console.error('[softDelete] ❌ Step 1: Failed to delete from mirror:', {
+      error: e?.message || e,
+      stack: e?.stack,
+    });
+    // Continue even if mirror deletion fails - we'll try again below
+  }
+  
+  // Also enqueue a remove task as backup to ensure it's removed even if there are pending updates
+  try {
+    const { mirrorQueueRepository } = await import('../repository/mirrorQueueRepository');
+    await mirrorQueueRepository.enqueueRemove({ historyId });
+    console.log('[softDelete] ✅ Step 1a: Enqueued remove task to mirror queue (backup)');
+  } catch (queueErr: any) {
+    console.warn('[softDelete] ⚠️ Step 1a: Failed to enqueue remove task (non-critical):', queueErr?.message || queueErr);
+  }
+  
+  // 2. Invalidate cache immediately after mirror deletion
+  console.log('[softDelete] Step 2: Invalidating cache...');
+  try {
+    const { invalidateItem, invalidateUserLists, invalidatePublicFeedCache } = await import('../utils/generationCache');
+    await invalidateItem(uid, historyId);
+    await invalidateUserLists(uid);
+    // CRITICAL: Invalidate public feed cache so ArtStation reflects deletion immediately
+    await invalidatePublicFeedCache();
+    console.log('[softDelete] ✅ Step 2: Cache invalidated (including public feed)');
+  } catch (e: any) {
+    console.warn('[softDelete] ⚠️ Step 2: Cache invalidation failed (non-critical):', e?.message || e);
+  }
+  
+  // 3. Mark as deleted in generationHistory (soft delete)
+  // This happens AFTER mirror deletion to ensure ArtStation updates first
+  console.log('[softDelete] Step 3: Marking as deleted in generationHistory...');
+  try {
+    await generationHistoryRepository.update(uid, historyId, { isDeleted: true, isPublic: false } as any);
+    console.log('[softDelete] ✅ Step 3: Successfully marked as deleted in generationHistory');
+  } catch (e: any) {
+    console.error('[softDelete] ❌ Step 3: Failed to mark as deleted in generationHistory:', e?.message || e);
+    throw new ApiError('Failed to mark item as deleted', 500);
+  }
+  
+  // 5. Delete files from Zata storage (in background, non-blocking)
+  console.log('[softDelete] Step 4: Queuing Zata file deletion (background)...');
+  const fileDeletionPromise = (async () => {
+    try {
+      console.log('[softDelete][Zata] Starting file deletion...');
+      const fileCounts = {
+        images: imageCount,
+        videos: videoCount,
+        audios: audioCount,
+        total: imageCount + videoCount + audioCount,
+      };
+      console.log('[softDelete][Zata] Files to delete:', fileCounts);
+      
+      await deleteGenerationFiles(existing);
+      console.log('[softDelete][Zata] ✅ Successfully deleted all files from Zata storage');
+      return { success: true, fileCounts };
+    } catch (e: any) {
+      console.error('[softDelete][Zata] ❌ Failed to delete files from Zata:', {
+        error: e?.message || e,
+        stack: e?.stack,
+      });
+      return { success: false, error: e?.message || 'Unknown error' };
+    }
+  })();
+  
+  // Start file deletion in background (don't await)
+  setImmediate(() => {
+    fileDeletionPromise.catch(err => {
+      console.error('[softDelete][Zata] Unhandled error in background deletion:', err);
+    });
+  });
+  
+  console.log('[softDelete] ========== DELETION COMPLETED ==========');
+  console.log('[softDelete] Summary:', {
+    historyId,
+    uid,
+    generationType,
+    mirrorDeleted: mirrorDeleteSuccess,
+    filesQueuedForDeletion: imageCount + videoCount + audioCount,
+    response: {
+      isDeleted: true,
+      isPublic: false,
+    },
+  });
   
   // Return the item with isDeleted flag
   return { 
@@ -578,27 +675,86 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
     nextDoc.visibility = nextDoc.isPublic ? Visibility.Public : Visibility.Private;
   }
 
+  // Check if this update is marking the item as deleted
+  const isBeingDeleted = (nextDoc.isDeleted === true) || (existing.isDeleted === true && nextDoc.isDeleted !== false);
+  const willBeDeleted = nextDoc.isDeleted === true;
+  
+  console.log('[update] Step 1: Updating generationHistory repository...');
   await generationHistoryRepository.update(uid, historyId, nextDoc);
+  console.log('[update] ✅ Step 1: Successfully updated generationHistory');
 
-  // Cache invalidation removed
-
-  console.log('[update] Updated generation:', { historyId, isPublic: nextDoc.isPublic, hasImages: !!nextDoc.images, hasVideos: !!nextDoc.videos });
-
-  // OPTIMIZATION: Enqueue mirror update instead of blocking
+  // Invalidate cache
+  console.log('[update] Step 2: Invalidating cache...');
   try {
-    await mirrorQueueRepository.enqueueUpdate({ uid, historyId, updates: nextDoc });
-  } catch (e) {
-    console.warn('[update] Failed to enqueue mirror update:', e);
+    const { invalidateItem, invalidateUserLists } = await import('../utils/generationCache');
+    await invalidateItem(uid, historyId);
+    await invalidateUserLists(uid);
+    console.log('[update] ✅ Step 2: Cache invalidated');
+  } catch (e: any) {
+    console.warn('[update] ⚠️ Step 2: Cache invalidation failed (non-critical):', e?.message || e);
   }
-  // Immediate mirror sync if public flag changed to ensure ArtStation reflects toggle quickly
-  try {
-    const publicChanged = typeof nextDoc.isPublic === 'boolean' && nextDoc.isPublic !== (existing.isPublic === true);
-    if (publicChanged) {
-      await syncToMirror(uid, historyId);
+
+  // CRITICAL: If item is being deleted or is already deleted, remove from mirror instead of updating
+  if (willBeDeleted || isBeingDeleted) {
+    console.log('[update] Step 3: Item is deleted - removing from mirror instead of updating...');
+    try {
+      await generationsMirrorRepository.remove(historyId);
+      // Also enqueue remove to ensure it's processed by queue workers
+      try {
+        const { mirrorQueueRepository } = await import('../repository/mirrorQueueRepository');
+        await mirrorQueueRepository.enqueueRemove({ historyId });
+        console.log('[update] ✅ Step 3: Removed from mirror and enqueued remove task');
+      } catch (queueErr: any) {
+        console.warn('[update] ⚠️ Step 3: Failed to enqueue remove (non-critical):', queueErr?.message || queueErr);
+      }
+    } catch (e: any) {
+      console.error('[update] ❌ Step 3: Failed to remove from mirror:', e?.message || e);
     }
-  } catch (e) {
-    console.warn('[update] Immediate mirror sync failed:', e);
+    console.log('[update] ========== UPDATE COMPLETED (DELETED) ==========');
+  } else {
+    // Only sync to mirror if item is NOT deleted
+    const publicChanged = typeof nextDoc.isPublic === 'boolean' && nextDoc.isPublic !== (existing.isPublic === true);
+    const wasPublic = existing.isPublic === true;
+    const nowPublic = nextDoc.isPublic === true;
+
+    console.log('[update] Visibility change:', {
+      historyId,
+      uid,
+      generationType: existing.generationType,
+      publicChanged,
+      wasPublic,
+      nowPublic,
+      visibility: nextDoc.visibility,
+      hasImages: !!nextDoc.images,
+      hasVideos: !!nextDoc.videos,
+      hasAudios: !!nextDoc.audios,
+    });
+
+    // OPTIMIZATION: Enqueue mirror update instead of blocking
+    console.log('[update] Step 3: Enqueuing mirror update...');
+    try {
+      await mirrorQueueRepository.enqueueUpdate({ uid, historyId, updates: nextDoc });
+      console.log('[update] ✅ Step 3: Successfully enqueued mirror update');
+    } catch (e: any) {
+      console.error('[update] ❌ Step 3: Failed to enqueue mirror update:', e?.message || e);
+    }
+    
+    // Immediate mirror sync if public flag changed to ensure ArtStation reflects toggle quickly
+    if (publicChanged) {
+      console.log('[update] Step 4: Immediate mirror sync (public flag changed)...');
+      try {
+        await syncToMirror(uid, historyId);
+        console.log('[update] ✅ Step 4: Successfully synced to mirror immediately');
+      } catch (e: any) {
+        console.warn('[update] ⚠️ Step 4: Immediate mirror sync failed (non-critical, will retry via queue):', e?.message || e);
+      }
+    } else {
+      console.log('[update] Step 4: Skipping immediate mirror sync (public flag unchanged)');
+    }
+    console.log('[update] ========== UPDATE COMPLETED ==========');
   }
+  
+  console.log('[update] ========== UPDATE COMPLETED ==========');
   
   // Fetch and return the updated item
   const updatedItem = await generationHistoryRepository.get(uid, historyId);

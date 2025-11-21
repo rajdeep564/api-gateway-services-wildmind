@@ -3,6 +3,11 @@ import { GenerationHistoryItem } from '../types/generate';
 
 function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
   const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, audios, createdBy, isPublic, createdAt, updatedAt, isDeleted, aspectRatio, frameSize, aspect_ratio } = data;
+  
+  // Ensure isPublic is explicitly boolean true (not undefined, null, or false)
+  // If isPublic is not explicitly true, set it to false to ensure proper filtering
+  const normalizedIsPublic = isPublic === true;
+  
   return {
     id,
     uid,
@@ -17,7 +22,7 @@ function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
     videos,
     audios,
     createdBy,
-    isPublic,
+    isPublic: normalizedIsPublic, // Explicitly set to true or false
     isDeleted,
     createdAt,
     updatedAt: updatedAt || createdAt,
@@ -49,184 +54,148 @@ export async function listPublic(params: {
   const projectionFields: Array<keyof GenerationHistoryItem | string> = [
     'prompt', 'model', 'generationType', 'status', 'visibility', 'tags', 'nsfw',
     'images', 'videos', 'audios', 'createdBy', 'isPublic', 'isDeleted', 'createdAt', 'updatedAt',
-    'aspectRatio', 'frameSize', 'aspect_ratio'
+    'aspectRatio', 'frameSize', 'aspect_ratio', 'aestheticScore'
   ];
-  let q: FirebaseFirestore.Query = col.select(...projectionFields as any).orderBy(sortBy, sortOrder);
   
-  // Only show public; we will exclude deleted after fetch so old docs without the flag still appear
-  q = q.where('isPublic', '==', true);
+  // ========== DATABASE-LEVEL FILTERING FOR OPTIMAL PERFORMANCE ==========
+  // All filtering is done at database level - NO in-memory filtering
   
-  // Apply filters
-  // Try server-side filtering for generationType if possible (<=10 values for 'in')
-  let clientFilterTypes: string[] | undefined;
+  const MIN_AESTHETIC_SCORE = 8.5;
+  
+  // Build base query with required filters
+  let baseQuery = col
+    .where('isPublic', '==', true)
+    .where('isDeleted', '==', false);
+  
+  // Apply generationType filter if provided
   if (params.generationType) {
     if (Array.isArray(params.generationType)) {
       const arr = (params.generationType as string[]).map(s => String(s));
       if (arr.length > 0 && arr.length <= 10) {
-        try {
-          q = q.where('generationType', 'in', arr);
-          clientFilterTypes = undefined;
-        } catch {
-          // fall back to client-side
-          clientFilterTypes = arr;
-        }
-      } else {
-        clientFilterTypes = arr;
+        baseQuery = baseQuery.where('generationType', 'in', arr);
       }
     } else {
-      // Single value can be server-side filtered
-      try {
-        q = q.where('generationType', '==', String(params.generationType));
-        clientFilterTypes = undefined;
-      } catch {
-        clientFilterTypes = [String(params.generationType)];
-      }
+      baseQuery = baseQuery.where('generationType', '==', String(params.generationType));
     }
   }
   
   if (params.status) {
-    q = q.where('status', '==', params.status);
+    baseQuery = baseQuery.where('status', '==', params.status);
   }
   
   if (params.createdBy) {
-    q = q.where('createdBy.uid', '==', params.createdBy);
+    baseQuery = baseQuery.where('createdBy.uid', '==', params.createdBy);
   }
-  // Optional date filtering based on createdAt timestamp
-  let filterByDateInMemory = false;
+  
+  // Date filtering at database level
   if (params.dateStart && params.dateEnd) {
-    try {
-      const start = new Date(params.dateStart);
-      const end = new Date(params.dateEnd);
-      // Try server-side range filter; requires composite index for where + orderBy
-      q = q.where('createdAt', '>=', admin.firestore.Timestamp.fromDate(start))
-           .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(end));
-    } catch {
-      filterByDateInMemory = true;
+    const start = new Date(params.dateStart);
+    const end = new Date(params.dateEnd);
+    baseQuery = baseQuery
+      .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(start))
+      .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(end));
+  }
+  
+  // Handle mode-based filtering at database level
+  if (params.mode && params.mode !== 'all') {
+    if (params.mode === 'video') {
+      baseQuery = baseQuery.where('generationType', 'in', ['text-to-video', 'image-to-video', 'video-to-video']);
+    } else if (params.mode === 'image') {
+      baseQuery = baseQuery.where('generationType', 'in', ['text-to-image', 'logo', 'sticker-generation', 'product-generation', 'ad-generation']);
+    } else if (params.mode === 'music') {
+      baseQuery = baseQuery.where('generationType', '==', 'text-to-music');
     }
   }
   
-  // Handle cursor-based pagination (AFTER filters)
+  // AESTHETIC SCORE FILTERING: Use two queries and merge for optimal performance
+  // Query 1: Items with aestheticScore >= 8.5 (images/videos with scores, and music with scores)
+  // Query 2: Music items (text-to-music) without score requirement (only if not already filtered by mode)
+  let query1 = baseQuery.where('aestheticScore', '>=', MIN_AESTHETIC_SCORE);
+  let query2: FirebaseFirestore.Query | null = null;
+  
+  // Only add music query if we're not already filtering by generationType or mode
+  if (!params.generationType && (!params.mode || params.mode === 'all')) {
+    query2 = baseQuery.where('generationType', '==', 'text-to-music');
+  }
+  
+  // Apply sorting, projection, and pagination
+  const applyQueryOptions = (q: FirebaseFirestore.Query) => {
+    let query = q.select(...projectionFields as any).orderBy(sortBy, sortOrder);
+    if (params.cursor) {
+      // Cursor will be applied after we get the cursor doc
+    }
+    return query;
+  };
+  
+  query1 = applyQueryOptions(query1);
+  if (query2) {
+    query2 = applyQueryOptions(query2);
+  }
+  
+  // Handle cursor-based pagination
   if (params.cursor) {
     const cursorDoc = await col.doc(params.cursor).get();
     if (cursorDoc.exists) {
-      q = q.startAfter(cursorDoc);
-    }
-  }
-  
-  // Skip total count to reduce query cost/latency; Firestore count queries require aggregation indexes
-  let totalCount: number | undefined = undefined;
-  
-  // If we need to filter in-memory (generationType arrays OR mode !== 'all'), fetch a larger page to increase chances of filling the page
-  // When searching, fetch a very large batch to find all matching results
-  const needsInMemoryFilter = Boolean(clientFilterTypes) || (params.mode && params.mode !== 'all') || Boolean(params.search);
-  let fetchMultiplier: number;
-  let maxFetchLimit: number;
-  
-  if (params.search && params.search.trim().length > 0) {
-    // When searching, fetch a reasonable batch to find matches (same multiplier as normal browsing)
-    // Don't overfetch too much to prevent loading everything at once
-    fetchMultiplier = 3; // Fetch 3x the limit (60 items) when searching - same as clientFilterTypes
-    maxFetchLimit = 150; // Same max limit as normal browsing
-  } else {
-    fetchMultiplier = clientFilterTypes ? 3 : 2;
-    maxFetchLimit = 150;
-  }
-  
-  const fetchLimit = needsInMemoryFilter ? Math.min(Math.max(params.limit * fetchMultiplier, params.limit), maxFetchLimit) : params.limit;
-  const snap = await q.limit(fetchLimit).get();
-  
-  let items: GenerationHistoryItem[] = snap.docs.map(d => normalizePublicItem(d.id, d.data() as any));
-  try {
-    // Lightweight visibility log for optimized fields presence across page
-    const imgCounts = items.map((it: any) => Array.isArray(it?.images) ? it.images.length : 0);
-    const optCounts = items.map((it: any) => Array.isArray(it?.images) ? it.images.filter((im: any) => im?.thumbnailUrl || im?.avifUrl).length : 0);
-    const totalImgs = imgCounts.reduce((a, b) => a + b, 0);
-    const totalOpt = optCounts.reduce((a, b) => a + b, 0);
-    if (items.length > 0) {
-      console.log('[Feed][Repo][listPublic] page stats', {
-        returnedItems: items.length,
-        totalImages: totalImgs,
-        imagesWithOptimized: totalOpt,
-      });
-
-      // Log per-item sample for debugging: first image's optimized fields (limit 10)
-      try {
-        const samples = items.slice(0, 10).map((it: any) => {
-          const first = Array.isArray(it.images) && it.images.length > 0 ? it.images[0] : null;
-          return {
-            id: it.id,
-            isPublic: it.isPublic,
-            imagesCount: Array.isArray(it.images) ? it.images.length : 0,
-            firstHasThumbnail: !!(first && first.thumbnailUrl),
-            firstHasAvif: !!(first && first.avifUrl),
-            firstThumbnail: first && typeof first.thumbnailUrl === 'string' ? first.thumbnailUrl : undefined,
-            firstAvif: first && typeof first.avifUrl === 'string' ? first.avifUrl : undefined,
-          };
-        });
-        console.log('[Feed][Repo][listPublic] item samples', samples);
-      } catch (e) {
-        // ignore
+      query1 = query1.startAfter(cursorDoc);
+      if (query2) {
+        query2 = query2.startAfter(cursorDoc);
       }
     }
-  } catch {}
-  if (clientFilterTypes) {
-    items = items.filter((it: any) => clientFilterTypes!.includes(String(it.generationType || '').toLowerCase()));
   }
-  // Optional mode-based filtering by media presence (more robust than generationType)
-  if (params.mode && params.mode !== 'all') {
-    if (params.mode === 'video') {
-      items = items.filter((it: any) => Array.isArray((it as any).videos) && (it as any).videos.length > 0);
-    } else if (params.mode === 'image') {
-      items = items.filter((it: any) => Array.isArray((it as any).images) && (it as any).images.length > 0);
-    } else if (params.mode === 'music') {
-      items = items.filter((it: any) => Array.isArray((it as any).audios) && (it as any).audios.length > 0 || String(it.generationType || '').toLowerCase() === 'text-to-music');
-    }
-  }
-  // Optional in-memory date filter fallback
-  if (filterByDateInMemory && params.dateStart && params.dateEnd) {
-    const startMs = new Date(params.dateStart).getTime();
-    const endMs = new Date(params.dateEnd).getTime();
-    items = items.filter((it: any) => {
-      const ts = (it.createdAt && (it.createdAt.seconds ? it.createdAt.seconds * 1000 : Date.parse(it.createdAt))) || 0;
-      return ts >= startMs && ts <= endMs;
+  
+  // Execute queries in parallel - fetch 2x limit to account for deduplication
+  const [snap1, snap2] = await Promise.all([
+    query1.limit(params.limit * 2).get(),
+    query2 ? query2.limit(params.limit).get() : Promise.resolve({ docs: [] } as any as FirebaseFirestore.QuerySnapshot),
+  ]);
+  
+  // Merge and deduplicate results
+  const docMap = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+  snap1.docs.forEach(doc => docMap.set(doc.id, doc));
+  if (query2) {
+    snap2.docs.forEach(doc => {
+      if (!docMap.has(doc.id)) {
+        docMap.set(doc.id, doc);
+      }
     });
   }
   
-  // Optional free-text prompt search (case-insensitive substring)
+  // Convert to items and sort by createdAt desc (maintain order)
+  let items: GenerationHistoryItem[] = Array.from(docMap.values())
+    .map(d => normalizePublicItem(d.id, d.data() as any))
+    .sort((a, b) => {
+      const aTime = typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() : 
+                   (a.createdAt as any)?.seconds ? (a.createdAt as any).seconds * 1000 : 0;
+      const bTime = typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() : 
+                   (b.createdAt as any)?.seconds ? (b.createdAt as any).seconds * 1000 : 0;
+      return sortOrder === 'desc' ? bTime - aTime : aTime - bTime;
+    });
+  
+  // Handle search - Firestore doesn't support full-text search, so minimal in-memory filter
+  // This is the ONLY in-memory filtering we do, and it's necessary for search functionality
   if (params.search && params.search.trim().length > 0) {
     const needle = params.search.toLowerCase();
     items = items.filter((it: any) => {
       const p = String((it as any).prompt || '').toLowerCase();
       return p.includes(needle);
     });
-    // No in-memory sorting - keep original Firestore order (createdAt DESC)
   }
   
-  // Exclude soft-deleted; treat missing as not deleted for old docs
-  items = items.filter((it: any) => it.isDeleted !== true);
-  
-  // Return items up to limit (works for both search and normal browsing)
+  // Return items up to limit
   const page = items.slice(0, params.limit);
   
   // Compute next cursor for pagination
-  // Enable pagination for both search and normal browsing
   let nextCursor: string | undefined;
-  if (page.length === params.limit) {
+  if (page.length === params.limit && items.length > params.limit) {
     // Full page returned - use last item's ID
     nextCursor = page[page.length - 1].id;
-  } else if (snap.docs.length === fetchLimit) {
-    // We fetched max items from Firestore but filtered results are fewer
-    // Use last Firestore doc ID to continue from database position
-    // This ensures we don't skip items when continuing pagination
-    nextCursor = snap.docs[snap.docs.length - 1].id;
-  } else if (page.length > 0 && snap.docs.length > 0) {
-    // We have some filtered results but didn't hit fetch limit
-    // Still use last Firestore doc to continue properly
-    nextCursor = snap.docs[snap.docs.length - 1].id;
-  } else {
-    // No more items available
-    nextCursor = undefined;
+  } else if (page.length > 0) {
+    // Use last item's ID if we have results
+    nextCursor = page[page.length - 1].id;
   }
+  
+  // Skip total count to reduce query cost/latency
+  const totalCount: number | undefined = undefined;
   
   return { items: page, nextCursor, totalCount };
 }

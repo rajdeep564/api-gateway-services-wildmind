@@ -10,6 +10,19 @@ interface CreatedBy {
 }
 
 export async function upsertFromHistory(uid: string, historyId: string, historyDoc: GenerationHistoryItem, createdBy: CreatedBy): Promise<void> {
+  // CRITICAL: If item is deleted or not public, remove it from mirror instead of upserting
+  if ((historyDoc as any)?.isDeleted === true) {
+    console.log('[Mirror][Upsert] Item is deleted - removing from mirror instead of upserting:', { historyId, uid });
+    await remove(historyId);
+    return;
+  }
+  
+  if ((historyDoc as any)?.isPublic !== true) {
+    console.log('[Mirror][Upsert] Item is not public - removing from mirror instead of upserting:', { historyId, uid, isPublic: (historyDoc as any)?.isPublic });
+    await remove(historyId);
+    return;
+  }
+  
   try {
     // eslint-disable-next-line no-console
     const imgs: any[] = Array.isArray((historyDoc as any)?.images) ? ((historyDoc as any).images as any[]) : [];
@@ -30,17 +43,28 @@ export async function upsertFromHistory(uid: string, historyId: string, historyD
     });
   } catch {}
   // Defensive: if the provided historyDoc lacks optimized fields, try to fetch a fresh copy
+  // CRITICAL: Also check if the fresh copy is deleted - if so, remove from mirror instead
   try {
     const imgs: any[] = Array.isArray((historyDoc as any)?.images) ? ((historyDoc as any).images as any[]) : [];
     const hasOptimized = imgs.some((im: any) => im?.thumbnailUrl || im?.avifUrl);
     if (!hasOptimized && uid && historyId) {
       try {
         const fresh = await generationHistoryRepository.get(uid, historyId);
-        if (fresh && Array.isArray((fresh as any).images)) {
-          const freshHasOpt = (fresh as any).images.some((im: any) => im?.thumbnailUrl || im?.avifUrl);
-          if (freshHasOpt) {
-            historyDoc = fresh as GenerationHistoryItem;
-            try { console.log('[Mirror][Upsert] Replacing stale snapshot with fresh history doc (contains optimized fields) ', { historyId, uid }); } catch {}
+        if (fresh) {
+          // CRITICAL: Check if fresh copy is deleted - if so, remove from mirror instead of upserting
+          if ((fresh as any)?.isDeleted === true) {
+            console.log('[Mirror][Upsert] Fresh history doc is deleted - removing from mirror instead of upserting:', { historyId, uid });
+            await remove(historyId);
+            return;
+          }
+          
+          // Check if fresh copy has optimized fields
+          if (Array.isArray((fresh as any).images)) {
+            const freshHasOpt = (fresh as any).images.some((im: any) => im?.thumbnailUrl || im?.avifUrl);
+            if (freshHasOpt) {
+              historyDoc = fresh as GenerationHistoryItem;
+              try { console.log('[Mirror][Upsert] Replacing stale snapshot with fresh history doc (contains optimized fields) ', { historyId, uid }); } catch {}
+            }
           }
         }
       } catch (e) {
@@ -82,6 +106,20 @@ function removeUndefinedValues(obj: any): any {
 }
 
 export async function updateFromHistory(uid: string, historyId: string, updates: Partial<GenerationHistoryItem>): Promise<void> {
+  // CRITICAL: If item is being marked as deleted or not public, remove it from mirror instead of updating
+  if ((updates as any)?.isDeleted === true) {
+    console.log('[Mirror][Update] Item is being marked as deleted - removing from mirror instead of updating:', { historyId, uid });
+    await remove(historyId);
+    return;
+  }
+  
+  // If isPublic is explicitly set to false, remove from mirror
+  if ((updates as any)?.isPublic === false) {
+    console.log('[Mirror][Update] Item is being marked as not public - removing from mirror instead of updating:', { historyId, uid });
+    await remove(historyId);
+    return;
+  }
+  
   try {
     // eslint-disable-next-line no-console
     const imgs: any[] = Array.isArray((updates as any)?.images) ? ((updates as any).images as any[]) : [];
@@ -115,8 +153,28 @@ export async function updateFromHistory(uid: string, historyId: string, updates:
 }
 
 export async function remove(historyId: string): Promise<void> {
-  const ref = adminDb.collection('generations').doc(historyId);
-  await ref.delete();
+  console.log('[Mirror][Remove] Starting removal from public mirror:', { historyId, timestamp: new Date().toISOString() });
+  
+  try {
+    const ref = adminDb.collection('generations').doc(historyId);
+    
+    // Check if document exists before deleting
+    const doc = await ref.get();
+    if (!doc.exists) {
+      console.log('[Mirror][Remove] Document does not exist in mirror (already deleted or never existed):', historyId);
+      return;
+    }
+    
+    await ref.delete();
+    console.log('[Mirror][Remove] ✅ Successfully deleted from public mirror repository:', historyId);
+  } catch (e: any) {
+    console.error('[Mirror][Remove] ❌ Failed to delete from mirror:', {
+      historyId,
+      error: e?.message || e,
+      stack: e?.stack,
+    });
+    throw e; // Re-throw to allow caller to handle
+  }
 }
 
 export const generationsMirrorRepository = {
