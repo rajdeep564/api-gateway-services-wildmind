@@ -38,6 +38,7 @@ router.put('/projects/:id/snapshot/current', snapshotController.setCurrentSnapsh
 // Generation (Canvas-specific)
 router.post('/generate', validateCanvasGenerate, generateController.generateForCanvas);
 router.post('/generate-video', requireAuth, generateController.generateVideoForCanvas);
+router.post('/upscale', requireAuth, generateController.upscaleForCanvas);
 
 // Media Library
 router.get('/media-library', mediaLibraryController.getMediaLibrary);

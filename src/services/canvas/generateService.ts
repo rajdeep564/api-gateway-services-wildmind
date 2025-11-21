@@ -796,7 +796,106 @@ export async function generateVideoForCanvas(
   }
 }
 
+/**
+ * Upscale image for Canvas - uses Crystal Upscaler via Replicate
+ */
+export async function upscaleForCanvas(
+  uid: string,
+  request: {
+    image: string;
+    model?: string;
+    scale?: number;
+    projectId: string;
+    elementId?: string;
+  }
+): Promise<{ url: string; storagePath: string; mediaId?: string; generationId?: string }> {
+  if (!request.image) {
+    throw new ApiError('Image is required', 400);
+  }
+  if (!request.projectId) {
+    throw new ApiError('Project ID is required', 400);
+  }
+
+  console.log('[upscaleForCanvas] Request received:', {
+    userId: uid,
+    model: request.model,
+    scale: request.scale,
+    projectId: request.projectId,
+    hasImage: !!request.image,
+  });
+
+  try {
+    // Map frontend model name to Replicate model
+    const replicateModel = request.model === 'Crystal Upscaler' 
+      ? 'philz1337x/crystal-upscaler'
+      : 'philz1337x/crystal-upscaler'; // Default to Crystal Upscaler
+
+    // Clamp scale to valid range (1-4 for Crystal Upscaler, but we allow up to 6 in UI)
+    // For scale > 4, we'll use 4 as the maximum
+    const scaleFactor = Math.min(Math.max(request.scale || 2, 1), 4);
+
+    // Call Replicate upscale service
+    const result = await replicateService.upscale(uid, {
+      image: request.image,
+      model: replicateModel,
+      scale_factor: scaleFactor,
+      output_format: 'png',
+      isPublic: false,
+    });
+
+    console.log('[upscaleForCanvas] Replicate upscale completed:', {
+      hasImages: !!result.images,
+      imageCount: result.images?.length || 0,
+      hasHistoryId: !!result.historyId,
+    });
+
+    // Extract the first upscaled image from the result
+    const firstImage = result.images && Array.isArray(result.images) && result.images.length > 0
+      ? result.images[0]
+      : null;
+
+    if (!firstImage || !firstImage.url) {
+      throw new ApiError('No upscaled image returned from service', 500);
+    }
+
+    // Attach canvas project linkage
+    try {
+      if (result?.historyId && request.projectId) {
+        await generationHistoryRepository.update(uid, result.historyId, { 
+          canvasProjectId: request.projectId 
+        } as any);
+      }
+    } catch (e) {
+      console.warn('[upscaleForCanvas] Failed to tag history with canvasProjectId', e);
+    }
+
+    return {
+      url: firstImage.url,
+      storagePath: firstImage.storagePath || firstImage.originalUrl || firstImage.url,
+      mediaId: firstImage.id,
+      generationId: result.historyId,
+    };
+  } catch (error: any) {
+    console.error('[upscaleForCanvas] Service error:', {
+      message: error.message,
+      statusCode: error.statusCode,
+      stack: error.stack,
+      model: request.model,
+    });
+    
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    
+    throw new ApiError(
+      error.message || 'Image upscale failed',
+      error.statusCode || error.status || 500
+    );
+  }
+}
+
 export const generateService = {
   generateForCanvas,
   generateVideoForCanvas,
+  upscaleForCanvas,
 };
