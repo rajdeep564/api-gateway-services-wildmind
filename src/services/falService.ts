@@ -56,7 +56,12 @@ async function generate(
 
   const falKey = env.falKey as string;
   if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
-  if (!prompt) throw new ApiError("Prompt is required", 400);
+  
+  // Check if this is a dialogue request (uses inputs array instead of prompt)
+  // Skip prompt validation for dialogue requests
+  const hasDialogueInputs = Array.isArray((payload as any).inputs) && (payload as any).inputs.length > 0;
+  const isDialogueRequest = hasDialogueInputs || String(model || '').toLowerCase().includes('dialogue') || String(model || '').toLowerCase().includes('text-to-dialogue');
+  if (!isDialogueRequest && !prompt) throw new ApiError("Prompt is required", 400);
 
   fal.config({ credentials: falKey });
 
@@ -185,10 +190,12 @@ async function generate(
   const wantsMaya = modelLowerRaw.includes('maya');
   const wantsChatterbox = modelLowerRaw.includes('chatterbox') || modelLowerRaw.includes('multilingual');
   // Heuristic: dialogue uses `inputs` array or mentions 'dialogue', TTS uses `text` or mentions 'tts'/'text-to-speech'
+  // SFX uses `text` and mentions 'sfx' or 'sound-effect' or 'sound-effects'
   const hasInputsArray = Array.isArray((payload as any).inputs) && (payload as any).inputs.length > 0;
   const hasText = typeof (payload as any).text === 'string' && (payload as any).text.trim().length > 0;
   const isElevenDialogue = hasInputsArray || modelLowerRaw.includes('dialogue') || modelLowerRaw.includes('text-to-dialogue');
   const isElevenTts = hasText || modelLowerRaw.includes('tts') || modelLowerRaw.includes('text-to-speech') || modelLowerRaw.includes('text-to-voice');
+  const isElevenSfx = hasText && (modelLowerRaw.includes('sfx') || modelLowerRaw.includes('sound-effect') || modelLowerRaw.includes('sound-effects') || generationType === 'sfx');
   const isMayaTts = hasText || modelLowerRaw.includes('maya') || modelLowerRaw.includes('maya-1') || modelLowerRaw.includes('maya-1-voice');
   const isChatterboxMultilingual = hasText || modelLowerRaw.includes('chatterbox') || modelLowerRaw.includes('multilingual');
 
@@ -221,12 +228,21 @@ async function generate(
       }
 
       const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+      
+      // Store in multiple formats for frontend compatibility (matching ElevenLabs TTS and Chatterbox format)
+      const audiosArray = [audioObj];
+      const imagesArray = [{ ...audioObj, type: 'audio' }];
 
-      await generationHistoryRepository.update(uid, historyId, { status: 'completed', audio: audioObj } as any);
-      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj } as any);
+      await generationHistoryRepository.update(uid, historyId, { 
+        status: 'completed', 
+        audio: audioObj,
+        audios: audiosArray,
+        images: imagesArray
+      } as any);
+      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj, audios: audiosArray } as any);
       await syncToMirror(uid, historyId);
 
-      return { audio: audioObj, historyId, model: mayaEndpoint, status: 'completed' } as any;
+      return { audio: audioObj, audios: audiosArray, historyId, model: mayaEndpoint, status: 'completed' } as any;
     } catch (err: any) {
       const message = err?.message || 'Failed to generate audio with FAL Maya API';
       try {
@@ -270,12 +286,21 @@ async function generate(
       }
 
       const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+      
+      // Store in multiple formats for frontend compatibility (matching ElevenLabs TTS format)
+      const audiosArray = [audioObj];
+      const imagesArray = [{ ...audioObj, type: 'audio' }];
 
-      await generationHistoryRepository.update(uid, historyId, { status: 'completed', audio: audioObj } as any);
-      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj } as any);
+      await generationHistoryRepository.update(uid, historyId, { 
+        status: 'completed', 
+        audio: audioObj,
+        audios: audiosArray,
+        images: imagesArray
+      } as any);
+      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj, audios: audiosArray } as any);
       await syncToMirror(uid, historyId);
 
-      return { audio: audioObj, historyId, model: chatterEndpoint, status: 'completed' } as any;
+      return { audio: audioObj, audios: audiosArray, historyId, model: chatterEndpoint, status: 'completed' } as any;
     } catch (err: any) {
       const message = err?.message || 'Failed to generate audio with FAL Chatterbox API';
       try {
@@ -289,25 +314,75 @@ async function generate(
     }
   }
 
-  if (wantsEleven && (isElevenDialogue || isElevenTts)) {
+  if (wantsEleven && (isElevenDialogue || isElevenTts || isElevenSfx)) {
     // Prefer explicit payload shape first
+    if (isElevenSfx) {
+      // Sound Effects flow
+      const sfxEndpoint = 'fal-ai/elevenlabs/sound-effects/v2';
+      try {
+        const inputBody: any = {
+          text: (payload as any).text || finalPrompt,
+        };
+        if ((payload as any).duration_seconds != null) inputBody.duration_seconds = Number((payload as any).duration_seconds);
+        if ((payload as any).prompt_influence != null) inputBody.prompt_influence = Number((payload as any).prompt_influence);
+        if ((payload as any).output_format) inputBody.output_format = (payload as any).output_format;
+        if ((payload as any).loop != null) inputBody.loop = Boolean((payload as any).loop);
+
+        console.log('[falService.generate] Calling ElevenLabs SFX model:', { sfxEndpoint, input: { ...inputBody, text: String(inputBody.text).slice(0, 120) + (String(inputBody.text).length > 120 ? '...' : '') } });
+        const result = await fal.subscribe(sfxEndpoint as any, ({ input: inputBody, logs: true } as unknown) as any);
+
+        const audioUrl: string | undefined = (result as any)?.data?.audio?.url;
+        if (!audioUrl) throw new ApiError('No audio URL returned from FAL ElevenLabs SFX API', 502);
+
+        const username = creator?.username || uid;
+        let stored: any;
+        try {
+          stored = await uploadFromUrlToZata({ sourceUrl: audioUrl, keyPrefix: `users/${username}/audio/${historyId}`, fileName: 'eleven-sfx' });
+        } catch (e) {
+          stored = { publicUrl: audioUrl, key: '' };
+        }
+
+        const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+        const audiosArray = [audioObj];
+        const imagesArray = [{ ...audioObj, type: 'audio' }];
+
+        await generationHistoryRepository.update(uid, historyId, {
+          status: 'completed',
+          audio: audioObj,
+          audios: audiosArray,
+          images: imagesArray,
+          generationType: 'sfx'
+        } as any);
+        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj, audios: audiosArray } as any);
+        await syncToMirror(uid, historyId);
+
+        return { audio: audioObj, audios: audiosArray, images: imagesArray, historyId, model: sfxEndpoint, status: 'completed' } as any;
+      } catch (err: any) {
+        const message = err?.message || 'Failed to generate audio with FAL ElevenLabs SFX API';
+        try {
+          await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: message } as any);
+          await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
+          await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+        } catch (mirrorErr) {
+          console.error('[falService.generate][eleven-sfx] Failed to mirror error state:', mirrorErr);
+        }
+        throw new ApiError(message, 500);
+      }
+    }
+    
     if (isElevenTts) {
       // Text-to-Speech flow
       const ttsEndpoint = 'fal-ai/elevenlabs/tts/eleven-v3';
       try {
         const inputBody: any = {
           text: (payload as any).text || finalPrompt,
+          voice: (payload as any).voice || 'english', // Default to 'english' per API schema
         };
-        if ((payload as any).voice) inputBody.voice = (payload as any).voice;
-        if ((payload as any).stability != null) inputBody.stability = (payload as any).stability;
-        if ((payload as any).similarity_boost != null) inputBody.similarity_boost = (payload as any).similarity_boost;
-        if ((payload as any).style != null) inputBody.style = (payload as any).style;
-        if ((payload as any).speed != null) inputBody.speed = (payload as any).speed;
-        if ((payload as any).timestamps != null) inputBody.timestamps = (payload as any).timestamps;
-        if ((payload as any).language_code) inputBody.language_code = (payload as any).language_code;
-        if ((payload as any).output_format) inputBody.output_format = (payload as any).output_format;
-        if ((payload as any).sync_mode != null) inputBody.sync_mode = (payload as any).sync_mode;
-        if ((payload as any).seed != null) inputBody.seed = (payload as any).seed;
+        // New API schema parameters
+        if ((payload as any).custom_audio_language) inputBody.custom_audio_language = (payload as any).custom_audio_language;
+        if ((payload as any).exaggeration != null) inputBody.exaggeration = Number((payload as any).exaggeration);
+        if ((payload as any).temperature != null) inputBody.temperature = Number((payload as any).temperature);
+        if ((payload as any).cfg_scale != null) inputBody.cfg_scale = Number((payload as any).cfg_scale);
 
         console.log('[falService.generate] Calling ElevenLabs TTS model:', { ttsEndpoint, input: { ...inputBody, text: String(inputBody.text).slice(0, 120) + (String(inputBody.text).length > 120 ? '...' : '') } });
         const result = await fal.subscribe(ttsEndpoint as any, ({ input: inputBody, logs: true } as unknown) as any);
@@ -324,12 +399,21 @@ async function generate(
         }
 
         const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+        
+        // Store in multiple formats for frontend compatibility
+        const audiosArray = [audioObj];
+        const imagesArray = [{ ...audioObj, type: 'audio' }];
 
-        await generationHistoryRepository.update(uid, historyId, { status: 'completed', audio: audioObj } as any);
-        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj } as any);
+        await generationHistoryRepository.update(uid, historyId, { 
+          status: 'completed', 
+          audio: audioObj,
+          audios: audiosArray,
+          images: imagesArray
+        } as any);
+        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj, audios: audiosArray } as any);
         await syncToMirror(uid, historyId);
 
-        return { audio: audioObj, historyId, model: ttsEndpoint, status: 'completed' } as any;
+        return { audio: audioObj, audios: audiosArray, historyId, model: ttsEndpoint, status: 'completed' } as any;
       } catch (err: any) {
         const message = err?.message || 'Failed to generate audio with FAL ElevenLabs TTS API';
         try {
@@ -369,12 +453,19 @@ async function generate(
         }
 
         const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+        const audiosArray = [audioObj];
+        const imagesArray = [{ ...audioObj, type: 'audio' }];
 
-        await generationHistoryRepository.update(uid, historyId, { status: 'completed', audio: audioObj } as any);
-        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj } as any);
+        await generationHistoryRepository.update(uid, historyId, {
+          status: 'completed',
+          audio: audioObj,
+          audios: audiosArray,
+          images: imagesArray
+        } as any);
+        await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj, audios: audiosArray } as any);
         await syncToMirror(uid, historyId);
 
-        return { audio: audioObj, historyId, model: dialogueEndpoint, status: 'completed' } as any;
+        return { audio: audioObj, audios: audiosArray, images: imagesArray, historyId, model: dialogueEndpoint, status: 'completed' } as any;
       } catch (err: any) {
         const message = err?.message || 'Failed to generate audio with FAL ElevenLabs API';
         try {

@@ -9,11 +9,11 @@ import { logger } from '../utils/logger';
 
 async function generate(req: Request, res: Response, next: NextFunction) {
   try {
-  const { prompt, userPrompt, model, n, frameSize, style, uploadedImages, output_format , generationType , tags , nsfw , visibility , isPublic , aspect_ratio , num_images, resolution, seed, negative_prompt, characterName } = req.body || {};
+    const payload = req.body || {};
     const uid = req.uid;
     const ctx = (req as any).context || {};
     logger.info({ uid, ctx }, '[CREDITS][FAL] Enter generate with context');
-  const result = await falService.generate(uid, { num_images, prompt, userPrompt, model, n, frameSize, style, uploadedImages, output_format , generationType , tags , nsfw , visibility , isPublic , aspect_ratio, resolution, seed, negative_prompt, characterName });
+    const result = await falService.generate(uid, payload);
     const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'generate');
     res.json(formatApiResponse('success', 'Images generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
   } catch (err) {
