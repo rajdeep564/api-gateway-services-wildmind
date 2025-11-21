@@ -109,6 +109,17 @@ async function syncToMirror(
       return { success: false, error: 'Mirror document does not exist' };
     }
 
+    // Check if mirror already has optimized images - skip if already optimized
+    const mirrorData = mirrorDoc.data();
+    if (mirrorData?.images && Array.isArray(mirrorData.images) && mirrorData.images.length > 0) {
+      const firstMirrorImage = mirrorData.images[0];
+      // Check if mirror already has optimized fields (thumbnailUrl, avifUrl, or optimized flag)
+      if (firstMirrorImage && typeof firstMirrorImage === 'object' && 
+          (firstMirrorImage.thumbnailUrl || firstMirrorImage.avifUrl || firstMirrorImage.optimized)) {
+        return { success: false, error: 'Already optimized in mirror' };
+      }
+    }
+
     // Update only the images field with optimized URLs
     await mirrorRef.update({
       images: data.images,
@@ -177,7 +188,9 @@ async function processBatch(
       if (result.success) {
         stats.successful = (stats.successful || 0) + 1;
       } else {
-        if (result.error === 'No optimized images' || result.error === 'Mirror document does not exist') {
+        if (result.error === 'No optimized images' || 
+            result.error === 'Mirror document does not exist' ||
+            result.error === 'Already optimized in mirror') {
           stats.skipped = (stats.skipped || 0) + 1;
         } else {
           stats.failed = (stats.failed || 0) + 1;
