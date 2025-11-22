@@ -6,6 +6,8 @@ import {falService, falQueueService} from '../services/falService';
 import { creditsRepository } from '../repository/creditsRepository';
 import { postSuccessDebit } from '../utils/creditDebit';
 import { logger } from '../utils/logger';
+import { uploadDataUriToZata } from '../utils/storage/zataUpload';
+import { authRepository } from '../repository/auth/authRepository';
 
 async function generate(req: Request, res: Response, next: NextFunction) {
   try {
@@ -281,6 +283,37 @@ export const falController = {
       const result = await falQueueService.queueResult(uid, model, requestId);
       res.json(formatApiResponse('success', 'Result', result));
     } catch (err) { next(err); }
+  },
+  async uploadVoice(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const { audioData, fileName } = req.body;
+      
+      if (!audioData || typeof audioData !== 'string') {
+        return res.status(400).json(formatApiResponse('error', 'audioData is required and must be a data URI', null));
+      }
+      
+      if (!audioData.startsWith('data:audio/')) {
+        return res.status(400).json(formatApiResponse('error', 'Invalid audio data URI', null));
+      }
+      
+      // Get user info for storage path
+      const creator = await authRepository.getUserById(uid);
+      const username = creator?.username || uid;
+      const keyPrefix = `users/${username}/inputaudio`;
+      const finalFileName = fileName || `custom-voice-${Date.now()}`;
+      
+      // Upload to Zata storage
+      const stored = await uploadDataUriToZata({
+        dataUri: audioData,
+        keyPrefix,
+        fileName: finalFileName,
+      });
+      
+      res.json(formatApiResponse('success', 'Voice file uploaded', { url: stored.publicUrl, storagePath: stored.key }));
+    } catch (err) {
+      next(err);
+    }
   }
 }
 

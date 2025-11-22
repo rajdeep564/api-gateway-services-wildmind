@@ -115,6 +115,13 @@ router.post(
   falController.generate as any
 );
 
+// Upload voice file for custom voice (Chatterbox TTS)
+router.post(
+  "/upload-voice",
+  requireAuth,
+  (falController as any).uploadVoice
+);
+
 // Image utilities
 router.post(
   "/image2svg",
