@@ -894,8 +894,289 @@ export async function upscaleForCanvas(
   }
 }
 
+/**
+ * Remove background from image for Canvas - uses 851-labs/background-remover via Replicate
+ */
+export async function removeBgForCanvas(
+  uid: string,
+  request: {
+    image: string;
+    model?: string;
+    backgroundType?: string;
+    scaleValue?: number;
+    projectId: string;
+    elementId?: string;
+  }
+): Promise<{ url: string; storagePath: string; mediaId?: string; generationId?: string }> {
+  if (!request.image) {
+    throw new ApiError('Image is required', 400);
+  }
+  if (!request.projectId) {
+    throw new ApiError('Project ID is required', 400);
+  }
+
+  console.log('[removeBgForCanvas] Request received:', {
+    userId: uid,
+    model: request.model,
+    backgroundType: request.backgroundType,
+    scaleValue: request.scaleValue,
+    projectId: request.projectId,
+    hasImage: !!request.image,
+  });
+
+  try {
+    // Map frontend model name to Replicate model
+    const replicateModel = request.model === '851-labs/background-remover' 
+      ? '851-labs/background-remover'
+      : '851-labs/background-remover'; // Default to 851-labs/background-remover
+
+    // Map backgroundType from UI to Replicate format
+    // UI options: 'green', 'rgba (transparent)', 'white', 'blue', 'overlay', 'map'
+    // Replicate expects: 'green', 'transparent', 'white', 'blue', 'overlay', 'map'
+    let backgroundType = request.backgroundType || 'transparent';
+    if (backgroundType === 'rgba (transparent)') {
+      backgroundType = 'transparent';
+    }
+
+    // Map scaleValue (0.0-1.0) to threshold if needed
+    // For 851-labs/background-remover, threshold is optional (0-1 range)
+    const threshold = request.scaleValue !== undefined ? request.scaleValue : undefined;
+
+    // Call Replicate remove background service
+    const result = await replicateService.removeBackground(uid, {
+      image: request.image,
+      model: replicateModel,
+      format: 'png',
+      background_type: backgroundType,
+      threshold: threshold,
+      isPublic: false,
+    });
+
+    console.log('[removeBgForCanvas] Replicate remove bg completed:', {
+      hasImages: !!result.images,
+      imageCount: result.images?.length || 0,
+      hasHistoryId: !!result.historyId,
+    });
+
+    // Extract the first image from the result
+    const firstImage = result.images && Array.isArray(result.images) && result.images.length > 0
+      ? result.images[0]
+      : null;
+
+    if (!firstImage || !firstImage.url) {
+      throw new ApiError('No image returned from service', 500);
+    }
+
+    // Attach canvas project linkage
+    try {
+      if (result?.historyId && request.projectId) {
+        await generationHistoryRepository.update(uid, result.historyId, { 
+          canvasProjectId: request.projectId 
+        } as any);
+      }
+    } catch (e) {
+      console.warn('[removeBgForCanvas] Failed to tag history with canvasProjectId', e);
+    }
+
+    return {
+      url: firstImage.url,
+      storagePath: firstImage.storagePath || firstImage.originalUrl || firstImage.url,
+      mediaId: firstImage.id,
+      generationId: result.historyId,
+    };
+  } catch (error: any) {
+    console.error('[removeBgForCanvas] Service error:', {
+      message: error.message,
+      statusCode: error.statusCode,
+      stack: error.stack,
+      model: request.model,
+      backgroundType: request.backgroundType,
+    });
+    
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    
+    throw new ApiError(
+      error.message || 'Background removal failed',
+      error.statusCode || error.status || 500
+    );
+  }
+}
+
+/**
+ * Vectorize image for Canvas - uses Recraft Vectorize via FAL
+ */
+export async function vectorizeForCanvas(
+  uid: string,
+  request: {
+    image: string;
+    mode?: string;
+    projectId: string;
+    elementId?: string;
+  }
+): Promise<{ url: string; storagePath: string; mediaId?: string; generationId?: string }> {
+  if (!request.image) {
+    throw new ApiError('Image is required', 400);
+  }
+  if (!request.projectId) {
+    throw new ApiError('Project ID is required', 400);
+  }
+
+  console.log('[vectorizeForCanvas] Request received:', {
+    userId: uid,
+    mode: request.mode,
+    projectId: request.projectId,
+    hasImage: !!request.image,
+    imageUrl: request.image?.substring(0, 100), // Log first 100 chars of URL
+  });
+
+  try {
+    // Ensure the image is accessible by uploading it to Zata if needed
+    // This handles cases where the URL might have CORS restrictions or require authentication
+    let imageUrl = request.image;
+    
+    // Check if the image is already an SVG (can't vectorize an SVG)
+    const isSvg = imageUrl.toLowerCase().endsWith('.svg') || 
+                  imageUrl.toLowerCase().includes('.svg') ||
+                  imageUrl.toLowerCase().includes('vectorized');
+    
+    if (isSvg) {
+      throw new ApiError('Cannot vectorize an SVG file. Please use a raster image (PNG, JPG, etc.)', 400);
+    }
+    
+    // Check if it's already a Zata URL (starts with the Zata domain)
+    const isZataUrl = imageUrl.includes('zata.ai') || imageUrl.includes('idr01.zata.ai');
+    
+    // If it's not a Zata URL, upload it to ensure it's publicly accessible
+    if (!isZataUrl) {
+      try {
+        console.log('[vectorizeForCanvas] Uploading image to Zata for accessibility');
+        const creator = await authRepository.getUserById(uid);
+        const username = creator?.username || uid;
+        const canvasKeyPrefix = `users/${username}/canvas/${request.projectId}`;
+        
+        // Upload the image to Zata to ensure it's accessible
+        const zataResult = await uploadFromUrlToZata({
+          sourceUrl: imageUrl,
+          keyPrefix: canvasKeyPrefix,
+          fileName: `vectorize-source-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        });
+        
+        imageUrl = zataResult.publicUrl;
+        console.log('[vectorizeForCanvas] Image uploaded to Zata:', {
+          originalUrl: request.image?.substring(0, 100),
+          zataUrl: imageUrl?.substring(0, 100),
+        });
+      } catch (uploadError: any) {
+        console.warn('[vectorizeForCanvas] Failed to upload image to Zata, using original URL:', uploadError.message);
+        // Continue with original URL - let FAL API try to download it
+      }
+    }
+    
+    // Handle "Detailed" mode: First process through Google Nano Banana, then vectorize
+    if (request.mode === 'Detailed') {
+      console.log('[vectorizeForCanvas] Detailed mode: Processing through Google Nano Banana first');
+      
+      // Step 1: Process image through Google Nano Banana with image-to-image
+      const nanoBananaPrompt = 'create a simple flat 2d vector style image, minimal colours';
+      const creator = await authRepository.getUserById(uid);
+      const username = creator?.username || uid;
+      const canvasKeyPrefix = `users/${username}/canvas/${request.projectId}`;
+      
+      const nanoBananaResult = await falService.generate(uid, {
+        prompt: nanoBananaPrompt,
+        model: 'gemini-25-flash-image', // Google Nano Banana
+        uploadedImages: [imageUrl], // Image-to-image generation
+        aspect_ratio: '1:1', // Default aspect ratio
+        num_images: 1,
+        storageKeyPrefixOverride: canvasKeyPrefix,
+        forceSyncUpload: true,
+        isPublic: false,
+      });
+      
+      console.log('[vectorizeForCanvas] Google Nano Banana completed:', {
+        hasImages: !!nanoBananaResult.images,
+        imageCount: nanoBananaResult.images?.length || 0,
+      });
+      
+      // Extract the processed image from Nano Banana result
+      const processedImage = nanoBananaResult.images && Array.isArray(nanoBananaResult.images) && nanoBananaResult.images.length > 0
+        ? nanoBananaResult.images[0]
+        : null;
+      
+      if (!processedImage || !processedImage.url) {
+        throw new ApiError('No image returned from Google Nano Banana processing', 500);
+      }
+      
+      // Use the processed image URL for vectorization
+      imageUrl = processedImage.url;
+      console.log('[vectorizeForCanvas] Using processed image for vectorization:', {
+        processedImageUrl: imageUrl?.substring(0, 100),
+      });
+    }
+    
+    // Step 2: Call FAL Recraft Vectorize service with the (possibly processed) image
+    const result = await falService.recraftVectorize(uid, {
+      image: imageUrl,
+      isPublic: false,
+    });
+
+    console.log('[vectorizeForCanvas] Recraft vectorize completed:', {
+      hasImages: !!result.images,
+      imageCount: result.images?.length || 0,
+      hasHistoryId: !!result.historyId,
+    });
+
+    // Extract the first image from the result
+    const firstImage = result.images && Array.isArray(result.images) && result.images.length > 0
+      ? result.images[0]
+      : null;
+
+    if (!firstImage || !firstImage.url) {
+      throw new ApiError('No image returned from service', 500);
+    }
+
+    // Attach canvas project linkage
+    try {
+      if (result?.historyId && request.projectId) {
+        await generationHistoryRepository.update(uid, result.historyId, { 
+          canvasProjectId: request.projectId 
+        } as any);
+      }
+    } catch (e) {
+      console.warn('[vectorizeForCanvas] Failed to tag history with canvasProjectId', e);
+    }
+
+    return {
+      url: firstImage.url,
+      storagePath: (firstImage as any).storagePath || firstImage.originalUrl || firstImage.url,
+      mediaId: firstImage.id,
+      generationId: result.historyId,
+    };
+  } catch (error: any) {
+    console.error('[vectorizeForCanvas] Service error:', {
+      message: error.message,
+      statusCode: error.statusCode,
+      stack: error.stack,
+      mode: request.mode,
+    });
+    
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    
+    throw new ApiError(
+      error.message || 'Vectorization failed',
+      error.statusCode || error.status || 500
+    );
+  }
+}
+
 export const generateService = {
   generateForCanvas,
   generateVideoForCanvas,
   upscaleForCanvas,
+  removeBgForCanvas,
+  vectorizeForCanvas,
 };

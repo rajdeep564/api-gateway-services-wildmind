@@ -223,3 +223,127 @@ export async function upscaleForCanvas(req: Request, res: Response) {
   }
 }
 
+export async function removeBgForCanvas(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      console.error('[removeBgForCanvas] Missing userId');
+      return res.status(401).json(
+        formatApiResponse('error', 'Unauthorized', null)
+      );
+    }
+
+    const { image, model, backgroundType, scaleValue, meta } = req.body;
+
+    console.log('[removeBgForCanvas] Request received:', {
+      userId,
+      model,
+      backgroundType,
+      scaleValue,
+      hasImage: !!image,
+      hasMeta: !!meta,
+      projectId: meta?.projectId,
+    });
+
+    if (!image) {
+      console.error('[removeBgForCanvas] Missing image');
+      return res.status(400).json(
+        formatApiResponse('error', 'Image is required', null)
+      );
+    }
+
+    if (!meta || meta.source !== 'canvas' || !meta.projectId) {
+      console.error('[removeBgForCanvas] Invalid meta:', meta);
+      return res.status(400).json(
+        formatApiResponse('error', 'Invalid request: meta.source must be "canvas" and meta.projectId is required', null)
+      );
+    }
+
+    const result = await generateService.removeBgForCanvas(userId, {
+      image,
+      model: model || '851-labs/background-remover',
+      backgroundType: backgroundType || 'rgba (transparent)',
+      scaleValue: scaleValue !== undefined ? scaleValue : 0.5,
+      projectId: meta.projectId,
+      elementId: meta.elementId,
+    });
+
+    console.log('[removeBgForCanvas] Remove bg completed:', {
+      hasUrl: !!result.url,
+    });
+
+    return res.json(formatApiResponse('success', 'Background removal completed', result));
+  } catch (error: any) {
+    console.error('[removeBgForCanvas] Error:', error);
+    console.error('[removeBgForCanvas] Error stack:', error.stack);
+    const statusCode = error.statusCode || error.status || 500;
+    const message = error.message || 'Failed to remove background';
+    
+    if (!res.headersSent) {
+      return res.status(statusCode).json(
+        formatApiResponse('error', message, null)
+      );
+    }
+  }
+}
+
+export async function vectorizeForCanvas(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      console.error('[vectorizeForCanvas] Missing userId');
+      return res.status(401).json(
+        formatApiResponse('error', 'Unauthorized', null)
+      );
+    }
+
+    const { image, mode, meta } = req.body;
+
+    console.log('[vectorizeForCanvas] Request received:', {
+      userId,
+      mode,
+      hasImage: !!image,
+      hasMeta: !!meta,
+      projectId: meta?.projectId,
+    });
+
+    if (!image) {
+      console.error('[vectorizeForCanvas] Missing image');
+      return res.status(400).json(
+        formatApiResponse('error', 'Image is required', null)
+      );
+    }
+
+    if (!meta || meta.source !== 'canvas' || !meta.projectId) {
+      console.error('[vectorizeForCanvas] Invalid meta:', meta);
+      return res.status(400).json(
+        formatApiResponse('error', 'Invalid request: meta.source must be "canvas" and meta.projectId is required', null)
+      );
+    }
+
+    const result = await generateService.vectorizeForCanvas(userId, {
+      image,
+      mode: mode || 'simple',
+      projectId: meta.projectId,
+      elementId: meta.elementId,
+    });
+
+    console.log('[vectorizeForCanvas] Vectorize completed:', {
+      hasUrl: !!result.url,
+    });
+
+    return res.json(formatApiResponse('success', 'Vectorization completed', result));
+  } catch (error: any) {
+    console.error('[vectorizeForCanvas] Error:', error);
+    console.error('[vectorizeForCanvas] Error stack:', error.stack);
+    const statusCode = error.statusCode || error.status || 500;
+    const message = error.message || 'Failed to vectorize image';
+    
+    if (!res.headersSent) {
+      return res.status(statusCode).json(
+        formatApiResponse('error', message, null)
+      );
+    }
+  }
+}
+
