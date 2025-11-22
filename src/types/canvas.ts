@@ -58,7 +58,7 @@ export interface CanvasOp {
 export interface CanvasElement {
   id: string;
   projectId: string;
-  type: 'image' | 'video' | 'text' | 'shape' | 'group' | 'connector' | '3d';
+  type: 'image' | 'video' | 'text' | 'shape' | 'group' | 'connector' | '3d' | 'image-generator' | 'video-generator' | 'music-generator' | 'text-generator' | 'upscale-plugin';
   x: number;
   y: number;
   width?: number;
