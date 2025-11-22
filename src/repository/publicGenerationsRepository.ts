@@ -449,5 +449,5 @@ export async function getRandomHighScoredImages(count: number = 20): Promise<Arr
 export const publicGenerationsRepository = {
   listPublic,
   getPublicById,
-  getRandomHighScoredImage: getRandomHighScoredImages,
+  getRandomHighScoredImages,
 };

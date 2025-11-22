@@ -52,7 +52,7 @@ async function getRandomHighScoredImage(req: Request, res: Response, next: NextF
 		const count = parseInt(req.query.count as string) || 20;
 		const limitCount = Math.min(Math.max(count, 1), 50); // Limit between 1 and 50
 		
-		const results = await publicGenerationsRepository.getRandomHighScoredImage(limitCount);
+		const results = await publicGenerationsRepository.getRandomHighScoredImages(limitCount);
 		if (results.length === 0) {
 			return res.status(404).json(formatApiResponse('error', 'No high-scored images found', []));
 		}
