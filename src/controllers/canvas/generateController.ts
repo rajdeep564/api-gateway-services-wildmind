@@ -161,3 +161,65 @@ export async function generateForCanvas(req: Request, res: Response) {
   }
 }
 
+export async function upscaleForCanvas(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      console.error('[upscaleForCanvas] Missing userId');
+      return res.status(401).json(
+        formatApiResponse('error', 'Unauthorized', null)
+      );
+    }
+
+    const { image, model, scale, meta } = req.body;
+
+    console.log('[upscaleForCanvas] Request received:', {
+      userId,
+      model,
+      hasImage: !!image,
+      scale,
+      hasMeta: !!meta,
+      projectId: meta?.projectId,
+    });
+
+    if (!image) {
+      console.error('[upscaleForCanvas] Missing image');
+      return res.status(400).json(
+        formatApiResponse('error', 'Image is required', null)
+      );
+    }
+
+    if (!meta || meta.source !== 'canvas' || !meta.projectId) {
+      console.error('[upscaleForCanvas] Invalid meta:', meta);
+      return res.status(400).json(
+        formatApiResponse('error', 'Invalid request: meta.source must be "canvas" and meta.projectId is required', null)
+      );
+    }
+
+    const result = await generateService.upscaleForCanvas(userId, {
+      image,
+      model: model || 'Crystal Upscaler',
+      scale: scale || 2,
+      projectId: meta.projectId,
+      elementId: meta.elementId,
+    });
+
+    console.log('[upscaleForCanvas] Upscale completed:', {
+      hasUrl: !!result.url,
+    });
+
+    return res.json(formatApiResponse('success', 'Upscale completed', result));
+  } catch (error: any) {
+    console.error('[upscaleForCanvas] Error:', error);
+    console.error('[upscaleForCanvas] Error stack:', error.stack);
+    const statusCode = error.statusCode || error.status || 500;
+    const message = error.message || 'Failed to upscale image';
+    
+    if (!res.headersSent) {
+      return res.status(statusCode).json(
+        formatApiResponse('error', message, null)
+      );
+    }
+  }
+}
+

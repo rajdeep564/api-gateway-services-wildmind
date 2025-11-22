@@ -9,18 +9,23 @@ import { URL } from 'url';
 
 export type GeneratorOverlay = {
   id: string;
-  type: 'image' | 'video' | 'music';
+  type: 'image' | 'video' | 'music' | 'upscale';
   x: number;
   y: number;
   generatedImageUrl?: string | null;
   generatedVideoUrl?: string | null;
   generatedMusicUrl?: string | null;
+  upscaledImageUrl?: string | null;
+  sourceImageUrl?: string | null;
+  localUpscaledImageUrl?: string | null;
   frameWidth?: number;
   frameHeight?: number;
   model?: string;
   frame?: string;
   aspectRatio?: string;
   prompt?: string;
+  scale?: number;
+  isUpscaling?: boolean;
 };
 
 export type MediaElement = {

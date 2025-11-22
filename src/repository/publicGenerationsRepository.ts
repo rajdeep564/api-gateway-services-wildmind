@@ -60,7 +60,7 @@ export async function listPublic(params: {
   // ========== DATABASE-LEVEL FILTERING FOR OPTIMAL PERFORMANCE ==========
   // All filtering is done at database level - NO in-memory filtering
   
-  const HIGH_AESTHETIC_SCORE = 9.5; // Priority threshold for ArtStation
+  const HIGH_AESTHETIC_SCORE = 9.0; // Priority threshold for ArtStation
   
   // Build base query with required filters
   let baseQuery = col
@@ -108,15 +108,15 @@ export async function listPublic(params: {
   }
   
   // AESTHETIC SCORE PRIORITIZATION FOR ARTSTATION:
-  // 1. First fetch items with aestheticScore >= 9.5 (sorted by createdAt desc - latest first)
-  // 2. If not enough results, fetch items with aestheticScore < 9.5 (sorted by createdAt desc - latest first)
+  // 1. First fetch items with aestheticScore >= 9.0 (sorted by createdAt desc - latest first)
+  // 2. If not enough results, fetch items with aestheticScore < 9.0 (sorted by createdAt desc - latest first)
   // 3. Combine with high-scored items first, then lower scored items
   // 4. Also include text-to-music items without score requirement (only if not already filtered)
   
-  // Query 1: High-scored items (>= 9.5)
+  // Query 1: High-scored items (>= 9.0)
   let queryHigh = baseQuery.where('aestheticScore', '>=', HIGH_AESTHETIC_SCORE);
   
-  // Query 2: Lower-scored items (< 9.5) - only if we need to fill
+  // Query 2: Lower-scored items (< 9.0) - only if we need to fill
   let queryLow: FirebaseFirestore.Query | null = null;
   
   // Query 3: Music items without score requirement (only if not already filtered)
@@ -289,25 +289,25 @@ export async function getPublicById(generationId: string): Promise<GenerationHis
 
 /**
  * Get multiple random high-scored images from the public feed
- * Returns up to 20 images with aestheticScore >= 9.5
+ * Returns up to 20 images with aestheticScore >= 9.0
  * 
  * IMPORTANT: 
  * - Every call returns DIFFERENT random images (shuffled)
- * - Only images with aestheticScore >= 9.5 are included
+ * - Only images with aestheticScore >= 9.0 are included
  * - Uses optimized avifUrl for faster loading
  */
 export async function getRandomHighScoredImages(count: number = 20): Promise<Array<{ imageUrl: string; prompt?: string; generationId?: string; creator?: { username?: string; photoURL?: string } }>> {
   try {
     const col = adminDb.collection('generations');
     
-    // Query for public items with aestheticScore >= 9.5
+    // Query for public items with aestheticScore >= 9.0
     // Note: Firestore doesn't support >= queries on aestheticScore directly if it's nested in images array
-    // So we'll fetch items with document-level aestheticScore >= 9.5 OR check image-level scores
-    // This ensures ONLY images with score >= 9.5 are returned
+    // So we'll fetch items with document-level aestheticScore >= 9.0 OR check image-level scores
+    // This ensures ONLY images with score >= 9.0 are returned
     let q = col
       .where('isPublic', '==', true)
       .where('isDeleted', '!=', true)
-      .where('aestheticScore', '>=', 9.5)
+      .where('aestheticScore', '>=', 9.0)
       .limit(100); // Fetch up to 100 candidates for randomization
     
     const snap = await q.get();
@@ -337,7 +337,7 @@ export async function getRandomHighScoredImages(count: number = 20): Promise<Arr
                           (typeof img?.aesthetic?.score === 'number' ? img.aesthetic.score : null);
           const score = imgScore || docScore;
           
-          if (score !== null && score >= 9.5) {
+          if (score !== null && score >= 9.0) {
             candidates.push({
               item: normalizePublicItem(doc.id, data),
               image: img
@@ -389,10 +389,10 @@ export async function getRandomHighScoredImages(count: number = 20): Promise<Arr
       const images = Array.isArray(data.images) ? data.images : [];
       if (images.length === 0) return;
       
-      // Document-level aestheticScore (already >= 9.5 from query)
+      // Document-level aestheticScore (already >= 9.0 from query)
       const docScore = typeof data.aestheticScore === 'number' ? data.aestheticScore : null;
       
-      // Prefer images with high scores, but accept document-level score >= 9.5
+      // Prefer images with high scores, but accept document-level score >= 9.0
       for (const img of images) {
         const imgScore = typeof img?.aestheticScore === 'number' ? img.aestheticScore : 
                         (typeof img?.aesthetic?.score === 'number' ? img.aesthetic.score : null);
@@ -400,8 +400,8 @@ export async function getRandomHighScoredImages(count: number = 20): Promise<Arr
         // Use image score if available, otherwise fall back to document score
         const score = imgScore !== null ? imgScore : docScore;
         
-        // If score >= 9.5, include it
-        if (score !== null && score >= 9.5) {
+        // If score >= 9.0, include it
+        if (score !== null && score >= 9.0) {
           candidates.push({
             item: normalizePublicItem(doc.id, data),
             image: img
