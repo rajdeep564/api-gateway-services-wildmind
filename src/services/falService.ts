@@ -270,7 +270,31 @@ async function generate(
       const inputBody: any = {
         text: (payload as any).text || finalPrompt,
       };
-      if ((payload as any).voice) inputBody.voice = (payload as any).voice;
+      
+      // Handle custom voice URL: upload to Zata storage if voice is a URL
+      let voiceValue = (payload as any).voice;
+      if (voiceValue && typeof voiceValue === 'string' && (voiceValue.startsWith('http://') || voiceValue.startsWith('https://'))) {
+        // This is a custom voice URL - upload it to Zata storage
+        const username = creator?.username || uid;
+        const voiceFileName = (payload as any).voice_file_name || `custom-voice-${Date.now()}`;
+        const keyPrefix = `users/${username}/inputaudio`;
+        
+        try {
+          console.log('[falService.generate] Uploading custom voice file to Zata:', { originalUrl: voiceValue, fileName: voiceFileName });
+          const voiceStored = await uploadFromUrlToZata({
+            sourceUrl: voiceValue,
+            keyPrefix,
+            fileName: voiceFileName,
+          });
+          voiceValue = voiceStored.publicUrl;
+          console.log('[falService.generate] Custom voice file uploaded successfully:', { storedUrl: voiceValue, storagePath: voiceStored.key });
+        } catch (uploadErr: any) {
+          console.error('[falService.generate] Failed to upload custom voice file to Zata, using original URL:', uploadErr?.message || uploadErr);
+          // Continue with original URL if upload fails
+        }
+      }
+      
+      if (voiceValue) inputBody.voice = voiceValue;
       if ((payload as any).custom_audio_language) inputBody.custom_audio_language = (payload as any).custom_audio_language;
       if ((payload as any).exaggeration != null) inputBody.exaggeration = (payload as any).exaggeration;
       if ((payload as any).temperature != null) inputBody.temperature = (payload as any).temperature;

@@ -102,7 +102,8 @@ export const validateFalMayaTts = [
 export const validateFalChatterboxMultilingual = [
   body('text').isString().notEmpty().isLength({ max: 300 }).withMessage('text is required and must be <= 300 characters'),
   body('voice').optional().isString().withMessage('voice must be a string'),
-  body('custom_audio_language').optional().isString().withMessage('custom_audio_language must be a valid enum string'),
+  body('custom_audio_language').optional().isIn(['english', 'arabic', 'danish', 'german', 'greek', 'spanish', 'finnish', 'french', 'hebrew', 'hindi', 'italian', 'japanese', 'korean', 'malay', 'dutch', 'norwegian', 'polish', 'portuguese', 'russian', 'swedish', 'swahili', 'turkish', 'chinese']).withMessage('custom_audio_language must be one of the allowed language codes'),
+  body('voice_file_name').optional().isString().withMessage('voice_file_name must be a string if provided'),
   body('exaggeration').optional().isFloat({ min: 0.25, max: 2.0 }).withMessage('exaggeration must be between 0.25 and 2.0'),
   body('temperature').optional().isFloat({ min: 0.05, max: 5.0 }).withMessage('temperature must be between 0.05 and 5.0'),
   body('cfg_scale').optional().isFloat({ min: 0, max: 1 }).withMessage('cfg_scale must be between 0 and 1'),
@@ -111,6 +112,16 @@ export const validateFalChatterboxMultilingual = [
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    
+    // If voice is a custom audio URL (starts with http:// or https://), require custom_audio_language
+    const voice = req.body?.voice;
+    const customAudioLanguage = req.body?.custom_audio_language;
+    if (voice && typeof voice === 'string' && (voice.startsWith('http://') || voice.startsWith('https://'))) {
+      if (!customAudioLanguage) {
+        return next(new ApiError('custom_audio_language is required when voice is a custom audio URL', 400));
+      }
+    }
+    
     next();
   }
 ];
