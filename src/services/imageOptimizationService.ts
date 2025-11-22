@@ -3,6 +3,7 @@ import axios from 'axios';
 import { uploadBufferToZata, getZataSignedGetUrl } from '../utils/storage/zataUpload';
 import { adminDb } from '../config/firebaseAdmin';
 import { logger } from '../utils/logger';
+import { generationsMirrorRepository } from '../repository/generationsMirrorRepository';
 
 export interface OptimizedImageResult {
   originalUrl: string;
@@ -360,17 +361,42 @@ export async function optimizeExistingImage(
 
     const optimized = await optimizeImage(imageUrl, basePath, filename);
 
-    // Update Firestore with optimized URLs (AVIF only)
+    // Update Firestore with optimized URLs while preserving all existing fields
+    // This ensures we don't lose id, originalUrl, storagePath, aestheticScore, etc.
+    const existingImage = typeof image === 'object' && image !== null ? image : {};
+    
+    // For legacy string format, create a proper object structure
+    // Ensure id exists (required by ArtStation and other consumers)
+    const imageId = existingImage.id || `img-${historyId}-${imageIndex}-${Date.now()}`;
+    
     images[imageIndex] = {
-      url: imageUrl,
+      ...existingImage, // Preserve all existing fields (id, originalUrl, storagePath, aestheticScore, etc.)
+      id: imageId, // Ensure id is always present
+      url: imageUrl, // Ensure url is set
+      originalUrl: existingImage.originalUrl || imageUrl, // Preserve or set originalUrl
       avifUrl: optimized.avifUrl,      // Primary and only format
       thumbnailUrl: optimized.thumbnailUrl,
       blurDataUrl: optimized.blurDataUrl,
       optimized: true,
       optimizedAt: Date.now(),
+      // Preserve width/height if they exist, or add from optimization
+      width: existingImage.width || optimized.width,
+      height: existingImage.height || optimized.height,
+      size: existingImage.size || optimized.size,
     };
 
     await docRef.update({ images });
+
+    // If this item is public, also update the public feed mirror
+    if (data?.isPublic === true) {
+      try {
+        await generationsMirrorRepository.updateFromHistory(uid, historyId, { images });
+        console.log('[ImageOptimization] Successfully updated public feed mirror');
+      } catch (mirrorError: any) {
+        // Log but don't fail - mirror update is non-critical
+        console.warn('[ImageOptimization] Failed to update public feed mirror (non-critical):', mirrorError?.message || mirrorError);
+      }
+    }
 
     console.log('[ImageOptimization] Successfully optimized and updated image');
   } catch (error) {

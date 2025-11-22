@@ -48,27 +48,33 @@ async function getPublicById(req: Request, res: Response, next: NextFunction) {
 
 async function getRandomHighScoredImage(req: Request, res: Response, next: NextFunction) {
 	try {
-		const result = await publicGenerationsRepository.getRandomHighScoredImage();
-		if (!result) {
-			return res.status(404).json(formatApiResponse('error', 'No high-scored images found', {}));
+		// Get count from query parameter, default to 20
+		const count = parseInt(req.query.count as string) || 20;
+		const limitCount = Math.min(Math.max(count, 1), 50); // Limit between 1 and 50
+		
+		const results = await publicGenerationsRepository.getRandomHighScoredImages(limitCount);
+		if (results.length === 0) {
+			return res.status(404).json(formatApiResponse('error', 'No high-scored images found', []));
 		}
 		
-		// Enrich creator info if missing photoURL
-		if (result.creator && result.generationId) {
-			const item = await publicGenerationsRepository.getPublicById(result.generationId);
-			if (item?.createdBy?.uid && !result.creator.photoURL) {
-				const { authRepository } = await import('../repository/auth/authRepository');
-				const user = await authRepository.getUserById(item.createdBy.uid);
-				if (user?.photoURL) {
-					result.creator.photoURL = user.photoURL;
-				}
-				if (user?.username && !result.creator.username) {
-					result.creator.username = user.username;
+		// Enrich creator info if missing photoURL for all results
+		for (const result of results) {
+			if (result.creator && result.generationId) {
+				const item = await publicGenerationsRepository.getPublicById(result.generationId);
+				if (item?.createdBy?.uid && !result.creator.photoURL) {
+					const { authRepository } = await import('../repository/auth/authRepository');
+					const user = await authRepository.getUserById(item.createdBy.uid);
+					if (user?.photoURL) {
+						result.creator.photoURL = user.photoURL;
+					}
+					if (user?.username && !result.creator.username) {
+						result.creator.username = user.username;
+					}
 				}
 			}
 		}
 		
-		return res.json(formatApiResponse('success', 'OK', result));
+		return res.json(formatApiResponse('success', 'OK', results));
 	} catch (err) {
 		return next(err);
 	}

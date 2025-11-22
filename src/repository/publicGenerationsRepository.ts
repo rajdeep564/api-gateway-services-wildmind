@@ -60,7 +60,7 @@ export async function listPublic(params: {
   // ========== DATABASE-LEVEL FILTERING FOR OPTIMAL PERFORMANCE ==========
   // All filtering is done at database level - NO in-memory filtering
   
-  const MIN_AESTHETIC_SCORE = 8.5;
+  const HIGH_AESTHETIC_SCORE = 9.5; // Priority threshold for ArtStation
   
   // Build base query with required filters
   let baseQuery = col
@@ -107,69 +107,144 @@ export async function listPublic(params: {
     }
   }
   
-  // AESTHETIC SCORE FILTERING: Use two queries and merge for optimal performance
-  // Query 1: Items with aestheticScore >= 8.5 (images/videos with scores, and music with scores)
-  // Query 2: Music items (text-to-music) without score requirement (only if not already filtered by mode)
-  let query1 = baseQuery.where('aestheticScore', '>=', MIN_AESTHETIC_SCORE);
-  let query2: FirebaseFirestore.Query | null = null;
+  // AESTHETIC SCORE PRIORITIZATION FOR ARTSTATION:
+  // 1. First fetch items with aestheticScore >= 9.5 (sorted by createdAt desc - latest first)
+  // 2. If not enough results, fetch items with aestheticScore < 9.5 (sorted by createdAt desc - latest first)
+  // 3. Combine with high-scored items first, then lower scored items
+  // 4. Also include text-to-music items without score requirement (only if not already filtered)
   
-  // Only add music query if we're not already filtering by generationType or mode
+  // Query 1: High-scored items (>= 9.5)
+  let queryHigh = baseQuery.where('aestheticScore', '>=', HIGH_AESTHETIC_SCORE);
+  
+  // Query 2: Lower-scored items (< 9.5) - only if we need to fill
+  let queryLow: FirebaseFirestore.Query | null = null;
+  
+  // Query 3: Music items without score requirement (only if not already filtered)
+  let queryMusic: FirebaseFirestore.Query | null = null;
   if (!params.generationType && (!params.mode || params.mode === 'all')) {
-    query2 = baseQuery.where('generationType', '==', 'text-to-music');
+    queryMusic = baseQuery.where('generationType', '==', 'text-to-music');
   }
   
   // Apply sorting, projection, and pagination
   const applyQueryOptions = (q: FirebaseFirestore.Query) => {
-    let query = q.select(...projectionFields as any).orderBy(sortBy, sortOrder);
+    // Always sort by createdAt desc for latest first
+    let query = q.select(...projectionFields as any).orderBy('createdAt', 'desc');
     if (params.cursor) {
       // Cursor will be applied after we get the cursor doc
     }
     return query;
   };
   
-  query1 = applyQueryOptions(query1);
-  if (query2) {
-    query2 = applyQueryOptions(query2);
+  queryHigh = applyQueryOptions(queryHigh);
+  if (queryMusic) {
+    queryMusic = applyQueryOptions(queryMusic);
   }
   
   // Handle cursor-based pagination
+  // For cursor pagination, we continue from where we left off
+  // The cursor represents the last item from the previous page
   if (params.cursor) {
     const cursorDoc = await col.doc(params.cursor).get();
     if (cursorDoc.exists) {
-      query1 = query1.startAfter(cursorDoc);
-      if (query2) {
-        query2 = query2.startAfter(cursorDoc);
+      queryHigh = queryHigh.startAfter(cursorDoc);
+      if (queryMusic) {
+        queryMusic = queryMusic.startAfter(cursorDoc);
       }
     }
   }
   
-  // Execute queries in parallel - fetch 2x limit to account for deduplication
-  const [snap1, snap2] = await Promise.all([
-    query1.limit(params.limit * 2).get(),
-    query2 ? query2.limit(params.limit).get() : Promise.resolve({ docs: [] } as any as FirebaseFirestore.QuerySnapshot),
-  ]);
+  // Execute high-scored query first - fetch more than needed to account for potential duplicates
+  const snapHigh = await queryHigh.limit(params.limit * 2).get();
   
-  // Merge and deduplicate results
-  const docMap = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
-  snap1.docs.forEach(doc => docMap.set(doc.id, doc));
-  if (query2) {
-    snap2.docs.forEach(doc => {
-      if (!docMap.has(doc.id)) {
-        docMap.set(doc.id, doc);
-      }
-    });
-  }
-  
-  // Convert to items and sort by createdAt desc (maintain order)
-  let items: GenerationHistoryItem[] = Array.from(docMap.values())
+  // Convert high-scored results
+  const highScoredItems: GenerationHistoryItem[] = snapHigh.docs
     .map(d => normalizePublicItem(d.id, d.data() as any))
     .sort((a, b) => {
       const aTime = typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() : 
                    (a.createdAt as any)?.seconds ? (a.createdAt as any).seconds * 1000 : 0;
       const bTime = typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() : 
                    (b.createdAt as any)?.seconds ? (b.createdAt as any).seconds * 1000 : 0;
-      return sortOrder === 'desc' ? bTime - aTime : aTime - bTime;
+      return bTime - aTime; // Latest first
     });
+  
+  // If we don't have enough high-scored items, fetch lower-scored items
+  let lowScoredItems: GenerationHistoryItem[] = [];
+  if (highScoredItems.length < params.limit) {
+    const needed = params.limit - highScoredItems.length;
+    
+    // Build query for lower-scored items
+    queryLow = baseQuery.where('aestheticScore', '<', HIGH_AESTHETIC_SCORE);
+    queryLow = applyQueryOptions(queryLow);
+    
+    if (params.cursor) {
+      const cursorDoc = await col.doc(params.cursor).get();
+      if (cursorDoc.exists) {
+        queryLow = queryLow.startAfter(cursorDoc);
+      }
+    }
+    
+    const snapLow = await queryLow.limit(needed * 2).get();
+    lowScoredItems = snapLow.docs
+      .map(d => normalizePublicItem(d.id, d.data() as any))
+      .sort((a, b) => {
+        const aTime = typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() : 
+                     (a.createdAt as any)?.seconds ? (a.createdAt as any).seconds * 1000 : 0;
+        const bTime = typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() : 
+                     (b.createdAt as any)?.seconds ? (b.createdAt as any).seconds * 1000 : 0;
+        return bTime - aTime; // Latest first
+      });
+  }
+  
+  // Fetch music items if needed
+  let musicItems: GenerationHistoryItem[] = [];
+  if (queryMusic && (highScoredItems.length + lowScoredItems.length) < params.limit) {
+    const needed = params.limit - (highScoredItems.length + lowScoredItems.length);
+    const snapMusic = await queryMusic.limit(needed).get();
+    musicItems = snapMusic.docs
+      .map(d => normalizePublicItem(d.id, d.data() as any))
+      .sort((a, b) => {
+        const aTime = typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() : 
+                     (a.createdAt as any)?.seconds ? (a.createdAt as any).seconds * 1000 : 0;
+        const bTime = typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() : 
+                     (b.createdAt as any)?.seconds ? (b.createdAt as any).seconds * 1000 : 0;
+        return bTime - aTime; // Latest first
+      });
+  }
+  
+  // Combine: high-scored first (sorted by latest), then lower-scored (sorted by latest), then music (sorted by latest)
+  // Deduplicate by ID and maintain priority order
+  const itemMap = new Map<string, GenerationHistoryItem>();
+  const itemOrder: string[] = []; // Track order to maintain priority
+  
+  // Add high-scored items first (already sorted by latest first)
+  highScoredItems.forEach(item => {
+    if (!itemMap.has(item.id)) {
+      itemMap.set(item.id, item);
+      itemOrder.push(item.id);
+    }
+  });
+  
+  // Add lower-scored items (already sorted by latest first, avoid duplicates)
+  lowScoredItems.forEach(item => {
+    if (!itemMap.has(item.id)) {
+      itemMap.set(item.id, item);
+      itemOrder.push(item.id);
+    }
+  });
+  
+  // Add music items (already sorted by latest first, avoid duplicates)
+  musicItems.forEach(item => {
+    if (!itemMap.has(item.id)) {
+      itemMap.set(item.id, item);
+      itemOrder.push(item.id);
+    }
+  });
+  
+  // Convert to array maintaining priority order (high-scored first, then lower-scored, then music)
+  // All groups are already sorted by createdAt desc (latest first)
+  let items: GenerationHistoryItem[] = itemOrder
+    .map(id => itemMap.get(id)!)
+    .filter(item => item !== undefined);
   
   // Handle search - Firestore doesn't support full-text search, so minimal in-memory filter
   // This is the ONLY in-memory filtering we do, and it's necessary for search functionality
@@ -213,16 +288,22 @@ export async function getPublicById(generationId: string): Promise<GenerationHis
 }
 
 /**
- * Get a random high-scored image from the public feed
- * Returns an image with aestheticScore >= 9.5
+ * Get multiple random high-scored images from the public feed
+ * Returns up to 20 images with aestheticScore >= 9.5
+ * 
+ * IMPORTANT: 
+ * - Every call returns DIFFERENT random images (shuffled)
+ * - Only images with aestheticScore >= 9.5 are included
+ * - Uses optimized avifUrl for faster loading
  */
-export async function getRandomHighScoredImage(): Promise<{ imageUrl: string; prompt?: string; generationId?: string; creator?: { username?: string; photoURL?: string } } | null> {
+export async function getRandomHighScoredImages(count: number = 20): Promise<Array<{ imageUrl: string; prompt?: string; generationId?: string; creator?: { username?: string; photoURL?: string } }>> {
   try {
     const col = adminDb.collection('generations');
     
     // Query for public items with aestheticScore >= 9.5
     // Note: Firestore doesn't support >= queries on aestheticScore directly if it's nested in images array
     // So we'll fetch items with document-level aestheticScore >= 9.5 OR check image-level scores
+    // This ensures ONLY images with score >= 9.5 are returned
     let q = col
       .where('isPublic', '==', true)
       .where('isDeleted', '!=', true)
@@ -266,26 +347,36 @@ export async function getRandomHighScoredImage(): Promise<{ imageUrl: string; pr
         }
       });
       
-      if (candidates.length === 0) return null;
+      if (candidates.length === 0) return [];
       
-      // Randomly select one
-      const random = candidates[Math.floor(Math.random() * candidates.length)];
-      const imageUrl = random.image?.avifUrl || random.image?.thumbnailUrl || random.image?.url;
+      // Shuffle candidates array for randomization - ensures different images each time
+      // Using Math.random() - 0.5 provides true randomization
+      const shuffled = candidates.sort(() => Math.random() - 0.5);
       
-      if (!imageUrl) return null;
+      // Take up to 'count' images
+      const selected = shuffled.slice(0, Math.min(count, shuffled.length));
       
-      // Get creator info
-      const creator = random.item.createdBy || null;
+      // Map to result format with optimized URLs (avifUrl > thumbnailUrl > url)
+      const results = selected
+        .map(candidate => {
+          const imageUrl = candidate.image?.avifUrl || candidate.image?.thumbnailUrl || candidate.image?.url;
+          if (!imageUrl) return null;
+          
+          const creator = candidate.item.createdBy || null;
+          
+          return {
+            imageUrl,
+            prompt: candidate.item.prompt,
+            generationId: candidate.item.id,
+            creator: creator ? {
+              username: creator.username,
+              photoURL: creator.photoURL
+            } : undefined
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => item !== null);
       
-      return {
-        imageUrl,
-        prompt: random.item.prompt,
-        generationId: random.item.id,
-        creator: creator ? {
-          username: creator.username,
-          photoURL: creator.photoURL
-        } : undefined
-      };
+      return results;
     }
     
     // Filter items that have images and extract image URLs
@@ -320,36 +411,43 @@ export async function getRandomHighScoredImage(): Promise<{ imageUrl: string; pr
       }
     });
     
-    if (candidates.length === 0) return null;
+    if (candidates.length === 0) return [];
     
-    // Randomly select one
-    const random = candidates[Math.floor(Math.random() * candidates.length)];
+    // Shuffle candidates array for randomization
+    const shuffled = candidates.sort(() => Math.random() - 0.5);
     
-    // Prefer optimized URLs (avifUrl > thumbnailUrl > url)
-    const imageUrl = random.image?.avifUrl || random.image?.thumbnailUrl || random.image?.url;
+    // Take up to 'count' images
+    const selected = shuffled.slice(0, Math.min(count, shuffled.length));
     
-    if (!imageUrl) return null;
+    // Map to result format with optimized URLs (avifUrl > thumbnailUrl > url)
+    const results = selected
+      .map(candidate => {
+        const imageUrl = candidate.image?.avifUrl || candidate.image?.thumbnailUrl || candidate.image?.url;
+        if (!imageUrl) return null;
+        
+        const creator = candidate.item.createdBy || null;
+        
+        return {
+          imageUrl,
+          prompt: candidate.item.prompt,
+          generationId: candidate.item.id,
+          creator: creator ? {
+            username: creator.username,
+            photoURL: creator.photoURL
+          } : undefined
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
     
-    // Get creator info
-    const creator = random.item.createdBy || null;
-    
-    return {
-      imageUrl,
-      prompt: random.item.prompt,
-      generationId: random.item.id,
-      creator: creator ? {
-        username: creator.username,
-        photoURL: creator.photoURL
-      } : undefined
-    };
+    return results;
   } catch (error) {
-    console.error('[publicGenerationsRepository] Error getting random high-scored image:', error);
-    return null;
+    console.error('[publicGenerationsRepository] Error getting random high-scored images:', error);
+    return [];
   }
 }
 
 export const publicGenerationsRepository = {
   listPublic,
   getPublicById,
-  getRandomHighScoredImage,
+  getRandomHighScoredImages,
 };
