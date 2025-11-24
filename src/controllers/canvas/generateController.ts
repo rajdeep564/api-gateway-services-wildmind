@@ -38,32 +38,23 @@ export async function generateVideoForCanvas(req: Request, res: Response) {
       );
     }
 
-    if (!model) {
-      console.error('[generateVideoForCanvas] Missing model');
-      return res.status(400).json(
-        formatApiResponse('error', 'Model is required', null)
-      );
-    }
-
     const result = await generateService.generateVideoForCanvas(userId, {
       prompt,
-      model,
-      aspectRatio,
-      duration,
-      resolution,
+      model: model || 'runway/gen3a_turbo',
+      aspectRatio: aspectRatio || '16:9',
+      duration: duration || 5,
+      resolution: resolution || '1280x720',
       projectId: meta.projectId,
       elementId: meta.elementId,
       firstFrameUrl,
       lastFrameUrl,
     });
 
-    console.log('[generateVideoForCanvas] Generation completed:', {
-      hasMediaId: !!result.mediaId,
+    console.log('[generateVideoForCanvas] Video generation completed:', {
       hasUrl: !!result.url,
-      hasTaskId: !!result.taskId,
     });
 
-    return res.json(formatApiResponse('success', 'Video generation started', result));
+    return res.json(formatApiResponse('success', 'Video generation completed', result));
   } catch (error: any) {
     console.error('[generateVideoForCanvas] Error:', error);
     console.error('[generateVideoForCanvas] Error stack:', error.stack);
@@ -88,71 +79,44 @@ export async function generateForCanvas(req: Request, res: Response) {
       );
     }
 
-    const { prompt, model, width, height, aspectRatio, seed, options, imageCount, sourceImageUrl, meta } = req.body;
+    const request: CanvasGenerationRequest = req.body;
 
     console.log('[generateForCanvas] Request received:', {
       userId,
-      model,
-      hasPrompt: !!prompt,
-      hasMeta: !!meta,
-      projectId: meta?.projectId,
-      imageCount,
-      hasSourceImage: !!sourceImageUrl,
+      model: request.model,
+      hasPrompt: !!request.prompt,
+      hasMeta: !!request.meta,
+      projectId: request.meta?.projectId,
     });
 
-    if (!prompt) {
+    if (!request.prompt) {
       console.error('[generateForCanvas] Missing prompt');
       return res.status(400).json(
         formatApiResponse('error', 'Prompt is required', null)
       );
     }
 
-    if (!meta || meta.source !== 'canvas' || !meta.projectId) {
-      console.error('[generateForCanvas] Invalid meta:', meta);
+    if (!request.meta || request.meta.source !== 'canvas' || !request.meta.projectId) {
+      console.error('[generateForCanvas] Invalid meta:', request.meta);
       return res.status(400).json(
         formatApiResponse('error', 'Invalid request: meta.source must be "canvas" and meta.projectId is required', null)
       );
     }
 
-    if (!model) {
-      console.error('[generateForCanvas] Missing model');
-      return res.status(400).json(
-        formatApiResponse('error', 'Model is required', null)
-      );
-    }
-
-    const request: CanvasGenerationRequest = {
-      prompt,
-      model,
-      width,
-      height,
-      aspectRatio, // Pass aspectRatio for proper model mapping
-      seed,
-      options,
-      imageCount,
-      sourceImageUrl, // Pass sourceImageUrl for image-to-image generation
-      meta: {
-        source: 'canvas',
-        projectId: meta.projectId,
-        elementId: meta.elementId,
-      },
-    };
-
-    console.log('[generateForCanvas] Calling generateService.generateForCanvas');
     const result = await generateService.generateForCanvas(userId, request);
+
     console.log('[generateForCanvas] Generation completed:', {
-      hasMediaId: !!result.mediaId,
       hasUrl: !!result.url,
+      imageCount: result.images?.length || 1,
     });
 
-    return res.json(formatApiResponse('success', 'Generation completed', result));
+    return res.json(formatApiResponse('success', 'Image generation completed', result));
   } catch (error: any) {
     console.error('[generateForCanvas] Error:', error);
     console.error('[generateForCanvas] Error stack:', error.stack);
     const statusCode = error.statusCode || error.status || 500;
-    const message = error.message || 'Failed to generate';
+    const message = error.message || 'Failed to generate image';
     
-    // Ensure response is sent
     if (!res.headersSent) {
       return res.status(statusCode).json(
         formatApiResponse('error', message, null)
@@ -171,13 +135,12 @@ export async function upscaleForCanvas(req: Request, res: Response) {
       );
     }
 
-    const { image, model, scale, meta } = req.body;
+    const { image, model, meta } = req.body;
 
     console.log('[upscaleForCanvas] Request received:', {
       userId,
       model,
       hasImage: !!image,
-      scale,
       hasMeta: !!meta,
       projectId: meta?.projectId,
     });
@@ -198,8 +161,7 @@ export async function upscaleForCanvas(req: Request, res: Response) {
 
     const result = await generateService.upscaleForCanvas(userId, {
       image,
-      model: model || 'Crystal Upscaler',
-      scale: scale || 2,
+      model: model || 'recraft/upscaler',
       projectId: meta.projectId,
       elementId: meta.elementId,
     });
@@ -208,7 +170,7 @@ export async function upscaleForCanvas(req: Request, res: Response) {
       hasUrl: !!result.url,
     });
 
-    return res.json(formatApiResponse('success', 'Upscale completed', result));
+    return res.json(formatApiResponse('success', 'Image upscale completed', result));
   } catch (error: any) {
     console.error('[upscaleForCanvas] Error:', error);
     console.error('[upscaleForCanvas] Error stack:', error.stack);
@@ -233,13 +195,11 @@ export async function removeBgForCanvas(req: Request, res: Response) {
       );
     }
 
-    const { image, model, backgroundType, scaleValue, meta } = req.body;
+    const { image, model, meta } = req.body;
 
     console.log('[removeBgForCanvas] Request received:', {
       userId,
       model,
-      backgroundType,
-      scaleValue,
       hasImage: !!image,
       hasMeta: !!meta,
       projectId: meta?.projectId,
@@ -261,14 +221,12 @@ export async function removeBgForCanvas(req: Request, res: Response) {
 
     const result = await generateService.removeBgForCanvas(userId, {
       image,
-      model: model || '851-labs/background-remover',
-      backgroundType: backgroundType || 'rgba (transparent)',
-      scaleValue: scaleValue !== undefined ? scaleValue : 0.5,
+      model: model || 'bria/remove-bg',
       projectId: meta.projectId,
       elementId: meta.elementId,
     });
 
-    console.log('[removeBgForCanvas] Remove bg completed:', {
+    console.log('[removeBgForCanvas] Background removal completed:', {
       hasUrl: !!result.url,
     });
 
@@ -328,11 +286,11 @@ export async function vectorizeForCanvas(req: Request, res: Response) {
       elementId: meta.elementId,
     });
 
-    console.log('[vectorizeForCanvas] Vectorize completed:', {
+    console.log('[vectorizeForCanvas] Vectorization completed:', {
       hasUrl: !!result.url,
     });
 
-    return res.json(formatApiResponse('success', 'Vectorization completed', result));
+    return res.json(formatApiResponse('success', 'Image vectorization completed', result));
   } catch (error: any) {
     console.error('[vectorizeForCanvas] Error:', error);
     console.error('[vectorizeForCanvas] Error stack:', error.stack);
@@ -347,3 +305,146 @@ export async function vectorizeForCanvas(req: Request, res: Response) {
   }
 }
 
+export async function eraseForCanvas(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      console.error('[eraseForCanvas] Missing userId');
+      return res.status(401).json(
+        formatApiResponse('error', 'Unauthorized', null)
+      );
+    }
+
+    const { image, mask, meta, prompt } = req.body;
+
+    console.log('[eraseForCanvas] Request received:', {
+      userId,
+      hasImage: !!image,
+      hasMask: !!mask,
+      hasMeta: !!meta,
+      projectId: meta?.projectId,
+      hasPrompt: !!prompt,
+    });
+
+    if (!image) {
+      console.error('[eraseForCanvas] Missing image');
+      return res.status(400).json(
+        formatApiResponse('error', 'Image is required', null)
+      );
+    }
+
+    // Mask is now optional - image should be composited with white mask overlay
+    // If mask is provided, it will be ignored (we use the composited image instead)
+    if (mask) {
+      console.log('[eraseForCanvas] Mask provided but will be ignored (using composited image)');
+    }
+
+    if (!meta || meta.source !== 'canvas' || !meta.projectId) {
+      console.error('[eraseForCanvas] Invalid meta:', meta);
+      return res.status(400).json(
+        formatApiResponse('error', 'Invalid request: meta.source must be "canvas" and meta.projectId is required', null)
+      );
+    }
+
+    const result = await generateService.eraseForCanvas(userId, {
+      image,
+      mask,
+      projectId: meta.projectId,
+      elementId: meta.elementId,
+      prompt,
+    });
+
+    console.log('[eraseForCanvas] Erase completed:', {
+      hasUrl: !!result.url,
+    });
+
+    return res.json(formatApiResponse('success', 'Image erase completed', result));
+  } catch (error: any) {
+    console.error('[eraseForCanvas] Error:', error);
+    console.error('[eraseForCanvas] Error stack:', error.stack);
+    const statusCode = error.statusCode || error.status || 500;
+    const message = error.message || 'Failed to erase image';
+    
+    if (!res.headersSent) {
+      return res.status(statusCode).json(
+        formatApiResponse('error', message, null)
+      );
+    }
+  }
+}
+
+export async function replaceForCanvas(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      console.error('[replaceForCanvas] Missing userId');
+      return res.status(401).json(
+        formatApiResponse('error', 'Unauthorized', null)
+      );
+    }
+
+    const { image, mask, meta, prompt } = req.body;
+
+    console.log('[replaceForCanvas] Request received:', {
+      userId,
+      hasImage: !!image,
+      hasMask: !!mask,
+      hasMeta: !!meta,
+      projectId: meta?.projectId,
+      hasPrompt: !!prompt,
+    });
+
+    if (!image) {
+      console.error('[replaceForCanvas] Missing image');
+      return res.status(400).json(
+        formatApiResponse('error', 'Image is required', null)
+      );
+    }
+
+    // Prompt is REQUIRED for replace (unlike erase which has a default)
+    if (!prompt || !prompt.trim()) {
+      console.error('[replaceForCanvas] Missing prompt');
+      return res.status(400).json(
+        formatApiResponse('error', 'Prompt is required for image replace. Please describe what you want to replace the selected area with.', null)
+      );
+    }
+
+    // Mask is now optional - image should be composited with white mask overlay
+    // If mask is provided, it will be ignored (we use the composited image instead)
+    if (mask) {
+      console.log('[replaceForCanvas] Mask provided but will be ignored (using composited image)');
+    }
+
+    if (!meta || meta.source !== 'canvas' || !meta.projectId) {
+      console.error('[replaceForCanvas] Invalid meta:', meta);
+      return res.status(400).json(
+        formatApiResponse('error', 'Invalid request: meta.source must be "canvas" and meta.projectId is required', null)
+      );
+    }
+
+    const result = await generateService.replaceForCanvas(userId, {
+      image,
+      mask,
+      projectId: meta.projectId,
+      elementId: meta.elementId,
+      prompt: prompt.trim(), // REQUIRED - what to replace the white area with
+    });
+
+    console.log('[replaceForCanvas] Replace completed:', {
+      hasUrl: !!result.url,
+    });
+
+    return res.json(formatApiResponse('success', 'Image replace completed', result));
+  } catch (error: any) {
+    console.error('[replaceForCanvas] Error:', error);
+    console.error('[replaceForCanvas] Error stack:', error.stack);
+    const statusCode = error.statusCode || error.status || 500;
+    const message = error.message || 'Failed to replace image';
+    
+    if (!res.headersSent) {
+      return res.status(statusCode).json(
+        formatApiResponse('error', message, null)
+      );
+    }
+  }
+}

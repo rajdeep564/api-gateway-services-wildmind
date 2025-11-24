@@ -10,6 +10,7 @@ import * as cursorAgentController from '../controllers/canvas/cursorAgentControl
 import * as workersController from '../controllers/canvas/workersController';
 import * as presenceController from '../websocket/canvasPresenceServer';
 import * as mediaLibraryController from '../controllers/canvas/mediaLibraryController';
+import * as queryController from '../controllers/canvas/queryController';
 
 const router = Router();
 
@@ -41,6 +42,11 @@ router.post('/generate-video', requireAuth, generateController.generateVideoForC
 router.post('/upscale', requireAuth, generateController.upscaleForCanvas);
 router.post('/removebg', requireAuth, generateController.removeBgForCanvas);
 router.post('/vectorize', requireAuth, generateController.vectorizeForCanvas);
+router.post('/erase', requireAuth, generateController.eraseForCanvas);
+router.post('/replace', requireAuth, generateController.replaceForCanvas);
+
+// Query (Canvas prompt enhancement)
+router.post('/query', queryController.queryCanvas);
 
 // Media Library
 router.get('/media-library', mediaLibraryController.getMediaLibrary);

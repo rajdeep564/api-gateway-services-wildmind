@@ -169,5 +169,86 @@ export async function enhancePromptsBatch(
   }
 }
 
-export default { enhancePrompt, enhancePromptsBatch };
+export interface CanvasQueryResult {
+  type: 'image' | 'video' | 'music' | 'answer';
+  enhanced_prompt: string | null;
+  response: string | null;
+}
+
+/**
+ * Query canvas prompt enhancement endpoint
+ * Calls the /canvas/query endpoint on the prompt enhancer service
+ */
+export async function queryCanvasPrompt(
+  text: string,
+  maxNewTokens?: number
+): Promise<CanvasQueryResult> {
+  if (!text || typeof text !== 'string' || !text.trim()) {
+    throw new Error('Text is required');
+  }
+
+  const baseUrl = getPromptEnhancerUrl();
+  const maxTokens = maxNewTokens || 300;
+
+  try {
+    console.log(`[Canvas Query] Querying prompt enhancement for text: "${text.substring(0, 50)}..."`);
+    
+    const response = await axios.post(
+      `${baseUrl}/canvas/query`,
+      {
+        text: text.trim(),
+        max_new_tokens: maxTokens,
+      },
+      {
+        timeout: 30000, // 30 second timeout
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const data = response.data;
+
+    if (!data || typeof data.type !== 'string') {
+      console.error('[Canvas Query] Invalid response structure:', data);
+      throw new Error('Invalid response from canvas query service');
+    }
+
+    // Validate type
+    if (!['image', 'video', 'music', 'answer'].includes(data.type)) {
+      console.error('[Canvas Query] Invalid type in response:', data.type);
+      throw new Error('Invalid response type from canvas query service');
+    }
+
+    console.log(`[Canvas Query] Successfully processed query, type: ${data.type}`);
+
+    return {
+      type: data.type,
+      enhanced_prompt: data.enhanced_prompt || null,
+      response: data.response || null,
+    };
+  } catch (error: any) {
+    const axiosError = error as AxiosError;
+    
+    if (axiosError.response) {
+      // Server responded with error status
+      const status = axiosError.response.status;
+      const statusText = axiosError.response.statusText;
+      const errorData = (axiosError.response.data as any)?.detail || axiosError.response.data;
+      
+      console.error(`[Canvas Query] Service error (${status}):`, errorData);
+      throw new Error(`Canvas query failed: ${errorData || statusText}`);
+    } else if (axiosError.request) {
+      // Request was made but no response received
+      console.error('[Canvas Query] No response from service:', axiosError.message);
+      throw new Error('Canvas query service is unavailable. Please try again later.');
+    } else {
+      // Error setting up the request
+      console.error('[Canvas Query] Request setup error:', axiosError.message);
+      throw new Error(`Failed to query canvas prompt: ${axiosError.message}`);
+    }
+  }
+}
+
+export default { enhancePrompt, enhancePromptsBatch, queryCanvasPrompt };
 

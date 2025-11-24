@@ -39,7 +39,7 @@ async function textToImage(
   uid: string,
   payload: RunwayTextToImageRequest
 ): Promise<RunwayTextToImageResponse & { historyId?: string }> {
-  const { promptText, ratio, model, seed, uploadedImages, contentModeration } =
+  const { promptText, ratio, model, seed, uploadedImages, referenceImages: directReferenceImages, contentModeration } =
     payload;
   if (!promptText || !ratio || !model)
     throw new ApiError(
@@ -48,22 +48,32 @@ async function textToImage(
     );
   if (!["gen4_image", "gen4_image_turbo"].includes(model))
     throw new ApiError("Invalid model", 400);
+  
+  // Prefer SDK
+  const client = getRunwayClient();
+  
+  // If referenceImages are provided directly (e.g., for mask support), use them
+  // Otherwise, map uploadedImages to referenceImages with default tags
+  let referenceImages: Array<{ uri: string; tag?: string }>;
+  if (directReferenceImages && directReferenceImages.length > 0) {
+    referenceImages = directReferenceImages;
+  } else if (uploadedImages && uploadedImages.length > 0) {
+    referenceImages = (uploadedImages || []).map(
+      (uri: string, i: number) => ({ uri, tag: `ref_${i + 1}` })
+    );
+  } else {
+    referenceImages = [];
+  }
+  
   if (
     model === "gen4_image_turbo" &&
-    (!uploadedImages || uploadedImages.length === 0)
+    referenceImages.length === 0
   ) {
     throw new ApiError(
       "gen4_image_turbo requires at least one reference image",
       400
     );
   }
-
-  // Prefer SDK
-  const client = getRunwayClient();
-  // SDK expects referenceImages, not uploadedImages
-  const referenceImages = (uploadedImages || []).map(
-    (uri: string, i: number) => ({ uri, tag: `ref_${i + 1}` })
-  );
   const created = await client.textToImage.create({
     model,
     promptText,

@@ -6,6 +6,7 @@ export interface RunwayTextToImageRequest {
   model: RunwayImageModel;
   seed?: number;
   uploadedImages?: string[]; // base64 or URLs
+  referenceImages?: Array<{ uri: string; tag?: string }>; // Direct reference images with optional tags (for mask support)
   contentModeration?: { publicFigureThreshold?: "auto" | string };
   generationType?: string;
   style?: string;
