@@ -18,9 +18,11 @@ export async function computeMinimaxImageCost(req: Request): Promise<{ cost: num
 }
 
 export async function computeMinimaxMusicCost(_req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
-  const base = findCreditsExact('Music 1.5 (Up to 90s)');
+  // Try MiniMax Music 2 first, fallback to Music 1.5 for backward compatibility
+  let base = findCreditsExact('MiniMax Music 2');
+  if (base == null) base = findCreditsExact('Music 1.5 (Up to 90s)');
   if (base == null) throw new Error('Unsupported Minimax music');
-  return { cost: Math.ceil(base), pricingVersion: MINIMAX_PRICING_VERSION, meta: { model: 'Music 1.5 (Up to 90s)' } };
+  return { cost: Math.ceil(base), pricingVersion: MINIMAX_PRICING_VERSION, meta: { model: 'music-2.0' } };
 }
 
 export async function computeMinimaxVideoCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {

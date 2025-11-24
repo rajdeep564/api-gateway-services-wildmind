@@ -459,6 +459,21 @@ export const creditDistributionData: ModelCreditInfo[] = [
   },
   {
     srNo: 13,
+    modelName: "MiniMax Music 2",
+    priceToPay: 0.03,
+    overCharge: 0.01,
+    userCost: 0.04,
+    creditsPerGeneration: 60,
+    plans: {
+      planA: 8.24,
+      planB: 16.48,
+      planC: 24.72,
+      planD: 79.104,
+      free: 0.816326531,
+    },
+  },
+  {
+    srNo: 13.1,
     modelName: "Music 1.5 (Up to 90s)",
     priceToPay: 0.03,
     overCharge: 0.01,

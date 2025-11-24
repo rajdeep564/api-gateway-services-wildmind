@@ -29,9 +29,6 @@ export const ALLOWED_FAL_MODELS = [
   // Chatterbox speech-to-speech (resemble-ai)
   'resemble-ai/chatterboxhd/speech-to-speech',
   'chatterbox-sts',
-  // MiniMax Music 2
-  'minimax-music-2',
-  'fal-ai/minimax/music-2',
 ];
 
 export const validateFalGenerate = [
@@ -756,20 +753,4 @@ export const validateFalTopazUpscaleImage = [
     next();
   }
 ];
-
-// MiniMax Music 2 validator
-export const validateFalMiniMaxMusic2 = [
-  body('prompt').isString().notEmpty().isLength({ min: 10, max: 300 }).withMessage('prompt is required and must be 10-300 characters'),
-  body('lyrics_prompt').isString().notEmpty().isLength({ min: 10, max: 3000 }).withMessage('lyrics_prompt is required and must be 10-3000 characters'),
-  body('audio_setting').optional().isObject().withMessage('audio_setting must be an object'),
-  body('audio_setting.sample_rate').optional().isIn(['8000', '16000', '22050', '24000', '32000', '44100']).withMessage('sample_rate must be one of: 8000, 16000, 22050, 24000, 32000, 44100'),
-  body('audio_setting.bitrate').optional().isIn(['32000', '64000', '128000', '256000']).withMessage('bitrate must be one of: 32000, 64000, 128000, 256000'),
-  body('audio_setting.format').optional().isIn(['mp3', 'pcm', 'flac']).withMessage('format must be one of: mp3, pcm, flac'),
-  (req: Request, _res: Response, next: NextFunction) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
-    next();
-  }
-];
-
 

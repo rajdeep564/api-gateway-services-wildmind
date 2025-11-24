@@ -390,21 +390,92 @@ async function generateMusic(
   body: MinimaxMusicRequest
 ): Promise<MinimaxMusicResponse> {
   if (!apiKey) throw new ApiError("MiniMax API not configured", 500);
-  const res = await axios.post(`${MINIMAX_API_BASE}/music_generation`, body, {
+  
+  // Build request payload according to new API schema - only include allowed fields
+  const requestPayload: any = {
+    model: body.model || 'music-2.0',
+    prompt: body.prompt,
+    lyrics: body.lyrics,
+  };
+  
+  // Only add optional fields if they exist
+  if (body.output_format) {
+    requestPayload.output_format = body.output_format;
+  } else {
+    requestPayload.output_format = 'hex'; // Default
+  }
+  
+  if (body.stream !== undefined) {
+    requestPayload.stream = body.stream;
+  } else {
+    requestPayload.stream = false; // Default
+  }
+  
+  // Audio settings - only include if provided, ensure numbers are integers
+  if (body.audio_setting) {
+    requestPayload.audio_setting = {};
+    if (body.audio_setting.sample_rate !== undefined) {
+      requestPayload.audio_setting.sample_rate = parseInt(String(body.audio_setting.sample_rate), 10);
+    } else {
+      requestPayload.audio_setting.sample_rate = 44100; // Default
+    }
+    if (body.audio_setting.bitrate !== undefined) {
+      requestPayload.audio_setting.bitrate = parseInt(String(body.audio_setting.bitrate), 10);
+    } else {
+      requestPayload.audio_setting.bitrate = 256000; // Default
+    }
+    if (body.audio_setting.format) {
+      requestPayload.audio_setting.format = String(body.audio_setting.format);
+    } else {
+      requestPayload.audio_setting.format = 'mp3'; // Default
+    }
+  } else {
+    // Default audio settings if not provided
+    requestPayload.audio_setting = {
+      sample_rate: 44100,
+      bitrate: 256000,
+      format: 'mp3',
+    };
+  }
+  
+  // Log the payload being sent (for debugging)
+  console.log('[MiniMax] Music generation request payload:', JSON.stringify({
+    ...requestPayload,
+    prompt: requestPayload.prompt?.substring(0, 50) + '...',
+    lyrics: requestPayload.lyrics?.substring(0, 50) + '...'
+  }, null, 2));
+  
+  const res = await axios.post(`${MINIMAX_API_BASE}/music_generation`, requestPayload, {
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     validateStatus: () => true,
   });
+  
   if (res.status < 200 || res.status >= 300) {
+    console.error('[MiniMax] Music API error response:', JSON.stringify(res.data, null, 2));
+    const errorMsg = res.data?.base_resp?.status_msg || res.data?.status_msg || `MiniMax music error: ${res.status}`;
     throw new ApiError(
-      `MiniMax music error: ${res.status}`,
+      errorMsg,
       res.status,
       res.data
     );
   }
-  return res.data as MinimaxMusicResponse;
+  
+  const data = res.data;
+  // Check base_resp before asserting
+  if (data.base_resp && data.base_resp.status_code !== 0) {
+    const errorMsg = data.base_resp.status_msg || `MiniMax API error: status_code ${data.base_resp.status_code}`;
+    console.error('[MiniMax] Music API base_resp error:', JSON.stringify(data.base_resp, null, 2));
+    throw new ApiError(
+      errorMsg,
+      mapMiniMaxCodeToHttp(data.base_resp.status_code),
+      data
+    );
+  }
+  
+  return data as MinimaxMusicResponse;
 }
 
 // Post-processing helpers to store provider files into Zata and update history/mirror
@@ -496,60 +567,140 @@ async function musicGenerateAndStore(
 ): Promise<any> {
   const apiKey = env.minimaxApiKey as string;
   if (!apiKey) throw new ApiError('MiniMax API not configured', 500);
+  
+  // Validate required fields
+  if (!body.prompt || body.prompt.length < 10 || body.prompt.length > 2000) {
+    throw new ApiError('prompt is required and must be 10-2000 characters', 400);
+  }
+  if (!body.lyrics || body.lyrics.length < 10 || body.lyrics.length > 3000) {
+    throw new ApiError('lyrics is required and must be 10-3000 characters', 400);
+  }
+  
   const creator = await authRepository.getUserById(uid);
   const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
   const { historyId } = await generationHistoryRepository.create(uid, {
-    prompt: (body as any)?.prompt || body?.lyrics || '',
-    model: String(body?.model || 'MiniMax-Music'),
+    prompt: body.prompt || body.lyrics || '',
+    model: 'music-2.0',
     generationType: body?.generationType || 'text-to-music',
     visibility: (body as any)?.visibility || 'private',
-  isPublic: (body as any)?.isPublic === true,
+    isPublic: (body as any)?.isPublic === true,
     createdBy,
   } as any);
-  const result = await generateMusic(apiKey, body);
-  const providerUrl = extractDownloadUrl(result);
-  if (providerUrl) {
-    try {
-      const username = creator?.username || uid;
-      const { key, publicUrl } = await uploadFromUrlToZata({
-        sourceUrl: providerUrl,
-        keyPrefix: `users/${username}/music/${historyId}`,
-        fileName: 'music-1',
-      });
-      const audioItem: any = { id: 'music-1', url: publicUrl, storagePath: key, originalUrl: providerUrl };
-      await generationHistoryRepository.update(uid, historyId, { status: 'completed', audios: [audioItem], provider: 'minimax' } as any);
-      // Robust mirror sync with retry logic
-      await syncToMirror(uid, historyId);
-      return { historyId, audios: [audioItem], status: 'completed' };
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.warn('[MiniMax] Music Zata upload failed; using provider URL');
-      const audioItem: any = { id: 'music-1', url: providerUrl, originalUrl: providerUrl };
-      await generationHistoryRepository.update(uid, historyId, { status: 'completed', audios: [audioItem], provider: 'minimax' } as any);
-      // Robust mirror sync with retry logic
-      await syncToMirror(uid, historyId);
-      return { historyId, audios: [audioItem], status: 'completed' };
+  
+  try {
+    // Clean the body to only include fields that the MiniMax API expects
+    const cleanBody: MinimaxMusicRequest = {
+      model: body.model || 'music-2.0',
+      prompt: body.prompt,
+      lyrics: body.lyrics,
+      output_format: body.output_format,
+      stream: body.stream,
+      audio_setting: body.audio_setting,
+      generationType: body.generationType, // Keep for internal use, but won't be sent to API
+    };
+    
+    const result = await generateMusic(apiKey, cleanBody);
+    
+    // Check if status is completed (status: 2)
+    const status = (result as any)?.data?.status;
+    if (status !== 2) {
+      await generationHistoryRepository.update(uid, historyId, { 
+        status: 'failed', 
+        error: `Music generation not completed. Status: ${status}` 
+      } as any);
+      throw new ApiError(`Music generation not completed. Status: ${status}`, 502, result);
     }
+    
+    // Handle hex-encoded audio (default)
+    const hexAudio: string | undefined = (result as any)?.data?.audio;
+    if (hexAudio && typeof hexAudio === 'string') {
+      const format: string = body.audio_setting?.format || 'mp3';
+      const ext = format.toLowerCase() === 'wav' ? 'wav' : format.toLowerCase() === 'pcm' ? 'pcm' : 'mp3';
+      const contentType = ext === 'wav' ? 'audio/wav' : ext === 'pcm' ? 'audio/pcm' : 'audio/mpeg';
+      const buffer = Buffer.from(hexAudio, 'hex');
+      const username = creator?.username || uid;
+      const key = `users/${username}/audio/${historyId}/music-1.${ext}`;
+      const { publicUrl } = await uploadBufferToZata(key, buffer, contentType);
+      const audioItem: any = { 
+        id: 'music-1', 
+        url: publicUrl, 
+        storagePath: key,
+        originalUrl: publicUrl 
+      };
+      
+      // Store in multiple formats for frontend compatibility
+      const audiosArray = [audioItem];
+      const imagesArray = [{ ...audioItem, type: 'audio' }];
+      
+      await generationHistoryRepository.update(uid, historyId, { 
+        status: 'completed', 
+        audio: audioItem,
+        audios: audiosArray,
+        images: imagesArray,
+        provider: 'minimax' 
+      } as any);
+      await syncToMirror(uid, historyId);
+      return { audio: audioItem, audios: audiosArray, images: imagesArray, historyId, status: 'completed' };
+    }
+    
+    // Fallback: try to extract URL
+    const providerUrl = extractDownloadUrl(result);
+    if (providerUrl) {
+      try {
+        const username = creator?.username || uid;
+        const { key, publicUrl } = await uploadFromUrlToZata({
+          sourceUrl: providerUrl,
+          keyPrefix: `users/${username}/audio/${historyId}`,
+          fileName: 'music-1',
+        });
+        const audioItem: any = { 
+          id: 'music-1', 
+          url: publicUrl, 
+          storagePath: key, 
+          originalUrl: providerUrl 
+        };
+        const audiosArray = [audioItem];
+        const imagesArray = [{ ...audioItem, type: 'audio' }];
+        await generationHistoryRepository.update(uid, historyId, { 
+          status: 'completed', 
+          audio: audioItem,
+          audios: audiosArray,
+          images: imagesArray,
+          provider: 'minimax' 
+        } as any);
+        await syncToMirror(uid, historyId);
+        return { audio: audioItem, audios: audiosArray, images: imagesArray, historyId, status: 'completed' };
+      } catch (e) {
+        console.warn('[MiniMax] Music Zata upload failed; using provider URL', e);
+        const audioItem: any = { id: 'music-1', url: providerUrl, originalUrl: providerUrl };
+        const audiosArray = [audioItem];
+        const imagesArray = [{ ...audioItem, type: 'audio' }];
+        await generationHistoryRepository.update(uid, historyId, { 
+          status: 'completed', 
+          audio: audioItem,
+          audios: audiosArray,
+          images: imagesArray,
+          provider: 'minimax' 
+        } as any);
+        await syncToMirror(uid, historyId);
+        return { audio: audioItem, audios: audiosArray, images: imagesArray, historyId, status: 'completed' };
+      }
+    }
+    
+    await generationHistoryRepository.update(uid, historyId, { 
+      status: 'failed', 
+      error: 'No audio data returned from MiniMax' 
+    } as any);
+    throw new ApiError('MiniMax music response missing audio data', 502, result);
+  } catch (err: any) {
+    const message = err?.message || 'Failed to generate music with MiniMax';
+    await generationHistoryRepository.update(uid, historyId, { 
+      status: 'failed', 
+      error: message 
+    } as any);
+    await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
+    throw err;
   }
-
-  // Fallback: hex data in result
-  const hexAudio: string | undefined = (result as any)?.data?.audio || (result as any)?.audio;
-  if (!hexAudio || typeof hexAudio !== 'string') {
-    await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: 'No audio URL or hex from MiniMax' } as any);
-    throw new ApiError('MiniMax music response missing downloadable URL or audio hex', 502, result);
-  }
-  const format: string = (body as any)?.audio_setting?.format || 'mp3';
-  const ext = format.toLowerCase() === 'wav' ? 'wav' : format.toLowerCase() === 'pcm' ? 'pcm' : 'mp3';
-  const contentType = ext === 'wav' ? 'audio/wav' : ext === 'pcm' ? 'audio/pcm' : 'audio/mpeg';
-  const buffer = Buffer.from(hexAudio, 'hex');
-  const username = creator?.username || uid;
-  const key = `users/${username}/music/${historyId}/music-1.${ext}`;
-  const { publicUrl } = await uploadBufferToZata(key, buffer, contentType);
-  const audioItem: any = { id: 'music-1', url: publicUrl, storagePath: key };
-  await generationHistoryRepository.update(uid, historyId, { status: 'completed', audios: [audioItem], provider: 'minimax' } as any);
-  // Robust mirror sync with retry logic
-  await syncToMirror(uid, historyId);
-  return { historyId, audios: [audioItem], status: 'completed' };
 }
 
 export const minimaxService = {

@@ -24,7 +24,6 @@ import {
   computeFalSeedVrUpscaleCost,
   computeFalTopazUpscaleImageCost,
   computeFalBirefnetVideoCost,
-  computeFalMiniMaxMusic2Cost,
 } from "../utils/pricing/falPricing";
 import {
   validateFalGenerate,
@@ -59,7 +58,6 @@ import {
   validateFalSeedvrUpscale,
   validateFalTopazUpscaleImage,
   validateFalBirefnetVideo,
-  validateFalMiniMaxMusic2,
 } from "../middlewares/validators/fal/validateFalGenerate";
 
 const router = Router();
@@ -129,15 +127,6 @@ router.get(
   "/audio-files",
   requireAuth,
   (falController as any).listUserAudioFiles
-);
-
-// MiniMax Music 2
-router.post(
-  "/minimax/music-2",
-  requireAuth,
-  validateFalMiniMaxMusic2 as any,
-  makeCreditCost("fal", "generate", computeFalMiniMaxMusic2Cost) as any,
-  falController.generate as any
 );
 
 // Image utilities
