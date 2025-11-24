@@ -2204,8 +2204,18 @@ async function queueResult(uid: string, model: string | undefined, requestId: st
       });
       const videoObj: any = { id: requestId, url: uploaded.publicUrl, storagePath: uploaded.key, originalUrl: providerUrl };
       if (providerVideoId) videoObj.soraVideoId = providerVideoId;
-      videos = [ videoObj as any ];
-      await generationHistoryRepository.update(uid, located.id, { status: 'completed', videos: [ videoObj ] as any, ...(providerVideoId ? { soraVideoId: providerVideoId } : {}) } as any);
+      
+      // Generate and attach thumbnail
+      try {
+        const { generateAndAttachThumbnail } = await import('./videoThumbnailService');
+        const videoWithThumbnail = await generateAndAttachThumbnail(videoObj, keyPrefix);
+        videos = [ videoWithThumbnail as any ];
+      } catch (thumbErr) {
+        console.warn('[falService.queueResult] Failed to generate thumbnail, continuing without it:', thumbErr);
+        videos = [ videoObj as any ];
+      }
+      
+      await generationHistoryRepository.update(uid, located.id, { status: 'completed', videos, ...(providerVideoId ? { soraVideoId: providerVideoId } : {}) } as any);
     } catch (e) {
       // Fallback to provider URL if Zata upload fails
       const videoObj: any = { id: requestId, url: providerUrl, storagePath: '', originalUrl: providerUrl };

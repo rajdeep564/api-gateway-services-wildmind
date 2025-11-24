@@ -9,13 +9,14 @@ export interface FilterParams {
   nextCursor?: string; // NEW: timestamp cursor
   generationType?: GenerationType | string | string[];
   status?: 'generating' | 'completed' | 'failed';
-  sortBy?: 'createdAt' | 'updatedAt' | 'prompt';
+  sortBy?: 'createdAt' | 'updatedAt' | 'prompt' | 'aestheticScore';
   sortOrder?: 'asc' | 'desc';
   createdBy?: string;
   mode?: 'video' | 'image' | 'music' | 'all';
   dateStart?: string;
   dateEnd?: string;
   search?: string; // free-text prompt search (case-insensitive substring)
+  minScore?: number; // Minimum aesthetic score threshold (e.g., 9.5)
 }
 
 export interface PaginationMeta {
@@ -37,13 +38,16 @@ async function getUserGenerations(uid: string, params: FilterParams) {
     cursor = undefined; // Start from beginning for now
   }
   
+  // For user generations, aestheticScore sorting is not supported, fallback to createdAt
+  const userSortBy = params.sortBy === 'aestheticScore' ? 'createdAt' : params.sortBy;
+  
   const result = await generationHistoryRepository.list(uid, {
     limit,
     cursor, // LEGACY: document ID cursor
     nextCursor, // NEW: timestamp cursor
     generationType: params.generationType as any,
     status: params.status,
-    sortBy: params.sortBy,
+    sortBy: userSortBy as any,
     sortOrder: params.sortOrder,
     dateStart: params.dateStart,
     dateEnd: params.dateEnd,
@@ -115,6 +119,7 @@ async function getPublicGenerations(params: FilterParams) {
     dateEnd: params.dateEnd,
     mode: params.mode,
     search: params.search,
+    minScore: params.minScore,
   });
   
   // Enrich createdBy objects with photoURL if missing
@@ -230,12 +235,22 @@ async function validateAndTransformParams(queryParams: any): Promise<FilterParam
   }
   
   // Handle sortBy
-  const validSortFields = ['createdAt', 'updatedAt', 'prompt'];
+  const validSortFields = ['createdAt', 'updatedAt', 'prompt', 'aestheticScore'];
   if (queryParams.sortBy) {
     if (validSortFields.includes(queryParams.sortBy)) {
       params.sortBy = queryParams.sortBy as any;
     } else {
       throw new Error(`Invalid sortBy. Must be one of: ${validSortFields.join(', ')}`);
+    }
+  }
+  
+  // Handle minScore (minimum aesthetic score threshold)
+  if (queryParams.minScore) {
+    const score = parseFloat(String(queryParams.minScore));
+    if (!isNaN(score) && score >= 0 && score <= 10) {
+      params.minScore = score;
+    } else {
+      throw new Error('Invalid minScore. Must be a number between 0 and 10');
     }
   }
   

@@ -1944,11 +1944,26 @@ export async function wanT2V(uid: string, body: any) {
   const scoredVideos = await aestheticScoreService.scoreVideos(videos);
   const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
 
-  await generationHistoryRepository.update(uid, historyId, {
-    status: "completed",
-    videos: scoredVideos,
-    aestheticScore: highestScore,
-  } as any);
+  // Generate and attach thumbnails
+  try {
+    const { generateAndAttachThumbnail } = await import('./videoThumbnailService');
+    const keyPrefix = storagePath ? storagePath.substring(0, storagePath.lastIndexOf('/')) : `users/${creator?.username || uid}/video/${historyId}`;
+    const videosWithThumbnails = await Promise.all(
+      scoredVideos.map((video: any) => generateAndAttachThumbnail(video, keyPrefix))
+    );
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "completed",
+      videos: videosWithThumbnails,
+      aestheticScore: highestScore,
+    } as any);
+  } catch (thumbErr) {
+    console.warn('[Replicate.wanT2V] Failed to generate thumbnails, continuing without them:', thumbErr);
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "completed",
+      videos: scoredVideos,
+      aestheticScore: highestScore,
+    } as any);
+  }
   try { console.log('[Replicate.wanT2V] Video history updated with scores', { historyId, videoCount: scoredVideos.length, highestScore }); } catch {}
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
