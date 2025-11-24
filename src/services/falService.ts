@@ -201,6 +201,80 @@ async function generate(
   const isElevenSfx = hasText && (modelLowerRaw.includes('sfx') || modelLowerRaw.includes('sound-effect') || modelLowerRaw.includes('sound-effects') || generationType === 'sfx');
   const isMayaTts = hasText || modelLowerRaw.includes('maya') || modelLowerRaw.includes('maya-1') || modelLowerRaw.includes('maya-1-voice');
   const isChatterboxMultilingual = hasText || modelLowerRaw.includes('chatterbox') || modelLowerRaw.includes('multilingual');
+  const wantsMiniMaxMusic2 = modelLowerRaw.includes('minimax-music-2') || modelLowerRaw.includes('music-2') || modelLowerRaw.includes('minimax/music-2');
+  const isMiniMaxMusic2 = wantsMiniMaxMusic2 && generationType === 'text-to-music';
+
+  // MiniMax Music 2 flow
+  if (isMiniMaxMusic2) {
+    const musicEndpoint = 'fal-ai/minimax/music-2';
+    try {
+      const inputBody: any = {
+        prompt: (payload as any).prompt,
+        lyrics_prompt: (payload as any).lyrics_prompt,
+      };
+      
+      // Add audio_setting if provided
+      if ((payload as any).audio_setting) {
+        inputBody.audio_setting = {
+          sample_rate: (payload as any).audio_setting.sample_rate || '44100',
+          bitrate: (payload as any).audio_setting.bitrate || '256000',
+          format: (payload as any).audio_setting.format || 'mp3',
+        };
+      } else {
+        // Default audio settings
+        inputBody.audio_setting = {
+          sample_rate: '44100',
+          bitrate: '256000',
+          format: 'mp3',
+        };
+      }
+
+      console.log('[falService.generate] Calling MiniMax Music 2 model:', { musicEndpoint, input: { ...inputBody, prompt: String(inputBody.prompt).slice(0, 120) + '...', lyrics_prompt: String(inputBody.lyrics_prompt).slice(0, 120) + '...' } });
+      const result = await fal.subscribe(musicEndpoint as any, ({ input: inputBody, logs: true } as unknown) as any);
+
+      const audioUrl: string | undefined = (result as any)?.data?.audio?.url;
+      if (!audioUrl) throw new ApiError('No audio URL returned from FAL MiniMax Music 2 API', 502);
+
+      const username = creator?.username || uid;
+      let stored: any;
+      try {
+        stored = await uploadFromUrlToZata({ sourceUrl: audioUrl, keyPrefix: `users/${username}/audio/${historyId}`, fileName: 'minimax-music-2' });
+      } catch (e) {
+        stored = { publicUrl: audioUrl, key: '' };
+      }
+
+      const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
+      
+      // Store in multiple formats for frontend compatibility
+      const audiosArray = [audioObj];
+      const imagesArray = [{ ...audioObj, type: 'audio' }];
+
+      await generationHistoryRepository.update(uid, historyId, { 
+        status: 'completed', 
+        audio: audioObj,
+        audios: audiosArray,
+        images: imagesArray
+      } as any);
+      await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj, audios: audiosArray } as any);
+      await syncToMirror(uid, historyId);
+
+      return { audio: audioObj, audios: audiosArray, historyId, model: musicEndpoint, status: 'completed' } as any;
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to generate music with FAL MiniMax Music 2 API',
+        context: 'falService.generate.minimaxMusic2',
+        toastTitle: 'MiniMax Music 2 failed',
+      });
+      try {
+        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
+      } catch (mirrorErr) {
+        console.error('[falService.generate][minimax-music-2] Failed to mirror error state:', mirrorErr);
+      }
+      throw falError;
+    }
+  }
 
   if (wantsMaya && isMayaTts) {
     // Maya TTS flow

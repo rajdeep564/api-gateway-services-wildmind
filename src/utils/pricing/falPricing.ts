@@ -579,6 +579,13 @@ export async function computeFalBirefnetVideoCost(req: Request): Promise<{ cost:
 
 // Topaz Image Upscaler dynamic pricing
 // Rule: 70 credits per output megapixel (width x height / 1e6)
+// MiniMax Music 2 pricing: $0.03 per generation = 60 credits
+export async function computeFalMiniMaxMusic2Cost(_req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  // $0.03 per generation = 60 credits (using CREDITS_PER_USD = 2000)
+  const cost = 60;
+  return { cost, pricingVersion: FAL_PRICING_VERSION, meta: { model: 'MiniMax Music 2', costUSD: 0.03 } };
+}
+
 export async function computeFalTopazUpscaleImageCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
   const body: any = req.body || {};
   let url: string | undefined = body.image_url;

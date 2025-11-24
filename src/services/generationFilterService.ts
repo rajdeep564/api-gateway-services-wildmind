@@ -112,7 +112,7 @@ async function getPublicGenerations(params: FilterParams) {
     cursor,
     generationType: params.generationType as any,
     status: params.status,
-    sortBy: params.sortBy,
+    sortBy: params.sortBy as 'createdAt' | 'updatedAt' | 'prompt' | 'aestheticScore' | undefined,
     sortOrder: params.sortOrder,
     createdBy: params.createdBy,
     dateStart: params.dateStart,
