@@ -11,6 +11,7 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
   const isIdeogram = m.includes('ideogram-ai/ideogram-v3');
   const isLucidOrigin = m.includes('leonardoai/lucid-origin');
   const isPhoenix = m.includes('leonardoai/phoenix-1.0');
+  const isNanoBananaPro = m.includes('google/nano-banana-pro') || m.includes('nano-banana-pro');
 
   if (isSeedream) {
     if (size != null && !['1K', '2K', '4K', 'custom'].includes(String(size))) return next(new ApiError("size must be one of '1K' | '2K' | '4K' | 'custom'", 400));
@@ -99,6 +100,41 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
     }
     if (req.body.prompt_enhance != null && typeof req.body.prompt_enhance !== 'boolean') return next(new ApiError('prompt_enhance must be boolean', 400));
     if (req.body.generation_mode != null && !allowedMode.has(String(req.body.generation_mode))) return next(new ApiError('invalid generation_mode for phoenix-1.0', 400));
+  }
+  // Google Nano Banana Pro validations
+  if (isNanoBananaPro) {
+    const allowedResolution = new Set(['1K', '2K', '4K']);
+    const allowedAspectRatio = new Set([
+      'match_input_image', '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'
+    ]);
+    const allowedOutputFormat = new Set(['jpg', 'png']);
+    const allowedSafetyFilter = new Set(['block_low_and_above', 'block_medium_and_above', 'block_only_high']);
+    
+    if (req.body.resolution != null && !allowedResolution.has(String(req.body.resolution))) {
+      return next(new ApiError('resolution must be one of: 1K, 2K, 4K', 400));
+    }
+    if (req.body.aspect_ratio != null && !allowedAspectRatio.has(String(req.body.aspect_ratio))) {
+      return next(new ApiError('invalid aspect_ratio for nano-banana-pro', 400));
+    }
+    if (req.body.output_format != null && !allowedOutputFormat.has(String(req.body.output_format))) {
+      return next(new ApiError('output_format must be jpg or png', 400));
+    }
+    if (req.body.safety_filter_level != null && !allowedSafetyFilter.has(String(req.body.safety_filter_level))) {
+      return next(new ApiError('invalid safety_filter_level for nano-banana-pro', 400));
+    }
+    if (req.body.image_input != null) {
+      if (!Array.isArray(req.body.image_input)) {
+        return next(new ApiError('image_input must be an array of URLs', 400));
+      }
+      if (req.body.image_input.length > 14) {
+        return next(new ApiError('image_input supports up to 14 images', 400));
+      }
+      for (const url of req.body.image_input) {
+        if (typeof url !== 'string') {
+          return next(new ApiError('image_input must contain URL strings', 400));
+        }
+      }
+    }
   }
   next();
 }

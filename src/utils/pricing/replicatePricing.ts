@@ -22,6 +22,9 @@ const COST_MAGIC_IMAGE_REFINER = 84;
 const COST_IDEOGRAM_3_QUALITY = 210;
 const COST_LUCID_ORIGIN = 183;
 const COST_PHOENIX_1_0 = 180;
+const COST_NANO_BANANA_PRO_1K = 300;
+const COST_NANO_BANANA_PRO_2K = 300;
+const COST_NANO_BANANA_PRO_4K = 500;
 
 export async function computeReplicateBgRemoveCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { model } = req.body || {};
@@ -100,6 +103,16 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   }
   if (normalized.includes('leonardoai/lucid-origin') || normalized.includes('lucid origin') || normalized.includes('lucid-origin')) cost = COST_LUCID_ORIGIN;
   if (normalized.includes('phoenix 1.0') || normalized.includes('phoenix-1.0')) cost = COST_PHOENIX_1_0;
+  // Google Nano Banana Pro - resolution-based pricing
+  if (normalized.includes('google/nano-banana-pro') || normalized.includes('nano-banana-pro')) {
+    const resolution = String((req.body as any)?.resolution || '2K').toUpperCase();
+    if (resolution === '4K') {
+      cost = COST_NANO_BANANA_PRO_4K;
+    } else {
+      // Default to 1K/2K pricing (300 credits)
+      cost = COST_NANO_BANANA_PRO_2K;
+    }
+  }
   return { cost: Math.ceil(cost), pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: normalized } };
 }
 

@@ -122,6 +122,13 @@ router.post(
   (falController as any).uploadVoice
 );
 
+// List user's uploaded audio files
+router.get(
+  "/audio-files",
+  requireAuth,
+  (falController as any).listUserAudioFiles
+);
+
 // Image utilities
 router.post(
   "/image2svg",

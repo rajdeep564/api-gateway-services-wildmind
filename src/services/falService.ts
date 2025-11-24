@@ -271,26 +271,33 @@ async function generate(
         text: (payload as any).text || finalPrompt,
       };
       
-      // Handle custom voice URL: upload to Zata storage if voice is a URL
+      // Handle custom voice URL: only upload to Zata if it's NOT already a Zata URL
       let voiceValue = (payload as any).voice;
       if (voiceValue && typeof voiceValue === 'string' && (voiceValue.startsWith('http://') || voiceValue.startsWith('https://'))) {
-        // This is a custom voice URL - upload it to Zata storage
-        const username = creator?.username || uid;
-        const voiceFileName = (payload as any).voice_file_name || `custom-voice-${Date.now()}`;
-        const keyPrefix = `users/${username}/inputaudio`;
+        // Check if it's already a Zata URL - if so, use it directly without re-uploading
+        const isZataUrl = voiceValue.includes('idr01.zata.ai') || voiceValue.includes('zata.ai');
         
-        try {
-          console.log('[falService.generate] Uploading custom voice file to Zata:', { originalUrl: voiceValue, fileName: voiceFileName });
-          const voiceStored = await uploadFromUrlToZata({
-            sourceUrl: voiceValue,
-            keyPrefix,
-            fileName: voiceFileName,
-          });
-          voiceValue = voiceStored.publicUrl;
-          console.log('[falService.generate] Custom voice file uploaded successfully:', { storedUrl: voiceValue, storagePath: voiceStored.key });
-        } catch (uploadErr: any) {
-          console.error('[falService.generate] Failed to upload custom voice file to Zata, using original URL:', uploadErr?.message || uploadErr);
-          // Continue with original URL if upload fails
+        if (!isZataUrl) {
+          // This is a custom voice URL from external source - upload it to Zata storage
+          const username = creator?.username || uid;
+          const voiceFileName = (payload as any).voice_file_name || `custom-voice-${Date.now()}`;
+          const keyPrefix = `users/${username}/inputaudio`;
+          
+          try {
+            console.log('[falService.generate] Uploading custom voice file to Zata:', { originalUrl: voiceValue, fileName: voiceFileName });
+            const voiceStored = await uploadFromUrlToZata({
+              sourceUrl: voiceValue,
+              keyPrefix,
+              fileName: voiceFileName,
+            });
+            voiceValue = voiceStored.publicUrl;
+            console.log('[falService.generate] Custom voice file uploaded successfully:', { storedUrl: voiceValue, storagePath: voiceStored.key });
+          } catch (uploadErr: any) {
+            console.error('[falService.generate] Failed to upload custom voice file to Zata, using original URL:', uploadErr?.message || uploadErr);
+            // Continue with original URL if upload fails
+          }
+        } else {
+          console.log('[falService.generate] Voice URL is already a Zata URL, using directly:', voiceValue);
         }
       }
       
