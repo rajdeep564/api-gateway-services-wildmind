@@ -100,10 +100,34 @@ export async function deleteUserAudio(uid: string, audioId: string): Promise<voi
   }
 }
 
+/**
+ * Get a specific audio file by ID
+ */
+export async function getUserAudioById(uid: string, audioId: string): Promise<(UserAudioDoc & { id: string }) | null> {
+  try {
+    const docRef = adminDb.collection('users').doc(uid).collection('audioFiles').doc(audioId);
+    const snapshot = await docRef.get();
+    
+    if (!snapshot.exists) {
+      return null;
+    }
+    
+    const data = snapshot.data() as UserAudioDoc;
+    return {
+      ...data,
+      id: snapshot.id,
+    } as any;
+  } catch (err: any) {
+    logger.error({ uid, audioId, err }, '[UserAudio] Failed to get audio file by ID');
+    throw err;
+  }
+}
+
 export const userAudioRepository = {
   createUserAudio,
   getUserAudioFiles,
   deleteUserAudio,
+  getUserAudioById,
   checkFileNameExists,
 };
 
