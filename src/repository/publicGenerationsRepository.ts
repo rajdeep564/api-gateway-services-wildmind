@@ -1,5 +1,6 @@
 import { adminDb, admin } from '../config/firebaseAdmin';
 import { GenerationHistoryItem } from '../types/generate';
+import { mapModeToGenerationTypes } from '../utils/modeTypeMap';
 
 function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
   const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, audios, createdBy, isPublic, createdAt, updatedAt, isDeleted, aspectRatio, frameSize, aspect_ratio } = data;
@@ -41,7 +42,7 @@ export async function listPublic(params: {
   createdBy?: string; // uid of creator
   dateStart?: string;
   dateEnd?: string;
-  mode?: 'video' | 'image' | 'music' | 'all';
+  mode?: 'video' | 'image' | 'music' | 'branding' | 'all';
   search?: string; // free-text prompt search
   minScore?: number; // Minimum aesthetic score threshold
 }): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string; totalCount?: number }> {
@@ -105,12 +106,9 @@ export async function listPublic(params: {
   
   // Handle mode-based filtering at database level
   if (params.mode && params.mode !== 'all') {
-    if (params.mode === 'video') {
-      baseQuery = baseQuery.where('generationType', 'in', ['text-to-video', 'image-to-video', 'video-to-video']);
-    } else if (params.mode === 'image') {
-      baseQuery = baseQuery.where('generationType', 'in', ['text-to-image', 'logo', 'sticker-generation', 'product-generation', 'ad-generation']);
-    } else if (params.mode === 'music') {
-      baseQuery = baseQuery.where('generationType', '==', 'text-to-music');
+    const mappedTypes = mapModeToGenerationTypes(params.mode);
+    if (mappedTypes && mappedTypes.length > 0) {
+      baseQuery = baseQuery.where('generationType', 'in', mappedTypes);
     }
   }
   

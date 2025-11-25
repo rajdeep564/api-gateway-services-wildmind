@@ -1,6 +1,7 @@
 import { GenerationType } from '../types/generate';
 import { generationHistoryRepository } from '../repository/generationHistoryRepository';
 import { publicGenerationsRepository } from '../repository/publicGenerationsRepository';
+import { mapModeToGenerationTypes, normalizeMode } from '../utils/modeTypeMap';
 
 export interface FilterParams {
   limit?: number;
@@ -12,7 +13,7 @@ export interface FilterParams {
   sortBy?: 'createdAt' | 'updatedAt' | 'prompt' | 'aestheticScore';
   sortOrder?: 'asc' | 'desc';
   createdBy?: string;
-  mode?: 'video' | 'image' | 'music' | 'all';
+  mode?: 'video' | 'image' | 'music' | 'branding' | 'all';
   dateStart?: string;
   dateEnd?: string;
   search?: string; // free-text prompt search (case-insensitive substring)
@@ -41,6 +42,11 @@ async function getUserGenerations(uid: string, params: FilterParams) {
   // For user generations, aestheticScore sorting is not supported, fallback to createdAt
   const userSortBy = params.sortBy === 'aestheticScore' ? 'createdAt' : params.sortBy;
   
+  const mappedModeTypesForUser = !params.generationType ? mapModeToGenerationTypes(params.mode) : undefined;
+  if (mappedModeTypesForUser) {
+    params.generationType = mappedModeTypesForUser;
+  }
+
   const result = await generationHistoryRepository.list(uid, {
     limit,
     cursor, // LEGACY: document ID cursor
@@ -52,6 +58,7 @@ async function getUserGenerations(uid: string, params: FilterParams) {
     dateStart: params.dateStart,
     dateEnd: params.dateEnd,
     search: params.search,
+    mode: params.mode,
   });
   
   const meta: PaginationMeta = {
@@ -73,18 +80,9 @@ async function getPublicGenerations(params: FilterParams) {
     cursor = undefined;
   }
 
-  // Support feature-wise mode mapping to generationType arrays
-  if (!params.generationType && params.mode) {
-    const mode = String(params.mode).toLowerCase();
-    if (mode === 'video') {
-      params.generationType = ['text-to-video', 'image-to-video', 'video-to-video'];
-    } else if (mode === 'image') {
-      params.generationType = ['text-to-image', 'logo', 'sticker-generation', 'product-generation', 'ad-generation'];
-    } else if (mode === 'music') {
-      params.generationType = ['text-to-music'];
-    } else if (mode === 'all') {
-      params.generationType = undefined;
-    }
+  const mappedModeTypesForPublic = !params.generationType ? mapModeToGenerationTypes(params.mode) : undefined;
+  if (mappedModeTypesForPublic) {
+    params.generationType = mappedModeTypesForPublic;
   }
 
   const limit = params.limit || 20;
@@ -199,6 +197,13 @@ async function validateAndTransformParams(queryParams: any): Promise<FilterParam
   if (queryParams.cursor) {
     params.cursor = queryParams.cursor;
   }
+
+  if (queryParams.mode) {
+    const normalizedMode = normalizeMode(queryParams.mode);
+    if (normalizedMode && ['video', 'image', 'music', 'branding', 'all'].includes(normalizedMode)) {
+      params.mode = normalizedMode as FilterParams['mode'];
+    }
+  }
   
   // Handle generationType
   const validGenerationTypes = [
@@ -272,7 +277,7 @@ async function validateAndTransformParams(queryParams: any): Promise<FilterParam
   // Handle mode (feature-wise)
   if (queryParams.mode) {
     const mode = String(queryParams.mode).toLowerCase();
-    const validModes = ['video','image','music','all'];
+    const validModes = ['video','image','music','branding','all'];
     if (!validModes.includes(mode)) {
       throw new Error(`Invalid mode. Must be one of: ${validModes.join(', ')}`);
     }

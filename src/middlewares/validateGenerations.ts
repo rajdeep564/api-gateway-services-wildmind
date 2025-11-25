@@ -50,6 +50,7 @@ export const validateListGenerations = [
   query('sortBy').optional().isIn(['createdAt','updatedAt','prompt']),
   query('sortOrder').optional().isIn(['asc','desc']),
   query('search').optional().isString().trim().isLength({ max: 200 }),
+  query('mode').optional().isIn(['video','image','music','branding','all']),
 ];
 
 export function handleValidationErrors(req: Request, res: Response, next: NextFunction) {
