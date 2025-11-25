@@ -9,6 +9,8 @@ import { logger } from '../utils/logger';
 import { uploadDataUriToZata } from '../utils/storage/zataUpload';
 import { authRepository } from '../repository/auth/authRepository';
 import { userAudioRepository } from '../repository/userAudioRepository';
+import { deleteFile, extractKeyFromUrl } from '../utils/storage/zataDelete';
+import { ApiError } from '../utils/errorHandler';
 
 async function generate(req: Request, res: Response, next: NextFunction) {
   try {
@@ -341,6 +343,31 @@ export const falController = {
       const audioFiles = await userAudioRepository.getUserAudioFiles(uid);
       
       res.json(formatApiResponse('success', 'Audio files retrieved', { audioFiles }));
+    } catch (err) {
+      next(err);
+    }
+  },
+  async deleteUserAudioFile(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const audioId = req.params.audioId;
+      if (!audioId) {
+        throw new ApiError('audioId is required', 400);
+      }
+      
+      const audioDoc = await userAudioRepository.getUserAudioById(uid, audioId);
+      if (!audioDoc) {
+        throw new ApiError('Audio file not found', 404);
+      }
+      
+      const storageKey = audioDoc.storagePath || extractKeyFromUrl(audioDoc.url || '');
+      if (storageKey) {
+        await deleteFile(storageKey);
+      }
+      
+      await userAudioRepository.deleteUserAudio(uid, audioId);
+      
+      res.json(formatApiResponse('success', 'Audio file deleted', { audioId }));
     } catch (err) {
       next(err);
     }
