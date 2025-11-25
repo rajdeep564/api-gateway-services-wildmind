@@ -47,6 +47,7 @@ router.post('/replace', requireAuth, generateController.replaceForCanvas);
 
 // Query (Canvas prompt enhancement)
 router.post('/query', queryController.queryCanvas);
+router.post('/generate-scenes', queryController.generateScenes);
 
 // Media Library
 router.get('/media-library', mediaLibraryController.getMediaLibrary);

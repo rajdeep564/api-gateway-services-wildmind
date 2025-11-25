@@ -22,7 +22,7 @@ import { formatApiResponse } from '../../utils/formatApiResponse';
 export async function queryCanvas(req: Request, res: Response, next: NextFunction) {
   try {
     const { text, max_new_tokens } = req.body || {};
-    
+
     if (!text || typeof text !== 'string') {
       return res.status(400).json(
         formatApiResponse('error', 'text is required and must be a string', null)
@@ -47,5 +47,26 @@ export async function queryCanvas(req: Request, res: Response, next: NextFunctio
   }
 }
 
-export default { queryCanvas };
+export async function generateScenes(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { story } = req.body || {};
+
+    if (!story || typeof story !== 'string') {
+      return res.status(400).json(
+        formatApiResponse('error', 'story is required and must be a string', null)
+      );
+    }
+
+    // Dynamic import to avoid circular deps if any
+    const { generateScenesFromStory } = require('../../services/promptEnhancerService');
+    const result = await generateScenesFromStory(story);
+
+    return res.json(formatApiResponse('success', 'Scenes generated successfully', result));
+  } catch (err: any) {
+    console.error('[Generate Scenes Controller] Error:', err);
+    next(err);
+  }
+}
+
+export default { queryCanvas, generateScenes };
 

@@ -85,7 +85,7 @@ export const env: EnvConfig = {
   minimaxGroupId: process.env.MINIMAX_GROUP_ID,
   // Accept multiple env names for Replicate for robustness
   replicateApiKey: process.env.REPLICATE_API_KEY || process.env.REPLICATE_API_TOKEN || (process.env as any).RAPLICATE_API_KEY,
-  googleGenAIApiKey: process.env.GOOGLE_GENAI_API_KEY || process.env.GENAI_API_KEY,
+  googleGenAIApiKey: process.env.GOOGLE_GENAI_API_KEY || process.env.GENAI_API_KEY || process.env.GEMINI_API_KEY,
   emailUser: process.env.EMAIL_USER,
   emailAppPassword: process.env.EMAIL_APP_PASSWORD,
   smtpHost: process.env.SMTP_HOST,
