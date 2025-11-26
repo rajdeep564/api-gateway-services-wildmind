@@ -1247,6 +1247,67 @@ export async function generateImage(uid: string, body: any) {
       }
       // No additional clamping required; validator enforces enumerations and limits
     }
+    // Google Nano Banana Pro mapping
+    if (modelBase === "google/nano-banana-pro") {
+      if (rest.resolution) input.resolution = String(rest.resolution);
+      if (rest.aspect_ratio) input.aspect_ratio = String(rest.aspect_ratio);
+      if (rest.output_format) input.output_format = String(rest.output_format);
+      if (rest.safety_filter_level) input.safety_filter_level = String(rest.safety_filter_level);
+      // Handle image_input array (up to 14 images)
+      if (Array.isArray(rest.image_input) && rest.image_input.length > 0) {
+        const username = creator?.username || uid;
+        const keyPrefix = `users/${username}/input/${historyId}`;
+        const inputPersisted: any[] = [];
+        const resolved: string[] = [];
+        for (let i = 0; i < Math.min(rest.image_input.length, 14); i++) {
+          const img = rest.image_input[i];
+          if (typeof img !== 'string') continue;
+          try {
+            if (img.startsWith('data:')) {
+              const uploaded = await uploadDataUriToZata({
+                dataUri: img,
+                keyPrefix,
+                fileName: `nano-banana-pro-ref-${i + 1}`,
+              });
+              resolved.push(uploaded.publicUrl);
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: uploaded.publicUrl,
+                storagePath: (uploaded as any).key,
+                originalUrl: img,
+              });
+            } else {
+              resolved.push(img);
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: img,
+                originalUrl: img,
+              });
+            }
+          } catch (e) {
+            // Fallback to original URL if upload fails
+            if (typeof img === 'string') {
+              resolved.push(img);
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: img,
+                originalUrl: img,
+              });
+            }
+          }
+        }
+        if (resolved.length > 0) input.image_input = resolved;
+        // Save input images to database
+        if (inputPersisted.length > 0) {
+          try {
+            await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+            console.log('[replicateService.generateImage] Saved inputImages for Nano Banana Pro', { historyId, count: inputPersisted.length });
+          } catch (e) {
+            console.warn('[replicateService.generateImage] Failed to save inputImages for Nano Banana Pro:', e);
+          }
+        }
+      }
+    }
     const modelSpec = composeModelSpec(replicateModelBase, body.version);
     // eslint-disable-next-line no-console
     console.log("[replicateService.generateImage] run", {
@@ -1883,11 +1944,26 @@ export async function wanT2V(uid: string, body: any) {
   const scoredVideos = await aestheticScoreService.scoreVideos(videos);
   const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
 
-  await generationHistoryRepository.update(uid, historyId, {
-    status: "completed",
-    videos: scoredVideos,
-    aestheticScore: highestScore,
-  } as any);
+  // Generate and attach thumbnails
+  try {
+    const { generateAndAttachThumbnail } = await import('./videoThumbnailService');
+    const keyPrefix = storagePath ? storagePath.substring(0, storagePath.lastIndexOf('/')) : `users/${creator?.username || uid}/video/${historyId}`;
+    const videosWithThumbnails = await Promise.all(
+      scoredVideos.map((video: any) => generateAndAttachThumbnail(video, keyPrefix))
+    );
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "completed",
+      videos: videosWithThumbnails,
+      aestheticScore: highestScore,
+    } as any);
+  } catch (thumbErr) {
+    console.warn('[Replicate.wanT2V] Failed to generate thumbnails, continuing without them:', thumbErr);
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "completed",
+      videos: scoredVideos,
+      aestheticScore: highestScore,
+    } as any);
+  }
   try { console.log('[Replicate.wanT2V] Video history updated with scores', { historyId, videoCount: scoredVideos.length, highestScore }); } catch {}
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {

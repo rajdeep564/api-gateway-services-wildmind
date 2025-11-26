@@ -1,6 +1,7 @@
 import { GenerationType } from '../types/generate';
 import { generationHistoryRepository } from '../repository/generationHistoryRepository';
 import { publicGenerationsRepository } from '../repository/publicGenerationsRepository';
+import { mapModeToGenerationTypes, normalizeMode } from '../utils/modeTypeMap';
 
 export interface FilterParams {
   limit?: number;
@@ -9,13 +10,14 @@ export interface FilterParams {
   nextCursor?: string; // NEW: timestamp cursor
   generationType?: GenerationType | string | string[];
   status?: 'generating' | 'completed' | 'failed';
-  sortBy?: 'createdAt' | 'updatedAt' | 'prompt';
+  sortBy?: 'createdAt' | 'updatedAt' | 'prompt' | 'aestheticScore';
   sortOrder?: 'asc' | 'desc';
   createdBy?: string;
-  mode?: 'video' | 'image' | 'music' | 'all';
+  mode?: 'video' | 'image' | 'music' | 'branding' | 'all';
   dateStart?: string;
   dateEnd?: string;
   search?: string; // free-text prompt search (case-insensitive substring)
+  minScore?: number; // Minimum aesthetic score threshold (e.g., 9.5)
 }
 
 export interface PaginationMeta {
@@ -37,17 +39,26 @@ async function getUserGenerations(uid: string, params: FilterParams) {
     cursor = undefined; // Start from beginning for now
   }
   
+  // For user generations, aestheticScore sorting is not supported, fallback to createdAt
+  const userSortBy = params.sortBy === 'aestheticScore' ? 'createdAt' : params.sortBy;
+  
+  const mappedModeTypesForUser = !params.generationType ? mapModeToGenerationTypes(params.mode) : undefined;
+  if (mappedModeTypesForUser) {
+    params.generationType = mappedModeTypesForUser;
+  }
+
   const result = await generationHistoryRepository.list(uid, {
     limit,
     cursor, // LEGACY: document ID cursor
     nextCursor, // NEW: timestamp cursor
     generationType: params.generationType as any,
     status: params.status,
-    sortBy: params.sortBy,
+    sortBy: userSortBy as any,
     sortOrder: params.sortOrder,
     dateStart: params.dateStart,
     dateEnd: params.dateEnd,
     search: params.search,
+    mode: params.mode,
   });
   
   const meta: PaginationMeta = {
@@ -69,18 +80,9 @@ async function getPublicGenerations(params: FilterParams) {
     cursor = undefined;
   }
 
-  // Support feature-wise mode mapping to generationType arrays
-  if (!params.generationType && params.mode) {
-    const mode = String(params.mode).toLowerCase();
-    if (mode === 'video') {
-      params.generationType = ['text-to-video', 'image-to-video', 'video-to-video'];
-    } else if (mode === 'image') {
-      params.generationType = ['text-to-image', 'logo', 'sticker-generation', 'product-generation', 'ad-generation'];
-    } else if (mode === 'music') {
-      params.generationType = ['text-to-music'];
-    } else if (mode === 'all') {
-      params.generationType = undefined;
-    }
+  const mappedModeTypesForPublic = !params.generationType ? mapModeToGenerationTypes(params.mode) : undefined;
+  if (mappedModeTypesForPublic) {
+    params.generationType = mappedModeTypesForPublic;
   }
 
   const limit = params.limit || 20;
@@ -108,13 +110,14 @@ async function getPublicGenerations(params: FilterParams) {
     cursor,
     generationType: params.generationType as any,
     status: params.status,
-    sortBy: params.sortBy,
+    sortBy: params.sortBy as 'createdAt' | 'updatedAt' | 'prompt' | 'aestheticScore' | undefined,
     sortOrder: params.sortOrder,
     createdBy: params.createdBy,
     dateStart: params.dateStart,
     dateEnd: params.dateEnd,
     mode: params.mode,
     search: params.search,
+    minScore: params.minScore,
   });
   
   // Enrich createdBy objects with photoURL if missing
@@ -194,6 +197,13 @@ async function validateAndTransformParams(queryParams: any): Promise<FilterParam
   if (queryParams.cursor) {
     params.cursor = queryParams.cursor;
   }
+
+  if (queryParams.mode) {
+    const normalizedMode = normalizeMode(queryParams.mode);
+    if (normalizedMode && ['video', 'image', 'music', 'branding', 'all'].includes(normalizedMode)) {
+      params.mode = normalizedMode as FilterParams['mode'];
+    }
+  }
   
   // Handle generationType
   const validGenerationTypes = [
@@ -230,12 +240,22 @@ async function validateAndTransformParams(queryParams: any): Promise<FilterParam
   }
   
   // Handle sortBy
-  const validSortFields = ['createdAt', 'updatedAt', 'prompt'];
+  const validSortFields = ['createdAt', 'updatedAt', 'prompt', 'aestheticScore'];
   if (queryParams.sortBy) {
     if (validSortFields.includes(queryParams.sortBy)) {
       params.sortBy = queryParams.sortBy as any;
     } else {
       throw new Error(`Invalid sortBy. Must be one of: ${validSortFields.join(', ')}`);
+    }
+  }
+  
+  // Handle minScore (minimum aesthetic score threshold)
+  if (queryParams.minScore) {
+    const score = parseFloat(String(queryParams.minScore));
+    if (!isNaN(score) && score >= 0 && score <= 10) {
+      params.minScore = score;
+    } else {
+      throw new Error('Invalid minScore. Must be a number between 0 and 10');
     }
   }
   
@@ -257,7 +277,7 @@ async function validateAndTransformParams(queryParams: any): Promise<FilterParam
   // Handle mode (feature-wise)
   if (queryParams.mode) {
     const mode = String(queryParams.mode).toLowerCase();
-    const validModes = ['video','image','music','all'];
+    const validModes = ['video','image','music','branding','all'];
     if (!validModes.includes(mode)) {
       throw new Error(`Invalid mode. Must be one of: ${validModes.join(', ')}`);
     }

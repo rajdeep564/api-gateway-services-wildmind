@@ -31,6 +31,7 @@ router.get('/resolve-email', authController.resolveEmail);
 router.get('/username/check', validateCheckUsername, authController.checkUsername);
 router.get('/me', requireAuth, authController.getCurrentUser);
 router.patch('/me', requireAuth, validateUpdateMe, authController.updateUser);
+router.post('/session/refresh', requireAuth, validateSession, authController.refreshSession);
 router.post('/logout', authController.logout);
 router.post('/redeem-code/apply', requireAuth, redeemCodeController.applyRedeemCode);
 // Check if user can toggle public generation (free users cannot)

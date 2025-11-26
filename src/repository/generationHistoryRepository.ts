@@ -3,6 +3,7 @@ import { GenerationHistoryItem, GenerationStatus, Visibility, GenerationType } f
 import { logger } from '../utils/logger';
 import { invalidateUserLists, invalidateItem } from '../utils/generationCache';
 import { mirrorQueueRepository } from './mirrorQueueRepository';
+import { getModeTypeSet, normalizeMode } from '../utils/modeTypeMap';
 
 function toIso(value: any): any {
   try {
@@ -20,6 +21,29 @@ function normalizeItem(id: string, data: any): GenerationHistoryItem {
   const updatedAt = toIso(data?.updatedAt);
   return { id, ...data, ...(createdAt ? { createdAt } : {}), ...(updatedAt ? { updatedAt } : {}) } as GenerationHistoryItem;
 }
+
+const normalizeTypeValue = (value?: string): string => {
+  if (!value) return '';
+  return String(value).replace(/[_-]/g, '-').toLowerCase();
+};
+
+const filterItemsByMode = <T extends { generationType?: string }>(
+  items: T[],
+  mode?: 'video' | 'image' | 'music' | 'branding' | 'all'
+): { filtered: T[]; removed: number } => {
+  const normalizedMode = normalizeMode(mode);
+  if (!normalizedMode || normalizedMode === 'all') {
+    return { filtered: items, removed: 0 };
+  }
+  const allowedSet = getModeTypeSet(normalizedMode);
+  if (!allowedSet || allowedSet.size === 0) {
+    return { filtered: items, removed: 0 };
+  }
+  const filtered = items.filter((item) =>
+    allowedSet.has(normalizeTypeValue(item?.generationType))
+  );
+  return { filtered, removed: items.length - filtered.length };
+};
 
 export async function create(uid: string, data: {
   prompt: string;
@@ -211,9 +235,12 @@ export async function list(uid: string, params: {
   dateStart?: string; // LEGACY: ISO date string for range filtering
   dateEnd?: string; // LEGACY: ISO date string for range filtering
   search?: string;
+  mode?: 'video' | 'image' | 'music' | 'branding' | 'all';
   debug?: boolean; // when true include diagnostics
 }): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string | number | null; hasMore?: boolean; totalCount?: number; diagnostics?: any }> {
   const col = adminDb.collection('generationHistory').doc(uid).collection('items');
+  const normalizedMode = normalizeMode(params.mode);
+  const hasModeFilter = Boolean(normalizedMode && normalizedMode !== 'all');
   
   // Determine if we're using new optimized pagination or legacy mode
   // Allow explicit sortBy=createdAt without disabling optimized path. Optimized path triggers if:
@@ -292,7 +319,11 @@ export async function list(uid: string, params: {
     
     // Fetch more than requested to compensate for in-memory filters (e.g., isDeleted true)
     // and still return a full page. Cap to a safe value to avoid large reads.
-    const fetchLimit = Math.min(200, Math.max(params.limit * 3, params.limit + 10));
+    const modeMultiplier = hasModeFilter ? 6 : 3;
+    const fetchLimit = Math.min(
+      400,
+      Math.max(params.limit * modeMultiplier, params.limit + (hasModeFilter ? 40 : 10))
+    );
     
     let snap: FirebaseFirestore.QuerySnapshot;
     try {
@@ -334,12 +365,15 @@ export async function list(uid: string, params: {
       items = items.filter((it: any) => String((it as any).prompt || '').toLowerCase().includes(needle));
     }
 
+    const { filtered: modeFilteredItems, removed: removedByMode } = filterItemsByMode(items, normalizedMode as any);
+    items = modeFilteredItems;
+
     // Detect if there are more items AFTER in-memory filtering
     // Prefer optimistic hasMore when raw fetch hit the cap, to avoid early stop when
     // filtering trims results to exactly the page size.
     const rawCount = snap.docs.length;
     let hasMore = items.length > params.limit;
-    if (!hasMore && rawCount >= fetchLimit) {
+    if (!hasMore && (rawCount >= fetchLimit || removedByMode > 0)) {
       hasMore = true;
     }
     const pageItems = items.slice(0, params.limit);
@@ -383,8 +417,10 @@ export async function list(uid: string, params: {
       appliedFilters: {
         status: params.status || null,
         generationType: params.generationType || null,
+        mode: normalizedMode || null,
       },
       generationTypeSynonymsUsed: params.generationType ? (Array.isArray(params.generationType) ? params.generationType : [params.generationType]) : [],
+      removedByMode,
     } : undefined };
   }
   
@@ -404,6 +440,7 @@ async function listLegacy(uid: string, params: {
   dateStart?: string;
   dateEnd?: string;
   search?: string;
+  mode?: 'video' | 'image' | 'music' | 'branding' | 'all';
 }): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string; totalCount?: number }> {
   const col = adminDb.collection('generationHistory').doc(uid).collection('items');
   
@@ -460,9 +497,10 @@ async function listLegacy(uid: string, params: {
     }
   }
   
+  const legacyModeMultiplier = (params.mode && params.mode !== 'all') ? 6 : 1;
   const fetchCount = params.status || params.generationType ? 
-    Math.max(params.limit * 2, params.limit) : 
-    Math.max(params.limit * 4, params.limit);
+    Math.max(params.limit * 2 * legacyModeMultiplier, params.limit) : 
+    Math.max(params.limit * 4 * legacyModeMultiplier, params.limit);
   
   let snap: FirebaseFirestore.QuerySnapshot;
   try {
@@ -529,6 +567,8 @@ async function listLegacy(uid: string, params: {
     const needle = params.search.toLowerCase();
     items = items.filter((it: any) => String((it as any).prompt || '').toLowerCase().includes(needle));
   }
+
+  items = filterItemsByMode(items, params.mode).filtered;
 
   items.sort((a: any, b: any) => {
     const av = a[sortBy];

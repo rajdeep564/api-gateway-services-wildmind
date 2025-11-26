@@ -115,7 +115,9 @@ async function generate(
   // Map our model key to FAL endpoints
   let modelEndpoint: string;
   const modelLower = (model || '').toLowerCase();
-  if (modelLower.includes('imagen-4')) {
+  if (modelLower.includes('flux-2-pro')) {
+    modelEndpoint = 'fal-ai/flux-2-pro';
+  } else if (modelLower.includes('imagen-4')) {
     // Imagen 4 family
     if (modelLower.includes('ultra')) modelEndpoint = 'fal-ai/imagen4/preview/ultra';
     else if (modelLower.includes('fast')) modelEndpoint = 'fal-ai/imagen4/preview/fast';
@@ -271,26 +273,33 @@ async function generate(
         text: (payload as any).text || finalPrompt,
       };
       
-      // Handle custom voice URL: upload to Zata storage if voice is a URL
+      // Handle custom voice URL: only upload to Zata if it's NOT already a Zata URL
       let voiceValue = (payload as any).voice;
       if (voiceValue && typeof voiceValue === 'string' && (voiceValue.startsWith('http://') || voiceValue.startsWith('https://'))) {
-        // This is a custom voice URL - upload it to Zata storage
-        const username = creator?.username || uid;
-        const voiceFileName = (payload as any).voice_file_name || `custom-voice-${Date.now()}`;
-        const keyPrefix = `users/${username}/inputaudio`;
+        // Check if it's already a Zata URL - if so, use it directly without re-uploading
+        const isZataUrl = voiceValue.includes('idr01.zata.ai') || voiceValue.includes('zata.ai');
         
-        try {
-          console.log('[falService.generate] Uploading custom voice file to Zata:', { originalUrl: voiceValue, fileName: voiceFileName });
-          const voiceStored = await uploadFromUrlToZata({
-            sourceUrl: voiceValue,
-            keyPrefix,
-            fileName: voiceFileName,
-          });
-          voiceValue = voiceStored.publicUrl;
-          console.log('[falService.generate] Custom voice file uploaded successfully:', { storedUrl: voiceValue, storagePath: voiceStored.key });
-        } catch (uploadErr: any) {
-          console.error('[falService.generate] Failed to upload custom voice file to Zata, using original URL:', uploadErr?.message || uploadErr);
-          // Continue with original URL if upload fails
+        if (!isZataUrl) {
+          // This is a custom voice URL from external source - upload it to Zata storage
+          const username = creator?.username || uid;
+          const voiceFileName = (payload as any).voice_file_name || `custom-voice-${Date.now()}`;
+          const keyPrefix = `users/${username}/inputaudio`;
+          
+          try {
+            console.log('[falService.generate] Uploading custom voice file to Zata:', { originalUrl: voiceValue, fileName: voiceFileName });
+            const voiceStored = await uploadFromUrlToZata({
+              sourceUrl: voiceValue,
+              keyPrefix,
+              fileName: voiceFileName,
+            });
+            voiceValue = voiceStored.publicUrl;
+            console.log('[falService.generate] Custom voice file uploaded successfully:', { storedUrl: voiceValue, storagePath: voiceStored.key });
+          } catch (uploadErr: any) {
+            console.error('[falService.generate] Failed to upload custom voice file to Zata, using original URL:', uploadErr?.message || uploadErr);
+            // Continue with original URL if upload fails
+          }
+        } else {
+          console.log('[falService.generate] Voice URL is already a Zata URL, using directly:', voiceValue);
         }
       }
       
@@ -576,8 +585,64 @@ async function generate(
     const fileNameForIndex = (index: number) => buildGenerationImageFileName(historyId, index);
     const imagePromises = Array.from({ length: imagesRequested }, async (_, index) => {
   const input: any = { prompt: finalPrompt, output_format, num_images: 1 };
-      // Seedream expects image_size instead of aspect_ratio; allow explicit image_size override
-      if (modelEndpoint.includes('seedream')) {
+      // Flux 2 Pro expects image_size instead of aspect_ratio
+      if (modelEndpoint.includes('flux-2-pro')) {
+        const explicit = (payload as any).image_size;
+        const resolution = (payload as any).resolution; // '1K' | '2K'
+        
+        if (explicit) {
+          input.image_size = explicit;
+        } else {
+          // Map aspect_ratio + resolution to image_size
+          // For 1K: use enum values (costs $0.03)
+          // For 2K: use custom dimensions that meet 2K requirements (costs $0.07)
+          // Special case: 1024x2048 (9:16 portrait) costs $0.05
+          
+          const aspectMap: Record<string, { enum: string; enum1K?: string; custom2K?: { width: number; height: number } }> = {
+            '1:1': { enum: 'square_hd', enum1K: 'square_hd', custom2K: { width: 2048, height: 2048 } }, // 1K: square_hd (1024x1024), 2K: 2048x2048
+            '4:3': { enum: 'landscape_4_3', custom2K: { width: 2048, height: 1536 } },
+            '3:4': { enum: 'portrait_4_3', custom2K: { width: 1536, height: 2048 } },
+            '16:9': { enum: 'landscape_16_9', custom2K: { width: 2048, height: 1152 } },
+            '9:16': { enum: 'portrait_16_9', custom2K: { width: 1152, height: 2048 } },
+            'square_hd': { enum: 'square_hd', enum1K: 'square_hd', custom2K: { width: 2048, height: 2048 } },
+          };
+          
+          const mapping = aspectMap[String(resolvedAspect)] || aspectMap['1:1'];
+          
+          if (resolution === '2K') {
+            // Use custom dimensions for 2K
+            if (mapping.custom2K) {
+              input.image_size = mapping.custom2K;
+            } else {
+              // Fallback: use enum with 2K dimensions
+              input.image_size = { width: 2048, height: 2048 };
+            }
+          } else if (resolvedAspect === '9:16') {
+            // Special case: 9:16 portrait defaults to 1024x2048 (costs $0.05) unless 2K is explicitly selected
+            if (resolution === '2K') {
+              // Use 2K dimensions for 9:16
+              input.image_size = { width: 1152, height: 2048 };
+            } else {
+              // Default to 1024x2048 for 9:16 (costs $0.05)
+              input.image_size = { width: 1024, height: 2048 };
+            }
+          } else if (resolvedAspect === '1:1') {
+            // Special handling for Square (1:1):
+            // 1K → square_hd (1024x1024)
+            // 2K → custom 2048x2048 (handled above)
+            input.image_size = mapping.enum1K || 'square_hd';
+          } else {
+            // Default to 1K enum (costs $0.03)
+            input.image_size = mapping.enum;
+          }
+        }
+        
+        // Flux 2 Pro specific parameters
+        if ((payload as any).safety_tolerance) input.safety_tolerance = String((payload as any).safety_tolerance);
+        if ((payload as any).enable_safety_checker !== undefined) input.enable_safety_checker = Boolean((payload as any).enable_safety_checker);
+        if ((payload as any).seed != null) input.seed = Number((payload as any).seed);
+      } else if (modelEndpoint.includes('seedream')) {
+        // Seedream expects image_size instead of aspect_ratio; allow explicit image_size override
         const explicit = (payload as any).image_size;
         if (explicit) {
           input.image_size = explicit;
@@ -2396,7 +2461,7 @@ async function queueResult(uid: string, model: string | undefined, requestId: st
   let resolvedModel = model;
   if (!resolvedModel && requestId) {
     try {
-      const located = await generationHistoryRepository.findByProviderTaskId(uid, 'fal', requestId);
+  const located = await generationHistoryRepository.findByProviderTaskId(uid, 'fal', requestId);
       if (located?.item?.model) {
         resolvedModel = located.item.model;
       }
@@ -2466,8 +2531,18 @@ async function queueResult(uid: string, model: string | undefined, requestId: st
       });
       const videoObj: any = { id: requestId, url: uploaded.publicUrl, storagePath: uploaded.key, originalUrl: providerUrl };
       if (providerVideoId) videoObj.soraVideoId = providerVideoId;
+      
+      // Generate and attach thumbnail
+      try {
+        const { generateAndAttachThumbnail } = await import('./videoThumbnailService');
+        const videoWithThumbnail = await generateAndAttachThumbnail(videoObj, keyPrefix);
+        videos = [ videoWithThumbnail as any ];
+      } catch (thumbErr) {
+        console.warn('[falService.queueResult] Failed to generate thumbnail, continuing without it:', thumbErr);
       videos = [ videoObj as any ];
-      await generationHistoryRepository.update(uid, located.id, { status: 'completed', videos: [ videoObj ] as any, ...(providerVideoId ? { soraVideoId: providerVideoId } : {}) } as any);
+      }
+      
+      await generationHistoryRepository.update(uid, located.id, { status: 'completed', videos, ...(providerVideoId ? { soraVideoId: providerVideoId } : {}) } as any);
     } catch (e) {
       // Fallback to provider URL if Zata upload fails
       const videoObj: any = { id: requestId, url: providerUrl, storagePath: '', originalUrl: providerUrl };

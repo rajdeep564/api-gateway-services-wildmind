@@ -16,13 +16,14 @@ export const validatePublicListGenerations = [
     'mockup-generation','product-generation','ad-generation','live-chat'
   ]),
   query('status').optional().isIn(['generating','completed','failed']),
-  query('sortBy').optional().isIn(['createdAt','updatedAt','prompt']),
+  query('sortBy').optional().isIn(['createdAt','updatedAt','prompt','aestheticScore']),
   query('sortOrder').optional().isIn(['asc','desc']),
   query('createdBy').optional().isString(),
   query('mode').optional().isIn(['video','image','music','all']),
   query('dateStart').optional().isISO8601(),
   query('dateEnd').optional().isISO8601(),
   query('search').optional().isString().trim().isLength({ max: 200 }),
+  query('minScore').optional().isFloat({ min: 0, max: 10 }).withMessage('minScore must be a number between 0 and 10'),
 ];
 
 export const validateGenerationId = [

@@ -8,6 +8,9 @@ import { postSuccessDebit } from '../utils/creditDebit';
 import { logger } from '../utils/logger';
 import { uploadDataUriToZata } from '../utils/storage/zataUpload';
 import { authRepository } from '../repository/auth/authRepository';
+import { userAudioRepository } from '../repository/userAudioRepository';
+import { deleteFile, extractKeyFromUrl } from '../utils/storage/zataDelete';
+import { ApiError } from '../utils/errorHandler';
 
 async function generate(req: Request, res: Response, next: NextFunction) {
   try {
@@ -297,23 +300,77 @@ export const falController = {
         return res.status(400).json(formatApiResponse('error', 'Invalid audio data URI', null));
       }
       
+      if (!fileName || typeof fileName !== 'string' || fileName.trim().length === 0) {
+        return res.status(400).json(formatApiResponse('error', 'fileName is required', null));
+      }
+      
+      const trimmedFileName = fileName.trim();
+      
+      // Check for duplicate file name
+      const nameExists = await userAudioRepository.checkFileNameExists(uid, trimmedFileName);
+      
+      if (nameExists) {
+        return res.status(400).json(formatApiResponse('error', `Name "${trimmedFileName}" is already taken. Please try a different name.`, null));
+      }
+      
       // Get user info for storage path
       const creator = await authRepository.getUserById(uid);
       const username = creator?.username || uid;
       const keyPrefix = `users/${username}/inputaudio`;
-      const finalFileName = fileName || `custom-voice-${Date.now()}`;
       
       // Upload to Zata storage
       const stored = await uploadDataUriToZata({
         dataUri: audioData,
         keyPrefix,
-        fileName: finalFileName,
+        fileName: trimmedFileName,
       });
       
-      res.json(formatApiResponse('success', 'Voice file uploaded', { url: stored.publicUrl, storagePath: stored.key }));
+      // Store in database with name (single entry)
+      await userAudioRepository.createUserAudio(uid, {
+        fileName: trimmedFileName,
+        url: stored.publicUrl,
+        storagePath: stored.key,
+      });
+      
+      res.json(formatApiResponse('success', 'Voice file uploaded', { url: stored.publicUrl, storagePath: stored.key, fileName: trimmedFileName }));
     } catch (err) {
       next(err);
     }
-  }
-}
+  },
+  async listUserAudioFiles(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const audioFiles = await userAudioRepository.getUserAudioFiles(uid);
+      
+      res.json(formatApiResponse('success', 'Audio files retrieved', { audioFiles }));
+    } catch (err) {
+      next(err);
+    }
+  },
+  async deleteUserAudioFile(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const audioId = req.params.audioId;
+      if (!audioId) {
+        throw new ApiError('audioId is required', 400);
+      }
+      
+      const audioDoc = await userAudioRepository.getUserAudioById(uid, audioId);
+      if (!audioDoc) {
+        throw new ApiError('Audio file not found', 404);
+      }
+      
+      const storageKey = audioDoc.storagePath || extractKeyFromUrl(audioDoc.url || '');
+      if (storageKey) {
+        await deleteFile(storageKey);
+      }
+      
+      await userAudioRepository.deleteUserAudio(uid, audioId);
+      
+      res.json(formatApiResponse('success', 'Audio file deleted', { audioId }));
+    } catch (err) {
+      next(err);
+    }
+  },
+};
 

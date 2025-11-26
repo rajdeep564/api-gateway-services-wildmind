@@ -122,6 +122,20 @@ router.post(
   (falController as any).uploadVoice
 );
 
+// List user's uploaded audio files
+router.get(
+  "/audio-files",
+  requireAuth,
+  (falController as any).listUserAudioFiles
+);
+
+// Delete an uploaded audio file
+router.delete(
+  "/audio-files/:audioId",
+  requireAuth,
+  (falController as any).deleteUserAudioFile
+);
+
 // Image utilities
 router.post(
   "/image2svg",

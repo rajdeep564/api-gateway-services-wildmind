@@ -1,5 +1,6 @@
 import { adminDb, admin } from '../config/firebaseAdmin';
 import { GenerationHistoryItem } from '../types/generate';
+import { mapModeToGenerationTypes } from '../utils/modeTypeMap';
 
 function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
   const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, audios, createdBy, isPublic, createdAt, updatedAt, isDeleted, aspectRatio, frameSize, aspect_ratio } = data;
@@ -36,13 +37,14 @@ export async function listPublic(params: {
   cursor?: string;
   generationType?: string | string[];
   status?: string;
-  sortBy?: 'createdAt' | 'updatedAt' | 'prompt';
+  sortBy?: 'createdAt' | 'updatedAt' | 'prompt' | 'aestheticScore';
   sortOrder?: 'asc' | 'desc';
   createdBy?: string; // uid of creator
   dateStart?: string;
   dateEnd?: string;
-  mode?: 'video' | 'image' | 'music' | 'all';
+  mode?: 'video' | 'image' | 'music' | 'branding' | 'all';
   search?: string; // free-text prompt search
+  minScore?: number; // Minimum aesthetic score threshold
 }): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string; totalCount?: number }> {
   const col = adminDb.collection('generations');
   
@@ -60,12 +62,18 @@ export async function listPublic(params: {
   // ========== DATABASE-LEVEL FILTERING FOR OPTIMAL PERFORMANCE ==========
   // All filtering is done at database level - NO in-memory filtering
   
-  const HIGH_AESTHETIC_SCORE = 9.0; // Priority threshold for ArtStation
+  // Use minScore if provided, otherwise default to 9.0 for backward compatibility
+  const HIGH_AESTHETIC_SCORE = params.minScore !== undefined ? params.minScore : 9.0;
   
   // Build base query with required filters
   let baseQuery = col
     .where('isPublic', '==', true)
     .where('isDeleted', '==', false);
+  
+  // Apply minScore filter if provided
+  if (params.minScore !== undefined) {
+    baseQuery = baseQuery.where('aestheticScore', '>=', params.minScore);
+  }
   
   // Apply generationType filter if provided
   if (params.generationType) {
@@ -98,23 +106,23 @@ export async function listPublic(params: {
   
   // Handle mode-based filtering at database level
   if (params.mode && params.mode !== 'all') {
-    if (params.mode === 'video') {
-      baseQuery = baseQuery.where('generationType', 'in', ['text-to-video', 'image-to-video', 'video-to-video']);
-    } else if (params.mode === 'image') {
-      baseQuery = baseQuery.where('generationType', 'in', ['text-to-image', 'logo', 'sticker-generation', 'product-generation', 'ad-generation']);
-    } else if (params.mode === 'music') {
-      baseQuery = baseQuery.where('generationType', '==', 'text-to-music');
+    const mappedTypes = mapModeToGenerationTypes(params.mode);
+    if (mappedTypes && mappedTypes.length > 0) {
+      baseQuery = baseQuery.where('generationType', 'in', mappedTypes);
     }
   }
   
   // AESTHETIC SCORE PRIORITIZATION FOR ARTSTATION:
-  // 1. First fetch items with aestheticScore >= 9.0 (sorted by createdAt desc - latest first)
-  // 2. If not enough results, fetch items with aestheticScore < 9.0 (sorted by createdAt desc - latest first)
+  // If minScore is provided, only fetch items >= minScore
+  // Otherwise, use the two-tier approach (high-scored first, then lower-scored)
+  // 1. First fetch items with aestheticScore >= threshold (sorted by aestheticScore or createdAt)
+  // 2. If not enough results and minScore not set, fetch items with aestheticScore < threshold
   // 3. Combine with high-scored items first, then lower scored items
   // 4. Also include text-to-music items without score requirement (only if not already filtered)
   
-  // Query 1: High-scored items (>= 9.0)
-  let queryHigh = baseQuery.where('aestheticScore', '>=', HIGH_AESTHETIC_SCORE);
+  // Query 1: High-scored items (>= threshold)
+  // If minScore is provided, baseQuery already has the filter, so use it directly
+  let queryHigh = params.minScore !== undefined ? baseQuery : baseQuery.where('aestheticScore', '>=', HIGH_AESTHETIC_SCORE);
   
   // Query 2: Lower-scored items (< 9.0) - only if we need to fill
   let queryLow: FirebaseFirestore.Query | null = null;
@@ -127,8 +135,11 @@ export async function listPublic(params: {
   
   // Apply sorting, projection, and pagination
   const applyQueryOptions = (q: FirebaseFirestore.Query) => {
-    // Always sort by createdAt desc for latest first
-    let query = q.select(...projectionFields as any).orderBy('createdAt', 'desc');
+    // If sorting by aestheticScore, we need to order by that field (requires composite index)
+    // Otherwise, order by createdAt
+    const sortField = params.sortBy === 'aestheticScore' ? 'aestheticScore' : 'createdAt';
+    const sortDir = params.sortOrder === 'asc' ? 'asc' : 'desc';
+    let query = q.select(...projectionFields as any).orderBy(sortField, sortDir);
     if (params.cursor) {
       // Cursor will be applied after we get the cursor doc
     }
@@ -156,23 +167,48 @@ export async function listPublic(params: {
   // Execute high-scored query first - fetch more than needed to account for potential duplicates
   const snapHigh = await queryHigh.limit(params.limit * 2).get();
   
-  // Convert high-scored results
+  // Helper function to get aesthetic score (default to 0 if missing)
+  const getAestheticScore = (item: GenerationHistoryItem): number => {
+    return typeof item.aestheticScore === 'number' ? item.aestheticScore : 0;
+  };
+  
+  // Helper function to get createdAt timestamp
+  const getCreatedAtTime = (item: GenerationHistoryItem): number => {
+    if (typeof item.createdAt === 'string') return new Date(item.createdAt).getTime();
+    if ((item.createdAt as any)?.seconds) return (item.createdAt as any).seconds * 1000;
+    return 0;
+  };
+  
+  // Convert high-scored results with proper sorting
   const highScoredItems: GenerationHistoryItem[] = snapHigh.docs
     .map(d => normalizePublicItem(d.id, d.data() as any))
     .sort((a, b) => {
-      const aTime = typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() : 
-                   (a.createdAt as any)?.seconds ? (a.createdAt as any).seconds * 1000 : 0;
-      const bTime = typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() : 
-                   (b.createdAt as any)?.seconds ? (b.createdAt as any).seconds * 1000 : 0;
-      return bTime - aTime; // Latest first
+      if (params.sortBy === 'aestheticScore') {
+        // Sort by aestheticScore first (desc), then createdAt as tiebreaker (desc)
+        const aScore = getAestheticScore(a);
+        const bScore = getAestheticScore(b);
+        if (aScore !== bScore) {
+          return params.sortOrder === 'asc' ? aScore - bScore : bScore - aScore;
+        }
+        // Tiebreaker: createdAt desc (latest first)
+        const aTime = getCreatedAtTime(a);
+        const bTime = getCreatedAtTime(b);
+        return bTime - aTime;
+      } else {
+        // Default: sort by createdAt
+        const aTime = getCreatedAtTime(a);
+        const bTime = getCreatedAtTime(b);
+        return params.sortOrder === 'asc' ? aTime - bTime : bTime - aTime;
+      }
     });
   
-  // If we don't have enough high-scored items, fetch lower-scored items
+  // If we don't have enough high-scored items and minScore is not set, fetch lower-scored items
+  // (If minScore is set, we only want items >= minScore, so skip lower-scored items)
   let lowScoredItems: GenerationHistoryItem[] = [];
-  if (highScoredItems.length < params.limit) {
+  if (params.minScore === undefined && highScoredItems.length < params.limit) {
     const needed = params.limit - highScoredItems.length;
     
-    // Build query for lower-scored items
+    // Build query for lower-scored items (exclude items already in high-scored)
     queryLow = baseQuery.where('aestheticScore', '<', HIGH_AESTHETIC_SCORE);
     queryLow = applyQueryOptions(queryLow);
     
@@ -187,27 +223,45 @@ export async function listPublic(params: {
     lowScoredItems = snapLow.docs
       .map(d => normalizePublicItem(d.id, d.data() as any))
       .sort((a, b) => {
-        const aTime = typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() : 
-                     (a.createdAt as any)?.seconds ? (a.createdAt as any).seconds * 1000 : 0;
-        const bTime = typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() : 
-                     (b.createdAt as any)?.seconds ? (b.createdAt as any).seconds * 1000 : 0;
-        return bTime - aTime; // Latest first
+        if (params.sortBy === 'aestheticScore') {
+          const aScore = getAestheticScore(a);
+          const bScore = getAestheticScore(b);
+          if (aScore !== bScore) {
+            return params.sortOrder === 'asc' ? aScore - bScore : bScore - aScore;
+          }
+          const aTime = getCreatedAtTime(a);
+          const bTime = getCreatedAtTime(b);
+          return bTime - aTime;
+        } else {
+          const aTime = getCreatedAtTime(a);
+          const bTime = getCreatedAtTime(b);
+          return params.sortOrder === 'asc' ? aTime - bTime : bTime - aTime;
+        }
       });
   }
   
-  // Fetch music items if needed
+  // Fetch music items if needed (skip if minScore is set, as music items may not have scores)
   let musicItems: GenerationHistoryItem[] = [];
-  if (queryMusic && (highScoredItems.length + lowScoredItems.length) < params.limit) {
+  if (params.minScore === undefined && queryMusic && (highScoredItems.length + lowScoredItems.length) < params.limit) {
     const needed = params.limit - (highScoredItems.length + lowScoredItems.length);
     const snapMusic = await queryMusic.limit(needed).get();
     musicItems = snapMusic.docs
       .map(d => normalizePublicItem(d.id, d.data() as any))
       .sort((a, b) => {
-        const aTime = typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() : 
-                     (a.createdAt as any)?.seconds ? (a.createdAt as any).seconds * 1000 : 0;
-        const bTime = typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() : 
-                     (b.createdAt as any)?.seconds ? (b.createdAt as any).seconds * 1000 : 0;
-        return bTime - aTime; // Latest first
+        if (params.sortBy === 'aestheticScore') {
+          const aScore = getAestheticScore(a);
+          const bScore = getAestheticScore(b);
+          if (aScore !== bScore) {
+            return params.sortOrder === 'asc' ? aScore - bScore : bScore - aScore;
+          }
+          const aTime = getCreatedAtTime(a);
+          const bTime = getCreatedAtTime(b);
+          return bTime - aTime;
+        } else {
+          const aTime = getCreatedAtTime(a);
+          const bTime = getCreatedAtTime(b);
+          return params.sortOrder === 'asc' ? aTime - bTime : bTime - aTime;
+        }
       });
   }
   

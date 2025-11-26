@@ -62,6 +62,7 @@ export interface VideoMedia {
   url: string;
   storagePath: string;
   thumbUrl?: string;
+  originalUrl?: string;
   aestheticScore?: number;
   // Rich aesthetic details for videos (new)
   aesthetic?: {
@@ -98,6 +99,10 @@ export interface GenerationHistoryItem {
   images?: ImageMedia[];
   videos?: VideoMedia[];
   audios?: AudioMedia[];
+  // User-uploaded input images (for image-to-image, image-to-video, etc.)
+  inputImages?: ImageMedia[];
+  // User-uploaded input videos (for video-to-video, etc.)
+  inputVideos?: VideoMedia[];
   aestheticScore?: number; // Highest score among all images/videos
   frameSize?: string;
   aspectRatio?: string;
