@@ -19,6 +19,7 @@ import { authRepository } from "../repository/auth/authRepository";
 import { syncToMirror } from "../utils/mirrorHelper";
 import { ApiError } from "../utils/errorHandler";
 import { normalizeGenerationType } from "../utils/normalizeGenerationType";
+import { mapModeToGenerationTypes, normalizeMode } from "../utils/modeTypeMap";
 
 export async function startGeneration(
   uid: string,
@@ -426,12 +427,14 @@ export async function listUserGenerations(
     dateStart?: string; // LEGACY: ISO date string
     dateEnd?: string; // LEGACY: ISO date string
     search?: string;
+    mode?: 'video' | 'image' | 'music' | 'branding' | 'all';
     debug?: string | boolean; // from query (?debug=1)
   }
 ): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string | number | null; hasMore?: boolean; totalCount?: number }> {
   // Normalize generation type; do NOT force status. We want generating + completed by default and exclude failed in post-filter.
   const debugFlag = params.debug === '1' || params.debug === 'true' || params.debug === true;
   const normalizedGenType = normalizeGenerationType(params.generationType as any);
+  const normalizedMode = normalizeMode(params.mode);
   // Backward-compat: if requesting 'logo', include legacy 'logo-generation' too
   let generationTypeParam: any = normalizedGenType as any;
   if (typeof normalizedGenType === 'string' && normalizedGenType === 'logo') {
@@ -445,8 +448,17 @@ export async function listUserGenerations(
     generationTypeParam = Array.from(set);
   }
 
+  // If no explicit generationType filter provided, derive from mode
+  if ((!generationTypeParam || (Array.isArray(generationTypeParam) && generationTypeParam.length === 0)) && normalizedMode && normalizedMode !== 'all') {
+    const mapped = mapModeToGenerationTypes(normalizedMode);
+    if (mapped && mapped.length > 0) {
+      generationTypeParam = mapped;
+    }
+  }
+
   const effectiveParams = {
     ...params,
+    mode: normalizedMode,
     generationType: generationTypeParam,
     debug: debugFlag,
     // status left as-is (undefined means no status filter at repository level)

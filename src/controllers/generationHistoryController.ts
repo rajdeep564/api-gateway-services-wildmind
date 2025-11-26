@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { generationHistoryService } from '../services/generationHistoryService';
 import { formatApiResponse } from '../utils/formatApiResponse';
+import { normalizeMode } from '../utils/modeTypeMap';
 
 async function create(req: Request, res: Response, next: NextFunction) {
 	try {
@@ -61,12 +62,10 @@ async function listMine(req: Request, res: Response, next: NextFunction) {
 		} catch {}
 		const uid = (req as any).uid;
 		const { limit = 20, cursor, nextCursor, status, generationType, sortBy, sortOrder, mode, dateStart, dateEnd, search, debug } = req.query as any;
+		const normalizedMode = normalizeMode(mode);
 		
-		// Support grouped mode for convenience (e.g., mode=video)
-		let generationTypeFilter: string | string[] | undefined = generationType;
-		if (typeof mode === 'string' && mode.toLowerCase() === 'video') {
-			generationTypeFilter = ['text-to-video', 'image-to-video', 'video-to-video'];
-		}
+		// Allow explicit generationType override, otherwise rely on mode down the chain
+		const generationTypeFilter: string | string[] | undefined = generationType;
 		
 		// Prefer optimized pagination: omit legacy sort fields unless explicitly provided.
 		// Frontend now passes nextCursor (millis) for createdAt DESC pagination.
@@ -83,6 +82,7 @@ async function listMine(req: Request, res: Response, next: NextFunction) {
 			dateStart: dateStart || undefined,
 			dateEnd: dateEnd || undefined,
 			search: search || undefined,
+			mode: normalizedMode,
 			debug: debug || undefined,
 		});
 		
