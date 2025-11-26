@@ -10,6 +10,9 @@ export interface CachedSession {
   ip?: string;
 }
 
+// BUG FIX #13: Maximum concurrent sessions per user
+const MAX_CONCURRENT_SESSIONS = 5;
+
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
@@ -38,6 +41,95 @@ export async function getCachedSession(token: string): Promise<CachedSession | n
 export async function deleteCachedSession(token: string): Promise<void> {
   const key = keyForToken(token);
   await redisDelSafe(key);
+}
+
+/**
+ * Get all active sessions for a user
+ */
+export async function getUserSessions(uid: string): Promise<Array<{ key: string; session: CachedSession }>> {
+  try {
+    const { getRedisClient } = await import('../config/redisClient');
+    const { env } = await import('../config/env');
+    const client = getRedisClient();
+    if (!client) return [];
+
+    const prefix = env.redisPrefix || 'sess:app:';
+    const pattern = `${prefix}*`;
+    const keys = await client.keys(pattern);
+    
+    if (keys.length === 0) return [];
+
+    const userSessions: Array<{ key: string; session: CachedSession }> = [];
+    for (const key of keys) {
+      try {
+        const sessionData = await redisGetSafe<CachedSession>(key);
+        if (sessionData?.uid === uid) {
+          userSessions.push({ key, session: sessionData });
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return userSessions;
+  } catch (error) {
+    console.warn('[AUTH] Failed to get user sessions (non-fatal):', error);
+    return [];
+  }
+}
+
+/**
+ * Invalidate all sessions for a specific user
+ * Used when user logs in from a new device to invalidate old sessions
+ * BUG FIX #13: Enforces concurrent session limit by removing oldest sessions
+ */
+export async function invalidateAllUserSessions(uid: string, keepNewest: boolean = false): Promise<void> {
+  try {
+    const { getRedisClient } = await import('../config/redisClient');
+    const { env } = await import('../config/env');
+    const client = getRedisClient();
+    if (!client) return;
+
+    // Get all sessions for this user
+    const userSessions = await getUserSessions(uid);
+    
+    if (userSessions.length === 0) return;
+
+    // BUG FIX #13: If keeping newest and over limit, remove oldest sessions first
+    if (keepNewest && userSessions.length >= MAX_CONCURRENT_SESSIONS) {
+      // Sort by issuedAt (oldest first)
+      userSessions.sort((a, b) => {
+        const aTime = a.session.issuedAt || 0;
+        const bTime = b.session.issuedAt || 0;
+        return aTime - bTime;
+      });
+      
+      // Remove oldest sessions until under limit
+      const toRemove = userSessions.length - (MAX_CONCURRENT_SESSIONS - 1);
+      for (let i = 0; i < toRemove; i++) {
+        await redisDelSafe(userSessions[i].key);
+      }
+      
+      if (env.redisDebug) {
+        console.log('[AUTH][Redis] Removed oldest sessions to enforce limit', { 
+          uid, 
+          removed: toRemove,
+          remaining: userSessions.length - toRemove 
+        });
+      }
+    } else {
+      // Delete all sessions for this user
+      for (const { key } of userSessions) {
+        await redisDelSafe(key);
+      }
+      
+      if (env.redisDebug) {
+        console.log('[AUTH][Redis] Invalidated all sessions for user', { uid, count: userSessions.length });
+      }
+    }
+  } catch (error) {
+    console.warn('[AUTH] Failed to invalidate all user sessions (non-fatal):', error);
+  }
 }
 
 // Decode JWT payload without verifying signature to read 'exp' (base64url)

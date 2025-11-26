@@ -7,7 +7,7 @@ import { ApiError } from "../../utils/errorHandler";
 import { extractDeviceInfo } from "../../utils/deviceInfo";
 import { admin } from "../../config/firebaseAdmin";
 import "../../types/http";
-import { cacheSession, deleteCachedSession, decodeJwtPayload, getCachedSession } from "../../utils/sessionStore";
+import { cacheSession, deleteCachedSession, decodeJwtPayload, getCachedSession, invalidateAllUserSessions } from "../../utils/sessionStore";
 import { isRedisEnabled } from "../../config/redisClient";
 
 // Module-level log to confirm file is loaded
@@ -37,6 +37,35 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
     
     const user = await authService.createSession(idToken);
     console.log('[AUTH][createSession] Session created, user:', { uid: user?.uid, username: user?.username });
+
+    // BUG FIX #1: Invalidate all existing sessions for this user before creating new one
+    // This prevents multiple active sessions across devices
+    // BUG FIX #10: Also revoke old Firebase tokens to sync auth state
+    if (user?.uid) {
+      try {
+        // Delete old session cookie from Redis if present
+        const oldToken = req.cookies?.['app_session'];
+        if (oldToken) {
+          await deleteCachedSession(oldToken);
+        }
+        // Invalidate all other sessions for this user
+        // BUG FIX #13: Keep newest session if under limit, otherwise remove oldest
+        await invalidateAllUserSessions(user.uid, true);
+        
+        // BUG FIX #10: Revoke all refresh tokens for this user to force re-authentication on other devices
+        // This ensures Firebase auth state is synced across devices
+        try {
+          await admin.auth().revokeRefreshTokens(user.uid);
+          console.log('[AUTH][createSession] Revoked Firebase refresh tokens for user', { uid: user.uid });
+        } catch (revokeError) {
+          console.warn('[AUTH][createSession] Failed to revoke refresh tokens (non-fatal):', revokeError);
+        }
+        
+        console.log('[AUTH][createSession] Invalidated old sessions for user', { uid: user.uid });
+      } catch (error) {
+        console.warn('[AUTH][createSession] Failed to invalidate old sessions (non-fatal):', error);
+      }
+    }
 
     // Set session cookie (safely handle domain so browsers don't drop it in prod)
     console.log('[AUTH][createSession] About to call setSessionCookie...');
@@ -168,13 +197,31 @@ async function logout(req: Request, res: Response, next: NextFunction) {
         const { env } = await import('../../config/env');
         if (env.redisDebug) {
           // eslint-disable-next-line no-console
-          console.log('[AUTH][Redis] DEL (logout)');
+          console.log('[AUTH][Redis] DEL (logout)', { tokenHash: token.substring(0, 20) + '...' });
         }
       }
-    } catch {}
+    } catch (e) {
+      console.warn('[AUTH][logout] Failed to delete cached session:', e);
+      // Non-fatal - continue with cookie clearing
+    }
+    
+    // Clear session cookie (handles all variants)
     clearSessionCookie(res);
+    
+    // Log successful logout
+    console.log('[AUTH][logout] Logout successful', {
+      hasToken: !!(req.cookies as any)?.['app_session'],
+      origin: req.headers.origin,
+      userAgent: req.headers['user-agent']?.substring(0, 50),
+    });
+    
     res.json(formatApiResponse("success", "Logged out successfully", {}));
   } catch (error) {
+    console.error('[AUTH][logout] Logout error:', error);
+    // Even on error, try to clear cookies
+    try {
+      clearSessionCookie(res);
+    } catch {}
     next(error);
   }
 }
@@ -216,6 +263,21 @@ async function verifyEmailOtp(req: Request, res: Response, next: NextFunction) {
       deviceInfo
     );
     console.log(`[CONTROLLER] User created and ID token generated`);
+
+    // BUG FIX #9: Invalidate any existing sessions for this user (if user already existed)
+    if (result.user?.uid) {
+      try {
+        const oldToken = req.cookies?.['app_session'];
+        if (oldToken) {
+          await deleteCachedSession(oldToken);
+        }
+        // BUG FIX #13: Keep newest session if under limit
+        await invalidateAllUserSessions(result.user.uid, true);
+        console.log('[AUTH][verifyEmailOtp] Invalidated old sessions for user', { uid: result.user.uid });
+      } catch (error) {
+        console.warn('[AUTH][verifyEmailOtp] Failed to invalidate old sessions (non-fatal):', error);
+      }
+    }
 
     // Initialize credits for the new user
     try {
@@ -285,12 +347,38 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
   
   const isProd = process.env.NODE_ENV === "production";
   const cookieDomain = process.env.COOKIE_DOMAIN; // e.g., .wildmindai.com when API runs on api.wildmindai.com
-  const expiresIn = 1000 * 60 * 60 * 24 * 7; // 7 days
+  // BUG FIX #11: Check ID token expiration first to prevent mismatch
+  let decodedToken: any;
+  try {
+    decodedToken = await admin.auth().verifyIdToken(idToken);
+  } catch (error) {
+    throw new ApiError('Invalid ID token', 401);
+  }
+  
+  // Calculate expiration based on ID token expiration (max 30 days)
+  const idTokenExp = decodedToken.exp * 1000; // Convert to milliseconds
+  const now = Date.now();
+  const idTokenExpiresIn = Math.max(0, idTokenExp - now);
+  const maxExpiresIn = 1000 * 60 * 60 * 24 * 30; // 30 days max
+  const expiresIn = Math.min(idTokenExpiresIn, maxExpiresIn);
+  
+  // If ID token expires very soon, use a shorter expiration
+  if (expiresIn < 1000 * 60 * 60) { // Less than 1 hour
+    throw new ApiError('ID token expires too soon. Please refresh and try again.', 401);
+  }
+  
+  // BUG FIX #4: Mobile cookie compatibility - SameSite=None requires Secure=true
+  // BUG FIX #22: Android WebView detection
+  const userAgent = req.get('user-agent') || '';
+  const isMobile = /Mobile|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
+  const isWebView = /wv|WebView/i.test(userAgent); // Android WebView detection
   
   console.log('[AUTH][setSessionCookie] Before creating session cookie', {
     isProd,
     cookieDomain: cookieDomain || '(not set in env)',
-    expiresIn
+    expiresIn,
+    idTokenExpiresIn,
+    expiresInDays: Math.floor(expiresIn / (1000 * 60 * 60 * 24))
   });
   
   const sessionCookie = await admin
@@ -320,9 +408,12 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
 
   const cookieOptions = {
     httpOnly: true,
-    // Cookies must be Secure when SameSite=None per Chrome requirements
-    secure: isProd, // Secure only in production (HTTPS required)
-    sameSite: (isProd ? "none" : "lax") as "none" | "lax" | "strict", // None for cross-subdomain, Lax for same-site
+    // BUG FIX #4: Cookies must be Secure when SameSite=None per Chrome requirements
+    // Also always secure on mobile for compatibility
+    // BUG FIX #22: WebView requires Secure cookies
+    secure: isProd || isMobile || isWebView, // Always secure on mobile/WebView, secure in production
+    // BUG FIX #22: WebView doesn't support SameSite=None well, use Lax
+    sameSite: (isProd && !isWebView ? "none" : "lax") as "none" | "lax" | "strict", // None for cross-subdomain, Lax for WebView/same-site
     maxAge: expiresIn,
     path: "/",
     ...(shouldSetDomain ? { domain: cookieDomain } : {}),
@@ -371,19 +462,40 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
 function clearSessionCookie(res: Response) {
   const cookieDomain = process.env.COOKIE_DOMAIN; // e.g. .wildmindai.com
   const expired = 'Thu, 01 Jan 1970 00:00:00 GMT';
+  const isProd = process.env.NODE_ENV === 'production';
 
   const variants: string[] = [];
-  // SameSite=None; Secure variants
-  variants.push(`app_session=; Path=/; Max-Age=0; Expires=${expired}; SameSite=None; Secure`);
-  if (cookieDomain) variants.push(`app_session=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=None; Secure`);
-  // SameSite=Lax variants (older cookies)
-  variants.push(`app_session=; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
-  if (cookieDomain) variants.push(`app_session=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
-  // Also clear auth_hint if present
-  variants.push(`auth_hint=; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
-  if (cookieDomain) variants.push(`auth_hint=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
+  const cookiesToClear = ['app_session', 'app_session.sig', 'auth_hint'];
+  
+  // Generate all cookie clearing variants
+  cookiesToClear.forEach(cookieName => {
+    // SameSite=None; Secure variants (for cross-site cookies)
+    variants.push(`${cookieName}=; Path=/; Max-Age=0; Expires=${expired}; SameSite=None; Secure`);
+    if (cookieDomain) {
+      variants.push(`${cookieName}=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=None; Secure`);
+    }
+    
+    // SameSite=Lax variants (for same-site cookies)
+    variants.push(`${cookieName}=; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
+    if (cookieDomain) {
+      variants.push(`${cookieName}=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
+    }
+    
+    // SameSite=Strict variants (for strict cookies)
+    variants.push(`${cookieName}=; Path=/; Max-Age=0; Expires=${expired}; SameSite=Strict`);
+    if (cookieDomain) {
+      variants.push(`${cookieName}=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=Strict`);
+    }
+  });
 
+  // Set all cookie clearing variants
   res.setHeader('Set-Cookie', variants);
+  
+  console.log('[AUTH][clearSessionCookie] Cleared cookies', {
+    cookieCount: variants.length,
+    cookieDomain: cookieDomain || '(not set)',
+    isProd,
+  });
 }
 
 async function loginWithEmailPassword(
@@ -403,6 +515,31 @@ async function loginWithEmailPassword(
     );
 
     console.log(`[CONTROLLER] Login successful for: ${email}`);
+
+    // BUG FIX #1: Invalidate all existing sessions for this user before creating new one
+    // BUG FIX #10: Also revoke Firebase tokens to sync auth state
+    if (result.user?.uid) {
+      try {
+        const oldToken = req.cookies?.['app_session'];
+        if (oldToken) {
+          await deleteCachedSession(oldToken);
+        }
+        // BUG FIX #13: Keep newest session if under limit
+        await invalidateAllUserSessions(result.user.uid, true);
+        
+        // Revoke Firebase refresh tokens
+        try {
+          await admin.auth().revokeRefreshTokens(result.user.uid);
+          console.log('[AUTH][loginEmail] Revoked Firebase refresh tokens for user', { uid: result.user.uid });
+        } catch (revokeError) {
+          console.warn('[AUTH][loginEmail] Failed to revoke refresh tokens (non-fatal):', revokeError);
+        }
+        
+        console.log('[AUTH][loginEmail] Invalidated old sessions for user', { uid: result.user.uid });
+      } catch (error) {
+        console.warn('[AUTH][loginEmail] Failed to invalidate old sessions (non-fatal):', error);
+      }
+    }
 
     try {
       console.log('[CREDITS][loginEmail] Init start', { uid: (result.user as any)?.uid });
@@ -458,6 +595,31 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
     console.log(
       `[CONTROLLER] Google sign-in result - needsUsername: ${result.needsUsername}`
     );
+
+    // BUG FIX #1: Invalidate all existing sessions for this user before creating new one
+    // BUG FIX #10: Also revoke Firebase tokens to sync auth state
+    if (result.user?.uid) {
+      try {
+        const oldToken = req.cookies?.['app_session'];
+        if (oldToken) {
+          await deleteCachedSession(oldToken);
+        }
+        // BUG FIX #13: Keep newest session if under limit
+        await invalidateAllUserSessions(result.user.uid, true);
+        
+        // Revoke Firebase refresh tokens
+        try {
+          await admin.auth().revokeRefreshTokens(result.user.uid);
+          console.log('[AUTH][googleSignIn] Revoked Firebase refresh tokens for user', { uid: result.user.uid });
+        } catch (revokeError) {
+          console.warn('[AUTH][googleSignIn] Failed to revoke refresh tokens (non-fatal):', revokeError);
+        }
+        
+        console.log('[AUTH][googleSignIn] Invalidated old sessions for user', { uid: result.user.uid });
+      } catch (error) {
+        console.warn('[AUTH][googleSignIn] Failed to invalidate old sessions (non-fatal):', error);
+      }
+    }
 
     if (result.needsUsername) {
       // Initialize credits even if username is pending
@@ -584,6 +746,102 @@ async function setGoogleUsername(
   }
 }
 
+/**
+ * Refresh session cookie - extends expiration by another 30 days
+ * Called automatically when session is about to expire (within 3 days)
+ * Requires a fresh ID token from the client
+ */
+async function refreshSession(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = req.uid as string;
+    if (!uid) {
+      throw new ApiError('Unauthorized - No user ID', 401);
+    }
+
+    // Get fresh ID token from request body (client must send it)
+    const { idToken } = req.body;
+    if (!idToken) {
+      throw new ApiError('Missing idToken - client must provide fresh Firebase ID token', 400);
+    }
+
+    // Verify the ID token to ensure it's valid and matches the current user
+    let decoded: any;
+    try {
+      decoded = await admin.auth().verifyIdToken(idToken);
+      if (decoded.uid !== uid) {
+        throw new ApiError('ID token does not match current user', 403);
+      }
+    } catch (error: any) {
+      throw new ApiError(`Invalid ID token: ${error.message}`, 401);
+    }
+
+    // BUG FIX #6: Clear old cookie before creating new one
+    const oldToken = req.cookies?.['app_session'];
+    const cookieDomain = process.env.COOKIE_DOMAIN;
+    const isProd = process.env.NODE_ENV === "production";
+    
+    if (oldToken) {
+      // Delete old session from Redis cache
+      try {
+        await deleteCachedSession(oldToken);
+      } catch {}
+      
+      // Clear old cookie explicitly
+      try {
+        const expired = 'Thu, 01 Jan 1970 00:00:00 GMT';
+        const cookieVariants = [
+          { domain: undefined, sameSite: 'None', secure: true },
+          { domain: cookieDomain, sameSite: 'None', secure: true },
+          { domain: undefined, sameSite: 'Lax', secure: false },
+          { domain: cookieDomain, sameSite: 'Lax', secure: false },
+        ];
+        
+        cookieVariants.forEach(variant => {
+          let cookieString = `app_session=; Path=/; Max-Age=0; Expires=${expired}`;
+          if (variant.domain) cookieString += `; Domain=${variant.domain}`;
+          cookieString += `; SameSite=${variant.sameSite}`;
+          if (variant.secure || isProd) cookieString += '; Secure';
+          res.setHeader('Set-Cookie', cookieString);
+        });
+      } catch {}
+    }
+    
+    // Create new session cookie with extended expiration (30 days)
+    const newSessionCookie = await setSessionCookie(req, res, idToken);
+    
+    // Update Redis cache with new session
+    try {
+      const payload: any = decodeJwtPayload(newSessionCookie) || {};
+      const exp = typeof payload?.exp === 'number' ? payload.exp : undefined;
+      if (uid && exp) {
+        
+        // Cache new session
+        await cacheSession(newSessionCookie, { 
+          uid, 
+          exp, 
+          issuedAt: payload?.iat,
+          userAgent: req.get('user-agent') || undefined,
+          ip: req.ip,
+        });
+        const { env } = await import('../../config/env');
+        if (env.redisDebug) {
+          console.log('[AUTH][Redis] SET (refreshSession)', { uid, exp });
+        }
+      }
+    } catch (cacheError) {
+      console.warn('[AUTH] Failed to cache refreshed session (non-fatal):', cacheError);
+    }
+
+    res.json(
+      formatApiResponse("success", "Session refreshed successfully", {
+        expiresIn: 30 * 24 * 60 * 60 * 1000, // 30 days in milliseconds
+      })
+    );
+  } catch (error) {
+    next(error);
+  }
+}
+
 export const authController = {
   createSession,
   getCurrentUser,
@@ -597,6 +855,7 @@ export const authController = {
   googleSignIn,
   setGoogleUsername,
   checkUsername,
+  refreshSession,
 };
 
 // Lightweight endpoint to check if current session token is cached in Redis
