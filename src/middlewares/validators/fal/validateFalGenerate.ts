@@ -12,6 +12,8 @@ export const ALLOWED_FAL_MODELS = [
   'imagen-4-ultra',
   'imagen-4',
   'imagen-4-fast',
+  // Flux 2 Pro
+  'flux-2-pro',
   // ElevenLabs / text-to-dialogue variants // all will call same model 
   'eleven-v3',
   'elevenlabs-text-to-dialogue',
@@ -37,6 +39,20 @@ export const validateFalGenerate = [
   body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat','text-to-character']).withMessage('invalid generationType'),
   body('model').isString().isIn(ALLOWED_FAL_MODELS),
   body('aspect_ratio').optional().isIn(['21:9','16:9','3:2','4:3','5:4','1:1','4:5','3:4','2:3','9:16']),
+  body('image_size').optional().custom((value) => {
+    // Allow enum string or custom object with width/height
+    if (typeof value === 'string') {
+      return ['square_hd', 'square', 'portrait_4_3', 'portrait_16_9', 'landscape_4_3', 'landscape_16_9'].includes(value);
+    }
+    if (typeof value === 'object' && value !== null) {
+      const width = Number(value.width);
+      const height = Number(value.height);
+      return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0;
+    }
+    return false;
+  }).withMessage('image_size must be a valid enum string or object with width and height'),
+  body('safety_tolerance').optional().isIn(['1', '2', '3', '4', '5']),
+  body('enable_safety_checker').optional().isBoolean(),
   body('n').optional().isInt({ min: 1, max: 10 }),
   body('num_images').optional().isInt({ min: 1, max: 10 }),
   body('uploadedImages').optional().isArray(),
