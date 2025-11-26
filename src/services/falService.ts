@@ -115,7 +115,9 @@ async function generate(
   // Map our model key to FAL endpoints
   let modelEndpoint: string;
   const modelLower = (model || '').toLowerCase();
-  if (modelLower.includes('imagen-4')) {
+  if (modelLower.includes('flux-2-pro')) {
+    modelEndpoint = 'fal-ai/flux-2-pro';
+  } else if (modelLower.includes('imagen-4')) {
     // Imagen 4 family
     if (modelLower.includes('ultra')) modelEndpoint = 'fal-ai/imagen4/preview/ultra';
     else if (modelLower.includes('fast')) modelEndpoint = 'fal-ai/imagen4/preview/fast';
@@ -583,8 +585,64 @@ async function generate(
     const fileNameForIndex = (index: number) => buildGenerationImageFileName(historyId, index);
     const imagePromises = Array.from({ length: imagesRequested }, async (_, index) => {
   const input: any = { prompt: finalPrompt, output_format, num_images: 1 };
-      // Seedream expects image_size instead of aspect_ratio; allow explicit image_size override
-      if (modelEndpoint.includes('seedream')) {
+      // Flux 2 Pro expects image_size instead of aspect_ratio
+      if (modelEndpoint.includes('flux-2-pro')) {
+        const explicit = (payload as any).image_size;
+        const resolution = (payload as any).resolution; // '1K' | '2K'
+        
+        if (explicit) {
+          input.image_size = explicit;
+        } else {
+          // Map aspect_ratio + resolution to image_size
+          // For 1K: use enum values (costs $0.03)
+          // For 2K: use custom dimensions that meet 2K requirements (costs $0.07)
+          // Special case: 1024x2048 (9:16 portrait) costs $0.05
+          
+          const aspectMap: Record<string, { enum: string; enum1K?: string; custom2K?: { width: number; height: number } }> = {
+            '1:1': { enum: 'square_hd', enum1K: 'square_hd', custom2K: { width: 2048, height: 2048 } }, // 1K: square_hd (1024x1024), 2K: 2048x2048
+            '4:3': { enum: 'landscape_4_3', custom2K: { width: 2048, height: 1536 } },
+            '3:4': { enum: 'portrait_4_3', custom2K: { width: 1536, height: 2048 } },
+            '16:9': { enum: 'landscape_16_9', custom2K: { width: 2048, height: 1152 } },
+            '9:16': { enum: 'portrait_16_9', custom2K: { width: 1152, height: 2048 } },
+            'square_hd': { enum: 'square_hd', enum1K: 'square_hd', custom2K: { width: 2048, height: 2048 } },
+          };
+          
+          const mapping = aspectMap[String(resolvedAspect)] || aspectMap['1:1'];
+          
+          if (resolution === '2K') {
+            // Use custom dimensions for 2K
+            if (mapping.custom2K) {
+              input.image_size = mapping.custom2K;
+            } else {
+              // Fallback: use enum with 2K dimensions
+              input.image_size = { width: 2048, height: 2048 };
+            }
+          } else if (resolvedAspect === '9:16') {
+            // Special case: 9:16 portrait defaults to 1024x2048 (costs $0.05) unless 2K is explicitly selected
+            if (resolution === '2K') {
+              // Use 2K dimensions for 9:16
+              input.image_size = { width: 1152, height: 2048 };
+            } else {
+              // Default to 1024x2048 for 9:16 (costs $0.05)
+              input.image_size = { width: 1024, height: 2048 };
+            }
+          } else if (resolvedAspect === '1:1') {
+            // Special handling for Square (1:1):
+            // 1K → square_hd (1024x1024)
+            // 2K → custom 2048x2048 (handled above)
+            input.image_size = mapping.enum1K || 'square_hd';
+          } else {
+            // Default to 1K enum (costs $0.03)
+            input.image_size = mapping.enum;
+          }
+        }
+        
+        // Flux 2 Pro specific parameters
+        if ((payload as any).safety_tolerance) input.safety_tolerance = String((payload as any).safety_tolerance);
+        if ((payload as any).enable_safety_checker !== undefined) input.enable_safety_checker = Boolean((payload as any).enable_safety_checker);
+        if ((payload as any).seed != null) input.seed = Number((payload as any).seed);
+      } else if (modelEndpoint.includes('seedream')) {
+        // Seedream expects image_size instead of aspect_ratio; allow explicit image_size override
         const explicit = (payload as any).image_size;
         if (explicit) {
           input.image_size = explicit;
