@@ -154,25 +154,112 @@ export async function generateGeminiTextResponse(
   return aggregatedText;
 }
 
-const SCENE_GENERATION_SYSTEM_INSTRUCTION = `You are a professional storyboard artist.
-Your task is to break down the provided story into a sequence of scenes (5-10 scenes).
-For each scene, provide:
-- scene_number: integer
-- content: A detailed description of the scene, including action, visuals, and any dialogue.
-- heading: A standard scene heading (e.g., "EXT. FOREST - DAY").
 
-Output the result as a valid JSON object with a "scenes" array.
-Example format:
+const SCENE_GENERATION_SYSTEM_INSTRUCTION = `You are a professional storyboard artist and story world director.
+
+Input: A full story or script.
+
+Your tasks (complete them in this order):
+
+1) STORY WORLD ANALYSIS
+Extract the main CHARACTERS that visually appear in the story.
+Extract the main LOCATIONS that visually appear.
+Define a GLOBAL VISUAL STYLE for all storyboard images.
+
+For each character:
+- id: "char_1", "char_2", etc. (sequential)
+- name: human-readable name (e.g., "John", "Sarah")
+- role: short description (e.g., "Protagonist, shy barista", "Love interest, confident reader")
+- visual_description: VERY detailed physical and clothing description. Include: age range, body type, height, hair color/style, eye color, skin tone, facial features, clothing style, main clothing colors, accessories. Be specific and consistent.
+- emotion_baseline: their default emotional vibe (e.g., "nervous but kind", "confident and warm")
+- consistency_token: A UNIQUE UPPERCASE token combining name and random words (e.g., "JOHN-ALPHA-FOX", "SARAH-DELTA-ROSE"). This will be used in image prompts for consistency.
+
+For each location:
+- id: "loc_1", "loc_2", etc. (sequential)
+- name: short name (e.g., "Coffee Shop", "City Park")
+- visual_description: detailed description of layout, architecture, key props, furniture, lighting, time of day, atmosphere. Be specific about spatial arrangement and visual elements.
+- color_palette: main colors to use (e.g., "warm oranges, browns, soft yellows", "autumn golds, deep greens")
+- consistency_token: A UNIQUE UPPERCASE token (e.g., "COFFEE-SHOP-AMBER", "PARK-AUTUMN-GOLD")
+
+Global style:
+- art_style: overall visual style (e.g., "cinematic semi-realistic with soft lighting", "painterly impressionist", "photorealistic film stills")
+- color_palette: global color palette that ties all scenes together (e.g., "warm oranges and teal accents", "muted earth tones")
+- aspect_ratio: image aspect ratio (e.g., "16:9", "4:3", "2.35:1")
+- camera_style: cinematography approach (e.g., "film stills with shallow depth of field", "wide establishing shots", "intimate close-ups")
+
+2) SCENE OUTLINE (STRUCTURE)
+Break the story into 5-10 MAJOR scenes.
+For each scene:
+- scene_number: integer starting at 1
+- heading: screenplay-style heading (e.g., "INT. COFFEE SHOP - DAY", "EXT. PARK - AFTERNOON")
+- summary: 1-3 sentences describing the core action/emotion of the scene
+- mood: 1-3 words describing emotional tone (e.g., "hopeful", "tense", "joyful and warm")
+- character_ids: array of character ids present in this scene (e.g., ["char_1", "char_2"])
+- location_id: one location id where the scene takes place (e.g., "loc_1")
+
+3) DETAILED SCENES FOR RENDERING
+For each scene, produce a detailed description:
+- scene_number: matches the scene_outline number
+- heading: same as in scene_outline
+- content: detailed description including action, visuals, character emotions, lighting, camera angles, and any important dialogue or sound. This will be used for image generation, so be vivid and specific.
+
+OUTPUT FORMAT (CRITICAL):
+Respond ONLY with a SINGLE JSON object with this EXACT structure:
+
 {
+  "storyWorld": {
+    "characters": [
+      {
+        "id": "char_1",
+        "name": "John",
+        "role": "Protagonist, shy barista",
+        "visual_description": "30s, average height, slim build, short brown hair, blue eyes behind round glasses, fair skin, wearing a soft blue sweater and dark jeans, nervous demeanor",
+        "emotion_baseline": "nervous but kind",
+        "consistency_token": "JOHN-ALPHA-FOX"
+      }
+    ],
+    "locations": [
+      {
+        "id": "loc_1",
+        "name": "Coffee Shop",
+        "visual_description": "Cozy interior with exposed brick walls, wooden tables and chairs, vintage coffee posters, warm pendant lighting, large windows with natural light, espresso machine at counter",
+        "color_palette": "warm oranges, browns, soft yellows",
+        "consistency_token": "COFFEE-SHOP-AMBER"
+      }
+    ],
+    "global_style": {
+      "art_style": "cinematic semi-realistic with soft lighting",
+      "color_palette": "warm oranges and teal accents",
+      "aspect_ratio": "16:9",
+      "camera_style": "film stills with shallow depth of field"
+    },
+    "scene_outline": [
+      {
+        "scene_number": 1,
+        "heading": "INT. COFFEE SHOP - DAY",
+        "summary": "John enters nervously and spots Sarah by the window.",
+        "mood": "nervous but hopeful",
+        "character_ids": ["char_1", "char_2"],
+        "location_id": "loc_1"
+      }
+    ]
+  },
   "scenes": [
     {
       "scene_number": 1,
-      "heading": "EXT. PARK - DAY",
-      "content": "The sun shines brightly..."
+      "heading": "INT. COFFEE SHOP - DAY",
+      "content": "John, wearing his blue sweater and glasses, enters the cozy coffee shop. Warm lighting bathes the space. He spots Sarah sitting by the window, reading. He approaches hesitantly."
     }
   ]
 }
-Respond ONLY with the JSON object.`;
+
+CRITICAL RULES:
+- Do NOT add any text outside the JSON object
+- Ensure all character_ids and location_id in scene_outline reference valid ids in characters and locations arrays
+- Make visual_description fields VERY detailed for consistency
+- Consistency tokens must be UNIQUE and UPPERCASE
+- Include 5-10 scenes maximum
+- Respond ONLY with valid JSON`;
 
 export async function generateScenesFromStory(story: string): Promise<any> {
   const ai = getGeminiClient();
@@ -206,7 +293,35 @@ export async function generateScenesFromStory(story: string): Promise<any> {
         result.response?.candidates?.[0]?.content?.parts?.[0]?.text ||
         JSON.stringify(result);
   try {
-    return JSON.parse(responseText);
+    const parsed = JSON.parse(responseText);
+
+    // Validate response structure
+    if (!parsed.scenes || !Array.isArray(parsed.scenes)) {
+      throw new Error('Invalid scenes structure from Gemini');
+    }
+    if (!parsed.storyWorld) {
+      throw new Error('Missing storyWorld from Gemini');
+    }
+    if (!parsed.storyWorld.characters || !Array.isArray(parsed.storyWorld.characters)) {
+      throw new Error('Invalid characters structure in storyWorld');
+    }
+    if (!parsed.storyWorld.locations || !Array.isArray(parsed.storyWorld.locations)) {
+      throw new Error('Invalid locations structure in storyWorld');
+    }
+    if (!parsed.storyWorld.global_style) {
+      throw new Error('Missing global_style in storyWorld');
+    }
+    if (!parsed.storyWorld.scene_outline || !Array.isArray(parsed.storyWorld.scene_outline)) {
+      throw new Error('Invalid scene_outline structure in storyWorld');
+    }
+
+    console.log('[GeminiTextService] Story World generated successfully', {
+      charactersCount: parsed.storyWorld.characters.length,
+      locationsCount: parsed.storyWorld.locations.length,
+      scenesCount: parsed.scenes.length,
+    });
+
+    return parsed;
   } catch (e) {
     console.error("Failed to parse JSON from Gemini response", e);
     throw new Error("Failed to generate valid JSON for scenes");
