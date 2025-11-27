@@ -463,12 +463,15 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     throw new ApiError(`Invalid ID token: ${verifyError?.message || 'Token verification failed'}`, 401);
   }
   
-  // Calculate expiration based on ID token expiration (max 30 days)
+  // FIX: Always use 30 days for session cookie, regardless of ID token expiration
+  // Firebase createSessionCookie can create a session that lasts longer than the ID token
+  // This ensures users stay logged in for 30 days, not just 1 hour (ID token expiration)
   const idTokenExp = decodedToken.exp * 1000; // Convert to milliseconds
   const now = Date.now();
   const idTokenExpiresIn = Math.max(0, idTokenExp - now);
   const maxExpiresIn = 1000 * 60 * 60 * 24 * 30; // 30 days max
-  const expiresIn = Math.min(idTokenExpiresIn, maxExpiresIn);
+  // Always use full 30 days for session cookie (not limited by ID token expiration)
+  const expiresIn = maxExpiresIn;
   
   console.log('[AUTH][setSessionCookie] Token expiration calculation:', {
     idTokenExp,
