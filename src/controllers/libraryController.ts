@@ -5,6 +5,8 @@ import { generationHistoryService } from '../services/generationHistoryService';
 import { normalizeMode } from '../utils/modeTypeMap';
 import { getCachedLibrary, setCachedLibrary, getCachedUploads, setCachedUploads } from '../utils/generationCache';
 import { createHash } from 'crypto';
+import { uploadDataUriToZata, uploadFromUrlToZata } from '../utils/storage/zataUpload';
+import { authRepository } from '../repository/auth/authRepository';
 
 /**
  * Get user's library (generated images/videos)
@@ -321,6 +323,14 @@ export async function getUploads(req: Request, res: Response, next: NextFunction
       nextCursorLocal = result.nextCursor || undefined;
 
       for (const entry of result.items) {
+        // Only treat explicit WildMind uploads as \"uploads\" here.
+        // These are the synthetic history entries we create via the
+        // saveUploadForWild endpoint with model === 'wild-upload' and
+        // inputImages/inputVideos populated.
+        if (entry.model !== 'wild-upload') {
+          continue;
+        }
+
         if (entry.inputImages && Array.isArray(entry.inputImages)) {
           for (const img of entry.inputImages) {
             const url = img.url || img.originalUrl || '';
@@ -404,6 +414,115 @@ export async function getUploads(req: Request, res: Response, next: NextFunction
     );
   } catch (err) {
     console.error('[getUploads] Error:', err);
+    return next(err);
+  }
+}
+
+/**
+ * Save an uploaded media item (image/video) for the WildMind AI app.
+ * This creates a dedicated history entry with model === 'wild-upload'
+ * and stores the file in Zata, so it appears in the /uploads endpoint
+ * but is not tied to any specific generation run.
+ */
+export async function saveUploadForWild(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid;
+    if (!uid) {
+      return res.status(401).json(
+        formatApiResponse('error', 'Unauthorized', null)
+      );
+    }
+
+    const { url, type } = req.body || {};
+
+    if (!url || !type) {
+      return res.status(400).json(
+        formatApiResponse('error', 'url and type are required', null)
+      );
+    }
+
+    if (type !== 'image' && type !== 'video') {
+      return res.status(400).json(
+        formatApiResponse('error', 'type must be \"image\" or \"video\"', null)
+      );
+    }
+
+    // Get user info
+    const creator = await authRepository.getUserById(uid);
+    const username = creator?.username || uid;
+
+    // Create a minimal generation history entry representing this upload
+    const { historyId } = await generationHistoryService.startGeneration(uid, {
+      prompt: 'Uploaded from WildMind AI',
+      model: 'wild-upload',
+      generationType: type === 'image' ? 'text-to-image' : 'text-to-video',
+      visibility: 'private',
+    });
+
+    // Upload the file to Zata
+    const isDataUri = /^data:/.test(url);
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    const fileName = `upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    let stored: { key: string; publicUrl: string; storagePath?: string; originalUrl?: string };
+
+    if (isDataUri) {
+      const result = await uploadDataUriToZata({
+        dataUri: url,
+        keyPrefix,
+        fileName,
+      });
+      stored = {
+        key: result.key,
+        publicUrl: result.publicUrl,
+        storagePath: result.key,
+        originalUrl: url,
+      };
+    } else {
+      const result = await uploadFromUrlToZata({
+        sourceUrl: url,
+        keyPrefix,
+        fileName,
+      });
+      stored = {
+        key: result.key,
+        publicUrl: result.publicUrl,
+        storagePath: result.key,
+        originalUrl: result.originalUrl,
+      };
+    }
+
+    // Build media item shape compatible with wild project
+    const mediaItem = {
+      id: `upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      url: stored.publicUrl,
+      firebaseUrl: stored.publicUrl,
+      storagePath: stored.storagePath,
+      originalUrl: stored.originalUrl || url,
+    };
+
+    const updateData: any = {
+      status: 'completed',
+    };
+    if (type === 'image') {
+      updateData.inputImages = [mediaItem];
+    } else {
+      updateData.inputVideos = [mediaItem];
+    }
+
+    await generationHistoryService.markGenerationCompleted(uid, historyId, updateData);
+
+    return res.json(
+      formatApiResponse('success', 'Uploaded media saved', {
+        id: mediaItem.id,
+        url: stored.publicUrl,
+        type,
+        storagePath: stored.storagePath,
+        historyId,
+      })
+    );
+  } catch (err) {
+    console.error('[saveUploadForWild] Error:', err);
     return next(err);
   }
 }

@@ -17,5 +17,8 @@ router.get('/library', validateLibrary as any, handleValidationErrors, libraryCo
 // Query params: limit, cursor, nextCursor, mode (image|video|music|branding|all)
 router.get('/uploads', validateUploads as any, handleValidationErrors, libraryController.getUploads);
 
+// Save an upload explicitly for WildMind AI (not canvas)
+router.post('/uploads/save', libraryController.saveUploadForWild);
+
 export default router;
 

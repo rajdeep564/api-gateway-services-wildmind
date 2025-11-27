@@ -23,14 +23,13 @@ app.use(requestId);
 app.use(securityHeaders);
 // CORS for frontend with credentials (dev + prod)
 const isProdEnv = process.env.NODE_ENV === 'production';
+// Always include production origins (even if NODE_ENV isn't set, Render.com is production)
 const allowedOrigins = [
-  // Common prod hosts for frontend
-  ...(isProdEnv ? [
-    'https://www.wildmindai.com', 
-    'https://wildmindai.com',
-    'https://studio.wildmindai.com' // Canvas subdomain
-  ] : []),
-  // Development origins
+  // Production hosts (always include these for live site)
+  'https://www.wildmindai.com', 
+  'https://wildmindai.com',
+  'https://studio.wildmindai.com', // Canvas subdomain
+  // Development origins (only in dev)
   ...(!isProdEnv ? [
     'http://localhost:3000', // Main project dev
     'http://localhost:3001', // Canvas dev
@@ -45,15 +44,26 @@ const corsOptions: any = {
     if (!origin) return callback(null, true);
     try {
       if (allowedOrigins.includes(origin)) return callback(null, true);
+      // Allow subdomains of wildmindai.com
+      const originUrl = new URL(origin);
+      if (originUrl.hostname === 'www.wildmindai.com' || 
+          originUrl.hostname === 'wildmindai.com' ||
+          originUrl.hostname.endsWith('.wildmindai.com')) {
+        return callback(null, true);
+      }
       // Allow subdomains of the configured prod origin (e.g., preview/app)
       if (process.env.FRONTEND_ORIGIN) {
         const allowHost = new URL(process.env.FRONTEND_ORIGIN).hostname;
-        const reqHost = new URL(origin).hostname;
+        const reqHost = originUrl.hostname;
         if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) {
           return callback(null, true);
         }
       }
-    } catch {}
+    } catch (e) {
+      console.warn('[CORS] Error checking origin:', origin, e);
+    }
+    // Log blocked origin for debugging
+    console.warn('[CORS] Blocked origin:', origin, 'Allowed:', allowedOrigins);
     return callback(new Error('CORS blocked: origin not allowed'));
   },
   credentials: true,
@@ -74,7 +84,9 @@ const corsOptions: any = {
     'Expires'
   ],
   optionsSuccessStatus: 204,
-  exposedHeaders: ['Content-Length', 'Content-Range']
+  exposedHeaders: ['Content-Length', 'Content-Range'],
+  preflightContinue: false, // End preflight requests immediately
+  maxAge: 86400 // Cache preflight for 24 hours
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
@@ -84,9 +96,16 @@ const allowOrigin = (origin?: string) => {
   if (!origin) return false;
   try {
     if (allowedOrigins.includes(origin)) return true;
+    // Allow wildmindai.com and all its subdomains
+    const originUrl = new URL(origin);
+    if (originUrl.hostname === 'www.wildmindai.com' || 
+        originUrl.hostname === 'wildmindai.com' ||
+        originUrl.hostname.endsWith('.wildmindai.com')) {
+      return true;
+    }
     if (process.env.FRONTEND_ORIGIN) {
       const allowHost = new URL(process.env.FRONTEND_ORIGIN).hostname;
-      const reqHost = new URL(origin).hostname;
+      const reqHost = originUrl.hostname;
       if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) return true;
     }
   } catch {}
