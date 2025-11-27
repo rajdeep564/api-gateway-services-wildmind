@@ -592,17 +592,17 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
   const dom = (cookieDomain || '').toLowerCase();
   let shouldSetDomain = false;
   
+  // Check if we're in a production-like environment:
+  // 1. NODE_ENV === 'production', OR
+  // 2. Origin is a wildmindai.com subdomain (production domain), OR
+  // 3. Host matches the cookie domain
+  const isProductionLike = isProd || 
+    (origin && (origin.includes('wildmindai.com') || origin.includes('studio.wildmindai.com'))) ||
+    (host && (host.includes('wildmindai.com') || host.includes('studio.wildmindai.com')));
+  
   // Always set domain cookie if COOKIE_DOMAIN is configured (for cross-subdomain sharing)
   // This works in both production and when NODE_ENV isn't set (Render.com production)
   if (cookieDomain) {
-    // Check if we're in a production-like environment:
-    // 1. NODE_ENV === 'production', OR
-    // 2. Origin is a wildmindai.com subdomain (production domain), OR
-    // 3. Host matches the cookie domain
-    const isProductionLike = isProd || 
-      (origin && (origin.includes('wildmindai.com') || origin.includes('studio.wildmindai.com'))) ||
-      (host && (host.includes('wildmindai.com') || host.includes('studio.wildmindai.com')));
-    
     if (isProductionLike) {
       // Production: always use domain for cross-subdomain cookie sharing
       shouldSetDomain = true;
@@ -615,9 +615,6 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
 
   // Determine sameSite: use "none" for cross-subdomain cookies in production-like environments
   // This allows cookies to work between www.wildmindai.com and studio.wildmindai.com
-  const isProductionLike = isProd || 
-    (origin && (origin.includes('wildmindai.com') || origin.includes('studio.wildmindai.com'))) ||
-    (host && (host.includes('wildmindai.com') || host.includes('studio.wildmindai.com')));
   const useSameSiteNone = isProductionLike && !isWebView && shouldUseSecureCookie;
   
   const cookieOptions = {
