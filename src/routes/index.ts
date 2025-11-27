@@ -16,6 +16,7 @@ import promptEnhancerRoutes from './promptEnhancer';
 import replaceRoutes from './replace';
 import reimagineRoutes from './reimagine';
 import libraryRoutes from './library';
+import uploadsRoutes from './uploads';
 
 const router = Router();
 
@@ -37,6 +38,5 @@ router.use('/canvas', canvasRoutes);
 router.use('/prompt-enhancer', promptEnhancerRoutes);
 router.use('/replace', replaceRoutes);
 router.use('/reimagine', reimagineRoutes);
-router.use('/', libraryRoutes);
 
 export default router;
