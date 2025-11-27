@@ -463,14 +463,14 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     throw new ApiError(`Invalid ID token: ${verifyError?.message || 'Token verification failed'}`, 401);
   }
   
-  // FIX: Always use 30 days for session cookie, regardless of ID token expiration
+  // FIX: Use 2 weeks (14 days) for session cookie - Firebase Admin maximum allowed duration
   // Firebase createSessionCookie can create a session that lasts longer than the ID token
-  // This ensures users stay logged in for 30 days, not just 1 hour (ID token expiration)
+  // Maximum allowed by Firebase Admin is 2 weeks (14 days), not 30 days
   const idTokenExp = decodedToken.exp * 1000; // Convert to milliseconds
   const now = Date.now();
   const idTokenExpiresIn = Math.max(0, idTokenExp - now);
-  const maxExpiresIn = 1000 * 60 * 60 * 24 * 30; // 30 days max
-  // Always use full 30 days for session cookie (not limited by ID token expiration)
+  const maxExpiresIn = 1000 * 60 * 60 * 24 * 14; // 14 days max (Firebase Admin limit: 2 weeks)
+  // Always use full 14 days for session cookie (not limited by ID token expiration)
   const expiresIn = maxExpiresIn;
   
   console.log('[AUTH][setSessionCookie] Token expiration calculation:', {
@@ -1092,7 +1092,7 @@ async function setGoogleUsername(
 }
 
 /**
- * Refresh session cookie - extends expiration by another 30 days
+ * Refresh session cookie - extends expiration by another 14 days (2 weeks)
  * Called automatically when session is about to expire (within 3 days)
  * Requires a fresh ID token from the client
  */
@@ -1151,7 +1151,7 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
       } catch {}
     }
     
-    // Create new session cookie with extended expiration (30 days)
+    // Create new session cookie with extended expiration (14 days / 2 weeks)
     const newSessionCookie = await setSessionCookie(req, res, idToken);
     
     // Update Redis cache with new session
@@ -1179,7 +1179,7 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
 
     res.json(
       formatApiResponse("success", "Session refreshed successfully", {
-        expiresIn: 30 * 24 * 60 * 60 * 1000, // 30 days in milliseconds
+        expiresIn: 14 * 24 * 60 * 60 * 1000, // 14 days in milliseconds (Firebase Admin max: 2 weeks)
       })
     );
   } catch (error) {
