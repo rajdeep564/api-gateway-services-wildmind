@@ -569,6 +569,8 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
       expiresIn,
       expiresInSeconds: Math.floor(expiresIn / 1000)
     });
+
+  
     
     // Check if it's a TOKEN_EXPIRED error
     if (createError?.code === 'auth/id-token-expired' || 
