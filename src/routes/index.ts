@@ -15,6 +15,8 @@ import canvasRoutes from './canvas';
 import promptEnhancerRoutes from './promptEnhancer';
 import replaceRoutes from './replace';
 import reimagineRoutes from './reimagine';
+import libraryRoutes from './library';
+import uploadsRoutes from './uploads';
 
 const router = Router();
 
@@ -24,6 +26,8 @@ router.use('/fal', falRoutes);
 router.use('/minimax', minimaxRoutes);
 router.use('/runway', runwayRoutes);
 router.use('/generations', generationsRoutes);
+router.use('/library', libraryRoutes);
+router.use('/uploads', uploadsRoutes);
 router.use('/credits', creditsRoutes);
 router.use('/feed', publicGenerationsRoutes);
 router.use('/redeem-codes', redeemCodeRoutes);
