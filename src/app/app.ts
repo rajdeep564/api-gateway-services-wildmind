@@ -199,3 +199,65 @@ export default app;
     if (isRedisEnabled()) getRedisClient();
   } catch (_e) {}
 })();
+
+// Auto-populate signup image cache on startup (non-blocking, runs ONCE globally)
+let cachePopulateStarted = false;
+(async () => {
+  try {
+    const { signupImageCache } = await import('../repository/signupImageCache');
+    const stats = await signupImageCache.getCacheStats();
+    
+    if (stats.count === 0 && !cachePopulateStarted) {
+      cachePopulateStarted = true;
+      console.log('[App] Signup image cache is empty, populating in background (ONE TIME ONLY)...');
+      // Populate cache in background (non-blocking) - runs ONCE on server startup
+      signupImageCache.refreshSignupImageCache().then((count) => {
+        console.log(`[App] ✅ Signup image cache populated with ${count} images`);
+      }).catch((error) => {
+        console.error('[App] Failed to populate signup image cache:', error);
+      });
+    } else if (stats.count > 0) {
+      console.log(`[App] Signup image cache ready (${stats.count} images cached)`);
+    }
+  } catch (_e) {
+    // Non-fatal: cache will be populated on first request
+  }
+})();
+
+// Start automatic 24-hour cache refresh (runs ONCE globally, not per user)
+let refreshSchedulerStarted = false;
+(async () => {
+  if (refreshSchedulerStarted) return;
+  refreshSchedulerStarted = true;
+  
+  try {
+    const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+    
+    console.log('[App] Starting automatic signup image cache refresh scheduler (every 24 hours)');
+    
+    // Refresh immediately if cache is empty
+    const { signupImageCache } = await import('../repository/signupImageCache');
+    const stats = await signupImageCache.getCacheStats();
+    
+    if (stats.count === 0) {
+      console.log('[App] Cache empty, refreshing now...');
+      signupImageCache.refreshSignupImageCache().catch((error) => {
+        console.error('[App] Initial cache refresh failed:', error);
+      });
+    }
+    
+    // Schedule automatic refresh every 24 hours (runs ONCE globally)
+    setInterval(() => {
+      console.log('[App] Auto-refreshing signup image cache (24-hour schedule)...');
+      signupImageCache.refreshSignupImageCache().then((count) => {
+        console.log(`[App] ✅ Signup image cache auto-refreshed with ${count} images`);
+      }).catch((error) => {
+        console.error('[App] Auto-refresh failed:', error);
+      });
+    }, REFRESH_INTERVAL_MS);
+    
+    console.log('[App] ✅ Signup image cache auto-refresh scheduler started (runs every 24 hours)');
+  } catch (_e) {
+    console.error('[App] Failed to start cache refresh scheduler:', _e);
+  }
+})();

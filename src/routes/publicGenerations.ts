@@ -32,6 +32,9 @@ router.get('/',
 router.get('/random/high-scored', publicGenerationsController.getRandomHighScoredImage);
 router.options('/random/high-scored', (_req, res) => res.sendStatus(204));
 
+// Admin endpoint to refresh signup image cache (no auth for now - can add later if needed)
+router.post('/refresh-signup-cache', publicGenerationsController.refreshSignupImageCache);
+
 router.get('/:generationId', 
   validateGenerationId as any, 
   handleValidationErrors, 
