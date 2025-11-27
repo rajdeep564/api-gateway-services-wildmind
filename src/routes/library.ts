@@ -35,10 +35,8 @@ router.get('/', requireAuth, validateListGenerations as any, handleValidationErr
       mode: normalizedMode,
     });
     
-    // Transform items to library format
-    // Each generation can have multiple images/videos, so we flatten them
+    // Flatten only the current page's history items
     const libraryItems: any[] = [];
-    
     if (result.items && Array.isArray(result.items)) {
       for (const item of result.items) {
         // Extract images
@@ -61,7 +59,6 @@ router.get('/', requireAuth, validateListGenerations as any, handleValidationErr
             });
           }
         }
-        
         // Extract videos
         if (item.videos && Array.isArray(item.videos) && item.videos.length > 0) {
           for (const vid of item.videos) {
@@ -82,28 +79,17 @@ router.get('/', requireAuth, validateListGenerations as any, handleValidationErr
         }
       }
     }
-    
     // Sort by createdAt descending (newest first)
     libraryItems.sort((a, b) => {
       const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return timeB - timeA;
     });
-    
-    // Apply pagination to the transformed results
-    const limitNum = Number(limit);
-    const paginatedItems = libraryItems.slice(0, limitNum);
-    const hasMore = libraryItems.length > limitNum || (result.hasMore || false);
-    
-    // For nextCursor, use the createdAt of the last item if available
-    const nextCursorValue = paginatedItems.length > 0 && paginatedItems[paginatedItems.length - 1].createdAt
-      ? new Date(paginatedItems[paginatedItems.length - 1].createdAt).getTime()
-      : result.nextCursor;
-    
+    // Use backend's nextCursor and hasMore for pagination
     return res.json(formatApiResponse('success', 'Library retrieved', {
-      items: paginatedItems,
-      nextCursor: nextCursorValue,
-      hasMore,
+      items: libraryItems,
+      nextCursor: result.nextCursor,
+      hasMore: result.hasMore || false,
     }));
   } catch (err) {
     return next(err);
