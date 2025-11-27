@@ -6,7 +6,7 @@ import { imageOptimizationService } from "./imageOptimizationService";
 // CACHING REMOVED: Redis generationCache disabled due to stale list items not reflecting newly started generations promptly.
 // If reintroducing, ensure immediate inclusion of generating items and robust invalidation on create/complete/fail/update.
 import { deleteGenerationFiles } from "../utils/storage/zataDelete";
-import { getCachedItem, setCachedItem, getCachedList, setCachedList } from "../utils/generationCache";
+import { getCachedItem, setCachedItem, getCachedList, setCachedList, invalidateLibraryCache } from "../utils/generationCache";
 import {
   GenerationStatus,
   CreateGenerationPayload,
@@ -228,6 +228,13 @@ export async function markGenerationCompleted(
         }
       } catch (e) {
         console.warn('[markGenerationCompleted] Failed to refresh cache for item:', e);
+      }
+      
+      // Invalidate library cache when generation is completed (new items may appear in library)
+      try {
+        await invalidateLibraryCache(uid);
+      } catch (e) {
+        console.warn('[markGenerationCompleted] Failed to invalidate library cache:', e);
       }
     } catch {}
   }
@@ -561,9 +568,10 @@ export async function softDelete(uid: string, historyId: string): Promise<{ item
   // 2. Invalidate cache immediately after mirror deletion
   console.log('[softDelete] Step 2: Invalidating cache...');
   try {
-    const { invalidateItem, invalidateUserLists, invalidatePublicFeedCache } = await import('../utils/generationCache');
+    const { invalidateItem, invalidateUserLists, invalidatePublicFeedCache, invalidateLibraryCache } = await import('../utils/generationCache');
     await invalidateItem(uid, historyId);
     await invalidateUserLists(uid);
+    await invalidateLibraryCache(uid);
     // CRITICAL: Invalidate public feed cache so ArtStation reflects deletion immediately
     await invalidatePublicFeedCache();
     console.log('[softDelete] ✅ Step 2: Cache invalidated (including public feed)');
@@ -698,8 +706,9 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
   // Invalidate cache
   console.log('[update] Step 2: Invalidating cache...');
   try {
-    const { invalidateItem, invalidateUserLists } = await import('../utils/generationCache');
+    const { invalidateItem, invalidateUserLists, invalidateLibraryCache } = await import('../utils/generationCache');
     await invalidateItem(uid, historyId);
+    await invalidateLibraryCache(uid);
     await invalidateUserLists(uid);
     console.log('[update] ✅ Step 2: Cache invalidated');
   } catch (e: any) {

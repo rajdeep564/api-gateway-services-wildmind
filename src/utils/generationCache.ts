@@ -1,8 +1,8 @@
 import { getRedisClient } from '../config/redisClient';
 import { GenerationHistoryItem } from '../types/generate';
 
-const CACHE_TTL = 60 * 5; // 5 minutes cache for generation items
-const LIST_CACHE_TTL = 60 * 2; // 2 minutes for list results
+const CACHE_TTL = 60 * 120; // 2 hours cache for generation items
+const LIST_CACHE_TTL = 60 * 60; // 1 hour for list results
 
 function getClient() {
   return getRedisClient();
@@ -265,5 +265,111 @@ export async function invalidatePublicFeedCache(): Promise<void> {
     }
   } catch (error) {
     console.warn('[generationCache] invalidatePublicFeedCache error:', error);
+  }
+}
+
+/**
+ * Library and Uploads cache functions
+ */
+function getLibraryCacheKey(uid: string, params: any): string {
+  const { limit = 50, cursor, nextCursor, mode } = params;
+  const modeKey = mode || 'all';
+  const cursorKey = nextCursor || cursor || 'start';
+  return `library:${uid}:${limit}:${cursorKey}:${modeKey}`;
+}
+
+function getUploadsCacheKey(uid: string, params: any): string {
+  const { limit = 50, cursor, nextCursor, mode } = params;
+  const modeKey = mode || 'all';
+  const cursorKey = nextCursor || cursor || 'start';
+  return `uploads:${uid}:${limit}:${cursorKey}:${modeKey}`;
+}
+
+const LIBRARY_CACHE_TTL = 60 * 60; // 1 hour for library/uploads (same as list cache)
+
+export async function getCachedLibrary(uid: string, params: any): Promise<any | null> {
+  try {
+    const client = getClient();
+    if (!client) {
+      return null;
+    }
+    const key = getLibraryCacheKey(uid, params);
+    const cached = await client.get(key);
+    if (!cached) {
+      return null;
+    }
+    console.log(`[generationCache] ✅ LIBRARY CACHE HIT: ${key}`);
+    return JSON.parse(cached);
+  } catch (error) {
+    console.warn('[generationCache] getCachedLibrary error:', error);
+    return null;
+  }
+}
+
+export async function setCachedLibrary(uid: string, params: any, result: any): Promise<void> {
+  try {
+    const client = getClient();
+    if (!client) {
+      return;
+    }
+    const key = getLibraryCacheKey(uid, params);
+    await client.setEx(key, LIBRARY_CACHE_TTL, JSON.stringify(result));
+    console.log(`[generationCache] 💾 LIBRARY CACHED: ${key} (TTL: ${LIBRARY_CACHE_TTL}s, items: ${result.items?.length || 0})`);
+  } catch (error) {
+    console.warn('[generationCache] setCachedLibrary error:', error);
+  }
+}
+
+export async function getCachedUploads(uid: string, params: any): Promise<any | null> {
+  try {
+    const client = getClient();
+    if (!client) {
+      return null;
+    }
+    const key = getUploadsCacheKey(uid, params);
+    const cached = await client.get(key);
+    if (!cached) {
+      return null;
+    }
+    console.log(`[generationCache] ✅ UPLOADS CACHE HIT: ${key}`);
+    return JSON.parse(cached);
+  } catch (error) {
+    console.warn('[generationCache] getCachedUploads error:', error);
+    return null;
+  }
+}
+
+export async function setCachedUploads(uid: string, params: any, result: any): Promise<void> {
+  try {
+    const client = getClient();
+    if (!client) {
+      return;
+    }
+    const key = getUploadsCacheKey(uid, params);
+    await client.setEx(key, LIBRARY_CACHE_TTL, JSON.stringify(result));
+    console.log(`[generationCache] 💾 UPLOADS CACHED: ${key} (TTL: ${LIBRARY_CACHE_TTL}s, items: ${result.items?.length || 0})`);
+  } catch (error) {
+    console.warn('[generationCache] setCachedUploads error:', error);
+  }
+}
+
+/**
+ * Invalidate library and uploads cache for a user
+ * Called when new generations are created/completed
+ */
+export async function invalidateLibraryCache(uid: string): Promise<void> {
+  try {
+    const client = getClient();
+    if (!client) return;
+    const patterns = [`library:${uid}:*`, `uploads:${uid}:*`];
+    for (const pattern of patterns) {
+      const keys = await client.keys(pattern);
+      if (keys && keys.length > 0) {
+        await client.del(keys);
+        console.log(`[generationCache] 🗑️  Invalidated ${keys.length} ${pattern} cache entries`);
+      }
+    }
+  } catch (error) {
+    console.warn('[generationCache] invalidateLibraryCache error:', error);
   }
 }

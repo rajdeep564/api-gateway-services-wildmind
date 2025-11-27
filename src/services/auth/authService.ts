@@ -48,12 +48,68 @@ async function checkUsernameAvailability(username: string): Promise<{ available:
 }
 
 async function createSession(idToken: string): Promise<AppUser> {
+  console.log('[AUTH][authService.createSession] ========== START ==========');
+  console.log('[AUTH][authService.createSession] Function called', {
+    hasIdToken: !!idToken,
+    idTokenLength: idToken?.length || 0,
+    idTokenPrefix: idToken?.substring(0, 30) || 'N/A',
+    timestamp: new Date().toISOString()
+  });
+  
   try {
+    console.log('[AUTH][authService.createSession] Verifying ID token with Firebase Admin (checkRevoked=true)...');
     const decoded = await admin.auth().verifyIdToken(idToken, true);
+    console.log('[AUTH][authService.createSession] ID token verified successfully:', {
+      uid: decoded?.uid,
+      email: decoded?.email,
+      exp: decoded?.exp,
+      expDate: decoded?.exp ? new Date(decoded.exp * 1000).toISOString() : 'N/A',
+      iat: decoded?.iat,
+      iatDate: decoded?.iat ? new Date(decoded.iat * 1000).toISOString() : 'N/A',
+      auth_time: decoded?.auth_time,
+      auth_timeDate: decoded?.auth_time ? new Date(decoded.auth_time * 1000).toISOString() : 'N/A',
+      currentTime: new Date().toISOString(),
+      currentTimestamp: Date.now(),
+      timeUntilExpiry: decoded?.exp ? (decoded.exp * 1000 - Date.now()) : 'N/A',
+      timeUntilExpiryMinutes: decoded?.exp ? Math.floor((decoded.exp * 1000 - Date.now()) / (1000 * 60)) : 'N/A'
+    });
+    
+    console.log('[AUTH][authService.createSession] Upserting user from Firebase...');
     const user = await upsertUserFromFirebase(decoded);
+    console.log('[AUTH][authService.createSession] User upserted successfully:', {
+      uid: user?.uid,
+      username: user?.username,
+      email: user?.email
+    });
+    console.log('[AUTH][authService.createSession] ========== SUCCESS ==========');
     return user;
-  } catch (error) {
-    throw new ApiError('Invalid token', 401);
+  } catch (error: any) {
+    console.error('[AUTH][authService.createSession] ========== ERROR ==========');
+    console.error('[AUTH][authService.createSession] Error details:', {
+      message: error?.message,
+      code: error?.code,
+      errorCode: error?.errorCode,
+      errorInfo: error?.errorInfo,
+      stack: error?.stack,
+      name: error?.name,
+      idTokenLength: idToken?.length,
+      idTokenPrefix: idToken?.substring(0, 30)
+    });
+    
+    // Check if it's a TOKEN_EXPIRED error
+    if (error?.code === 'auth/id-token-expired' || 
+        error?.errorInfo?.code === 'auth/id-token-expired' ||
+        error?.message?.includes('TOKEN_EXPIRED') ||
+        error?.message?.includes('expired')) {
+      console.error('[AUTH][authService.createSession] TOKEN_EXPIRED detected!', {
+        currentTime: new Date().toISOString(),
+        currentTimestamp: Date.now(),
+        errorDetails: error
+      });
+      throw new ApiError('ID token has expired. Please refresh and try again.', 401);
+    }
+    
+    throw new ApiError(`Invalid token: ${error?.message || 'Token verification failed'}`, 401);
   }
 }
 
