@@ -35,7 +35,7 @@ router.get('/', requireAuth, validateListGenerations as any, handleValidationErr
       mode: normalizedMode,
     });
     
-    // Flatten only the current page's history items
+   // Flatten only the current page's history items
     const libraryItems: any[] = [];
     if (result.items && Array.isArray(result.items)) {
       for (const item of result.items) {
