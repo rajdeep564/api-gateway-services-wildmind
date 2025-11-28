@@ -56,7 +56,7 @@ export async function listPublic(params: {
   const projectionFields: Array<keyof GenerationHistoryItem | string> = [
     'prompt', 'model', 'generationType', 'status', 'visibility', 'tags', 'nsfw',
     'images', 'videos', 'audios', 'createdBy', 'isPublic', 'isDeleted', 'createdAt', 'updatedAt',
-    'aspectRatio', 'frameSize', 'aspect_ratio', 'aestheticScore'
+    'aspectRatio', 'frameSize', 'aspect_ratio', 'aestheticScore', 'scoreUpdatedAt'
   ];
   
   // ========== DATABASE-LEVEL FILTERING FOR OPTIMAL PERFORMANCE ==========
@@ -168,7 +168,7 @@ export async function listPublic(params: {
   const snapHigh = await queryHigh.limit(params.limit * 2).get();
   
   // Helper function to get aesthetic score (default to 0 if missing)
-  const getAestheticScore = (item: GenerationHistoryItem): number => {
+  const getAestheticScore = (item: GenerationHistoryItem, rawData?: any): number => {
     return typeof item.aestheticScore === 'number' ? item.aestheticScore : 0;
   };
   
@@ -178,33 +178,79 @@ export async function listPublic(params: {
     if ((item.createdAt as any)?.seconds) return (item.createdAt as any).seconds * 1000;
     return 0;
   };
+
+  // Helper function to get scoreUpdatedAt timestamp (admin score update time)
+  const getScoreUpdatedAtTime = (rawData: any): number => {
+    if (!rawData || !rawData.scoreUpdatedAt) return 0;
+    if (typeof rawData.scoreUpdatedAt === 'string') return new Date(rawData.scoreUpdatedAt).getTime();
+    if (rawData.scoreUpdatedAt?.seconds) return rawData.scoreUpdatedAt.seconds * 1000;
+    if (rawData.scoreUpdatedAt?.toMillis) return rawData.scoreUpdatedAt.toMillis();
+    return 0;
+  };
+
+  // Helper function to check if item has admin score (has scoreUpdatedAt)
+  const hasAdminScore = (rawData: any): boolean => {
+    return rawData && rawData.scoreUpdatedAt != null;
+  };
   
   // Convert high-scored results with proper sorting
-  const highScoredItems: GenerationHistoryItem[] = snapHigh.docs
-    .map(d => normalizePublicItem(d.id, d.data() as any))
+  // Store raw data alongside normalized items for sorting
+  const highScoredItemsWithData = snapHigh.docs.map(d => ({
+    item: normalizePublicItem(d.id, d.data() as any),
+    rawData: d.data() as any
+  }));
+
+  // NEW SORTING LOGIC FOR ARTSTATION:
+  // 1. Admin-scored items first (has scoreUpdatedAt) - sorted by scoreUpdatedAt desc, then aestheticScore desc
+  // 2. Non-admin items with score >= 9 - sorted by createdAt desc, then aestheticScore desc
+  // 3. Items with score < 9 or no score - sorted by createdAt desc
+  const highScoredItems: GenerationHistoryItem[] = highScoredItemsWithData
     .sort((a, b) => {
-      if (params.sortBy === 'aestheticScore') {
-        // Sort by aestheticScore first (desc), then createdAt as tiebreaker (desc)
-        const aScore = getAestheticScore(a);
-        const bScore = getAestheticScore(b);
-        if (aScore !== bScore) {
-          return params.sortOrder === 'asc' ? aScore - bScore : bScore - aScore;
+      const aHasAdmin = hasAdminScore(a.rawData);
+      const bHasAdmin = hasAdminScore(b.rawData);
+      const aScore = getAestheticScore(a.item, a.rawData);
+      const bScore = getAestheticScore(b.item, b.rawData);
+      const aCreated = getCreatedAtTime(a.item);
+      const bCreated = getCreatedAtTime(b.item);
+
+      // Priority 1: Admin-scored items come first
+      if (aHasAdmin && !bHasAdmin) return -1;
+      if (!aHasAdmin && bHasAdmin) return 1;
+
+      if (aHasAdmin && bHasAdmin) {
+        // Both have admin scores - sort by scoreUpdatedAt desc, then score desc
+        const aScoreTime = getScoreUpdatedAtTime(a.rawData);
+        const bScoreTime = getScoreUpdatedAtTime(b.rawData);
+        if (aScoreTime !== bScoreTime) {
+          return bScoreTime - aScoreTime; // Newer admin scores first
         }
-        // Tiebreaker: createdAt desc (latest first)
-        const aTime = getCreatedAtTime(a);
-        const bTime = getCreatedAtTime(b);
-        return bTime - aTime;
-      } else {
-        // Default: sort by createdAt
-        const aTime = getCreatedAtTime(a);
-        const bTime = getCreatedAtTime(b);
-        return params.sortOrder === 'asc' ? aTime - bTime : bTime - aTime;
+        // Tiebreaker: higher score first
+        return bScore - aScore;
       }
-    });
+
+      // Priority 2: Non-admin items with score >= 9
+      const aHighScore = aScore >= 9;
+      const bHighScore = bScore >= 9;
+      if (aHighScore && !bHighScore) return -1;
+      if (!aHighScore && bHighScore) return 1;
+
+      if (aHighScore && bHighScore) {
+        // Both have high scores - sort by createdAt desc, then score desc
+        if (aCreated !== bCreated) {
+          return bCreated - aCreated; // Newer first
+        }
+        return bScore - aScore; // Higher score first
+      }
+
+      // Priority 3: Items with score < 9 or no score - sort by createdAt desc
+      return bCreated - aCreated;
+    })
+    .map(({ item }) => item);
   
   // If we don't have enough high-scored items and minScore is not set, fetch lower-scored items
   // (If minScore is set, we only want items >= minScore, so skip lower-scored items)
   let lowScoredItems: GenerationHistoryItem[] = [];
+  let lowScoredItemsWithData: Array<{ item: GenerationHistoryItem; rawData: any }> = [];
   if (params.minScore === undefined && highScoredItems.length < params.limit) {
     const needed = params.limit - highScoredItems.length;
     
@@ -220,85 +266,156 @@ export async function listPublic(params: {
     }
     
     const snapLow = await queryLow.limit(needed * 2).get();
-    lowScoredItems = snapLow.docs
-      .map(d => normalizePublicItem(d.id, d.data() as any))
+    lowScoredItemsWithData = snapLow.docs.map(d => ({
+      item: normalizePublicItem(d.id, d.data() as any),
+      rawData: d.data() as any
+    }));
+
+    lowScoredItems = lowScoredItemsWithData
       .sort((a, b) => {
-        if (params.sortBy === 'aestheticScore') {
-          const aScore = getAestheticScore(a);
-          const bScore = getAestheticScore(b);
-          if (aScore !== bScore) {
-            return params.sortOrder === 'asc' ? aScore - bScore : bScore - aScore;
+        const aHasAdmin = hasAdminScore(a.rawData);
+        const bHasAdmin = hasAdminScore(b.rawData);
+        const aScore = getAestheticScore(a.item, a.rawData);
+        const bScore = getAestheticScore(b.item, b.rawData);
+        const aCreated = getCreatedAtTime(a.item);
+        const bCreated = getCreatedAtTime(b.item);
+
+        // Admin-scored items first (even if score < 9)
+        if (aHasAdmin && !bHasAdmin) return -1;
+        if (!aHasAdmin && bHasAdmin) return 1;
+
+        if (aHasAdmin && bHasAdmin) {
+          const aScoreTime = getScoreUpdatedAtTime(a.rawData);
+          const bScoreTime = getScoreUpdatedAtTime(b.rawData);
+          if (aScoreTime !== bScoreTime) {
+            return bScoreTime - aScoreTime;
           }
-          const aTime = getCreatedAtTime(a);
-          const bTime = getCreatedAtTime(b);
-          return bTime - aTime;
-        } else {
-          const aTime = getCreatedAtTime(a);
-          const bTime = getCreatedAtTime(b);
-          return params.sortOrder === 'asc' ? aTime - bTime : bTime - aTime;
+          return bScore - aScore;
         }
-      });
+
+        // For non-admin items, sort by createdAt desc
+        return bCreated - aCreated;
+      })
+      .map(({ item }) => item);
   }
   
   // Fetch music items if needed (skip if minScore is set, as music items may not have scores)
   let musicItems: GenerationHistoryItem[] = [];
+  let musicItemsWithData: Array<{ item: GenerationHistoryItem; rawData: any }> = [];
   if (params.minScore === undefined && queryMusic && (highScoredItems.length + lowScoredItems.length) < params.limit) {
     const needed = params.limit - (highScoredItems.length + lowScoredItems.length);
     const snapMusic = await queryMusic.limit(needed).get();
-    musicItems = snapMusic.docs
-      .map(d => normalizePublicItem(d.id, d.data() as any))
+    musicItemsWithData = snapMusic.docs.map(d => ({
+      item: normalizePublicItem(d.id, d.data() as any),
+      rawData: d.data() as any
+    }));
+
+    musicItems = musicItemsWithData
       .sort((a, b) => {
-        if (params.sortBy === 'aestheticScore') {
-          const aScore = getAestheticScore(a);
-          const bScore = getAestheticScore(b);
-          if (aScore !== bScore) {
-            return params.sortOrder === 'asc' ? aScore - bScore : bScore - aScore;
+        const aHasAdmin = hasAdminScore(a.rawData);
+        const bHasAdmin = hasAdminScore(b.rawData);
+        const aScore = getAestheticScore(a.item, a.rawData);
+        const bScore = getAestheticScore(b.item, b.rawData);
+        const aCreated = getCreatedAtTime(a.item);
+        const bCreated = getCreatedAtTime(b.item);
+
+        // Admin-scored items first
+        if (aHasAdmin && !bHasAdmin) return -1;
+        if (!aHasAdmin && bHasAdmin) return 1;
+
+        if (aHasAdmin && bHasAdmin) {
+          const aScoreTime = getScoreUpdatedAtTime(a.rawData);
+          const bScoreTime = getScoreUpdatedAtTime(b.rawData);
+          if (aScoreTime !== bScoreTime) {
+            return bScoreTime - aScoreTime;
           }
-          const aTime = getCreatedAtTime(a);
-          const bTime = getCreatedAtTime(b);
-          return bTime - aTime;
-        } else {
-          const aTime = getCreatedAtTime(a);
-          const bTime = getCreatedAtTime(b);
-          return params.sortOrder === 'asc' ? aTime - bTime : bTime - aTime;
+          return bScore - aScore;
         }
-      });
+
+        // For non-admin items, sort by createdAt desc
+        return bCreated - aCreated;
+      })
+      .map(({ item }) => item);
   }
   
-  // Combine: high-scored first (sorted by latest), then lower-scored (sorted by latest), then music (sorted by latest)
-  // Deduplicate by ID and maintain priority order
-  const itemMap = new Map<string, GenerationHistoryItem>();
-  const itemOrder: string[] = []; // Track order to maintain priority
-  
-  // Add high-scored items first (already sorted by latest first)
-  highScoredItems.forEach(item => {
-    if (!itemMap.has(item.id)) {
-      itemMap.set(item.id, item);
-      itemOrder.push(item.id);
+  // Combine all items with their raw data for final sorting
+  // We need to store raw data to do proper cross-group sorting
+  const allItemsWithData: Array<{ item: GenerationHistoryItem; rawData: any }> = [];
+
+  // Create a map to store raw data by item ID
+  const rawDataMap = new Map<string, any>();
+
+  // Store raw data from high-scored items
+  highScoredItemsWithData.forEach(({ item, rawData }) => {
+    if (!rawDataMap.has(item.id)) {
+      rawDataMap.set(item.id, rawData);
+      allItemsWithData.push({ item, rawData });
     }
   });
-  
-  // Add lower-scored items (already sorted by latest first, avoid duplicates)
-  lowScoredItems.forEach(item => {
-    if (!itemMap.has(item.id)) {
-      itemMap.set(item.id, item);
-      itemOrder.push(item.id);
+
+  // Store raw data from low-scored items (avoid duplicates)
+  lowScoredItemsWithData.forEach(({ item, rawData }) => {
+    if (!rawDataMap.has(item.id)) {
+      rawDataMap.set(item.id, rawData);
+      allItemsWithData.push({ item, rawData });
     }
   });
-  
-  // Add music items (already sorted by latest first, avoid duplicates)
-  musicItems.forEach(item => {
-    if (!itemMap.has(item.id)) {
-      itemMap.set(item.id, item);
-      itemOrder.push(item.id);
+
+  // Store raw data from music items (avoid duplicates)
+  musicItemsWithData.forEach(({ item, rawData }) => {
+    if (!rawDataMap.has(item.id)) {
+      rawDataMap.set(item.id, rawData);
+      allItemsWithData.push({ item, rawData });
     }
   });
-  
-  // Convert to array maintaining priority order (high-scored first, then lower-scored, then music)
-  // All groups are already sorted by createdAt desc (latest first)
-  let items: GenerationHistoryItem[] = itemOrder
-    .map(id => itemMap.get(id)!)
-    .filter(item => item !== undefined);
+
+  // Final comprehensive sort across all groups with proper priority:
+  // 1. Admin-scored items (has scoreUpdatedAt) - by scoreUpdatedAt desc, then score desc
+  // 2. Non-admin items with score >= 9 - by createdAt desc, then score desc
+  // 3. Items with score < 9 or no score - by createdAt desc
+  allItemsWithData.sort((a, b) => {
+    const aHasAdmin = hasAdminScore(a.rawData);
+    const bHasAdmin = hasAdminScore(b.rawData);
+    const aScore = getAestheticScore(a.item, a.rawData);
+    const bScore = getAestheticScore(b.item, b.rawData);
+    const aCreated = getCreatedAtTime(a.item);
+    const bCreated = getCreatedAtTime(b.item);
+
+    // Priority 1: Admin-scored items come first
+    if (aHasAdmin && !bHasAdmin) return -1;
+    if (!aHasAdmin && bHasAdmin) return 1;
+
+    if (aHasAdmin && bHasAdmin) {
+      // Both have admin scores - sort by scoreUpdatedAt desc, then score desc
+      const aScoreTime = getScoreUpdatedAtTime(a.rawData);
+      const bScoreTime = getScoreUpdatedAtTime(b.rawData);
+      if (aScoreTime !== bScoreTime) {
+        return bScoreTime - aScoreTime; // Newer admin scores first
+      }
+      // Tiebreaker: higher score first
+      return bScore - aScore;
+    }
+
+    // Priority 2: Non-admin items with score >= 9
+    const aHighScore = aScore >= 9;
+    const bHighScore = bScore >= 9;
+    if (aHighScore && !bHighScore) return -1;
+    if (!aHighScore && bHighScore) return 1;
+
+    if (aHighScore && bHighScore) {
+      // Both have high scores - sort by createdAt desc, then score desc
+      if (aCreated !== bCreated) {
+        return bCreated - aCreated; // Newer first
+      }
+      return bScore - aScore; // Higher score first
+    }
+
+    // Priority 3: Items with score < 9 or no score - sort by createdAt desc
+    return bCreated - aCreated;
+  });
+
+  // Extract just the items in the final sorted order
+  let items: GenerationHistoryItem[] = allItemsWithData.map(({ item }) => item);
   
   // Handle search - Firestore doesn't support full-text search, so minimal in-memory filter
   // This is the ONLY in-memory filtering we do, and it's necessary for search functionality
