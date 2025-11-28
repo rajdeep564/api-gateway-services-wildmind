@@ -56,7 +56,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       // Enhanced error message for debugging
       const errorMessage = hasAppSessionInHeader 
         ? 'Unauthorized - Cookie exists in request but could not be parsed. Check cookie format and parsing.'
-        : 'Unauthorized - No session token. Cookie not sent with request. Check if cookie domain is set correctly for cross-subdomain sharing.';
+        : 'Unauthorized - No session token. Cookie not sent with request. This usually means the cookie domain is not set correctly for cross-subdomain sharing. Check COOKIE_DOMAIN environment variable.';
       
       console.error('[AUTH][requireAuth] 401 Unauthorized - No token', {
         hasCookieHeader: !!req.headers.cookie,
