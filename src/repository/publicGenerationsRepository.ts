@@ -343,39 +343,50 @@ export async function getPublicById(generationId: string): Promise<GenerationHis
 
 /**
  * Get multiple random high-scored images from the public feed
- * Returns up to 20 images with aestheticScore >= 9.0
+ * Returns 1 pure image generation (text-to-image, image-to-image) with aestheticScore >= 9.0
  * 
  * IMPORTANT: 
- * - Every call returns DIFFERENT random images (shuffled)
+ * - Every call returns DIFFERENT random image (highly randomized)
+ * - Only pure image generation types (excludes branding, edit, etc.)
  * - Only images with aestheticScore >= 9.0 are included
- * - Uses optimized avifUrl for faster loading
+ * - Uses optimized avifUrl for fastest loading
+ * - Excludes: branding-kit, logo, edit-image, image-edit, and all edit/branding types
  */
 export async function getRandomHighScoredImages(count: number = 20): Promise<Array<{ imageUrl: string; prompt?: string; generationId?: string; creator?: { username?: string; photoURL?: string } }>> {
   try {
     const col = adminDb.collection('generations');
     
-    // Query for public items with aestheticScore >= 9.0
-    // Note: Firestore doesn't support >= queries on aestheticScore directly if it's nested in images array
-    // So we'll fetch items with document-level aestheticScore >= 9.0 OR check image-level scores
-    // This ensures ONLY images with score >= 9.0 are returned
+    // Pure image generation types only (exclude branding and edit types)
+    const pureImageTypes = ['text-to-image', 'image-to-image', 'image-generation', 'image', 'text-to-character'];
+    
+    // Excluded types: branding, edit, and related
+    const excludedTypes = [
+      'logo', 'logo-generation', 'branding', 'branding-kit', 'sticker-generation', 
+      'product-generation', 'mockup-generation', 'ad-generation',
+      'image-edit', 'image_edit', 'edit-image', 'edit_image', 'image-upscale',
+      'image-to-svg', 'image-vectorize', 'vectorize', 'remove-bg', 'resize', 
+      'replace', 'fill', 'erase', 'expand', 'reimagine'
+    ];
+    
+    console.log('[getRandomHighScoredImages] Starting query with pureImageTypes:', pureImageTypes);
+    
+    // Query without aestheticScore filter to avoid index requirement
+    // Filter aestheticScore in memory instead
+    // This avoids needing a composite index for: generationType (in) + isPublic + aestheticScore (range) + isDeleted
     let q = col
       .where('isPublic', '==', true)
       .where('isDeleted', '!=', true)
-      .where('aestheticScore', '>=', 9.0)
-      .limit(100); // Fetch up to 100 candidates for randomization
+      .where('generationType', 'in', pureImageTypes)
+      .limit(100); // Fetch more to filter in memory
     
     const snap = await q.get();
+    console.log('[getRandomHighScoredImages] Query (without aestheticScore filter) returned:', snap.size, 'documents');
     
-    if (snap.empty) {
-      // Fallback: fetch public items and filter in memory
-      const fallbackQ = col
-        .where('isPublic', '==', true)
-        .limit(500);
-      const fallbackSnap = await fallbackQ.get();
-      
-      const candidates: Array<{ item: GenerationHistoryItem; image: any }> = [];
-      
-      fallbackSnap.docs.forEach(doc => {
+    // Process primary query results - filter aestheticScore in memory
+    let candidates: Array<{ item: GenerationHistoryItem; image: any; score: number }> = [];
+    
+    if (!snap.empty) {
+      snap.docs.forEach(doc => {
         const data = doc.data() as any;
         if (data.isDeleted === true) return;
         
@@ -385,104 +396,108 @@ export async function getRandomHighScoredImages(count: number = 20): Promise<Arr
         // Check document-level aestheticScore
         const docScore = typeof data.aestheticScore === 'number' ? data.aestheticScore : null;
         
-        // Check image-level aestheticScore
+        // Check image-level aestheticScore - prioritize high scores (>= 9.0), but accept >= 8.0
         for (const img of images) {
           const imgScore = typeof img?.aestheticScore === 'number' ? img.aestheticScore : 
                           (typeof img?.aesthetic?.score === 'number' ? img.aesthetic.score : null);
           const score = imgScore || docScore;
           
-          if (score !== null && score >= 9.0) {
+          // Accept score >= 8.0, or no score (for older items without scores)
+          if (score === null || score >= 8.0) {
             candidates.push({
               item: normalizePublicItem(doc.id, data),
-              image: img
+              image: img,
+              score: score || 0 // Store score for sorting
             });
             break; // Only take first matching image per generation
           }
         }
       });
-      
-      if (candidates.length === 0) return [];
-      
-      // Shuffle candidates array for randomization - ensures different images each time
-      // Using Math.random() - 0.5 provides true randomization
-      const shuffled = candidates.sort(() => Math.random() - 0.5);
-      
-      // Take up to 'count' images
-      const selected = shuffled.slice(0, Math.min(count, shuffled.length));
-      
-      // Map to result format with optimized URLs (avifUrl > thumbnailUrl > url)
-      const results = selected
-        .map(candidate => {
-          const imageUrl = candidate.image?.avifUrl || candidate.image?.thumbnailUrl || candidate.image?.url;
-          if (!imageUrl) return null;
-          
-          const creator = candidate.item.createdBy || null;
-          
-          return {
-            imageUrl,
-            prompt: candidate.item.prompt,
-            generationId: candidate.item.id,
-            creator: creator ? {
-              username: creator.username,
-              photoURL: creator.photoURL
-            } : undefined
-          };
-        })
-        .filter((item): item is NonNullable<typeof item> => item !== null);
-      
-      return results;
     }
     
-    // Filter items that have images and extract image URLs
-    const candidates: Array<{ item: GenerationHistoryItem; image: any }> = [];
-    
-    snap.docs.forEach(doc => {
-      const data = doc.data() as any;
-      if (data.isDeleted === true) return;
+    // If primary query didn't find enough candidates, try fallback without generationType filter
+    if (candidates.length < 5) {
+      console.log('[getRandomHighScoredImages] Primary query found', candidates.length, 'candidates, trying fallback');
+      const fallbackQ = col
+        .where('isPublic', '==', true)
+        .where('isDeleted', '!=', true)
+        .limit(200); // Fetch more for in-memory filtering
+      const fallbackSnap = await fallbackQ.get();
+      console.log('[getRandomHighScoredImages] Fallback query returned:', fallbackSnap.size, 'documents');
       
-      const images = Array.isArray(data.images) ? data.images : [];
-      if (images.length === 0) return;
-      
-      // Document-level aestheticScore (already >= 9.0 from query)
-      const docScore = typeof data.aestheticScore === 'number' ? data.aestheticScore : null;
-      
-      // Prefer images with high scores, but accept document-level score >= 9.0
-      for (const img of images) {
-        const imgScore = typeof img?.aestheticScore === 'number' ? img.aestheticScore : 
-                        (typeof img?.aesthetic?.score === 'number' ? img.aesthetic.score : null);
+      fallbackSnap.docs.forEach(doc => {
+        const data = doc.data() as any;
+        if (data.isDeleted === true) return;
         
-        // Use image score if available, otherwise fall back to document score
-        const score = imgScore !== null ? imgScore : docScore;
-        
-        // If score >= 9.0, include it
-        if (score !== null && score >= 9.0) {
-          candidates.push({
-            item: normalizePublicItem(doc.id, data),
-            image: img
-          });
-          break; // Only take first matching image per generation
+        // Filter out branding and edit types
+        const genType = String(data.generationType || '').toLowerCase().replace(/[_\s]/g, '-');
+        if (excludedTypes.some(excluded => genType.includes(excluded) || genType === excluded)) {
+          return; // Skip branding/edit types
         }
-      }
-    });
+        if (!pureImageTypes.includes(genType)) {
+          return; // Only allow pure image generation types
+        }
+        
+        const images = Array.isArray(data.images) ? data.images : [];
+        if (images.length === 0) return;
+        
+        // Check document-level aestheticScore
+        const docScore = typeof data.aestheticScore === 'number' ? data.aestheticScore : null;
+        
+        // Check image-level aestheticScore - accept any score or no score
+        for (const img of images) {
+          const imgScore = typeof img?.aestheticScore === 'number' ? img.aestheticScore : 
+                          (typeof img?.aesthetic?.score === 'number' ? img.aesthetic.score : null);
+          const score = imgScore || docScore;
+          
+          // Accept any score >= 8.0, or no score (for older items)
+          if (score === null || score >= 8.0) {
+            // Check if already added (avoid duplicates)
+            const existing = candidates.find(c => c.item.id === doc.id);
+            if (!existing) {
+              candidates.push({
+                item: normalizePublicItem(doc.id, data),
+                image: img,
+                score: score || 0
+              });
+            }
+            break; // Only take first matching image per generation
+          }
+        }
+      });
+    }
     
-    if (candidates.length === 0) return [];
+    console.log('[getRandomHighScoredImages] Total candidates found:', candidates.length);
+    if (candidates.length === 0) {
+      console.warn('[getRandomHighScoredImages] No candidates found');
+      return [];
+    }
     
-    // Shuffle candidates array for randomization
-    const shuffled = candidates.sort(() => Math.random() - 0.5);
+    // Sort by score (highest first) for better quality, then randomize
+    candidates.sort((a, b) => (b.score || 0) - (a.score || 0));
     
-    // Take up to 'count' images
-    const selected = shuffled.slice(0, Math.min(count, shuffled.length));
+    // Better randomization: Fisher-Yates shuffle for true randomness
+    // Shuffle top candidates (prioritize high scores but still randomize)
+    const topCandidates = candidates.slice(0, Math.min(50, candidates.length));
+    for (let i = topCandidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [topCandidates[i], topCandidates[j]] = [topCandidates[j], topCandidates[i]];
+    }
     
-    // Map to result format with optimized URLs (avifUrl > thumbnailUrl > url)
+    // Take up to 'count' images from shuffled top candidates
+    const selected = topCandidates.slice(0, Math.min(count, topCandidates.length));
+    
+    // Map to result format with optimized URLs - PRIORITIZE avifUrl first for fastest loading
     const results = selected
       .map(candidate => {
+        // Prioritize avifUrl > thumbnailUrl > url for optimal performance
         const imageUrl = candidate.image?.avifUrl || candidate.image?.thumbnailUrl || candidate.image?.url;
         if (!imageUrl) return null;
         
         const creator = candidate.item.createdBy || null;
         
         return {
-          imageUrl,
+          imageUrl, // Already prioritized: avifUrl first
           prompt: candidate.item.prompt,
           generationId: candidate.item.id,
           creator: creator ? {

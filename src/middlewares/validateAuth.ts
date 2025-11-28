@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { validationResult, body, query } from 'express-validator';
 import { ApiError } from '../utils/errorHandler';
+import { validateEmail } from '../utils/emailValidator';
 
 export const validateSession = [
   body('idToken').isString().notEmpty().withMessage('idToken is required'),
@@ -25,11 +26,26 @@ export const validateSession = [
 
 export const validateOtpStart = [
   body('email').isEmail().withMessage('Valid email is required'),
-  (req: Request, _res: Response, next: NextFunction) => {
+  async (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return next(new ApiError('Validation failed', 400, errors.array()));
     }
+    
+    // Additional email validation: check for temporary emails and MX records
+    try {
+      const email = req.body?.email;
+      if (email) {
+        await validateEmail(email);
+      }
+    } catch (error: any) {
+      // If it's an ApiError, pass it through; otherwise wrap it
+      if (error instanceof ApiError) {
+        return next(error);
+      }
+      return next(new ApiError(error.message || 'Email validation failed', 400));
+    }
+    
     next();
   }
 ];

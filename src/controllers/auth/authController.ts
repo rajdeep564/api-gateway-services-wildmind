@@ -631,7 +631,9 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     // BUG FIX #22: WebView doesn't support SameSite=None well, use Lax
     // Use "none" for cross-subdomain cookies (www.wildmindai.com <-> studio.wildmindai.com)
     sameSite: (useSameSiteNone ? "none" : "lax") as "none" | "lax" | "strict",
-    maxAge: expiresIn,
+    // BUG FIX: maxAge must be in seconds, not milliseconds
+    // expiresIn is in milliseconds, so convert to seconds
+    maxAge: Math.floor(expiresIn / 1000),
     path: "/",
     ...(shouldSetDomain ? { domain: cookieDomain } : {}),
   };
@@ -649,7 +651,9 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
       secure: cookieOptions.secure,
       httpOnly: cookieOptions.httpOnly,
       path: cookieOptions.path,
-      maxAge: cookieOptions.maxAge
+      maxAge: cookieOptions.maxAge,
+      maxAgeInSeconds: cookieOptions.maxAge,
+      maxAgeInDays: Math.floor(cookieOptions.maxAge / (60 * 60 * 24))
     }
   };
   
