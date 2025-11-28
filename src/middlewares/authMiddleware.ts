@@ -180,8 +180,17 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
             hasAuthHeader: !!req.headers.authorization,
             path: req.path,
             method: req.method,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            env: {
+              authStrictRevocation: env.authStrictRevocation,
+              nodeEnv: env.nodeEnv
+            }
           });
+          
+          // CRITICAL: If session error is "revoked", explicitly mention it
+          if (sessionError?.code === 'auth/session-cookie-revoked') {
+            console.error('[AUTH] ⚠️ SESSION REVOKED ⚠️ - The session cookie was explicitly revoked by Firebase.');
+          }
           
           throw new ApiError(`Unauthorized - ${errorMessage}`, 401);
         }

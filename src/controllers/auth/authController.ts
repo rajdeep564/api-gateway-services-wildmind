@@ -123,7 +123,7 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
             console.warn('[AUTH][createSession] Failed to revoke refresh tokens (non-fatal):', revokeError);
           }
         } else {
-          console.log('[AUTH][createSession] Skipping Firebase refresh token revocation (disabled via env).');
+          console.log('[AUTH][createSession] Skipping Firebase refresh token revocation (disabled via env). REVOKE_FIREBASE_TOKENS=', process.env.REVOKE_FIREBASE_TOKENS);
         }
         
         console.log('[AUTH][createSession] Invalidated old sessions for user', { uid: user.uid });
