@@ -28,7 +28,8 @@ export const securityHeaders = helmet({
     }
   },
   // Disable COOP/COEP to avoid auth popup issues across domains
-  crossOriginOpenerPolicy: false,
+  // Set to 'unsafe-none' to explicitly allow cross-origin window access (needed for Firebase auth popups)
+  crossOriginOpenerPolicy: { policy: 'unsafe-none' },
   crossOriginEmbedderPolicy: false,
   // Critical: Allow other origins (e.g., Next.js localhost:3000) to display images/videos/audio
   crossOriginResourcePolicy: { policy: 'cross-origin' },
@@ -52,14 +53,18 @@ export const originCheck = (req: Request, res: Response, next: NextFunction) => 
   if (path.startsWith('/api/auth/')) return next();
 
   const isProd = process.env.NODE_ENV === 'production';
-  const defaults = isProd
-    ? ['https://wildmindai.com', 'https://www.wildmindai.com']
-    : ['http://localhost:3000'];
+  // Always include production hosts (even if NODE_ENV isn't set)
+  const defaults = [
+    'https://wildmindai.com', 
+    'https://www.wildmindai.com',
+    'https://studio.wildmindai.com'
+  ];
+  const devDefaults = !isProd ? ['http://localhost:3000', 'http://localhost:3001'] : [];
   const extra = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_ORIGIN || '')
     .split(',')
     .map(s => s.trim())
     .filter(Boolean);
-  const all = [...defaults, ...extra];
+  const all = [...defaults, ...devDefaults, ...extra];
   const allowedHosts = new Set<string>();
   for (const o of all) {
     try {
@@ -76,15 +81,29 @@ export const originCheck = (req: Request, res: Response, next: NextFunction) => 
 
   try {
     if (origin) {
-      const oh = new URL(origin as string).host;
+      const originUrl = new URL(origin as string);
+      const oh = originUrl.host;
       if (allowedHosts.has(oh)) return next();
+      // Allow wildmindai.com and all its subdomains
+      if (originUrl.hostname === 'www.wildmindai.com' || 
+          originUrl.hostname === 'wildmindai.com' ||
+          originUrl.hostname.endsWith('.wildmindai.com')) {
+        return next();
+      }
     }
   } catch {}
 
   try {
     if (referer) {
-      const rh = new URL(referer as string).host;
+      const refererUrl = new URL(referer as string);
+      const rh = refererUrl.host;
       if (allowedHosts.has(rh)) return next();
+      // Allow wildmindai.com and all its subdomains
+      if (refererUrl.hostname === 'www.wildmindai.com' || 
+          refererUrl.hostname === 'wildmindai.com' ||
+          refererUrl.hostname.endsWith('.wildmindai.com')) {
+        return next();
+      }
     }
   } catch {}
 

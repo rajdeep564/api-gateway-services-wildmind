@@ -334,18 +334,21 @@ async function verifyEmailOtp(req: Request, res: Response, next: NextFunction) {
     );
     console.log(`[CONTROLLER] User created and ID token generated`);
 
-    // BUG FIX #9: Invalidate any existing sessions for this user (if user already existed)
+    // OPTIMIZATION: OTP verification only creates user - NO session cookie here
+    // Frontend must exchange custom token for ID token, then call /session endpoint
+    // Only invalidate sessions if user already existed (account recovery scenario)
     if (result.user?.uid) {
+      // Check if this is account recovery (user existed but password was reset)
+      // Only then invalidate old sessions for security
       try {
-        const oldToken = req.cookies?.['app_session'];
-        if (oldToken) {
-          await deleteCachedSession(oldToken);
+        const existingUser = await admin.auth().getUser(result.user.uid);
+        if (existingUser && password) {
+          // Password was set/reset - invalidate old sessions for security
+          await invalidateAllUserSessions(result.user.uid, true);
+          console.log('[AUTH][verifyEmailOtp] Invalidated old sessions (password reset scenario)', { uid: result.user.uid });
         }
-        // BUG FIX #13: Keep newest session if under limit
-        await invalidateAllUserSessions(result.user.uid, true);
-        console.log('[AUTH][verifyEmailOtp] Invalidated old sessions for user', { uid: result.user.uid });
       } catch (error) {
-        console.warn('[AUTH][verifyEmailOtp] Failed to invalidate old sessions (non-fatal):', error);
+        console.warn('[AUTH][verifyEmailOtp] Failed to check/invalidate sessions (non-fatal):', error);
       }
     }
 
@@ -463,45 +466,51 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     throw new ApiError(`Invalid ID token: ${verifyError?.message || 'Token verification failed'}`, 401);
   }
   
-  // Calculate expiration based on ID token expiration (max 30 days)
+  // CRITICAL FIX: Always use a FIXED 14-day expiration for session cookies
+  // NEVER derive expiresIn from the ID token expiration time
+  // ID tokens expire in ~60 minutes, but session cookies should last 14 days
+  // This ensures the cookie persists regardless of when the ID token was issued
+  const SESSION_COOKIE_DURATION_MS = 14 * 24 * 60 * 60 * 1000; // 14 days in milliseconds
+  const expiresIn = SESSION_COOKIE_DURATION_MS; // ALWAYS use fixed 14 days
+  
+  // Log ID token expiration for debugging (but don't use it for cookie expiration)
   const idTokenExp = decodedToken.exp * 1000; // Convert to milliseconds
   const now = Date.now();
   const idTokenExpiresIn = Math.max(0, idTokenExp - now);
-  const maxExpiresIn = 1000 * 60 * 60 * 24 * 30; // 30 days max
-  const expiresIn = Math.min(idTokenExpiresIn, maxExpiresIn);
   
-  console.log('[AUTH][setSessionCookie] Token expiration calculation:', {
-    idTokenExp,
-    idTokenExpDate: new Date(idTokenExp).toISOString(),
-    now,
-    nowDate: new Date(now).toISOString(),
-    idTokenExpiresIn,
-    idTokenExpiresInHours: Math.floor(idTokenExpiresIn / (1000 * 60 * 60)),
-    maxExpiresIn,
-    maxExpiresInDays: Math.floor(maxExpiresIn / (1000 * 60 * 60 * 24)),
+  console.log('[AUTH][setSessionCookie] Session cookie expiration (FIXED 14 DAYS):', {
     expiresIn,
+    expiresInMs: expiresIn,
+    expiresInSeconds: Math.floor(expiresIn / 1000),
     expiresInDays: Math.floor(expiresIn / (1000 * 60 * 60 * 24)),
     expiresInHours: Math.floor(expiresIn / (1000 * 60 * 60)),
-    timeUntilExpiry: idTokenExp - now,
-    isExpired: idTokenExp < now,
-    expiresSoon: expiresIn < 1000 * 60 * 60
+    expirationDate: new Date(Date.now() + expiresIn).toISOString(),
+    // ID token info (for debugging only - NOT used for cookie expiration)
+    idTokenExp,
+    idTokenExpDate: new Date(idTokenExp).toISOString(),
+    idTokenExpiresIn,
+    idTokenExpiresInHours: Math.floor(idTokenExpiresIn / (1000 * 60 * 60)),
+    idTokenExpiresInMinutes: Math.floor(idTokenExpiresIn / (1000 * 60)),
+    now: new Date(now).toISOString(),
+    note: 'Session cookie uses FIXED 14 days, independent of ID token expiration'
   });
   
-  // If ID token expires very soon (less than 5 minutes), reject it
-  // We need at least 5 minutes to ensure the session cookie can be created reliably
-  // Firebase ID tokens typically expire in 1 hour, so this should rarely trigger
-  const minExpiresIn = 1000 * 60 * 5; // 5 minutes minimum
-  if (expiresIn < minExpiresIn) {
-    console.error('[AUTH][setSessionCookie] ERROR: ID token expires too soon!', {
-      expiresIn,
-      expiresInMinutes: Math.floor(expiresIn / (1000 * 60)),
-      expiresInSeconds: Math.floor(expiresIn / 1000),
-      minExpiresIn,
-      minExpiresInMinutes: 5,
+  // Validate that ID token is still valid (must have at least 1 minute remaining)
+  // This ensures we can create a session cookie before the ID token expires
+  // Note: We use FIXED 14 days for session cookie, but ID token must still be valid
+  const minIdTokenTimeRemaining = 1000 * 60; // 1 minute minimum
+  if (idTokenExpiresIn < minIdTokenTimeRemaining) {
+    console.error('[AUTH][setSessionCookie] ERROR: ID token expires too soon to create session cookie!', {
+      idTokenExpiresIn,
+      idTokenExpiresInSeconds: Math.floor(idTokenExpiresIn / 1000),
+      idTokenExpiresInMinutes: Math.floor(idTokenExpiresIn / (1000 * 60)),
+      minIdTokenTimeRemaining,
+      minIdTokenTimeRemainingMinutes: 1,
       idTokenExp,
       idTokenExpDate: new Date(idTokenExp).toISOString(),
       now,
-      nowDate: new Date(now).toISOString()
+      nowDate: new Date(now).toISOString(),
+      note: 'Session cookie will use FIXED 14 days, but ID token must be valid to create it'
     });
     throw new ApiError('ID token expires too soon. Please refresh and try again.', 401);
   }
@@ -534,23 +543,69 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     isHttpsRequest ||
     (!isLocalhostHost && (isMobile || isWebView));
   
-  console.log('[AUTH][setSessionCookie] Before creating session cookie', {
+  console.log('[AUTH][setSessionCookie] Creating session cookie with FIXED 14-day expiration:', {
     isProd,
     cookieDomain: cookieDomain || '(not set in env)',
-    expiresIn,
-    expiresInMs: expiresIn,
-    expiresInSeconds: Math.floor(expiresIn / 1000),
-    expiresInDays: Math.floor(expiresIn / (1000 * 60 * 60 * 24)),
+    sessionCookieExpiresIn: expiresIn,
+    sessionCookieExpiresInMs: expiresIn,
+    sessionCookieExpiresInSeconds: Math.floor(expiresIn / 1000),
+    sessionCookieExpiresInDays: 14,
+    sessionCookieExpiresInHours: 336,
+    expirationDate: new Date(Date.now() + expiresIn).toISOString(),
+    // ID token info (for reference only)
     idTokenExpiresIn,
-    idTokenExpiresInHours: Math.floor(idTokenExpiresIn / (1000 * 60 * 60))
+    idTokenExpiresInHours: Math.floor(idTokenExpiresIn / (1000 * 60 * 60)),
+    idTokenExpiresInMinutes: Math.floor(idTokenExpiresIn / (1000 * 60)),
+    note: 'Session cookie expiration is FIXED at 14 days, independent of ID token expiration'
   });
   
   let sessionCookie: string;
   try {
-    console.log('[AUTH][setSessionCookie] Calling admin.auth().createSessionCookie...');
+    console.log('[AUTH][setSessionCookie] Calling admin.auth().createSessionCookie...', {
+      expiresIn,
+      expiresInMs: expiresIn,
+      expiresInSeconds: Math.floor(expiresIn / 1000),
+      expiresInDays: Math.floor(expiresIn / (1000 * 60 * 60 * 24)),
+      expiresInHours: Math.floor(expiresIn / (1000 * 60 * 60))
+    });
     sessionCookie = await admin
       .auth()
       .createSessionCookie(idToken, { expiresIn });
+    
+    // Decode the session cookie to verify its expiration
+    let decodedSessionCookie: any = null;
+    try {
+      const { decodeJwtPayload } = await import('../../utils/sessionStore');
+      decodedSessionCookie = decodeJwtPayload(sessionCookie);
+      if (decodedSessionCookie?.exp) {
+        const sessionExpDate = new Date(decodedSessionCookie.exp * 1000);
+        const now = new Date();
+        const sessionExpiresIn = decodedSessionCookie.exp * 1000 - Date.now();
+        console.log('[AUTH][setSessionCookie] Session cookie JWT expiration:', {
+          exp: decodedSessionCookie.exp,
+          expDate: sessionExpDate.toISOString(),
+          now: now.toISOString(),
+          expiresInMs: sessionExpiresIn,
+          expiresInDays: Math.floor(sessionExpiresIn / (1000 * 60 * 60 * 24)),
+          expiresInHours: Math.floor(sessionExpiresIn / (1000 * 60 * 60)),
+          requestedDays: Math.floor(expiresIn / (1000 * 60 * 60 * 24))
+        });
+        
+        // Warn if Firebase limited the expiration
+        const requestedDays = Math.floor(expiresIn / (1000 * 60 * 60 * 24));
+        const actualDays = Math.floor(sessionExpiresIn / (1000 * 60 * 60 * 24));
+        if (actualDays < requestedDays) {
+          console.warn('[AUTH][setSessionCookie] WARNING: Firebase limited session cookie expiration!', {
+            requestedDays,
+            actualDays,
+            difference: requestedDays - actualDays
+          });
+        }
+      }
+    } catch (decodeError) {
+      console.warn('[AUTH][setSessionCookie] Could not decode session cookie for verification:', decodeError);
+    }
+    
     console.log('[AUTH][setSessionCookie] Session cookie created successfully', {
       cookieLength: sessionCookie?.length || 0,
       hasCookie: !!sessionCookie,
@@ -569,6 +624,8 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
       expiresIn,
       expiresInSeconds: Math.floor(expiresIn / 1000)
     });
+
+  
     
     // Check if it's a TOKEN_EXPIRED error
     if (createError?.code === 'auth/id-token-expired' || 
@@ -592,15 +649,39 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
   const dom = (cookieDomain || '').toLowerCase();
   let shouldSetDomain = false;
   
-  if (isProd && cookieDomain) {
-    // Production: always use domain for cross-subdomain cookie sharing
-    shouldSetDomain = true;
-  } else if (cookieDomain) {
-    // Development: only use domain if it matches the host
-    const domainMatches = !!(dom && (host === dom.replace(/^\./, '') || host.endsWith(dom)));
-    shouldSetDomain = domainMatches;
+  // Check if we're in a production-like environment:
+  // 1. NODE_ENV === 'production', OR
+  // 2. Origin is a wildmindai.com subdomain (production domain), OR
+  // 3. Host matches the cookie domain
+  const isProductionLike = isProd || 
+    (origin && (origin.includes('wildmindai.com') || origin.includes('studio.wildmindai.com'))) ||
+    (host && (host.includes('wildmindai.com') || host.includes('studio.wildmindai.com')));
+  
+  // Always set domain cookie if COOKIE_DOMAIN is configured (for cross-subdomain sharing)
+  // This works in both production and when NODE_ENV isn't set (Render.com production)
+  if (cookieDomain) {
+    if (isProductionLike) {
+      // Production: always use domain for cross-subdomain cookie sharing
+      shouldSetDomain = true;
+    } else {
+      // Development: only use domain if it matches the host (localhost won't match .wildmindai.com)
+      const domainMatches = !!(dom && (host === dom.replace(/^\./, '') || host.endsWith(dom)));
+      shouldSetDomain = domainMatches;
+    }
   }
 
+  // Determine sameSite: use "none" for cross-subdomain cookies in production-like environments
+  // This allows cookies to work between www.wildmindai.com and studio.wildmindai.com
+  const useSameSiteNone = isProductionLike && !isWebView && shouldUseSecureCookie;
+  
+  // Calculate expiration date (14 days from now) - FIXED value, not derived from ID token
+  const expirationDate = new Date(Date.now() + expiresIn);
+  
+  // CRITICAL: maxAge must be in SECONDS (not milliseconds)
+  // expiresIn is in milliseconds (14 days = 1,209,600,000 ms)
+  // maxAge needs to be in seconds (14 days = 1,209,600 seconds)
+  const maxAgeInSeconds = Math.floor(expiresIn / 1000); // Convert milliseconds to seconds
+  
   const cookieOptions = {
     httpOnly: true,
     // BUG FIX #4: Cookies must be Secure when SameSite=None per Chrome requirements
@@ -608,8 +689,11 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     // Updated: avoid forcing Secure=true on localhost HTTP (mobile dev) to ensure cookies are accepted
     secure: shouldUseSecureCookie,
     // BUG FIX #22: WebView doesn't support SameSite=None well, use Lax
-    sameSite: (isProd && !isWebView ? "none" : "lax") as "none" | "lax" | "strict", // None for cross-subdomain, Lax for WebView/same-site
-    maxAge: expiresIn,
+    // Use "none" for cross-subdomain cookies (www.wildmindai.com <-> studio.wildmindai.com)
+    sameSite: (useSameSiteNone ? "none" : "lax") as "none" | "lax" | "strict",
+    // CRITICAL FIX: maxAge is in SECONDS (14 days = 1,209,600 seconds)
+    // This is a FIXED value, NOT derived from ID token expiration
+    maxAge: maxAgeInSeconds,
     path: "/",
     ...(shouldSetDomain ? { domain: cookieDomain } : {}),
   };
@@ -627,7 +711,13 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
       secure: cookieOptions.secure,
       httpOnly: cookieOptions.httpOnly,
       path: cookieOptions.path,
-      maxAge: cookieOptions.maxAge
+      maxAge: cookieOptions.maxAge,
+      maxAgeInSeconds: cookieOptions.maxAge,
+      maxAgeInDays: 14, // Fixed 14 days
+      expires: expirationDate.toISOString(),
+      expiresInDays: 14, // Fixed 14 days
+      expiresInHours: 336, // Fixed 336 hours (14 days)
+      note: 'Cookie expiration is FIXED at 14 days, independent of ID token expiration'
     }
   };
   
@@ -640,16 +730,45 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     // Logger not available, console.log is enough
   }
 
-  // Actually set the cookie
-  res.cookie("app_session", sessionCookie, cookieOptions);
+  // CRITICAL FIX: Manually set Set-Cookie header to ensure correct Max-Age value
+  // Express res.cookie() may truncate or miscalculate maxAge, so we set it manually
+  // This ensures Max-Age is always exactly 1,209,600 seconds (14 days)
+  let setCookieValue = `app_session=${sessionCookie}; Path=${cookieOptions.path}`;
   
-  // Log the actual Set-Cookie header that will be sent
-  const setCookieHeader = res.getHeader('Set-Cookie');
-  console.log('[AUTH][setSessionCookie] Set-Cookie header:', setCookieHeader);
+  // Set Max-Age (in seconds) - FIXED at 1,209,600 seconds (14 days)
+  setCookieValue += `; Max-Age=${maxAgeInSeconds}`;
   
-  // Also log what the browser should receive
-  const cookieString = `app_session=${sessionCookie}; Domain=${cookieOptions.domain || '(no domain)'}; Path=${cookieOptions.path}; Max-Age=${cookieOptions.maxAge}; SameSite=${cookieOptions.sameSite}; Secure=${cookieOptions.secure}; HttpOnly=${cookieOptions.httpOnly}`;
-  console.log('[AUTH][setSessionCookie] Cookie string that will be sent:', cookieString);
+  // Add Expires header (RFC 1123 format) - 14 days from now
+  setCookieValue += `; Expires=${expirationDate.toUTCString()}`;
+  
+  // Add domain if set
+  if (cookieOptions.domain) {
+    setCookieValue += `; Domain=${cookieOptions.domain}`;
+  }
+  
+  // Add SameSite
+  setCookieValue += `; SameSite=${cookieOptions.sameSite === 'none' ? 'None' : cookieOptions.sameSite === 'lax' ? 'Lax' : 'Strict'}`;
+  
+  // Add Secure if needed
+  if (cookieOptions.secure) {
+    setCookieValue += `; Secure`;
+  }
+  
+  // Add HttpOnly
+  setCookieValue += `; HttpOnly`;
+  
+  // Set the header manually
+  res.setHeader('Set-Cookie', setCookieValue);
+  
+  // Log what we set (for verification)
+  console.log('[AUTH][setSessionCookie] Set-Cookie header set manually:', {
+    maxAge: maxAgeInSeconds,
+    maxAgeInSeconds: maxAgeInSeconds,
+    maxAgeInDays: 14,
+    expires: expirationDate.toUTCString(),
+    expiresISO: expirationDate.toISOString(),
+    fullHeader: setCookieValue.substring(0, 200) + '...' // Truncate for logging
+  });
   console.log('[AUTH][setSessionCookie] ========== SUCCESS ==========');
   
   return sessionCookie;
@@ -738,68 +857,12 @@ async function loginWithEmailPassword(
       console.error('[CREDITS][loginEmail] Init error', { uid: (result.user as any)?.uid, err: e?.message });
     }
 
-    // CRITICAL FIX: Create session cookie FIRST before revoking tokens
-    // Revoking refresh tokens invalidates the ID token, so we must create the cookie first
-    let sessionCookieCreated: string | null = null;
+    // OPTIMIZATION: Login endpoint only authenticates - NO session cookie here
+    // Frontend should use Firebase SDK: signInWithEmailAndPassword() → getIdToken() → POST /session
+    // This ensures single cookie creation point and better performance
     
-    // If we have an ID token from password login, set the session cookie now so the client doesn't need to call session explicitly
-    console.log('[AUTH][loginWithEmailPassword] Checking for passwordLoginIdToken', {
-      hasPasswordLoginIdToken: !!result.passwordLoginIdToken,
-      tokenLength: result.passwordLoginIdToken?.length || 0,
-      tokenPrefix: result.passwordLoginIdToken?.substring(0, 30) || 'N/A'
-    });
-    
-    try {
-      if (result.passwordLoginIdToken) {
-        console.log('[AUTH][loginWithEmailPassword] About to call setSessionCookie with passwordLoginIdToken...');
-        sessionCookieCreated = await setSessionCookie(req, res, result.passwordLoginIdToken);
-        console.log('[AUTH][loginWithEmailPassword] setSessionCookie completed successfully');
-      } else {
-        console.log('[AUTH][loginWithEmailPassword] No passwordLoginIdToken, skipping setSessionCookie');
-      }
-    } catch (e: any) {
-      // Non-fatal; client still has customToken fallback
-      console.error('[AUTH][loginWithEmailPassword] ERROR: session cookie create failed', {
-        message: e?.message,
-        code: e?.code,
-        errorCode: e?.errorCode,
-        statusCode: e?.statusCode,
-        stack: e?.stack,
-        name: e?.name,
-        passwordLoginIdTokenLength: result.passwordLoginIdToken?.length,
-        passwordLoginIdTokenPrefix: result.passwordLoginIdToken?.substring(0, 30)
-      });
-    }
-
-    // BUG FIX #1: Invalidate all existing sessions for this user AFTER creating new session cookie
-    // BUG FIX #10: Also revoke Firebase tokens to sync auth state
-    // NOTE: We do this AFTER creating the session cookie because revoking tokens invalidates the ID token
-    if (result.user?.uid && sessionCookieCreated) {
-      try {
-        const oldToken = req.cookies?.['app_session'];
-        if (oldToken && oldToken !== sessionCookieCreated) {
-          await deleteCachedSession(oldToken);
-        }
-        // BUG FIX #13: Keep newest session if under limit
-        await invalidateAllUserSessions(result.user.uid, true);
-        
-        if (shouldRevokeFirebaseTokens) {
-          // Revoke Firebase refresh tokens
-          try {
-            await admin.auth().revokeRefreshTokens(result.user.uid);
-            console.log('[AUTH][loginWithEmailPassword] Revoked Firebase refresh tokens for user', { uid: result.user.uid });
-          } catch (revokeError) {
-            console.warn('[AUTH][loginWithEmailPassword] Failed to revoke refresh tokens (non-fatal):', revokeError);
-          }
-        } else {
-          console.log('[AUTH][loginWithEmailPassword] Skipping Firebase refresh token revocation (disabled via env).');
-        }
-        
-        console.log('[AUTH][loginWithEmailPassword] Invalidated old sessions for user', { uid: result.user.uid });
-      } catch (error) {
-        console.warn('[AUTH][loginWithEmailPassword] Failed to invalidate old sessions (non-fatal):', error);
-      }
-    }
+    // Only invalidate sessions when necessary (password reset, suspicious activity)
+    // For normal login, don't invalidate - let /session endpoint handle it
 
     console.log('[AUTH][loginWithEmailPassword] ========== SUCCESS ==========');
     // Return user data and custom token (frontend can signInWithCustomToken to sync Firebase client state)
@@ -852,9 +915,9 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
       }
     );
 
-    // CRITICAL FIX: We'll invalidate old sessions and revoke tokens AFTER creating the session cookie
-    // Revoking refresh tokens invalidates the ID token, so we must create the cookie first
-    let sessionCookieCreated: string | null = null;
+    // OPTIMIZATION: Google sign-in only creates/updates user - NO session cookie here
+    // Frontend must call /session endpoint separately to create session cookie
+    // This ensures single cookie creation point and better performance
 
     if (result.needsUsername) {
       // Initialize credits even if username is pending
@@ -865,64 +928,8 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
       } catch (e: any) {
         console.error('[CREDITS][googleSignIn:needsUsername] Init error', { uid: (result.user as any)?.uid, err: e?.message });
       }
-      // Set session cookie immediately so client doesn't need a follow-up session call
-      console.log('[AUTH][googleSignIn:needsUsername] Checking idToken for setSessionCookie', {
-        hasIdToken: !!idToken,
-        idTokenType: typeof idToken,
-        idTokenLength: idToken?.length || 0,
-        idTokenPrefix: idToken?.substring(0, 30) || 'N/A'
-      });
-      
-      try {
-        if (typeof idToken === 'string' && idToken.length > 0) {
-          console.log('[AUTH][googleSignIn:needsUsername] About to call setSessionCookie...');
-          sessionCookieCreated = await setSessionCookie(req, res, idToken);
-          console.log('[AUTH][googleSignIn:needsUsername] setSessionCookie completed successfully');
-        } else {
-          console.log('[AUTH][googleSignIn:needsUsername] Invalid idToken, skipping setSessionCookie');
-        }
-      } catch (cookieErr: any) {
-        console.error('[AUTH][googleSignIn:needsUsername] ERROR: session cookie create failed', {
-          message: cookieErr?.message,
-          code: cookieErr?.code,
-          errorCode: cookieErr?.errorCode,
-          statusCode: cookieErr?.statusCode,
-          stack: cookieErr?.stack,
-          name: cookieErr?.name,
-          idTokenLength: idToken?.length,
-          idTokenPrefix: idToken?.substring(0, 30)
-        });
-      }
-      
-      // BUG FIX #1: Invalidate all existing sessions for this user AFTER creating new session cookie
-      // BUG FIX #10: Also revoke Firebase tokens to sync auth state
-      // NOTE: We do this AFTER creating the session cookie because revoking tokens invalidates the ID token
-      if (result.user?.uid && sessionCookieCreated) {
-        try {
-          const oldToken = req.cookies?.['app_session'];
-          if (oldToken && oldToken !== sessionCookieCreated) {
-            await deleteCachedSession(oldToken);
-          }
-          // BUG FIX #13: Keep newest session if under limit
-          await invalidateAllUserSessions(result.user.uid, true);
-          
-          if (shouldRevokeFirebaseTokens) {
-            // Revoke Firebase refresh tokens
-            try {
-              await admin.auth().revokeRefreshTokens(result.user.uid);
-              console.log('[AUTH][googleSignIn:needsUsername] Revoked Firebase refresh tokens for user', { uid: result.user.uid });
-            } catch (revokeError) {
-              console.warn('[AUTH][googleSignIn:needsUsername] Failed to revoke refresh tokens (non-fatal):', revokeError);
-            }
-          } else {
-            console.log('[AUTH][googleSignIn:needsUsername] Skipping Firebase refresh token revocation (disabled via env).');
-          }
-          
-          console.log('[AUTH][googleSignIn:needsUsername] Invalidated old sessions for user', { uid: result.user.uid });
-        } catch (error) {
-          console.warn('[AUTH][googleSignIn:needsUsername] Failed to invalidate old sessions (non-fatal):', error);
-        }
-      }
+      // OPTIMIZATION: New user needs username - NO session cookie here
+      // Frontend must call /session endpoint after username is set
       
       // New user needs to set username
       res.json(
@@ -944,64 +951,9 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
       } catch (e: any) {
         console.error('[CREDITS][googleSignIn:existing] Init error', { uid: (result.user as any)?.uid, err: e?.message });
       }
-      // Set session cookie immediately for existing users too
-      console.log('[AUTH][googleSignIn:existing] Checking idToken for setSessionCookie', {
-        hasIdToken: !!idToken,
-        idTokenType: typeof idToken,
-        idTokenLength: idToken?.length || 0,
-        idTokenPrefix: idToken?.substring(0, 30) || 'N/A'
-      });
-      
-      try {
-        if (typeof idToken === 'string' && idToken.length > 0) {
-          console.log('[AUTH][googleSignIn:existing] About to call setSessionCookie...');
-          sessionCookieCreated = await setSessionCookie(req, res, idToken);
-          console.log('[AUTH][googleSignIn:existing] setSessionCookie completed successfully');
-        } else {
-          console.log('[AUTH][googleSignIn:existing] Invalid idToken, skipping setSessionCookie');
-        }
-      } catch (cookieErr: any) {
-        console.error('[AUTH][googleSignIn:existing] ERROR: session cookie create failed', {
-          message: cookieErr?.message,
-          code: cookieErr?.code,
-          errorCode: cookieErr?.errorCode,
-          statusCode: cookieErr?.statusCode,
-          stack: cookieErr?.stack,
-          name: cookieErr?.name,
-          idTokenLength: idToken?.length,
-          idTokenPrefix: idToken?.substring(0, 30)
-        });
-      }
-      
-      // BUG FIX #1: Invalidate all existing sessions for this user AFTER creating new session cookie
-      // BUG FIX #10: Also revoke Firebase tokens to sync auth state
-      // NOTE: We do this AFTER creating the session cookie because revoking tokens invalidates the ID token
-      if (result.user?.uid && sessionCookieCreated) {
-        try {
-          const oldToken = req.cookies?.['app_session'];
-          if (oldToken && oldToken !== sessionCookieCreated) {
-            await deleteCachedSession(oldToken);
-          }
-          // BUG FIX #13: Keep newest session if under limit
-          await invalidateAllUserSessions(result.user.uid, true);
-          
-          if (shouldRevokeFirebaseTokens) {
-            // Revoke Firebase refresh tokens
-            try {
-              await admin.auth().revokeRefreshTokens(result.user.uid);
-              console.log('[AUTH][googleSignIn:existing] Revoked Firebase refresh tokens for user', { uid: result.user.uid });
-            } catch (revokeError) {
-              console.warn('[AUTH][googleSignIn:existing] Failed to revoke refresh tokens (non-fatal):', revokeError);
-            }
-          } else {
-            console.log('[AUTH][googleSignIn:existing] Skipping Firebase refresh token revocation (disabled via env).');
-          }
-          
-          console.log('[AUTH][googleSignIn:existing] Invalidated old sessions for user', { uid: result.user.uid });
-        } catch (error) {
-          console.warn('[AUTH][googleSignIn:existing] Failed to invalidate old sessions (non-fatal):', error);
-        }
-      }
+      // OPTIMIZATION: Only invalidate sessions when necessary (provider change, suspicious activity)
+      // For normal Google sign-in, don't invalidate - let /session endpoint handle it
+      // This improves performance and avoids logging out user from other devices unnecessarily
       
       res.json(
         formatApiResponse("success", "Google sign-in successful", {
@@ -1070,7 +1022,7 @@ async function setGoogleUsername(
 }
 
 /**
- * Refresh session cookie - extends expiration by another 30 days
+ * Refresh session cookie - extends expiration by another 14 days (2 weeks)
  * Called automatically when session is about to expire (within 3 days)
  * Requires a fresh ID token from the client
  */
@@ -1129,7 +1081,7 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
       } catch {}
     }
     
-    // Create new session cookie with extended expiration (30 days)
+    // Create new session cookie with extended expiration (14 days / 2 weeks)
     const newSessionCookie = await setSessionCookie(req, res, idToken);
     
     // Update Redis cache with new session
@@ -1157,7 +1109,7 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
 
     res.json(
       formatApiResponse("success", "Session refreshed successfully", {
-        expiresIn: 30 * 24 * 60 * 60 * 1000, // 30 days in milliseconds
+        expiresIn: 14 * 24 * 60 * 60 * 1000, // 14 days in milliseconds (Firebase Admin max: 2 weeks)
       })
     );
   } catch (error) {

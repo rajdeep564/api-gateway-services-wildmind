@@ -23,14 +23,13 @@ app.use(requestId);
 app.use(securityHeaders);
 // CORS for frontend with credentials (dev + prod)
 const isProdEnv = process.env.NODE_ENV === 'production';
+// Always include production origins (even if NODE_ENV isn't set, Render.com is production)
 const allowedOrigins = [
-  // Common prod hosts for frontend
-  ...(isProdEnv ? [
-    'https://www.wildmindai.com', 
-    'https://wildmindai.com',
-    'https://studio.wildmindai.com' // Canvas subdomain
-  ] : []),
-  // Development origins
+  // Production hosts (always include these for live site)
+  'https://www.wildmindai.com', 
+  'https://wildmindai.com',
+  'https://studio.wildmindai.com', // Canvas subdomain
+  // Development origins (only in dev)
   ...(!isProdEnv ? [
     'http://localhost:3000', // Main project dev
     'http://localhost:3001', // Canvas dev
@@ -45,15 +44,26 @@ const corsOptions: any = {
     if (!origin) return callback(null, true);
     try {
       if (allowedOrigins.includes(origin)) return callback(null, true);
+      // Allow subdomains of wildmindai.com
+      const originUrl = new URL(origin);
+      if (originUrl.hostname === 'www.wildmindai.com' || 
+          originUrl.hostname === 'wildmindai.com' ||
+          originUrl.hostname.endsWith('.wildmindai.com')) {
+        return callback(null, true);
+      }
       // Allow subdomains of the configured prod origin (e.g., preview/app)
       if (process.env.FRONTEND_ORIGIN) {
         const allowHost = new URL(process.env.FRONTEND_ORIGIN).hostname;
-        const reqHost = new URL(origin).hostname;
+        const reqHost = originUrl.hostname;
         if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) {
           return callback(null, true);
         }
       }
-    } catch {}
+    } catch (e) {
+      console.warn('[CORS] Error checking origin:', origin, e);
+    }
+    // Log blocked origin for debugging
+    console.warn('[CORS] Blocked origin:', origin, 'Allowed:', allowedOrigins);
     return callback(new Error('CORS blocked: origin not allowed'));
   },
   credentials: true,
@@ -74,7 +84,9 @@ const corsOptions: any = {
     'Expires'
   ],
   optionsSuccessStatus: 204,
-  exposedHeaders: ['Content-Length', 'Content-Range']
+  exposedHeaders: ['Content-Length', 'Content-Range'],
+  preflightContinue: false, // End preflight requests immediately
+  maxAge: 86400 // Cache preflight for 24 hours
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
@@ -84,9 +96,16 @@ const allowOrigin = (origin?: string) => {
   if (!origin) return false;
   try {
     if (allowedOrigins.includes(origin)) return true;
+    // Allow wildmindai.com and all its subdomains
+    const originUrl = new URL(origin);
+    if (originUrl.hostname === 'www.wildmindai.com' || 
+        originUrl.hostname === 'wildmindai.com' ||
+        originUrl.hostname.endsWith('.wildmindai.com')) {
+      return true;
+    }
     if (process.env.FRONTEND_ORIGIN) {
       const allowHost = new URL(process.env.FRONTEND_ORIGIN).hostname;
-      const reqHost = new URL(origin).hostname;
+      const reqHost = originUrl.hostname;
       if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) return true;
     }
   } catch {}
@@ -179,4 +198,66 @@ export default app;
   try {
     if (isRedisEnabled()) getRedisClient();
   } catch (_e) {}
+})();
+
+// Auto-populate signup image cache on startup (non-blocking, runs ONCE globally)
+let cachePopulateStarted = false;
+(async () => {
+  try {
+    const { signupImageCache } = await import('../repository/signupImageCache');
+    const stats = await signupImageCache.getCacheStats();
+    
+    if (stats.count === 0 && !cachePopulateStarted) {
+      cachePopulateStarted = true;
+      console.log('[App] Signup image cache is empty, populating in background (ONE TIME ONLY)...');
+      // Populate cache in background (non-blocking) - runs ONCE on server startup
+      signupImageCache.refreshSignupImageCache().then((count) => {
+        console.log(`[App] ✅ Signup image cache populated with ${count} images`);
+      }).catch((error) => {
+        console.error('[App] Failed to populate signup image cache:', error);
+      });
+    } else if (stats.count > 0) {
+      console.log(`[App] Signup image cache ready (${stats.count} images cached)`);
+    }
+  } catch (_e) {
+    // Non-fatal: cache will be populated on first request
+  }
+})();
+
+// Start automatic 24-hour cache refresh (runs ONCE globally, not per user)
+let refreshSchedulerStarted = false;
+(async () => {
+  if (refreshSchedulerStarted) return;
+  refreshSchedulerStarted = true;
+  
+  try {
+    const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+    
+    console.log('[App] Starting automatic signup image cache refresh scheduler (every 24 hours)');
+    
+    // Refresh immediately if cache is empty
+    const { signupImageCache } = await import('../repository/signupImageCache');
+    const stats = await signupImageCache.getCacheStats();
+    
+    if (stats.count === 0) {
+      console.log('[App] Cache empty, refreshing now...');
+      signupImageCache.refreshSignupImageCache().catch((error) => {
+        console.error('[App] Initial cache refresh failed:', error);
+      });
+    }
+    
+    // Schedule automatic refresh every 24 hours (runs ONCE globally)
+    setInterval(() => {
+      console.log('[App] Auto-refreshing signup image cache (24-hour schedule)...');
+      signupImageCache.refreshSignupImageCache().then((count) => {
+        console.log(`[App] ✅ Signup image cache auto-refreshed with ${count} images`);
+      }).catch((error) => {
+        console.error('[App] Auto-refresh failed:', error);
+      });
+    }, REFRESH_INTERVAL_MS);
+    
+    console.log('[App] ✅ Signup image cache auto-refresh scheduler started (runs every 24 hours)');
+  } catch (_e) {
+    console.error('[App] Failed to start cache refresh scheduler:', _e);
+  }
 })();
