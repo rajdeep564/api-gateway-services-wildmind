@@ -46,13 +46,26 @@ router.get('/debug/cookie-config', (req, res) => {
   const isProd = process.env.NODE_ENV === 'production';
   const cookieDomain = process.env.COOKIE_DOMAIN;
   
+  // CRITICAL: Analyze cookie header to see if cookie is being sent
+  const cookieHeader = req.headers.cookie || '';
+  const allCookies = cookieHeader.split(';').map(c => c.trim());
+  const hasAppSession = cookieHeader.includes('app_session=');
+  const appSessionCookie = allCookies.find(c => c.startsWith('app_session='));
+  
   console.log('[AUTH][DEBUG] Cookie config check', {
     isProd,
     cookieDomain: cookieDomain || '(NOT SET - THIS IS THE PROBLEM!)',
     nodeEnv: process.env.NODE_ENV,
     allEnvKeys: Object.keys(process.env).filter(k => k.includes('COOKIE') || k.includes('DOMAIN')),
     requestOrigin: req.headers.origin,
-    requestHost: req.headers.host
+    requestHost: req.headers.host,
+    cookieHeaderAnalysis: {
+      hasCookieHeader: !!req.headers.cookie,
+      cookieHeaderLength: cookieHeader.length,
+      allCookies: allCookies,
+      hasAppSession,
+      appSessionCookie: appSessionCookie ? (appSessionCookie.length > 50 ? appSessionCookie.substring(0, 50) + '...' : appSessionCookie) : null
+    }
   });
   
   res.json({
@@ -75,7 +88,38 @@ router.get('/debug/cookie-config', (req, res) => {
       '3. Look for app_session cookie with Domain: .wildmindai.com',
       '4. Then open studio.wildmindai.com - cookie should be there',
       '5. Check backend logs for [AUTH][setSessionCookie] when you log in'
-    ]
+    ],
+    // CRITICAL: Add cookie header analysis
+    cookieHeaderAnalysis: {
+      hasCookieHeader: !!req.headers.cookie,
+      cookieHeaderLength: cookieHeader.length,
+      allCookies: allCookies,
+      hasAppSession,
+      appSessionCookieFound: !!appSessionCookie,
+      cookieCount: allCookies.length,
+      hostname: req.hostname,
+      origin: req.headers.origin,
+      diagnosis: !hasAppSession ? {
+        issue: 'Cookie NOT in request header',
+        explanation: 'The app_session cookie is not being sent with this request. This means the cookie either:',
+        possibleCauses: [
+          '1. COOKIE_DOMAIN env var is NOT set in backend (most likely)',
+          '2. Cookie was set without Domain attribute (old cookie before env var was set)',
+          '3. Cookie domain mismatch (cookie for www.wildmindai.com but accessing studio.wildmindai.com)',
+          '4. User is not logged in on www.wildmindai.com'
+        ],
+        howToFix: [
+          '1. Set COOKIE_DOMAIN=.wildmindai.com in Render.com environment',
+          '2. Restart backend service',
+          '3. Log in again on www.wildmindai.com (old cookies won\'t have domain)',
+          '4. Check DevTools → Application → Cookies → verify Domain: .wildmindai.com',
+          '5. Then try studio.wildmindai.com again'
+        ]
+      } : {
+        issue: 'Cookie found in request header',
+        status: 'Cookie is being sent - check token verification in debug-session endpoint'
+      }
+    }
   });
 });
 

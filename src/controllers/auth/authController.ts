@@ -1189,6 +1189,24 @@ export async function sessionCacheStatus(req: Request, res: Response, _next: Nex
  */
 export async function debugSession(req: Request, res: Response, _next: NextFunction) {
   try {
+    // CRITICAL: Log all cookie information for debugging cross-subdomain issues
+    const cookieHeader = req.headers.cookie || '';
+    const allCookies = cookieHeader.split(';').map(c => c.trim());
+    const hasAppSessionInHeader = cookieHeader.includes('app_session=');
+    const appSessionCookie = allCookies.find(c => c.startsWith('app_session='));
+    
+    console.log('[AUTH][debugSession] Cookie debug info:', {
+      hasCookieHeader: !!req.headers.cookie,
+      cookieHeaderLength: cookieHeader.length,
+      cookieHeaderPreview: cookieHeader.substring(0, 150) + (cookieHeader.length > 150 ? '...' : ''),
+      allCookies: allCookies,
+      hasAppSessionInHeader,
+      appSessionCookie: appSessionCookie ? (appSessionCookie.length > 50 ? appSessionCookie.substring(0, 50) + '...' : appSessionCookie) : null,
+      hostname: req.hostname,
+      origin: req.headers.origin,
+      referer: req.headers.referer
+    });
+    
     const token = (req.cookies as any)?.['app_session'];
     const hasToken = !!token;
     
@@ -1310,6 +1328,44 @@ export async function debugSession(req: Request, res: Response, _next: NextFunct
       },
       jwt: jwtInfo,
       cache: cacheStatus,
+      // CRITICAL: Add cookie header analysis for cross-subdomain debugging
+      cookieHeaderAnalysis: {
+        hasCookieHeader: !!req.headers.cookie,
+        cookieHeaderLength: cookieHeader.length,
+        allCookies: allCookies,
+        hasAppSessionInHeader,
+        appSessionCookieFound: !!appSessionCookie,
+        cookieCount: allCookies.length,
+        hostname: req.hostname,
+        origin: req.headers.origin,
+        diagnosis: !hasAppSessionInHeader ? {
+          issue: 'Cookie NOT in request header',
+          explanation: 'The app_session cookie is not being sent with this request. This means the cookie either:',
+          possibleCauses: [
+            '1. COOKIE_DOMAIN env var is NOT set in backend (most likely)',
+            '2. Cookie was set without Domain attribute (old cookie before env var was set)',
+            '3. Cookie domain mismatch (cookie for www.wildmindai.com but accessing studio.wildmindai.com)',
+            '4. User is not logged in on www.wildmindai.com'
+          ],
+          howToFix: [
+            '1. Set COOKIE_DOMAIN=.wildmindai.com in Render.com environment',
+            '2. Restart backend service',
+            '3. Log in again on www.wildmindai.com (old cookies won\'t have domain)',
+            '4. Check DevTools → Application → Cookies → verify Domain: .wildmindai.com',
+            '5. Then try studio.wildmindai.com again'
+          ],
+          networkTabCheck: 'Open DevTools → Network tab → Find /api/auth/me request → Headers → Request Headers → Check if Cookie header includes app_session'
+        } : hasAppSessionInHeader && !hasToken ? {
+          issue: 'Cookie in header but not parsed',
+          possibleCauses: [
+            'Cookie parsing issue',
+            'Cookie format incorrect'
+          ]
+        } : {
+          issue: 'Cookie found and parsed successfully',
+          status: 'OK'
+        }
+      },
       recommendations: !hasToken 
         ? ['No session token found - user is not logged in']
         : verificationStatus === 'verification_failed'

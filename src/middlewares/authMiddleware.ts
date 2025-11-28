@@ -16,6 +16,30 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     // Extract token from cookie (primary method)
     let token = req.cookies?.[COOKIE_NAME];
     
+    // CRITICAL DEBUG: Log cookie information for cross-subdomain debugging
+    if (env.logLevel === 'debug' || req.headers['x-debug-auth'] === 'true') {
+      const cookieHeader = req.headers.cookie || '';
+      const allCookies = cookieHeader.split(';').map(c => c.trim());
+      const hasAppSessionInHeader = cookieHeader.includes('app_session=');
+      
+      console.log('[AUTH][requireAuth] Cookie debug info:', {
+        hasToken: !!token,
+        tokenLength: token?.length || 0,
+        tokenPrefix: token ? token.substring(0, 20) + '...' : 'N/A',
+        cookieHeaderLength: cookieHeader.length,
+        cookieHeaderPreview: cookieHeader.substring(0, 100) + (cookieHeader.length > 100 ? '...' : ''),
+        allCookies: allCookies,
+        hasAppSessionInHeader,
+        hostname: req.hostname,
+        origin: req.headers.origin,
+        referer: req.headers.referer,
+        userAgent: req.get('user-agent')?.substring(0, 50),
+        note: hasAppSessionInHeader && !token ? 'Cookie exists in header but not parsed - check cookie parsing' :
+              !hasAppSessionInHeader ? 'Cookie NOT in request header - cookie not being sent from browser' :
+              'Cookie found and parsed successfully'
+      });
+    }
+    
     // Fallback to Authorization header (Bearer token)
     if (!token) {
       const authHeader = req.headers.authorization || (req.headers.Authorization as string | undefined);
@@ -24,9 +48,40 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       }
     }
     
-    // No token found - return 401
+    // No token found - return 401 with detailed error
     if (!token) {
-      throw new ApiError('Unauthorized - No session token', 401);
+      const cookieHeader = req.headers.cookie || '';
+      const hasAppSessionInHeader = cookieHeader.includes('app_session=');
+      
+      // Enhanced error message for debugging
+      const errorMessage = hasAppSessionInHeader 
+        ? 'Unauthorized - Cookie exists in request but could not be parsed. Check cookie format and parsing.'
+        : 'Unauthorized - No session token. Cookie not sent with request. Check if cookie domain is set correctly for cross-subdomain sharing.';
+      
+      console.error('[AUTH][requireAuth] 401 Unauthorized - No token', {
+        hasCookieHeader: !!req.headers.cookie,
+        cookieHeaderLength: cookieHeader.length,
+        cookieHeaderPreview: cookieHeader.substring(0, 100),
+        hasAppSessionInHeader,
+        hostname: req.hostname,
+        origin: req.headers.origin,
+        referer: req.headers.referer,
+        possibleCauses: [
+          !hasAppSessionInHeader ? 'Cookie not being sent from browser (check cookie domain)' : 'Cookie in header but not parsed',
+          'COOKIE_DOMAIN env var might not be set in backend',
+          'Cookie was set without Domain attribute (old cookie before env var was set)',
+          'Cookie domain mismatch (cookie for www.wildmindai.com but accessing studio.wildmindai.com)'
+        ],
+        howToFix: [
+          '1. Set COOKIE_DOMAIN=.wildmindai.com in Render.com environment',
+          '2. Restart backend service',
+          '3. Log in again on www.wildmindai.com (old cookies won\'t have domain)',
+          '4. Check DevTools → Application → Cookies → verify Domain: .wildmindai.com',
+          '5. Check Network tab → Request Headers → should include Cookie: app_session=...'
+        ]
+      });
+      
+      throw new ApiError(errorMessage, 401);
     }
 
     // Try Redis cache first for performance (avoids Firebase Admin API calls)
