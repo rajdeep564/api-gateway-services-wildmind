@@ -86,21 +86,25 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     (req as any).uid = decoded.uid;
     (req as any).authMethod = isSessionCookie ? 'session' : 'idToken';
 
-    // Check if session needs refresh (expires within 3 days)
+    // OPTIMIZATION: Mid-life session refresh (refresh when JWT is > 7 days old)
     // Only check for session cookies, not ID tokens
-    // BUG FIX #16: Use UTC time for expiration calculations to avoid timezone issues
-    if (isSessionCookie && decoded.exp) {
+    // This reduces unnecessary refresh calls while ensuring sessions stay fresh
+    if (isSessionCookie && decoded.exp && decoded.iat) {
       const nowSec = Math.floor(Date.now() / 1000); // UTC time
       const expiresInSec = decoded.exp - nowSec; // decoded.exp is already UTC
-      const threeDaysInSec = 3 * 24 * 60 * 60; // 3 days
+      const issuedAtSec = decoded.iat; // JWT issued at timestamp
+      const ageInSec = nowSec - issuedAtSec; // How old the session is
+      const sevenDaysInSec = 7 * 24 * 60 * 60; // 7 days
       
-      // Set header to indicate session refresh is needed
-      if (expiresInSec > 0 && expiresInSec < threeDaysInSec) {
+      // Refresh if session is older than 7 days (mid-life refresh)
+      // This ensures sessions are refreshed once during their 14-day lifetime
+      if (expiresInSec > 0 && ageInSec > sevenDaysInSec) {
         res.setHeader('X-Session-Refresh-Needed', 'true');
         res.setHeader('X-Session-Expires-In', expiresInSec.toString());
         if (env.logLevel === 'debug') {
-          console.log('[AUTH] Session refresh needed', { 
+          console.log('[AUTH] Mid-life session refresh needed', { 
             uid: decoded.uid, 
+            ageInDays: Math.floor(ageInSec / (24 * 60 * 60)),
             expiresInDays: Math.floor(expiresInSec / (24 * 60 * 60)),
             nowUTC: new Date().toISOString(),
             expUTC: new Date(decoded.exp * 1000).toISOString()
