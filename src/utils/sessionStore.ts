@@ -24,10 +24,15 @@ function keyForToken(token: string): string {
 
 export async function cacheSession(token: string, session: CachedSession): Promise<void> {
   // Compute TTL from exp if available
+  // CRITICAL FIX: Add buffer time (1 day) to ensure cache doesn't expire before cookie
+  // This prevents false cache misses that could cause authentication failures
   let ttlSec: number | undefined;
   if (session.exp) {
     const nowSec = Math.floor(Date.now() / 1000);
-    ttlSec = Math.max(1, session.exp - nowSec);
+    const timeUntilExp = session.exp - nowSec;
+    // Add 1 day buffer to prevent premature cache expiration
+    const bufferSec = 24 * 60 * 60; // 1 day in seconds
+    ttlSec = Math.max(1, timeUntilExp + bufferSec);
   }
   const key = keyForToken(token);
   await redisSetSafe(key, session, ttlSec);
@@ -82,8 +87,9 @@ export async function getUserSessions(uid: string): Promise<Array<{ key: string;
  * Invalidate all sessions for a specific user
  * Used when user logs in from a new device to invalidate old sessions
  * BUG FIX #13: Enforces concurrent session limit by removing oldest sessions
+ * CRITICAL FIX: Never invalidate the current session token
  */
-export async function invalidateAllUserSessions(uid: string, keepNewest: boolean = false): Promise<void> {
+export async function invalidateAllUserSessions(uid: string, keepNewest: boolean = false, currentToken?: string): Promise<void> {
   try {
     const { getRedisClient } = await import('../config/redisClient');
     const { env } = await import('../config/env');
@@ -95,36 +101,55 @@ export async function invalidateAllUserSessions(uid: string, keepNewest: boolean
     
     if (userSessions.length === 0) return;
 
+    // CRITICAL: Never delete the current session token
+    const currentTokenHash = currentToken ? hashToken(currentToken) : null;
+    const sessionsToProcess = currentTokenHash 
+      ? userSessions.filter(s => !s.key.includes(currentTokenHash))
+      : userSessions;
+
+    if (sessionsToProcess.length === 0) {
+      if (env.redisDebug) {
+        console.log('[AUTH][Redis] No sessions to invalidate (all are current session)', { uid });
+      }
+      return;
+    }
+
     // BUG FIX #13: If keeping newest and over limit, remove oldest sessions first
-    if (keepNewest && userSessions.length >= MAX_CONCURRENT_SESSIONS) {
+    if (keepNewest && sessionsToProcess.length >= MAX_CONCURRENT_SESSIONS) {
       // Sort by issuedAt (oldest first)
-      userSessions.sort((a, b) => {
+      sessionsToProcess.sort((a, b) => {
         const aTime = a.session.issuedAt || 0;
         const bTime = b.session.issuedAt || 0;
         return aTime - bTime;
       });
       
       // Remove oldest sessions until under limit
-      const toRemove = userSessions.length - (MAX_CONCURRENT_SESSIONS - 1);
+      const toRemove = sessionsToProcess.length - (MAX_CONCURRENT_SESSIONS - 1);
       for (let i = 0; i < toRemove; i++) {
-        await redisDelSafe(userSessions[i].key);
+        await redisDelSafe(sessionsToProcess[i].key);
       }
       
       if (env.redisDebug) {
         console.log('[AUTH][Redis] Removed oldest sessions to enforce limit', { 
           uid, 
           removed: toRemove,
-          remaining: userSessions.length - toRemove 
+          remaining: sessionsToProcess.length - toRemove,
+          currentTokenProtected: !!currentTokenHash
         });
       }
     } else {
-      // Delete all sessions for this user
-      for (const { key } of userSessions) {
+      // Delete all old sessions (but never the current one)
+      for (const { key } of sessionsToProcess) {
         await redisDelSafe(key);
       }
       
       if (env.redisDebug) {
-        console.log('[AUTH][Redis] Invalidated all sessions for user', { uid, count: userSessions.length });
+        console.log('[AUTH][Redis] Invalidated old sessions for user', { 
+          uid, 
+          count: sessionsToProcess.length,
+          totalSessions: userSessions.length,
+          currentTokenProtected: !!currentTokenHash
+        });
       }
     }
   } catch (error) {

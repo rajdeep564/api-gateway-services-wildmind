@@ -107,9 +107,10 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
         if (oldToken && oldToken !== sessionCookie) {
           await deleteCachedSession(oldToken);
         }
-        // Invalidate all other sessions for this user (but keep the one we just created)
+        // Invalidate all other sessions for this user (but NEVER the one we just created)
+        // CRITICAL FIX: Pass current session token to ensure it's never invalidated
         // BUG FIX #13: Keep newest session if under limit, otherwise remove oldest
-        await invalidateAllUserSessions(user.uid, true);
+        await invalidateAllUserSessions(user.uid, true, sessionCookie);
         
         if (shouldRevokeFirebaseTokens) {
           // BUG FIX #10: Revoke all refresh tokens for this user to force re-authentication on other devices
@@ -344,6 +345,10 @@ async function verifyEmailOtp(req: Request, res: Response, next: NextFunction) {
         const existingUser = await admin.auth().getUser(result.user.uid);
         if (existingUser && password) {
           // Password was set/reset - invalidate old sessions for security
+          // CRITICAL FIX: Don't pass currentToken here since we're creating a new session
+          // The new session will be created after this, so we want to keep it
+          // But we need to get the session cookie from the response to protect it
+          // For now, just invalidate old ones - the new session will be created separately
           await invalidateAllUserSessions(result.user.uid, true);
           console.log('[AUTH][verifyEmailOtp] Invalidated old sessions (password reset scenario)', { uid: result.user.uid });
         }
@@ -1131,6 +1136,7 @@ export const authController = {
   setGoogleUsername,
   checkUsername,
   refreshSession,
+  debugSession,
 };
 
 // Lightweight endpoint to check if current session token is cached in Redis
@@ -1152,5 +1158,150 @@ export async function sessionCacheStatus(req: Request, res: Response, _next: Nex
     }));
   } catch (_e) {
     return res.json(formatApiResponse('success', 'Error checking cache', { enabled: false }));
+  }
+}
+
+/**
+ * Debug endpoint to check comprehensive session status
+ * Helps verify session persistence without waiting for logout
+ */
+export async function debugSession(req: Request, res: Response, _next: NextFunction) {
+  try {
+    const token = (req.cookies as any)?.['app_session'];
+    const hasToken = !!token;
+    
+    let decoded: any = null;
+    let verificationStatus = 'not_verified';
+    let verificationError: any = null;
+    let isSessionCookie = false;
+    
+    // Try to verify the token
+    if (token) {
+      try {
+        const { admin } = await import('../../config/firebaseAdmin');
+        const { env } = await import('../../config/env');
+        
+        try {
+          decoded = await admin.auth().verifySessionCookie(token, env.authStrictRevocation);
+          isSessionCookie = true;
+          verificationStatus = 'verified_session_cookie';
+        } catch (sessionError: any) {
+          try {
+            decoded = await admin.auth().verifyIdToken(token, env.authStrictRevocation);
+            isSessionCookie = false;
+            verificationStatus = 'verified_id_token';
+          } catch (idTokenError: any) {
+            verificationStatus = 'verification_failed';
+            verificationError = {
+              sessionError: sessionError?.message || sessionError?.code,
+              idTokenError: idTokenError?.message || idTokenError?.code,
+            };
+          }
+        }
+      } catch (verifyErr: any) {
+        verificationError = verifyErr?.message || 'Unknown verification error';
+      }
+    }
+    
+    // Check Redis cache
+    let cacheStatus: any = null;
+    try {
+      const cached = token ? await getCachedSession(token) : null;
+      if (cached) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const isExpired = cached.exp && cached.exp < nowSec;
+        cacheStatus = {
+          found: true,
+          uid: cached.uid,
+          exp: cached.exp,
+          expDate: cached.exp ? new Date(cached.exp * 1000).toISOString() : null,
+          issuedAt: cached.issuedAt,
+          issuedAtDate: cached.issuedAt ? new Date(cached.issuedAt * 1000).toISOString() : null,
+          isExpired,
+          expiresIn: cached.exp ? Math.max(0, cached.exp - nowSec) : null,
+          expiresInDays: cached.exp ? Math.floor((cached.exp - nowSec) / (24 * 60 * 60)) : null,
+        };
+      } else {
+        cacheStatus = { found: false };
+      }
+    } catch (cacheErr: any) {
+      cacheStatus = { error: cacheErr?.message };
+    }
+    
+    // Decode JWT payload to get expiration info
+    let jwtInfo: any = null;
+    if (token && decoded) {
+      jwtInfo = {
+        uid: decoded.uid,
+        email: decoded.email,
+        exp: decoded.exp,
+        expDate: decoded.exp ? new Date(decoded.exp * 1000).toISOString() : null,
+        iat: decoded.iat,
+        iatDate: decoded.iat ? new Date(decoded.iat * 1000).toISOString() : null,
+        auth_time: decoded.auth_time,
+        auth_timeDate: decoded.auth_time ? new Date(decoded.auth_time * 1000).toISOString() : null,
+        isSessionCookie,
+      };
+      
+      if (decoded.exp) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const expiresInSec = decoded.exp - nowSec;
+        jwtInfo.expiresIn = expiresInSec;
+        jwtInfo.expiresInDays = Math.floor(expiresInSec / (24 * 60 * 60));
+        jwtInfo.expiresInHours = Math.floor(expiresInSec / (60 * 60));
+        jwtInfo.isExpired = expiresInSec <= 0;
+        jwtInfo.ageInDays = decoded.iat ? Math.floor((nowSec - decoded.iat) / (24 * 60 * 60)) : null;
+      }
+    } else if (token) {
+      // Try to decode without verification to at least get expiration
+      try {
+        const payload = decodeJwtPayload(token);
+        if (payload) {
+          jwtInfo = {
+            exp: payload.exp,
+            expDate: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
+            iat: payload.iat,
+            iatDate: payload.iat ? new Date(payload.iat * 1000).toISOString() : null,
+            uid: payload.uid,
+            note: 'Decoded without verification - token may be invalid',
+          };
+          if (payload.exp) {
+            const nowSec = Math.floor(Date.now() / 1000);
+            const expiresInSec = payload.exp - nowSec;
+            jwtInfo.expiresIn = expiresInSec;
+            jwtInfo.expiresInDays = Math.floor(expiresInSec / (24 * 60 * 60));
+            jwtInfo.isExpired = expiresInSec <= 0;
+          }
+        }
+      } catch {}
+    }
+    
+    return res.json(formatApiResponse('success', 'Session debug info', {
+      timestamp: new Date().toISOString(),
+      hasToken,
+      tokenLength: token?.length || 0,
+      tokenPrefix: token ? token.substring(0, 20) + '...' : null,
+      verification: {
+        status: verificationStatus,
+        error: verificationError,
+        isSessionCookie,
+      },
+      jwt: jwtInfo,
+      cache: cacheStatus,
+      recommendations: !hasToken 
+        ? ['No session token found - user is not logged in']
+        : verificationStatus === 'verification_failed'
+        ? ['Session token verification failed - user may be logged out', 'Check backend logs for detailed error']
+        : jwtInfo?.isExpired
+        ? ['Session token is expired - user needs to log in again']
+        : jwtInfo?.expiresInDays !== undefined && jwtInfo.expiresInDays < 1
+        ? ['Session expires soon - refresh may be needed']
+        : ['Session appears valid', `Expires in ${jwtInfo?.expiresInDays || 'unknown'} days`],
+    }));
+  } catch (error: any) {
+    return res.json(formatApiResponse('error', 'Debug endpoint error', {
+      error: error?.message,
+      stack: error?.stack,
+    }));
   }
 }

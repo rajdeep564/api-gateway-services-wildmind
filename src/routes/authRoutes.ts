@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authController, sessionCacheStatus } from '../controllers/auth/authController';
+import { authController, sessionCacheStatus, debugSession } from '../controllers/auth/authController';
 import { redeemCodeController } from '../controllers/redeemCodeController';
 import { publicVisibilityController } from '../controllers/auth/publicVisibilityController';
 import { requireAuth } from '../middlewares/authMiddleware';
@@ -38,6 +38,8 @@ router.post('/redeem-code/apply', requireAuth, redeemCodeController.applyRedeemC
 router.get('/can-toggle-public', requireAuth, publicVisibilityController.canTogglePublic);
 // Debug: check if current session cookie is cached in Redis
 router.get('/session-cache', requireAuth, sessionCacheStatus);
+// Debug: comprehensive session status check (no auth required for debugging)
+router.get('/debug-session', debugSession);
 
 // Debug endpoint to check cookie domain configuration (no auth required for debugging)
 router.get('/debug/cookie-config', (req, res) => {
