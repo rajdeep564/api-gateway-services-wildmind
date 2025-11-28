@@ -3,15 +3,54 @@ import { GenerationHistoryItem } from '../types/generate';
 import { mapModeToGenerationTypes } from '../utils/modeTypeMap';
 
 function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
-  const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, audios, createdBy, isPublic, createdAt, updatedAt, isDeleted, aspectRatio, frameSize, aspect_ratio } = data;
+  const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, audios, createdBy, isPublic, createdAt, updatedAt, isDeleted, aspectRatio, frameSize, aspect_ratio, aestheticScore, scoreUpdatedAt } = data;
   
   // Ensure isPublic is explicitly boolean true (not undefined, null, or false)
   // If isPublic is not explicitly true, set it to false to ensure proper filtering
   const normalizedIsPublic = isPublic === true;
   
+  // Normalize ID to ensure it's always a string
+  const normalizedId = String(id || '');
+  
+  // Normalize arrays to ensure they're always arrays
+  const normalizedImages = Array.isArray(images) ? images : [];
+  const normalizedVideos = Array.isArray(videos) ? videos : [];
+  const normalizedAudios = Array.isArray(audios) ? audios : [];
+  
+  // Normalize timestamps
+  let normalizedCreatedAt = createdAt;
+  if (createdAt) {
+    if (createdAt.toDate && typeof createdAt.toDate === 'function') {
+      normalizedCreatedAt = createdAt.toDate();
+    } else if (createdAt.seconds) {
+      normalizedCreatedAt = new Date(createdAt.seconds * 1000);
+    }
+  }
+  
+  let normalizedUpdatedAt = updatedAt || createdAt;
+  if (normalizedUpdatedAt) {
+    if (normalizedUpdatedAt.toDate && typeof normalizedUpdatedAt.toDate === 'function') {
+      normalizedUpdatedAt = normalizedUpdatedAt.toDate();
+    } else if (normalizedUpdatedAt.seconds) {
+      normalizedUpdatedAt = new Date(normalizedUpdatedAt.seconds * 1000);
+    }
+  }
+  
+  // Normalize createdBy object
+  let normalizedCreatedBy = createdBy;
+  if (createdBy && typeof createdBy === 'object') {
+    normalizedCreatedBy = {
+      uid: String(createdBy.uid || ''),
+      username: createdBy.username || undefined,
+      email: createdBy.email || undefined,
+      photoURL: createdBy.photoURL || createdBy.photoUrl || undefined,
+      displayName: createdBy.displayName || undefined,
+    };
+  }
+  
   return {
-    id,
-    uid,
+    id: normalizedId,
+    uid: uid ? String(uid) : '',
     prompt,
     model,
     generationType,
@@ -19,16 +58,19 @@ function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
     visibility,
     tags,
     nsfw,
-    images,
-    videos,
-    audios,
-    createdBy,
+    images: normalizedImages,
+    videos: normalizedVideos,
+    audios: normalizedAudios,
+    createdBy: normalizedCreatedBy,
     isPublic: normalizedIsPublic, // Explicitly set to true or false
-    isDeleted,
-    createdAt,
-    updatedAt: updatedAt || createdAt,
+    isDeleted: isDeleted === true,
+    createdAt: normalizedCreatedAt,
+    updatedAt: normalizedUpdatedAt,
     aspectRatio: aspectRatio || frameSize || aspect_ratio,
-    frameSize: frameSize || aspect_ratio || aspectRatio
+    frameSize: frameSize || aspect_ratio || aspectRatio,
+    aestheticScore: typeof aestheticScore === 'number' ? aestheticScore : undefined,
+    // Note: scoreUpdatedAt is not part of GenerationHistoryItem type, but we need it for sorting
+    // It will be available in rawData
   } as GenerationHistoryItem;
 }
 
@@ -154,13 +196,24 @@ export async function listPublic(params: {
   // Handle cursor-based pagination
   // For cursor pagination, we continue from where we left off
   // The cursor represents the last item from the previous page
+  // CRITICAL: Since we do in-memory sorting/filtering, we need to fetch more items
+  // and filter out items that come before the cursor in the final sorted order
+  let cursorItem: GenerationHistoryItem | null = null;
   if (params.cursor) {
-    const cursorDoc = await col.doc(params.cursor).get();
-    if (cursorDoc.exists) {
-      queryHigh = queryHigh.startAfter(cursorDoc);
-      if (queryMusic) {
-        queryMusic = queryMusic.startAfter(cursorDoc);
+    try {
+      const cursorDoc = await col.doc(params.cursor).get();
+      if (cursorDoc.exists) {
+        const cursorData = cursorDoc.data() as any;
+        cursorItem = normalizePublicItem(params.cursor, cursorData);
+        // Use startAfter for database query, but we'll also filter in-memory
+        queryHigh = queryHigh.startAfter(cursorDoc);
+        if (queryMusic) {
+          queryMusic = queryMusic.startAfter(cursorDoc);
+        }
       }
+    } catch (e) {
+      console.warn('[publicGenerationsRepository] Error fetching cursor doc:', e);
+      // Continue without cursor if there's an error
     }
   }
   
@@ -219,13 +272,29 @@ export async function listPublic(params: {
   // Store raw data alongside normalized items for sorting
   // IMPORTANT: When using .select() projection, only selected fields are returned
   // If scoreUpdatedAt doesn't exist in the document, it won't be in rawData (will be undefined)
-  const highScoredItemsWithData = snapHigh.docs.map(d => {
-    const rawData = d.data() as any;
-    return {
-      item: normalizePublicItem(d.id, rawData),
-      rawData: rawData
-    };
-  });
+  // CRITICAL: Deduplicate by ID during mapping to prevent duplicates
+  const highScoredSeenIds = new Set<string>();
+  const highScoredItemsWithData = snapHigh.docs
+    .map(d => {
+      const docId = String(d.id);
+      // Skip if we've already seen this ID
+      if (highScoredSeenIds.has(docId)) {
+        return null;
+      }
+      highScoredSeenIds.add(docId);
+      
+      const rawData = d.data() as any;
+      const normalizedItem = normalizePublicItem(docId, rawData);
+      // Ensure ID is properly set
+      if (!normalizedItem.id) {
+        normalizedItem.id = docId;
+      }
+      return {
+        item: normalizedItem,
+        rawData: rawData
+      };
+    })
+    .filter((item): item is { item: GenerationHistoryItem; rawData: any } => item !== null);
 
   // NEW SORTING LOGIC FOR ARTSTATION:
   // 1. Admin-scored items first (has scoreUpdatedAt) - sorted by scoreUpdatedAt desc, then aestheticScore desc
@@ -293,10 +362,28 @@ export async function listPublic(params: {
     }
     
     const snapLow = await queryLow.limit(needed * 2).get();
-    lowScoredItemsWithData = snapLow.docs.map(d => ({
-      item: normalizePublicItem(d.id, d.data() as any),
-      rawData: d.data() as any
-    }));
+    // CRITICAL: Deduplicate by ID during mapping
+    const lowScoredSeenIds = new Set<string>();
+    lowScoredItemsWithData = snapLow.docs
+      .map(d => {
+        const docId = String(d.id);
+        // Skip if we've already seen this ID
+        if (lowScoredSeenIds.has(docId)) {
+          return null;
+        }
+        lowScoredSeenIds.add(docId);
+        
+        const rawData = d.data() as any;
+        const normalizedItem = normalizePublicItem(docId, rawData);
+        if (!normalizedItem.id) {
+          normalizedItem.id = docId;
+        }
+        return {
+          item: normalizedItem,
+          rawData: rawData
+        };
+      })
+      .filter((item): item is { item: GenerationHistoryItem; rawData: any } => item !== null);
 
     lowScoredItems = lowScoredItemsWithData
       .sort((a, b) => {
@@ -332,10 +419,28 @@ export async function listPublic(params: {
   if (params.minScore === undefined && queryMusic && (highScoredItems.length + lowScoredItems.length) < params.limit) {
     const needed = params.limit - (highScoredItems.length + lowScoredItems.length);
     const snapMusic = await queryMusic.limit(needed).get();
-    musicItemsWithData = snapMusic.docs.map(d => ({
-      item: normalizePublicItem(d.id, d.data() as any),
-      rawData: d.data() as any
-    }));
+    // CRITICAL: Deduplicate by ID during mapping
+    const musicSeenIds = new Set<string>();
+    musicItemsWithData = snapMusic.docs
+      .map(d => {
+        const docId = String(d.id);
+        // Skip if we've already seen this ID
+        if (musicSeenIds.has(docId)) {
+          return null;
+        }
+        musicSeenIds.add(docId);
+        
+        const rawData = d.data() as any;
+        const normalizedItem = normalizePublicItem(docId, rawData);
+        if (!normalizedItem.id) {
+          normalizedItem.id = docId;
+        }
+        return {
+          item: normalizedItem,
+          rawData: rawData
+        };
+      })
+      .filter((item): item is { item: GenerationHistoryItem; rawData: any } => item !== null);
 
     musicItems = musicItemsWithData
       .sort((a, b) => {
@@ -442,7 +547,27 @@ export async function listPublic(params: {
   });
 
   // Extract just the items in the final sorted order
-  let items: GenerationHistoryItem[] = allItemsWithData.map(({ item }) => item);
+  // CRITICAL: Final deduplication by ID to ensure no duplicates
+  const seenIds = new Set<string>();
+  let items: GenerationHistoryItem[] = [];
+  for (const { item } of allItemsWithData) {
+    const itemId = String(item.id || '');
+    if (!itemId) continue; // Skip items without IDs
+    
+    // Skip duplicates
+    if (seenIds.has(itemId)) {
+      continue;
+    }
+    
+    // If we have a cursor, skip items that come before the cursor in sorted order
+    // This handles the case where in-memory sorting changes the order
+    if (cursorItem && itemId === cursorItem.id) {
+      continue; // Skip the cursor item itself
+    }
+    
+    seenIds.add(itemId);
+    items.push(item);
+  }
   
   // Handle search - Firestore doesn't support full-text search, so minimal in-memory filter
   // This is the ONLY in-memory filtering we do, and it's necessary for search functionality
@@ -458,13 +583,19 @@ export async function listPublic(params: {
   const page = items.slice(0, params.limit);
   
   // Compute next cursor for pagination
+  // CRITICAL: Use the last item's ID from the page, ensuring it's valid
   let nextCursor: string | undefined;
-  if (page.length === params.limit && items.length > params.limit) {
-    // Full page returned - use last item's ID
-    nextCursor = page[page.length - 1].id;
-  } else if (page.length > 0) {
-    // Use last item's ID if we have results
-    nextCursor = page[page.length - 1].id;
+  if (page.length > 0) {
+    const lastItem = page[page.length - 1];
+    const lastItemId = lastItem?.id ? String(lastItem.id) : undefined;
+    
+    // Only set cursor if:
+    // 1. We returned a full page (might have more)
+    // 2. OR we have more items beyond the page
+    const hasMoreItems = page.length === params.limit || items.length > params.limit;
+    if (lastItemId && hasMoreItems) {
+      nextCursor = lastItemId;
+    }
   }
   
   // Skip total count to reduce query cost/latency

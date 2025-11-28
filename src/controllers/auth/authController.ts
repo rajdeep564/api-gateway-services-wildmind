@@ -673,7 +673,29 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
       const domainMatches = !!(dom && (host === dom.replace(/^\./, '') || host.endsWith(dom)));
       shouldSetDomain = domainMatches;
     }
+  } else {
+    // CRITICAL WARNING: COOKIE_DOMAIN is not set - cookies will NOT share across subdomains!
+    if (isProductionLike) {
+      console.error('[AUTH][setSessionCookie] ⚠️⚠️⚠️ CRITICAL: COOKIE_DOMAIN is NOT SET! ⚠️⚠️⚠️');
+      console.error('[AUTH][setSessionCookie] Cookies will NOT be shared across subdomains (www.wildmindai.com <-> studio.wildmindai.com)');
+      console.error('[AUTH][setSessionCookie] To fix: Set COOKIE_DOMAIN=.wildmindai.com in Render.com environment variables');
+      console.error('[AUTH][setSessionCookie] Then restart the backend service and have users log in again');
+    }
   }
+  
+  // CRITICAL: Log domain setting decision for debugging cross-subdomain issues
+  console.log('[AUTH][setSessionCookie] Domain setting decision:', {
+    cookieDomain: cookieDomain || '(NOT SET - COOKIES WILL NOT SHARE ACROSS SUBDOMAINS!)',
+    isProd,
+    isProductionLike,
+    host,
+    origin,
+    shouldSetDomain,
+    willSetDomain: shouldSetDomain ? cookieDomain : '(NOT SETTING - COOKIES WON\'T SHARE!)',
+    warning: !cookieDomain ? '⚠️⚠️⚠️ COOKIE_DOMAIN env var is NOT SET! Set it to ".wildmindai.com" in Render.com ⚠️⚠️⚠️' : 
+             !shouldSetDomain ? '⚠️ Domain will NOT be set - cookies won\'t share across subdomains' :
+             '✅ Domain will be set - cookies will share across subdomains'
+  });
 
   // Determine sameSite: use "none" for cross-subdomain cookies in production-like environments
   // This allows cookies to work between www.wildmindai.com and studio.wildmindai.com
