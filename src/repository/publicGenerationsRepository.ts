@@ -181,24 +181,51 @@ export async function listPublic(params: {
 
   // Helper function to get scoreUpdatedAt timestamp (admin score update time)
   const getScoreUpdatedAtTime = (rawData: any): number => {
-    if (!rawData || !rawData.scoreUpdatedAt) return 0;
-    if (typeof rawData.scoreUpdatedAt === 'string') return new Date(rawData.scoreUpdatedAt).getTime();
-    if (rawData.scoreUpdatedAt?.seconds) return rawData.scoreUpdatedAt.seconds * 1000;
-    if (rawData.scoreUpdatedAt?.toMillis) return rawData.scoreUpdatedAt.toMillis();
+    if (!rawData) return 0;
+    const scoreUpdatedAt = rawData.scoreUpdatedAt;
+    if (!scoreUpdatedAt) return 0;
+    
+    // Handle Firestore Timestamp
+    if (scoreUpdatedAt.seconds !== undefined) {
+      return scoreUpdatedAt.seconds * 1000 + (scoreUpdatedAt.nanoseconds || 0) / 1000000;
+    }
+    if (typeof scoreUpdatedAt.toMillis === 'function') {
+      return scoreUpdatedAt.toMillis();
+    }
+    
+    // Handle string date
+    if (typeof scoreUpdatedAt === 'string') {
+      const parsed = new Date(scoreUpdatedAt).getTime();
+      return isNaN(parsed) ? 0 : parsed;
+    }
+    
+    // Handle number (milliseconds)
+    if (typeof scoreUpdatedAt === 'number') {
+      return scoreUpdatedAt;
+    }
+    
     return 0;
   };
 
   // Helper function to check if item has admin score (has scoreUpdatedAt)
+  // Note: When using .select() projection, missing fields are undefined, not null
   const hasAdminScore = (rawData: any): boolean => {
-    return rawData && rawData.scoreUpdatedAt != null;
+    if (!rawData) return false;
+    // Check both null and undefined (since Firestore projection omits missing fields)
+    return rawData.scoreUpdatedAt !== null && rawData.scoreUpdatedAt !== undefined;
   };
   
   // Convert high-scored results with proper sorting
   // Store raw data alongside normalized items for sorting
-  const highScoredItemsWithData = snapHigh.docs.map(d => ({
-    item: normalizePublicItem(d.id, d.data() as any),
-    rawData: d.data() as any
-  }));
+  // IMPORTANT: When using .select() projection, only selected fields are returned
+  // If scoreUpdatedAt doesn't exist in the document, it won't be in rawData (will be undefined)
+  const highScoredItemsWithData = snapHigh.docs.map(d => {
+    const rawData = d.data() as any;
+    return {
+      item: normalizePublicItem(d.id, rawData),
+      rawData: rawData
+    };
+  });
 
   // NEW SORTING LOGIC FOR ARTSTATION:
   // 1. Admin-scored items first (has scoreUpdatedAt) - sorted by scoreUpdatedAt desc, then aestheticScore desc
