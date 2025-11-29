@@ -1319,6 +1319,22 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 11.76470588,
     },
   },
+  // TODO: Update model name and pricing for new Turbo model
+  {
+    srNo: 47.1,
+    modelName: "New Turbo Model", // TODO: Update with actual model name
+    priceToPay: 0.05, // TODO: Update with actual price
+    overCharge: 0.01,
+    userCost: 0.06, // TODO: Update with actual user cost
+    creditsPerGeneration: 120, // TODO: Update with actual credits
+    plans: {
+      planA: 103,
+      planB: 206,
+      planC: 515,
+      planD: 1648,
+      free: 16.66666667,
+    },
+  },
   // Wan 2.5 Standard (T2V/I2V) - from sheet
   {
     srNo: 48,

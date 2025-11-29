@@ -12,6 +12,8 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
   const isLucidOrigin = m.includes('leonardoai/lucid-origin');
   const isPhoenix = m.includes('leonardoai/phoenix-1.0');
   const isNanoBananaPro = m.includes('google/nano-banana-pro') || m.includes('nano-banana-pro');
+  // TODO: Update model name placeholder with actual model identifier
+  const isNewTurboModel = m.includes('new-turbo-model') || m.includes('placeholder-model-name');
 
   if (isSeedream) {
     if (size != null && !['1K', '2K', '4K', 'custom'].includes(String(size))) return next(new ApiError("size must be one of '1K' | '2K' | '4K' | 'custom'", 400));
@@ -133,6 +135,51 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
         if (typeof url !== 'string') {
           return next(new ApiError('image_input must contain URL strings', 400));
         }
+      }
+    }
+  }
+  // New Turbo Model validations (placeholder - update model name)
+  if (isNewTurboModel) {
+    // Width validation: 64-2048, default 1024
+    if (req.body.width != null) {
+      if (typeof req.body.width !== 'number' || !Number.isInteger(req.body.width) || req.body.width < 64 || req.body.width > 2048) {
+        return next(new ApiError('width must be an integer between 64 and 2048', 400));
+      }
+    }
+    // Height validation: 64-2048, default 1024
+    if (req.body.height != null) {
+      if (typeof req.body.height !== 'number' || !Number.isInteger(req.body.height) || req.body.height < 64 || req.body.height > 2048) {
+        return next(new ApiError('height must be an integer between 64 and 2048', 400));
+      }
+    }
+    // Num inference steps validation: 1-50, default 8
+    if (req.body.num_inference_steps != null) {
+      if (typeof req.body.num_inference_steps !== 'number' || !Number.isInteger(req.body.num_inference_steps) || req.body.num_inference_steps < 1 || req.body.num_inference_steps > 50) {
+        return next(new ApiError('num_inference_steps must be an integer between 1 and 50', 400));
+      }
+    }
+    // Guidance scale validation: 0-20, default 0
+    if (req.body.guidance_scale != null) {
+      if (typeof req.body.guidance_scale !== 'number' || req.body.guidance_scale < 0 || req.body.guidance_scale > 20) {
+        return next(new ApiError('guidance_scale must be a number between 0 and 20', 400));
+      }
+    }
+    // Seed validation: nullable integer
+    if (req.body.seed != null) {
+      if (typeof req.body.seed !== 'number' || !Number.isInteger(req.body.seed)) {
+        return next(new ApiError('seed must be an integer', 400));
+      }
+    }
+    // Output format validation: png, jpg, webp, default jpg
+    if (req.body.output_format != null) {
+      if (!['png', 'jpg', 'webp'].includes(String(req.body.output_format))) {
+        return next(new ApiError('output_format must be one of: png, jpg, webp', 400));
+      }
+    }
+    // Output quality validation: 0-100, default 80
+    if (req.body.output_quality != null) {
+      if (typeof req.body.output_quality !== 'number' || !Number.isInteger(req.body.output_quality) || req.body.output_quality < 0 || req.body.output_quality > 100) {
+        return next(new ApiError('output_quality must be an integer between 0 and 100', 400));
       }
     }
   }
