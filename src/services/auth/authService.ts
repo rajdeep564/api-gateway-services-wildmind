@@ -4,6 +4,7 @@ import { authRepository } from '../../repository/auth/authRepository'; // Update
 import { AppUser, ProviderId } from '../../types/authTypes';
 import { ApiError } from '../../utils/errorHandler';
 import { sendEmail, isEmailConfigured } from '../../utils/mailer';
+import { generateOTPEmailHTML, generateOTPEmailText } from '../../utils/emailTemplates';
 
 function normalizeUsername(input: string): string {
   return (input || '')
@@ -141,11 +142,24 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
   
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   const ttlSeconds = 60; // OTP valid for 60s
+  const expiresInMinutes = Math.ceil(ttlSeconds / 60); // Convert to minutes for email template
   
   console.log(`[AUTH] Generated OTP: ${code} for ${email}, TTL: ${ttlSeconds}s`);
   
   await authRepository.saveOtp(email, code, ttlSeconds);
   console.log(`[AUTH] OTP saved to memory store`);
+  
+  // Generate formatted email templates
+  const emailHTML = generateOTPEmailHTML({
+    code,
+    email,
+    expiresInMinutes
+  });
+  const emailText = generateOTPEmailText({
+    code,
+    email,
+    expiresInMinutes
+  });
   
   // Fire-and-forget email send to reduce API latency; log result asynchronously
   const emailConfigured = isEmailConfigured();
@@ -159,7 +173,12 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
 
   if (shouldAwaitEmail) {
     try {
-      await sendEmail(email, 'Your verification code', `Your OTP code is: ${code}`);
+      await sendEmail(
+        email,
+        'Verify Your Email - WildMind AI',
+        emailText,
+        emailHTML
+      );
       console.log(`[AUTH] OTP email sent (await) to ${email}`);
     } catch (emailError: any) {
       console.log(`[AUTH] Email send failed (await): ${emailError.message}`);
@@ -168,7 +187,12 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
   } else {
     (async () => {
       try {
-        await sendEmail(email, 'Your verification code', `Your OTP code is: ${code}`);
+        await sendEmail(
+          email,
+          'Verify Your Email - WildMind AI',
+          emailText,
+          emailHTML
+        );
         console.log(`[AUTH] OTP email dispatched (async) to ${email}`);
       } catch (emailError: any) {
         console.log(`[AUTH] Async email send failed: ${emailError.message}`);
