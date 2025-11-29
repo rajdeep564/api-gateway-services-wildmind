@@ -151,9 +151,8 @@ export async function removeBackground(
     isPublic?: boolean;
   }
 ) {
-  const key =
-    ((env as any).replicateApiKey as string) ||
-    (process.env.REPLICATE_API_TOKEN as string);
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const key = env.replicateApiKey as string;
   if (!key) {
     // eslint-disable-next-line no-console
     console.error(
@@ -352,9 +351,8 @@ export async function removeBackground(
 }
 
 export async function upscale(uid: string, body: any) {
-  const key =
-    ((env as any).replicateApiKey as string) ||
-    (process.env.REPLICATE_API_TOKEN as string);
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const key = env.replicateApiKey as string;
   if (!key) {
     // eslint-disable-next-line no-console
     console.error("[replicateService.upscale] Missing REPLICATE_API_TOKEN");
@@ -441,8 +439,8 @@ export async function upscale(uid: string, body: any) {
     try {
       const username = creator?.username || uid;
       // Check if it's already a Zata URL - if so, extract the storage path
-      const ZATA_PREFIX = process.env.ZATA_PREFIX || 'https://idr01.zata.ai/devstoragev1/';
-      if (body.image.startsWith(ZATA_PREFIX)) {
+      const ZATA_PREFIX = env.zataPrefix;
+      if (ZATA_PREFIX && body.image.startsWith(ZATA_PREFIX)) {
         inputImageStoragePath = body.image.substring(ZATA_PREFIX.length);
         inputImageUrl = body.image;
       } else {
@@ -895,9 +893,8 @@ export async function upscale(uid: string, body: any) {
 }
 
 export async function generateImage(uid: string, body: any) {
-  const key =
-    ((env as any).replicateApiKey as string) ||
-    (process.env.REPLICATE_API_TOKEN as string);
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const key = env.replicateApiKey as string;
   if (!key) {
     // eslint-disable-next-line no-console
     console.error(
@@ -1624,9 +1621,8 @@ export const replicateService = {
 };
 // Wan 2.5 Image-to-Video via Replicate
 export async function wanI2V(uid: string, body: any) {
-  const key =
-    ((env as any).replicateApiKey as string) ||
-    (process.env.REPLICATE_API_TOKEN as string);
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const key = env.replicateApiKey as string;
   if (!key) {
     // eslint-disable-next-line no-console
     console.error("[replicateService.wanI2V] Missing REPLICATE_API_TOKEN");
@@ -1809,9 +1805,8 @@ Object.assign(replicateService, { wanI2V });
 
 // Wan 2.5 Text-to-Video via Replicate
 export async function wanT2V(uid: string, body: any) {
-  const key =
-    ((env as any).replicateApiKey as string) ||
-    (process.env.REPLICATE_API_TOKEN as string);
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const key = env.replicateApiKey as string;
   if (!key) {
     // eslint-disable-next-line no-console
     console.error("[replicateService.wanT2V] Missing REPLICATE_API_TOKEN");
@@ -2002,9 +1997,8 @@ async function resolveWanModelFast(body: any): Promise<boolean> {
 }
 
 function ensureReplicate(): any {
-  const key =
-    ((env as any).replicateApiKey as string) ||
-    (process.env.REPLICATE_API_TOKEN as string);
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const key = env.replicateApiKey as string;
   if (!key) {
     // eslint-disable-next-line no-console
     console.error("[replicateQueue] Missing REPLICATE_API_TOKEN");

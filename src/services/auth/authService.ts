@@ -150,10 +150,10 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
   // Fire-and-forget email send to reduce API latency; log result asynchronously
   const emailConfigured = isEmailConfigured();
   const shouldAwaitEmail = (() => {
-    const v = String(process.env.OTP_EMAIL_AWAIT || '').toLowerCase();
-    if (['1','true','yes','on'].includes(v)) return true;
+    // Use env config, but also check runtime detection for serverless platforms
+    if (env.otpEmailAwait) return true;
     // If running on typical serverless platforms, default to await for reliability
-    if (process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL) return true;
+    if (process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL) return true; // Keep - runtime detection
     return false;
   })();
 
@@ -177,7 +177,7 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
   }
 
   // Respond and indicate delivery channel (email or console fallback)
-  const exposeDebug = String(process.env.DEBUG_OTP || '').toLowerCase() === 'true' || (process.env.NODE_ENV !== 'production');
+  const exposeDebug = env.debugOtp || env.nodeEnv !== 'production';
   return { sent: true, ttl: ttlSeconds, channel: emailConfigured ? 'email' : 'console', ...(exposeDebug ? { debugCode: code } : {}) } as any;
 }
 
@@ -343,13 +343,15 @@ async function loginWithEmailPassword(email: string, password: string, deviceInf
   let passwordLoginIdToken: string | undefined;
   try {
       // Use Firebase REST API to verify password since Admin SDK doesn't expose signInWithEmailAndPassword
-      const firebaseApiKey = env.firebaseApiKey || process.env.NEXT_PUBLIC_FIREBASE_API_KEY || (process as any).env?.FIREBASE_WEB_API_KEY;
+      // env.firebaseApiKey already handles fallbacks in env.ts
+      const firebaseApiKey = env.firebaseApiKey;
       if (!firebaseApiKey) {
         // Explicit configuration error so ops can see it; don't mask as credentials issue
         throw new Error('FIREBASE_API_KEY missing (server). Set FIREBASE_API_KEY or NEXT_PUBLIC_FIREBASE_API_KEY');
       }
 
-      const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseApiKey}`, {
+      const firebaseAuthApiBase = env.firebaseAuthApiBase;
+      const response = await fetch(`${firebaseAuthApiBase}/accounts:signInWithPassword?key=${firebaseApiKey}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

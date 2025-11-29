@@ -12,8 +12,14 @@ async function loadDisposableDomains(): Promise<void> {
   }
 
   try {
+    const { env } = await import('../config/env');
+    const disposableEmailDomainsUrl = env.disposableEmailDomainsUrl;
+    if (!disposableEmailDomainsUrl) {
+      console.warn('[EMAIL GUARD] DISPOSABLE_EMAIL_DOMAINS_URL not configured, skipping domain list load');
+      return;
+    }
     const response = await axios.get(
-      'https://raw.githubusercontent.com/disposable/disposable-email-domains/master/domains.json',
+      disposableEmailDomainsUrl,
       { timeout: 10000 } // 10 second timeout
     );
     disposableDomains = response.data || [];

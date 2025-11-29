@@ -6,8 +6,7 @@ import { formatApiResponse } from "../../utils/formatApiResponse";
 import { ApiError } from "../../utils/errorHandler";
 import { extractDeviceInfo } from "../../utils/deviceInfo";
 import { admin } from "../../config/firebaseAdmin";
-const shouldRevokeFirebaseTokens =
-  (process.env.REVOKE_FIREBASE_TOKENS || '').toLowerCase() === 'true';
+import { env } from "../../config/env";
 import "../../types/http";
 import { cacheSession, deleteCachedSession, decodeJwtPayload, getCachedSession, invalidateAllUserSessions } from "../../utils/sessionStore";
 import { isRedisEnabled } from "../../config/redisClient";
@@ -112,7 +111,7 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
         // BUG FIX #13: Keep newest session if under limit, otherwise remove oldest
         await invalidateAllUserSessions(user.uid, true, sessionCookie);
         
-        if (shouldRevokeFirebaseTokens) {
+        if (env.revokeFirebaseTokens) {
           // BUG FIX #10: Revoke all refresh tokens for this user to force re-authentication on other devices
           // This ensures Firebase auth state is synced across devices
           // NOTE: This invalidates the ID token, but we've already created the session cookie above
@@ -123,7 +122,7 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
             console.warn('[AUTH][createSession] Failed to revoke refresh tokens (non-fatal):', revokeError);
           }
         } else {
-          console.log('[AUTH][createSession] Skipping Firebase refresh token revocation (disabled via env). REVOKE_FIREBASE_TOKENS=', process.env.REVOKE_FIREBASE_TOKENS);
+          console.log('[AUTH][createSession] Skipping Firebase refresh token revocation (disabled via env). REVOKE_FIREBASE_TOKENS=', env.revokeFirebaseTokens);
         }
         
         console.log('[AUTH][createSession] Invalidated old sessions for user', { uid: user.uid });
@@ -426,8 +425,8 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     timestamp: new Date().toISOString()
   });
   
-  const isProd = process.env.NODE_ENV === "production";
-  const cookieDomain = process.env.COOKIE_DOMAIN; // e.g., .wildmindai.com when API runs on api.wildmindai.com
+  const isProd = env.nodeEnv === "production";
+  const cookieDomain = env.cookieDomain; // e.g., .wildmindai.com when API runs on api.wildmindai.com
   
   // BUG FIX #11: Check ID token expiration first to prevent mismatch
   let decodedToken: any;
@@ -656,11 +655,13 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
   
   // Check if we're in a production-like environment:
   // 1. NODE_ENV === 'production', OR
-  // 2. Origin is a wildmindai.com subdomain (production domain), OR
+  // 2. Origin is a production domain subdomain, OR
   // 3. Host matches the cookie domain
+  const prodDomainHost = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
+  const studioDomainHost = env.productionStudioDomain ? new URL(env.productionStudioDomain).hostname : undefined;
   const isProductionLike = isProd || 
-    (origin && (origin.includes('wildmindai.com') || origin.includes('studio.wildmindai.com'))) ||
-    (host && (host.includes('wildmindai.com') || host.includes('studio.wildmindai.com')));
+    (origin && prodDomainHost && (origin.includes(prodDomainHost) || (studioDomainHost && origin.includes(studioDomainHost)))) ||
+    (host && prodDomainHost && (host.includes(prodDomainHost) || (studioDomainHost && host.includes(studioDomainHost))));
   
   // Always set domain cookie if COOKIE_DOMAIN is configured (for cross-subdomain sharing)
   // This works in both production and when NODE_ENV isn't set (Render.com production)
@@ -802,9 +803,9 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
 }
 
 function clearSessionCookie(res: Response) {
-  const cookieDomain = process.env.COOKIE_DOMAIN; // e.g. .wildmindai.com
+  const cookieDomain = env.cookieDomain; // e.g. .wildmindai.com
   const expired = 'Thu, 01 Jan 1970 00:00:00 GMT';
-  const isProd = process.env.NODE_ENV === 'production';
+  const isProd = env.nodeEnv === 'production';
 
   const variants: string[] = [];
   const cookiesToClear = ['app_session', 'app_session.sig', 'auth_hint'];
@@ -1079,8 +1080,8 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
 
     // BUG FIX #6: Clear old cookie before creating new one
     const oldToken = req.cookies?.['app_session'];
-    const cookieDomain = process.env.COOKIE_DOMAIN;
-    const isProd = process.env.NODE_ENV === "production";
+    const cookieDomain = env.cookieDomain;
+    const isProd = env.nodeEnv === "production";
     
     if (oldToken) {
       // Delete old session from Redis cache

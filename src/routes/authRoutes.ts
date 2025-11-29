@@ -4,6 +4,7 @@ import { redeemCodeController } from '../controllers/redeemCodeController';
 import { publicVisibilityController } from '../controllers/auth/publicVisibilityController';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { validateSession, validateOtpStart, validateOtpVerify, validateUsername, validateUpdateMe, validateLogin, validateGoogleSignIn, validateGoogleUsername, validateCheckUsername } from '../middlewares/validateAuth';
+import { env } from '../config/env';
 
 const router = Router();
 
@@ -43,8 +44,8 @@ router.get('/debug-session', debugSession);
 
 // Debug endpoint to check cookie domain configuration (no auth required for debugging)
 router.get('/debug/cookie-config', (req, res) => {
-  const isProd = process.env.NODE_ENV === 'production';
-  const cookieDomain = process.env.COOKIE_DOMAIN;
+  const isProd = env.nodeEnv === 'production';
+  const cookieDomain = env.cookieDomain;
   
   // CRITICAL: Analyze cookie header to see if cookie is being sent
   const cookieHeader = req.headers.cookie || '';
@@ -55,7 +56,7 @@ router.get('/debug/cookie-config', (req, res) => {
   console.log('[AUTH][DEBUG] Cookie config check', {
     isProd,
     cookieDomain: cookieDomain || '(NOT SET - THIS IS THE PROBLEM!)',
-    nodeEnv: process.env.NODE_ENV,
+    nodeEnv: env.nodeEnv,
     allEnvKeys: Object.keys(process.env).filter(k => k.includes('COOKIE') || k.includes('DOMAIN')),
     requestOrigin: req.headers.origin,
     requestHost: req.headers.host,
@@ -125,8 +126,9 @@ router.get('/debug/cookie-config', (req, res) => {
 
 // Test endpoint to manually set a cookie with the correct domain
 router.get('/debug/test-cookie', (req, res) => {
-  const isProd = process.env.NODE_ENV === 'production';
-  const cookieDomain = process.env.COOKIE_DOMAIN || '.wildmindai.com';
+  const isProd = env.nodeEnv === 'production';
+  // Use cookieDomain from env, or derive from productionDomain if available
+  const cookieDomain = env.cookieDomain || (env.productionDomain ? new URL(env.productionDomain).hostname.replace('www.', '.') : undefined);
   
   const testCookieValue = `test-${Date.now()}`;
   const cookieOptions = {

@@ -4,6 +4,7 @@ import { uploadBufferToZata, getZataSignedGetUrl } from '../utils/storage/zataUp
 import { adminDb } from '../config/firebaseAdmin';
 import { logger } from '../utils/logger';
 import { generationsMirrorRepository } from '../repository/generationsMirrorRepository';
+import { env } from '../config/env';
 
 export interface OptimizedImageResult {
   originalUrl: string;
@@ -23,11 +24,13 @@ export interface OptimizedImageResult {
 function extractStoragePathFromUrl(imageUrl: string): { basePath: string; filename: string } {
   try {
     // Handle different URL formats
+    const zataPrefix = env.zataPrefix || 'https://idr01.zata.ai/devstoragev1/';
+    const zataBase = zataPrefix.replace('/devstoragev1/', '').replace(/\/$/, '');
     const ZATA_PREFIXES = [
-      'https://idr01.zata.ai/devstoragev1/',
-      'https://idr01.zata.ai/',
-      'http://idr01.zata.ai/devstoragev1/',
-      'http://idr01.zata.ai/'
+      zataPrefix,
+      `${zataBase}/`,
+      zataPrefix.replace('https://', 'http://'),
+      `${zataBase.replace('https://', 'http://')}/`
     ];
     
     let fullPath = '';

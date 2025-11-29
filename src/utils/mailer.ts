@@ -46,8 +46,8 @@ function getTransporter() {
     });
     
     transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
+      host: env.gmailSmtpHost,
+      port: env.gmailSmtpPort,
       secure: true,
       pool: true,
       maxConnections: 3,
@@ -124,7 +124,8 @@ export async function sendEmail(to: string, subject: string, text: string) {
     // Try Resend API if configured
     if (env.resendApiKey && env.smtpFrom) {
       try {
-        const resp = await fetch('https://api.resend.com/emails', {
+        const resendApiBase = env.resendApiBase;
+        const resp = await fetch(`${resendApiBase}/emails`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${env.resendApiKey}`,
@@ -170,7 +171,8 @@ export async function sendEmail(to: string, subject: string, text: string) {
     // Try Resend fallback if configured
     if (env.resendApiKey && env.smtpFrom) {
       try {
-        const resp = await fetch('https://api.resend.com/emails', {
+        const resendApiBase = env.resendApiBase;
+        const resp = await fetch(`${resendApiBase}/emails`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${env.resendApiKey}`,

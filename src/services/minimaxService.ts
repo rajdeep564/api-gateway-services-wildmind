@@ -22,7 +22,8 @@ import { syncToMirror, updateMirror } from "../utils/mirrorHelper";
 import { aestheticScoreService } from "./aestheticScoreService";
 import { markGenerationCompleted } from "./generationHistoryService";
 
-const MINIMAX_API_BASE = "https://api.minimax.io/v1";
+
+const MINIMAX_API_BASE = env.minimaxApiBase;
 const MINIMAX_MODEL = "image-01";
 
 function mapMiniMaxCodeToHttp(statusCode: number): number {

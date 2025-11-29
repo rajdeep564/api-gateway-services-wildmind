@@ -1,6 +1,7 @@
 // utils/storage/zataDelete.ts
 import { DeleteObjectCommand, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { s3, ZATA_BUCKET } from "./zataClient";
+import { env } from "../../config/env";
 
 /**
  * Delete a single file from Zata storage
@@ -61,7 +62,7 @@ export async function deleteFiles(keys: string[]): Promise<{ deleted: string[]; 
  */
 export function extractKeyFromUrl(url: string): string | null {
   try {
-    const ZATA_PREFIX = 'https://idr01.zata.ai/devstoragev1/';
+    const ZATA_PREFIX = env.zataPrefix || 'https://idr01.zata.ai/devstoragev1/';
     if (url.startsWith(ZATA_PREFIX)) {
       return url.substring(ZATA_PREFIX.length);
     }

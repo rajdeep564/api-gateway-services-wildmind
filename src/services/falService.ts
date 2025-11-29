@@ -2167,7 +2167,8 @@ const extractFalVideoUrl = (payload: any): { url?: string; id?: string } => {
 
 async function fetchFalQueueResponse(modelPath: string, requestId: string): Promise<any> {
   const normalizedModel = modelPath.startsWith('fal-ai/') ? modelPath : `fal-ai/${modelPath}`;
-  const fallbackUrl = `https://queue.fal.run/${normalizedModel}/requests/${requestId}`;
+  const falQueueBase = env.falQueueBase;
+  const fallbackUrl = `${falQueueBase}/${normalizedModel}/requests/${requestId}`;
   const falKey = env.falKey as string;
   if (!falKey) {
     throw new ApiError('FAL AI API key not configured', 500);

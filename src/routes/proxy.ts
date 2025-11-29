@@ -17,7 +17,9 @@ try {
 } catch {}
 
 // Concurrency gate for ffmpeg to avoid CPU/memory spikes in production
-const FFMPEG_MAX_CONCURRENCY = Math.max(1, parseInt(String(process.env.FFMPEG_MAX_CONCURRENCY || '1'), 10));
+import { env } from '../config/env';
+
+const FFMPEG_MAX_CONCURRENCY = Math.max(1, env.ffmpegMaxConcurrency || 1);
 let ffmpegActive = 0;
 
 // Create HTTPS agent that ignores SSL certificate errors for Zata (certificate expired)
@@ -65,8 +67,8 @@ const getContentInfo = (contentType: string, url: string) => {
 };
 
 function buildZataUrl(resourcePath: string): string {
-  const endpoint = (ZATA_ENDPOINT || 'https://idr01.zata.ai').replace(/\/$/, '');
-  const bucket = (ZATA_BUCKET || 'devstoragev1').replace(/^\//, '');
+  const endpoint = ZATA_ENDPOINT ? ZATA_ENDPOINT.replace(/\/$/, '') : '';
+  const bucket = ZATA_BUCKET ? ZATA_BUCKET.replace(/^\//, '') : '';
   // resourcePath is already URL-encoded by frontend routing, keep as-is
   return `${endpoint}/${bucket}/${resourcePath}`;
 }

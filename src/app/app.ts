@@ -15,27 +15,27 @@ import { getRedisClient, isRedisEnabled } from '../config/redisClient';
 const app = express();
 
 // Trust proxy settings (safe for rate limiting)
-const isProd = process.env.NODE_ENV === 'production';
+const isProd = env.nodeEnv === 'production';
 app.set('trust proxy', isProd ? 1 : false);
 
 // Security and common middlewares (SOC2 oriented)
 app.use(requestId);
 app.use(securityHeaders);
 // CORS for frontend with credentials (dev + prod)
-const isProdEnv = process.env.NODE_ENV === 'production';
+const isProdEnv = env.nodeEnv === 'production';
 // Always include production origins (even if NODE_ENV isn't set, Render.com is production)
 const allowedOrigins = [
   // Production hosts (always include these for live site)
-  'https://www.wildmindai.com', 
-  'https://wildmindai.com',
-  'https://studio.wildmindai.com', // Canvas subdomain
+  env.productionWwwDomain,
+  env.productionDomain,
+  env.productionStudioDomain, // Canvas subdomain
   // Development origins (only in dev)
   ...(!isProdEnv ? [
-    'http://localhost:3000', // Main project dev
-    'http://localhost:3001', // Canvas dev
+    env.devFrontendUrl, // Main project dev
+    env.devCanvasUrl, // Canvas dev
   ] : []),
-  process.env.FRONTEND_ORIGIN || '',
-  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : [])
+  ...env.frontendOrigins,
+  ...env.allowedOrigins
 ].filter(Boolean);
 
 const corsOptions: any = {
@@ -44,19 +44,25 @@ const corsOptions: any = {
     if (!origin) return callback(null, true);
     try {
       if (allowedOrigins.includes(origin)) return callback(null, true);
-      // Allow subdomains of wildmindai.com
+      // Allow subdomains of production domain
       const originUrl = new URL(origin);
-      if (originUrl.hostname === 'www.wildmindai.com' || 
-          originUrl.hostname === 'wildmindai.com' ||
-          originUrl.hostname.endsWith('.wildmindai.com')) {
+      const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
+      const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
+      if (prodDomain && (originUrl.hostname === prodWwwDomain || 
+          originUrl.hostname === prodDomain ||
+          originUrl.hostname.endsWith(`.${prodDomain}`))) {
         return callback(null, true);
       }
-      // Allow subdomains of the configured prod origin (e.g., preview/app)
-      if (process.env.FRONTEND_ORIGIN) {
-        const allowHost = new URL(process.env.FRONTEND_ORIGIN).hostname;
-        const reqHost = originUrl.hostname;
-        if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) {
-          return callback(null, true);
+      // Allow subdomains of the configured frontend origins
+      for (const frontendOrigin of env.frontendOrigins) {
+        try {
+          const allowHost = new URL(frontendOrigin).hostname;
+          const reqHost = originUrl.hostname;
+          if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) {
+            return callback(null, true);
+          }
+        } catch {
+          // Skip invalid URLs
         }
       }
     } catch (e) {
@@ -96,15 +102,17 @@ const allowOrigin = (origin?: string) => {
   if (!origin) return false;
   try {
     if (allowedOrigins.includes(origin)) return true;
-    // Allow wildmindai.com and all its subdomains
+    // Allow production domain and all its subdomains
     const originUrl = new URL(origin);
-    if (originUrl.hostname === 'www.wildmindai.com' || 
-        originUrl.hostname === 'wildmindai.com' ||
-        originUrl.hostname.endsWith('.wildmindai.com')) {
+    const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
+    const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
+    if (prodDomain && (originUrl.hostname === prodWwwDomain || 
+        originUrl.hostname === prodDomain ||
+        originUrl.hostname.endsWith(`.${prodDomain}`))) {
       return true;
     }
-    if (process.env.FRONTEND_ORIGIN) {
-      const allowHost = new URL(process.env.FRONTEND_ORIGIN).hostname;
+    if (env.frontendOrigin) {
+      const allowHost = new URL(env.frontendOrigin).hostname;
       const reqHost = originUrl.hostname;
       if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) return true;
     }

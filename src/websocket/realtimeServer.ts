@@ -50,7 +50,9 @@ const projectMedia = new Map<string, Map<string, MediaElement>>();
 function getProjectId(reqUrl: string | undefined): string | null {
   if (!reqUrl) return null;
   try {
-    const u = new URL(reqUrl, 'http://localhost');
+    const { env } = require('../config/env');
+    const defaultBase = env.devFrontendUrl;
+    const u = new URL(reqUrl, defaultBase);
     return u.searchParams.get('projectId');
   } catch {
     return null;
