@@ -62,7 +62,7 @@ export async function deleteFiles(keys: string[]): Promise<{ deleted: string[]; 
  */
 export function extractKeyFromUrl(url: string): string | null {
   try {
-    const ZATA_PREFIX = env.zataPrefix || 'https://idr01.zata.ai/devstoragev1/';
+    const ZATA_PREFIX = env.zataPrefix;
     if (url.startsWith(ZATA_PREFIX)) {
       return url.substring(ZATA_PREFIX.length);
     }

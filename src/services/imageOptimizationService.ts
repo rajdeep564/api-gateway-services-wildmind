@@ -24,7 +24,7 @@ export interface OptimizedImageResult {
 function extractStoragePathFromUrl(imageUrl: string): { basePath: string; filename: string } {
   try {
     // Handle different URL formats
-    const zataPrefix = env.zataPrefix || 'https://idr01.zata.ai/devstoragev1/';
+    const zataPrefix = env.zataPrefix;
     const zataBase = zataPrefix.replace('/devstoragev1/', '').replace(/\/$/, '');
     const ZATA_PREFIXES = [
       zataPrefix,

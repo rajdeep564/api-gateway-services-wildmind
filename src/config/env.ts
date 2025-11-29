@@ -66,7 +66,7 @@ export interface EnvConfig {
   falQueueBase?: string; // FAL queue API base URL
   firebaseAuthApiBase?: string; // Firebase Auth API base URL
   // Zata Storage
-  zataPrefix?: string; // Zata storage prefix URL
+  zataPrefix: string; // Zata storage prefix URL
   // SMTP Configuration
   gmailSmtpHost?: string; // Gmail SMTP host
   gmailSmtpPort?: number; // Gmail SMTP port
