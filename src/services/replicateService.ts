@@ -1316,19 +1316,22 @@ export async function generateImage(uid: string, body: any) {
       if (rest.num_inference_steps != null) {
         input.num_inference_steps = Math.max(1, Math.min(50, Number(rest.num_inference_steps)));
       } else {
-        input.num_inference_steps = 14; // Default to 45
+        input.num_inference_steps = 14; // Default to 14
       }
-      // Default guidance_scale to 10 if not provided
+      // Default guidance_scale to 0 if not provided
       if (rest.guidance_scale != null) {
         input.guidance_scale = Math.max(0, Math.min(20, Number(rest.guidance_scale)));
       } else {
-        input.guidance_scale = 0; // Default to 10
+        input.guidance_scale = 0; // Default to 0
       }
       if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
       if (rest.output_format && ['png', 'jpg', 'webp'].includes(String(rest.output_format))) {
         input.output_format = String(rest.output_format);
       }
       if (rest.output_quality != null) input.output_quality = Math.max(0, Math.min(100, Number(rest.output_quality)));
+      // Support num_images parameter for multiple image generation
+      // If num_images is provided, we'll handle it by making multiple calls internally
+      const numImages = rest.num_images != null ? Math.max(1, Math.min(4, Number(rest.num_images))) : 1;
       // Map frontend model name to actual Replicate model identifier
       // Actual Replicate model: prunaai/z-image-turbo with version hash from DEFAULT_VERSION_BY_MODEL
       const ACTUAL_REPLICATE_MODEL = "prunaai/z-image-turbo";
@@ -1339,6 +1342,9 @@ export async function generateImage(uid: string, body: any) {
       if (!body.version && DEFAULT_VERSION_BY_MODEL[ACTUAL_REPLICATE_MODEL]) {
         body.version = DEFAULT_VERSION_BY_MODEL[ACTUAL_REPLICATE_MODEL];
       }
+      
+      // Store num_images for later use in the generation logic
+      (body as any).__num_images = numImages;
     }
     const modelSpec = composeModelSpec(replicateModelBase, body.version);
     // eslint-disable-next-line no-console
@@ -1390,7 +1396,34 @@ export async function generateImage(uid: string, body: any) {
         console.debug("[seedream] input dump", JSON.stringify(dump, null, 2));
       } catch {}
     }
-    const output: any = await replicate.run(modelSpec as any, { input });
+    // Handle num_images for z-image-turbo model
+    // If num_images > 1, make multiple calls and combine results
+    let output: any;
+    const numImages = (body as any).__num_images || 1;
+    
+    if ((modelBase === "new-turbo-model" || modelBase === "placeholder-model-name") && numImages > 1) {
+      // Make multiple parallel calls for z-image-turbo
+      const outputPromises = Array.from({ length: numImages }, async () => {
+        return await replicate.run(modelSpec as any, { input });
+      });
+      const outputs = await Promise.all(outputPromises);
+      // Resolve URLs from all outputs and combine
+      const allResolvedUrls: string[] = [];
+      for (const out of outputs) {
+        const urls = await resolveOutputUrls(out);
+        if (urls && urls.length > 0) {
+          allResolvedUrls.push(...urls);
+        }
+      }
+      // Set outputUrls directly to skip the normal resolveOutputUrls call
+      outputUrls = allResolvedUrls;
+      // Set output to empty array to skip normal processing
+      output = [];
+    } else {
+      // Single image generation (default behavior)
+      output = await replicate.run(modelSpec as any, { input });
+    }
+    
     // eslint-disable-next-line no-console
     console.log(
       "[replicateService.generateImage] output",
@@ -1444,7 +1477,10 @@ export async function generateImage(uid: string, body: any) {
       } catch {}
     }
     // Seedream returns an array of urls per schema; handle multiple
-    outputUrls = await resolveOutputUrls(output);
+    // Skip if outputUrls already set (for z-turbo num_images handling)
+    if (outputUrls.length === 0) {
+      outputUrls = await resolveOutputUrls(output);
+    }
     // If fewer images returned than requested, fall back to sequential reruns
     if (modelBase === "bytedance/seedream-4") {
       const requested =
