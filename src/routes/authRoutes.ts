@@ -1,9 +1,10 @@
 import { Router } from 'express';
-import { authController, sessionCacheStatus } from '../controllers/auth/authController';
+import { authController, sessionCacheStatus, debugSession } from '../controllers/auth/authController';
 import { redeemCodeController } from '../controllers/redeemCodeController';
 import { publicVisibilityController } from '../controllers/auth/publicVisibilityController';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { validateSession, validateOtpStart, validateOtpVerify, validateUsername, validateUpdateMe, validateLogin, validateGoogleSignIn, validateGoogleUsername, validateCheckUsername } from '../middlewares/validateAuth';
+import { env } from '../config/env';
 
 const router = Router();
 
@@ -38,19 +39,34 @@ router.post('/redeem-code/apply', requireAuth, redeemCodeController.applyRedeemC
 router.get('/can-toggle-public', requireAuth, publicVisibilityController.canTogglePublic);
 // Debug: check if current session cookie is cached in Redis
 router.get('/session-cache', requireAuth, sessionCacheStatus);
+// Debug: comprehensive session status check (no auth required for debugging)
+router.get('/debug-session', debugSession);
 
 // Debug endpoint to check cookie domain configuration (no auth required for debugging)
 router.get('/debug/cookie-config', (req, res) => {
-  const isProd = process.env.NODE_ENV === 'production';
-  const cookieDomain = process.env.COOKIE_DOMAIN;
+  const isProd = env.nodeEnv === 'production';
+  const cookieDomain = env.cookieDomain;
+  
+  // CRITICAL: Analyze cookie header to see if cookie is being sent
+  const cookieHeader = req.headers.cookie || '';
+  const allCookies = cookieHeader.split(';').map(c => c.trim());
+  const hasAppSession = cookieHeader.includes('app_session=');
+  const appSessionCookie = allCookies.find(c => c.startsWith('app_session='));
   
   console.log('[AUTH][DEBUG] Cookie config check', {
     isProd,
     cookieDomain: cookieDomain || '(NOT SET - THIS IS THE PROBLEM!)',
-    nodeEnv: process.env.NODE_ENV,
+    nodeEnv: env.nodeEnv,
     allEnvKeys: Object.keys(process.env).filter(k => k.includes('COOKIE') || k.includes('DOMAIN')),
     requestOrigin: req.headers.origin,
-    requestHost: req.headers.host
+    requestHost: req.headers.host,
+    cookieHeaderAnalysis: {
+      hasCookieHeader: !!req.headers.cookie,
+      cookieHeaderLength: cookieHeader.length,
+      allCookies: allCookies,
+      hasAppSession,
+      appSessionCookie: appSessionCookie ? (appSessionCookie.length > 50 ? appSessionCookie.substring(0, 50) + '...' : appSessionCookie) : null
+    }
   });
   
   res.json({
@@ -73,14 +89,46 @@ router.get('/debug/cookie-config', (req, res) => {
       '3. Look for app_session cookie with Domain: .wildmindai.com',
       '4. Then open studio.wildmindai.com - cookie should be there',
       '5. Check backend logs for [AUTH][setSessionCookie] when you log in'
-    ]
+    ],
+    // CRITICAL: Add cookie header analysis
+    cookieHeaderAnalysis: {
+      hasCookieHeader: !!req.headers.cookie,
+      cookieHeaderLength: cookieHeader.length,
+      allCookies: allCookies,
+      hasAppSession,
+      appSessionCookieFound: !!appSessionCookie,
+      cookieCount: allCookies.length,
+      hostname: req.hostname,
+      origin: req.headers.origin,
+      diagnosis: !hasAppSession ? {
+        issue: 'Cookie NOT in request header',
+        explanation: 'The app_session cookie is not being sent with this request. This means the cookie either:',
+        possibleCauses: [
+          '1. COOKIE_DOMAIN env var is NOT set in backend (most likely)',
+          '2. Cookie was set without Domain attribute (old cookie before env var was set)',
+          '3. Cookie domain mismatch (cookie for www.wildmindai.com but accessing studio.wildmindai.com)',
+          '4. User is not logged in on www.wildmindai.com'
+        ],
+        howToFix: [
+          '1. Set COOKIE_DOMAIN=.wildmindai.com in Render.com environment',
+          '2. Restart backend service',
+          '3. Log in again on www.wildmindai.com (old cookies won\'t have domain)',
+          '4. Check DevTools → Application → Cookies → verify Domain: .wildmindai.com',
+          '5. Then try studio.wildmindai.com again'
+        ]
+      } : {
+        issue: 'Cookie found in request header',
+        status: 'Cookie is being sent - check token verification in debug-session endpoint'
+      }
+    }
   });
 });
 
 // Test endpoint to manually set a cookie with the correct domain
 router.get('/debug/test-cookie', (req, res) => {
-  const isProd = process.env.NODE_ENV === 'production';
-  const cookieDomain = process.env.COOKIE_DOMAIN || '.wildmindai.com';
+  const isProd = env.nodeEnv === 'production';
+  // Use cookieDomain from env, or derive from productionDomain if available
+  const cookieDomain = env.cookieDomain || (env.productionDomain ? new URL(env.productionDomain).hostname.replace('www.', '.') : undefined);
   
   const testCookieValue = `test-${Date.now()}`;
   const cookieOptions = {

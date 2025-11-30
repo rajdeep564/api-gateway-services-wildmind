@@ -39,6 +39,8 @@ const DEFAULT_VERSION_BY_MODEL: Record<string, string> = {
     "f121d640bd286e1fdc67f9799164c1d5be36ff74576ee11c803ae5b665dd46aa",
   "mv-lab/swin2sr":
     "a01b0512004918ca55d02e554914a9eca63909fa83a29ff0f115c78a7045574f",
+  "prunaai/z-image-turbo":
+    "7ea16386290ff5977c7812e66e462d7ec3954d8e007a8cd18ded3e7d41f5d7cf",
 };
 
 function composeModelSpec(modelBase: string, maybeVersion?: string): string {
@@ -151,9 +153,8 @@ export async function removeBackground(
     isPublic?: boolean;
   }
 ) {
-  const key =
-    ((env as any).replicateApiKey as string) ||
-    (process.env.REPLICATE_API_TOKEN as string);
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const key = env.replicateApiKey as string;
   if (!key) {
     // eslint-disable-next-line no-console
     console.error(
@@ -352,9 +353,8 @@ export async function removeBackground(
 }
 
 export async function upscale(uid: string, body: any) {
-  const key =
-    ((env as any).replicateApiKey as string) ||
-    (process.env.REPLICATE_API_TOKEN as string);
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const key = env.replicateApiKey as string;
   if (!key) {
     // eslint-disable-next-line no-console
     console.error("[replicateService.upscale] Missing REPLICATE_API_TOKEN");
@@ -441,8 +441,8 @@ export async function upscale(uid: string, body: any) {
     try {
       const username = creator?.username || uid;
       // Check if it's already a Zata URL - if so, extract the storage path
-      const ZATA_PREFIX = process.env.ZATA_PREFIX || 'https://idr01.zata.ai/devstoragev1/';
-      if (body.image.startsWith(ZATA_PREFIX)) {
+      const ZATA_PREFIX = env.zataPrefix;
+      if (ZATA_PREFIX && body.image.startsWith(ZATA_PREFIX)) {
         inputImageStoragePath = body.image.substring(ZATA_PREFIX.length);
         inputImageUrl = body.image;
       } else {
@@ -895,9 +895,8 @@ export async function upscale(uid: string, body: any) {
 }
 
 export async function generateImage(uid: string, body: any) {
-  const key =
-    ((env as any).replicateApiKey as string) ||
-    (process.env.REPLICATE_API_TOKEN as string);
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const key = env.replicateApiKey as string;
   if (!key) {
     // eslint-disable-next-line no-console
     console.error(
@@ -937,10 +936,10 @@ export async function generateImage(uid: string, body: any) {
 
   // Do not upload input data URIs to Zata; pass directly to provider
   let outputUrls: string[] = [];
+  let replicateModelBase = modelBase; // Declare outside try block so it's accessible in catch
   try {
     const { model: _m, isPublic: _p, ...rest } = body || {};
     const input: any = { prompt: body.prompt };
-    let replicateModelBase = modelBase;
     // Seedream schema mapping
     if (modelBase === "bytedance/seedream-4") {
       // size handling
@@ -1308,13 +1307,49 @@ export async function generateImage(uid: string, body: any) {
         }
       }
     }
+    // New Turbo Model mapping (z-image-turbo)
+    // Using actual Replicate model identifier: prunaai/z-image-turbo with version hash
+    if (modelBase === "new-turbo-model" || modelBase === "placeholder-model-name") {
+      // Map all supported parameters from schema
+      if (rest.width != null) input.width = Math.max(64, Math.min(2048, Number(rest.width)));
+      if (rest.height != null) input.height = Math.max(64, Math.min(2048, Number(rest.height)));
+      if (rest.num_inference_steps != null) {
+        input.num_inference_steps = Math.max(1, Math.min(50, Number(rest.num_inference_steps)));
+      } else {
+        input.num_inference_steps = 14; // Default to 45
+      }
+      // Default guidance_scale to 10 if not provided
+      if (rest.guidance_scale != null) {
+        input.guidance_scale = Math.max(0, Math.min(20, Number(rest.guidance_scale)));
+      } else {
+        input.guidance_scale = 0; // Default to 10
+      }
+      if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
+      if (rest.output_format && ['png', 'jpg', 'webp'].includes(String(rest.output_format))) {
+        input.output_format = String(rest.output_format);
+      }
+      if (rest.output_quality != null) input.output_quality = Math.max(0, Math.min(100, Number(rest.output_quality)));
+      // Map frontend model name to actual Replicate model identifier
+      // Actual Replicate model: prunaai/z-image-turbo with version hash from DEFAULT_VERSION_BY_MODEL
+      const ACTUAL_REPLICATE_MODEL = "prunaai/z-image-turbo";
+      
+      replicateModelBase = ACTUAL_REPLICATE_MODEL;
+      // Ensure version is used from DEFAULT_VERSION_BY_MODEL if not provided
+      // This ensures the model spec includes the required version hash
+      if (!body.version && DEFAULT_VERSION_BY_MODEL[ACTUAL_REPLICATE_MODEL]) {
+        body.version = DEFAULT_VERSION_BY_MODEL[ACTUAL_REPLICATE_MODEL];
+      }
+    }
     const modelSpec = composeModelSpec(replicateModelBase, body.version);
     // eslint-disable-next-line no-console
     console.log("[replicateService.generateImage] run", {
       requestedModel: modelBase,
+      replicateModelBase,
+      bodyVersion: body.version,
       resolvedModelSpec: modelSpec,
       hasImage: !!rest.image,
       inputKeys: Object.keys(input),
+      modelSpecIncludesVersion: modelSpec.includes(':'),
     });
     if (modelBase === "bytedance/seedream-4") {
       try {
@@ -1504,17 +1539,36 @@ export async function generateImage(uid: string, body: any) {
   } catch (e: any) {
     // eslint-disable-next-line no-console
     console.error("[replicateService.generateImage] error", e?.message || e);
+    console.error("[replicateService.generateImage] error details", {
+      modelBase,
+      replicateModelBase: replicateModelBase || modelBase,
+      errorMessage: e?.message,
+      errorDetails: e?.response?.data || e?.data || e,
+    });
+    
+    // Extract more detailed error message
+    let errorMessage = "Replicate generation failed";
+    if (e?.message) {
+      errorMessage = e.message;
+    } else if (e?.response?.data?.detail) {
+      errorMessage = e.response.data.detail;
+    } else if (e?.response?.data?.error) {
+      errorMessage = e.response.data.error;
+    } else if (typeof e === 'string') {
+      errorMessage = e;
+    }
+    
     try {
       await replicateRepository.updateGenerationRecord(legacyId, {
         status: "failed",
-        error: e?.message || "Replicate failed",
+        error: errorMessage || "Replicate failed",
       });
     } catch {}
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
-      error: e?.message || "Replicate failed",
+      error: errorMessage || "Replicate failed",
     } as any);
-    throw new ApiError("Replicate generation failed", 502, e);
+    throw new ApiError(errorMessage || "Replicate generation failed", 502, e);
   }
 
   // Upload possibly multiple output URLs
@@ -1624,9 +1678,8 @@ export const replicateService = {
 };
 // Wan 2.5 Image-to-Video via Replicate
 export async function wanI2V(uid: string, body: any) {
-  const key =
-    ((env as any).replicateApiKey as string) ||
-    (process.env.REPLICATE_API_TOKEN as string);
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const key = env.replicateApiKey as string;
   if (!key) {
     // eslint-disable-next-line no-console
     console.error("[replicateService.wanI2V] Missing REPLICATE_API_TOKEN");
@@ -1809,9 +1862,8 @@ Object.assign(replicateService, { wanI2V });
 
 // Wan 2.5 Text-to-Video via Replicate
 export async function wanT2V(uid: string, body: any) {
-  const key =
-    ((env as any).replicateApiKey as string) ||
-    (process.env.REPLICATE_API_TOKEN as string);
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const key = env.replicateApiKey as string;
   if (!key) {
     // eslint-disable-next-line no-console
     console.error("[replicateService.wanT2V] Missing REPLICATE_API_TOKEN");
@@ -2002,9 +2054,8 @@ async function resolveWanModelFast(body: any): Promise<boolean> {
 }
 
 function ensureReplicate(): any {
-  const key =
-    ((env as any).replicateApiKey as string) ||
-    (process.env.REPLICATE_API_TOKEN as string);
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const key = env.replicateApiKey as string;
   if (!key) {
     // eslint-disable-next-line no-console
     console.error("[replicateQueue] Missing REPLICATE_API_TOKEN");

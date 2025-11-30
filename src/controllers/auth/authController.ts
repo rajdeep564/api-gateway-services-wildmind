@@ -6,8 +6,7 @@ import { formatApiResponse } from "../../utils/formatApiResponse";
 import { ApiError } from "../../utils/errorHandler";
 import { extractDeviceInfo } from "../../utils/deviceInfo";
 import { admin } from "../../config/firebaseAdmin";
-const shouldRevokeFirebaseTokens =
-  (process.env.REVOKE_FIREBASE_TOKENS || '').toLowerCase() === 'true';
+import { env } from "../../config/env";
 import "../../types/http";
 import { cacheSession, deleteCachedSession, decodeJwtPayload, getCachedSession, invalidateAllUserSessions } from "../../utils/sessionStore";
 import { isRedisEnabled } from "../../config/redisClient";
@@ -107,11 +106,12 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
         if (oldToken && oldToken !== sessionCookie) {
           await deleteCachedSession(oldToken);
         }
-        // Invalidate all other sessions for this user (but keep the one we just created)
+        // Invalidate all other sessions for this user (but NEVER the one we just created)
+        // CRITICAL FIX: Pass current session token to ensure it's never invalidated
         // BUG FIX #13: Keep newest session if under limit, otherwise remove oldest
-        await invalidateAllUserSessions(user.uid, true);
+        await invalidateAllUserSessions(user.uid, true, sessionCookie);
         
-        if (shouldRevokeFirebaseTokens) {
+        if (env.revokeFirebaseTokens) {
           // BUG FIX #10: Revoke all refresh tokens for this user to force re-authentication on other devices
           // This ensures Firebase auth state is synced across devices
           // NOTE: This invalidates the ID token, but we've already created the session cookie above
@@ -122,7 +122,7 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
             console.warn('[AUTH][createSession] Failed to revoke refresh tokens (non-fatal):', revokeError);
           }
         } else {
-          console.log('[AUTH][createSession] Skipping Firebase refresh token revocation (disabled via env).');
+          console.log('[AUTH][createSession] Skipping Firebase refresh token revocation (disabled via env). REVOKE_FIREBASE_TOKENS=', env.revokeFirebaseTokens);
         }
         
         console.log('[AUTH][createSession] Invalidated old sessions for user', { uid: user.uid });
@@ -344,6 +344,10 @@ async function verifyEmailOtp(req: Request, res: Response, next: NextFunction) {
         const existingUser = await admin.auth().getUser(result.user.uid);
         if (existingUser && password) {
           // Password was set/reset - invalidate old sessions for security
+          // CRITICAL FIX: Don't pass currentToken here since we're creating a new session
+          // The new session will be created after this, so we want to keep it
+          // But we need to get the session cookie from the response to protect it
+          // For now, just invalidate old ones - the new session will be created separately
           await invalidateAllUserSessions(result.user.uid, true);
           console.log('[AUTH][verifyEmailOtp] Invalidated old sessions (password reset scenario)', { uid: result.user.uid });
         }
@@ -421,8 +425,8 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     timestamp: new Date().toISOString()
   });
   
-  const isProd = process.env.NODE_ENV === "production";
-  const cookieDomain = process.env.COOKIE_DOMAIN; // e.g., .wildmindai.com when API runs on api.wildmindai.com
+  const isProd = env.nodeEnv === "production";
+  const cookieDomain = env.cookieDomain; // e.g., .wildmindai.com when API runs on api.wildmindai.com
   
   // BUG FIX #11: Check ID token expiration first to prevent mismatch
   let decodedToken: any;
@@ -651,11 +655,13 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
   
   // Check if we're in a production-like environment:
   // 1. NODE_ENV === 'production', OR
-  // 2. Origin is a wildmindai.com subdomain (production domain), OR
+  // 2. Origin is a production domain subdomain, OR
   // 3. Host matches the cookie domain
+  const prodDomainHost = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
+  const studioDomainHost = env.productionStudioDomain ? new URL(env.productionStudioDomain).hostname : undefined;
   const isProductionLike = isProd || 
-    (origin && (origin.includes('wildmindai.com') || origin.includes('studio.wildmindai.com'))) ||
-    (host && (host.includes('wildmindai.com') || host.includes('studio.wildmindai.com')));
+    (origin && prodDomainHost && (origin.includes(prodDomainHost) || (studioDomainHost && origin.includes(studioDomainHost)))) ||
+    (host && prodDomainHost && (host.includes(prodDomainHost) || (studioDomainHost && host.includes(studioDomainHost))));
   
   // Always set domain cookie if COOKIE_DOMAIN is configured (for cross-subdomain sharing)
   // This works in both production and when NODE_ENV isn't set (Render.com production)
@@ -668,7 +674,29 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
       const domainMatches = !!(dom && (host === dom.replace(/^\./, '') || host.endsWith(dom)));
       shouldSetDomain = domainMatches;
     }
+  } else {
+    // CRITICAL WARNING: COOKIE_DOMAIN is not set - cookies will NOT share across subdomains!
+    if (isProductionLike) {
+      console.error('[AUTH][setSessionCookie] ⚠️⚠️⚠️ CRITICAL: COOKIE_DOMAIN is NOT SET! ⚠️⚠️⚠️');
+      console.error('[AUTH][setSessionCookie] Cookies will NOT be shared across subdomains (www.wildmindai.com <-> studio.wildmindai.com)');
+      console.error('[AUTH][setSessionCookie] To fix: Set COOKIE_DOMAIN=.wildmindai.com in Render.com environment variables');
+      console.error('[AUTH][setSessionCookie] Then restart the backend service and have users log in again');
+    }
   }
+  
+  // CRITICAL: Log domain setting decision for debugging cross-subdomain issues
+  console.log('[AUTH][setSessionCookie] Domain setting decision:', {
+    cookieDomain: cookieDomain || '(NOT SET - COOKIES WILL NOT SHARE ACROSS SUBDOMAINS!)',
+    isProd,
+    isProductionLike,
+    host,
+    origin,
+    shouldSetDomain,
+    willSetDomain: shouldSetDomain ? cookieDomain : '(NOT SETTING - COOKIES WON\'T SHARE!)',
+    warning: !cookieDomain ? '⚠️⚠️⚠️ COOKIE_DOMAIN env var is NOT SET! Set it to ".wildmindai.com" in Render.com ⚠️⚠️⚠️' : 
+             !shouldSetDomain ? '⚠️ Domain will NOT be set - cookies won\'t share across subdomains' :
+             '✅ Domain will be set - cookies will share across subdomains'
+  });
 
   // Determine sameSite: use "none" for cross-subdomain cookies in production-like environments
   // This allows cookies to work between www.wildmindai.com and studio.wildmindai.com
@@ -775,9 +803,9 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
 }
 
 function clearSessionCookie(res: Response) {
-  const cookieDomain = process.env.COOKIE_DOMAIN; // e.g. .wildmindai.com
+  const cookieDomain = env.cookieDomain; // e.g. .wildmindai.com
   const expired = 'Thu, 01 Jan 1970 00:00:00 GMT';
-  const isProd = process.env.NODE_ENV === 'production';
+  const isProd = env.nodeEnv === 'production';
 
   const variants: string[] = [];
   const cookiesToClear = ['app_session', 'app_session.sig', 'auth_hint'];
@@ -1052,8 +1080,8 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
 
     // BUG FIX #6: Clear old cookie before creating new one
     const oldToken = req.cookies?.['app_session'];
-    const cookieDomain = process.env.COOKIE_DOMAIN;
-    const isProd = process.env.NODE_ENV === "production";
+    const cookieDomain = env.cookieDomain;
+    const isProd = env.nodeEnv === "production";
     
     if (oldToken) {
       // Delete old session from Redis cache
@@ -1131,6 +1159,7 @@ export const authController = {
   setGoogleUsername,
   checkUsername,
   refreshSession,
+  debugSession,
 };
 
 // Lightweight endpoint to check if current session token is cached in Redis
@@ -1152,5 +1181,206 @@ export async function sessionCacheStatus(req: Request, res: Response, _next: Nex
     }));
   } catch (_e) {
     return res.json(formatApiResponse('success', 'Error checking cache', { enabled: false }));
+  }
+}
+
+/**
+ * Debug endpoint to check comprehensive session status
+ * Helps verify session persistence without waiting for logout
+ */
+export async function debugSession(req: Request, res: Response, _next: NextFunction) {
+  try {
+    // CRITICAL: Log all cookie information for debugging cross-subdomain issues
+    const cookieHeader = req.headers.cookie || '';
+    const allCookies = cookieHeader.split(';').map(c => c.trim());
+    const hasAppSessionInHeader = cookieHeader.includes('app_session=');
+    const appSessionCookie = allCookies.find(c => c.startsWith('app_session='));
+    
+    console.log('[AUTH][debugSession] Cookie debug info:', {
+      hasCookieHeader: !!req.headers.cookie,
+      cookieHeaderLength: cookieHeader.length,
+      cookieHeaderPreview: cookieHeader.substring(0, 150) + (cookieHeader.length > 150 ? '...' : ''),
+      allCookies: allCookies,
+      hasAppSessionInHeader,
+      appSessionCookie: appSessionCookie ? (appSessionCookie.length > 50 ? appSessionCookie.substring(0, 50) + '...' : appSessionCookie) : null,
+      hostname: req.hostname,
+      origin: req.headers.origin,
+      referer: req.headers.referer
+    });
+    
+    const token = (req.cookies as any)?.['app_session'];
+    const hasToken = !!token;
+    
+    let decoded: any = null;
+    let verificationStatus = 'not_verified';
+    let verificationError: any = null;
+    let isSessionCookie = false;
+    
+    // Try to verify the token
+    if (token) {
+      try {
+        const { admin } = await import('../../config/firebaseAdmin');
+        const { env } = await import('../../config/env');
+        
+        try {
+          decoded = await admin.auth().verifySessionCookie(token, env.authStrictRevocation);
+          isSessionCookie = true;
+          verificationStatus = 'verified_session_cookie';
+        } catch (sessionError: any) {
+          try {
+            decoded = await admin.auth().verifyIdToken(token, env.authStrictRevocation);
+            isSessionCookie = false;
+            verificationStatus = 'verified_id_token';
+          } catch (idTokenError: any) {
+            verificationStatus = 'verification_failed';
+            verificationError = {
+              sessionError: sessionError?.message || sessionError?.code,
+              idTokenError: idTokenError?.message || idTokenError?.code,
+            };
+          }
+        }
+      } catch (verifyErr: any) {
+        verificationError = verifyErr?.message || 'Unknown verification error';
+      }
+    }
+    
+    // Check Redis cache
+    let cacheStatus: any = null;
+    try {
+      const cached = token ? await getCachedSession(token) : null;
+      if (cached) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const isExpired = cached.exp && cached.exp < nowSec;
+        cacheStatus = {
+          found: true,
+          uid: cached.uid,
+          exp: cached.exp,
+          expDate: cached.exp ? new Date(cached.exp * 1000).toISOString() : null,
+          issuedAt: cached.issuedAt,
+          issuedAtDate: cached.issuedAt ? new Date(cached.issuedAt * 1000).toISOString() : null,
+          isExpired,
+          expiresIn: cached.exp ? Math.max(0, cached.exp - nowSec) : null,
+          expiresInDays: cached.exp ? Math.floor((cached.exp - nowSec) / (24 * 60 * 60)) : null,
+        };
+      } else {
+        cacheStatus = { found: false };
+      }
+    } catch (cacheErr: any) {
+      cacheStatus = { error: cacheErr?.message };
+    }
+    
+    // Decode JWT payload to get expiration info
+    let jwtInfo: any = null;
+    if (token && decoded) {
+      jwtInfo = {
+        uid: decoded.uid,
+        email: decoded.email,
+        exp: decoded.exp,
+        expDate: decoded.exp ? new Date(decoded.exp * 1000).toISOString() : null,
+        iat: decoded.iat,
+        iatDate: decoded.iat ? new Date(decoded.iat * 1000).toISOString() : null,
+        auth_time: decoded.auth_time,
+        auth_timeDate: decoded.auth_time ? new Date(decoded.auth_time * 1000).toISOString() : null,
+        isSessionCookie,
+      };
+      
+      if (decoded.exp) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const expiresInSec = decoded.exp - nowSec;
+        jwtInfo.expiresIn = expiresInSec;
+        jwtInfo.expiresInDays = Math.floor(expiresInSec / (24 * 60 * 60));
+        jwtInfo.expiresInHours = Math.floor(expiresInSec / (60 * 60));
+        jwtInfo.isExpired = expiresInSec <= 0;
+        jwtInfo.ageInDays = decoded.iat ? Math.floor((nowSec - decoded.iat) / (24 * 60 * 60)) : null;
+      }
+    } else if (token) {
+      // Try to decode without verification to at least get expiration
+      try {
+        const payload = decodeJwtPayload(token);
+        if (payload) {
+          jwtInfo = {
+            exp: payload.exp,
+            expDate: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
+            iat: payload.iat,
+            iatDate: payload.iat ? new Date(payload.iat * 1000).toISOString() : null,
+            uid: payload.uid,
+            note: 'Decoded without verification - token may be invalid',
+          };
+          if (payload.exp) {
+            const nowSec = Math.floor(Date.now() / 1000);
+            const expiresInSec = payload.exp - nowSec;
+            jwtInfo.expiresIn = expiresInSec;
+            jwtInfo.expiresInDays = Math.floor(expiresInSec / (24 * 60 * 60));
+            jwtInfo.isExpired = expiresInSec <= 0;
+          }
+        }
+      } catch {}
+    }
+    
+    return res.json(formatApiResponse('success', 'Session debug info', {
+      timestamp: new Date().toISOString(),
+      hasToken,
+      tokenLength: token?.length || 0,
+      tokenPrefix: token ? token.substring(0, 20) + '...' : null,
+      verification: {
+        status: verificationStatus,
+        error: verificationError,
+        isSessionCookie,
+      },
+      jwt: jwtInfo,
+      cache: cacheStatus,
+      // CRITICAL: Add cookie header analysis for cross-subdomain debugging
+      cookieHeaderAnalysis: {
+        hasCookieHeader: !!req.headers.cookie,
+        cookieHeaderLength: cookieHeader.length,
+        allCookies: allCookies,
+        hasAppSessionInHeader,
+        appSessionCookieFound: !!appSessionCookie,
+        cookieCount: allCookies.length,
+        hostname: req.hostname,
+        origin: req.headers.origin,
+        diagnosis: !hasAppSessionInHeader ? {
+          issue: 'Cookie NOT in request header',
+          explanation: 'The app_session cookie is not being sent with this request. This means the cookie either:',
+          possibleCauses: [
+            '1. COOKIE_DOMAIN env var is NOT set in backend (most likely)',
+            '2. Cookie was set without Domain attribute (old cookie before env var was set)',
+            '3. Cookie domain mismatch (cookie for www.wildmindai.com but accessing studio.wildmindai.com)',
+            '4. User is not logged in on www.wildmindai.com'
+          ],
+          howToFix: [
+            '1. Set COOKIE_DOMAIN=.wildmindai.com in Render.com environment',
+            '2. Restart backend service',
+            '3. Log in again on www.wildmindai.com (old cookies won\'t have domain)',
+            '4. Check DevTools → Application → Cookies → verify Domain: .wildmindai.com',
+            '5. Then try studio.wildmindai.com again'
+          ],
+          networkTabCheck: 'Open DevTools → Network tab → Find /api/auth/me request → Headers → Request Headers → Check if Cookie header includes app_session'
+        } : hasAppSessionInHeader && !hasToken ? {
+          issue: 'Cookie in header but not parsed',
+          possibleCauses: [
+            'Cookie parsing issue',
+            'Cookie format incorrect'
+          ]
+        } : {
+          issue: 'Cookie found and parsed successfully',
+          status: 'OK'
+        }
+      },
+      recommendations: !hasToken 
+        ? ['No session token found - user is not logged in']
+        : verificationStatus === 'verification_failed'
+        ? ['Session token verification failed - user may be logged out', 'Check backend logs for detailed error']
+        : jwtInfo?.isExpired
+        ? ['Session token is expired - user needs to log in again']
+        : jwtInfo?.expiresInDays !== undefined && jwtInfo.expiresInDays < 1
+        ? ['Session expires soon - refresh may be needed']
+        : ['Session appears valid', `Expires in ${jwtInfo?.expiresInDays || 'unknown'} days`],
+    }));
+  } catch (error: any) {
+    return res.json(formatApiResponse('error', 'Debug endpoint error', {
+      error: error?.message,
+      stack: error?.stack,
+    }));
   }
 }

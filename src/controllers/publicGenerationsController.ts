@@ -116,9 +116,11 @@ async function refreshSignupImageCache(req: Request, res: Response, next: NextFu
 	}
 }
 
-export const publicGenerationsController = {
+const publicGenerationsController = {
 	listPublic,
 	getPublicById,
 	getRandomHighScoredImage,
 	refreshSignupImageCache,
 };
+
+export { publicGenerationsController };

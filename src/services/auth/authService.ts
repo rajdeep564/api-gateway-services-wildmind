@@ -4,6 +4,7 @@ import { authRepository } from '../../repository/auth/authRepository'; // Update
 import { AppUser, ProviderId } from '../../types/authTypes';
 import { ApiError } from '../../utils/errorHandler';
 import { sendEmail, isEmailConfigured } from '../../utils/mailer';
+import { generateOTPEmailHTML, generateOTPEmailText } from '../../utils/emailTemplates';
 
 function normalizeUsername(input: string): string {
   return (input || '')
@@ -141,25 +142,43 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
   
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   const ttlSeconds = 60; // OTP valid for 60s
+  const expiresInMinutes = Math.ceil(ttlSeconds / 60); // Convert to minutes for email template
   
   console.log(`[AUTH] Generated OTP: ${code} for ${email}, TTL: ${ttlSeconds}s`);
   
   await authRepository.saveOtp(email, code, ttlSeconds);
   console.log(`[AUTH] OTP saved to memory store`);
   
+  // Generate formatted email templates
+  const emailHTML = generateOTPEmailHTML({
+    code,
+    email,
+    expiresInMinutes
+  });
+  const emailText = generateOTPEmailText({
+    code,
+    email,
+    expiresInMinutes
+  });
+  
   // Fire-and-forget email send to reduce API latency; log result asynchronously
   const emailConfigured = isEmailConfigured();
   const shouldAwaitEmail = (() => {
-    const v = String(process.env.OTP_EMAIL_AWAIT || '').toLowerCase();
-    if (['1','true','yes','on'].includes(v)) return true;
+    // Use env config, but also check runtime detection for serverless platforms
+    if (env.otpEmailAwait) return true;
     // If running on typical serverless platforms, default to await for reliability
-    if (process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL) return true;
+    if (process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL) return true; // Keep - runtime detection
     return false;
   })();
 
   if (shouldAwaitEmail) {
     try {
-      await sendEmail(email, 'Your verification code', `Your OTP code is: ${code}`);
+      await sendEmail(
+        email,
+        'Verify Your Email - WildMind AI',
+        emailText,
+        emailHTML
+      );
       console.log(`[AUTH] OTP email sent (await) to ${email}`);
     } catch (emailError: any) {
       console.log(`[AUTH] Email send failed (await): ${emailError.message}`);
@@ -168,7 +187,12 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
   } else {
     (async () => {
       try {
-        await sendEmail(email, 'Your verification code', `Your OTP code is: ${code}`);
+        await sendEmail(
+          email,
+          'Verify Your Email - WildMind AI',
+          emailText,
+          emailHTML
+        );
         console.log(`[AUTH] OTP email dispatched (async) to ${email}`);
       } catch (emailError: any) {
         console.log(`[AUTH] Async email send failed: ${emailError.message}`);
@@ -177,7 +201,7 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
   }
 
   // Respond and indicate delivery channel (email or console fallback)
-  const exposeDebug = String(process.env.DEBUG_OTP || '').toLowerCase() === 'true' || (process.env.NODE_ENV !== 'production');
+  const exposeDebug = env.debugOtp || env.nodeEnv !== 'production';
   return { sent: true, ttl: ttlSeconds, channel: emailConfigured ? 'email' : 'console', ...(exposeDebug ? { debugCode: code } : {}) } as any;
 }
 
@@ -343,13 +367,15 @@ async function loginWithEmailPassword(email: string, password: string, deviceInf
   let passwordLoginIdToken: string | undefined;
   try {
       // Use Firebase REST API to verify password since Admin SDK doesn't expose signInWithEmailAndPassword
-      const firebaseApiKey = env.firebaseApiKey || process.env.NEXT_PUBLIC_FIREBASE_API_KEY || (process as any).env?.FIREBASE_WEB_API_KEY;
+      // env.firebaseApiKey already handles fallbacks in env.ts
+      const firebaseApiKey = env.firebaseApiKey;
       if (!firebaseApiKey) {
         // Explicit configuration error so ops can see it; don't mask as credentials issue
         throw new Error('FIREBASE_API_KEY missing (server). Set FIREBASE_API_KEY or NEXT_PUBLIC_FIREBASE_API_KEY');
       }
 
-      const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseApiKey}`, {
+      const firebaseAuthApiBase = env.firebaseAuthApiBase;
+      const response = await fetch(`${firebaseAuthApiBase}/accounts:signInWithPassword?key=${firebaseApiKey}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

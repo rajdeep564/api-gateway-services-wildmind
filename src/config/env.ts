@@ -12,6 +12,8 @@ export interface EnvConfig {
   firebaseMessagingSenderId?: string;
   firebaseAppId?: string;
   firebaseServiceAccount?: string;
+  firebaseServiceAccountJson?: string; // Alternative: JSON string format
+  firebaseServiceAccountB64?: string; // Alternative: Base64 encoded format
   // Zata
   zataEndpoint: string;
   zataBucket: string;
@@ -48,9 +50,44 @@ export interface EnvConfig {
   redisDebug: boolean;
   // Auth
   authStrictRevocation: boolean; // when true, verify* checks revocation (slower); default false for speed
+  revokeFirebaseTokens: boolean; // when true, revoke all Firebase tokens on login
+  cookieDomain?: string;
+  frontendOrigin?: string; // Single URL or comma-separated list of URLs
+  frontendOrigins: string[]; // Parsed array from frontendOrigin (comma-separated)
+  allowedOrigins: string[];
+  otpEmailAwait: boolean; // when true, await email sending before responding
+  debugOtp: boolean; // when true, expose OTP codes in response (dev only)
   // Local services
   scoreLocal?: string; // base URL for aesthetic scoring service
   promptEnhancerUrl?: string; // base URL for prompt enhancer service (Python FastAPI)
+  // API Base URLs
+  minimaxApiBase?: string; // MiniMax API base URL
+  resendApiBase?: string; // Resend API base URL
+  falQueueBase?: string; // FAL queue API base URL
+  firebaseAuthApiBase?: string; // Firebase Auth API base URL
+  // Zata Storage
+  zataPrefix: string; // Zata storage prefix URL
+  // SMTP Configuration
+  gmailSmtpHost?: string; // Gmail SMTP host
+  gmailSmtpPort?: number; // Gmail SMTP port
+  // Frontend Domains
+  productionDomain?: string; // Production domain (e.g., wildmindai.com)
+  productionWwwDomain?: string; // Production www domain (e.g., www.wildmindai.com)
+  productionStudioDomain?: string; // Production studio domain (e.g., studio.wildmindai.com)
+  // Development URLs
+  devFrontendUrl?: string; // Development frontend URL (e.g., http://localhost:3000)
+  devCanvasUrl?: string; // Development canvas URL (e.g., http://localhost:3001)
+  devBackendUrl?: string; // Development backend URL (e.g., http://localhost:5001)
+  // External Services
+  bflApiBase?: string; // BFL API base URL
+  apiGatewayUrl?: string; // API Gateway URL
+  disposableEmailDomainsUrl?: string; // Disposable email domains list URL
+  // Worker Configuration
+  mirrorQueuePollIntervalMs?: number; // Mirror queue polling interval in ms
+  mirrorQueueConcurrency?: number; // Mirror queue concurrent workers
+  mirrorQueueBatchLimit?: number; // Mirror queue batch size limit
+  // Media Processing
+  ffmpegMaxConcurrency?: number; // FFmpeg max concurrent operations
 }
 
 function normalizeBoolean(value: string | undefined, defaultTrue: boolean): boolean {
@@ -71,10 +108,11 @@ export const env: EnvConfig = {
   firebaseMessagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
   firebaseAppId: process.env.FIREBASE_APP_ID,
   firebaseServiceAccount: process.env.FIREBASE_SERVICE_ACCOUNT,
-  zataEndpoint: (process.env.ZATA_ENDPOINT || 'https://idr01.zata.ai').replace(/\/$/, ''),
-  zataBucket: process.env.ZATA_BUCKET || 'devstoragev1',
-  // Many S3-compatible providers accept 'us-east-1'; allow override
-  zataRegion: process.env.ZATA_REGION || 'us-east-1',
+  firebaseServiceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON,
+  firebaseServiceAccountB64: process.env.FIREBASE_SERVICE_ACCOUNT_B64,
+  zataEndpoint: (process.env.ZATA_ENDPOINT || '').replace(/\/$/, ''),
+  zataBucket: process.env.ZATA_BUCKET || '',
+  zataRegion: process.env.ZATA_REGION || '',
   zataForcePathStyle: normalizeBoolean(process.env.ZATA_FORCE_PATH_STYLE, true),
   zataAccessKeyId: process.env.ZATA_ACCESS_KEY_ID || '',
   zataSecretAccessKey: process.env.ZATA_SECRET_ACCESS_KEY || '',
@@ -104,9 +142,46 @@ export const env: EnvConfig = {
   redisDebug: normalizeBoolean(process.env.REDIS_DEBUG, false),
   // Auth
   authStrictRevocation: normalizeBoolean(process.env.AUTH_STRICT_REVOCATION, false),
+  revokeFirebaseTokens: normalizeBoolean(process.env.REVOKE_FIREBASE_TOKENS, false),
+  cookieDomain: process.env.COOKIE_DOMAIN,
+  frontendOrigin: process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL,
+  frontendOrigins: (process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL) 
+    ? (process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL || '').split(',').map(s => s.trim()).filter(Boolean)
+    : [],
+  allowedOrigins: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : [],
+  otpEmailAwait: normalizeBoolean(process.env.OTP_EMAIL_AWAIT, false),
+  debugOtp: normalizeBoolean(process.env.DEBUG_OTP, false),
   // Local services
   scoreLocal: (process.env.SCORE_LOCAL ? String(process.env.SCORE_LOCAL).trim() : undefined)?.replace(/\/$/, ''),
   promptEnhancerUrl: (process.env.PROMPT_ENHANCER_URL || process.env.NGROK_LANGUAGE)?.replace(/\/$/, ''),
+  // API Base URLs
+  minimaxApiBase: process.env.MINIMAX_API_BASE || 'https://api.minimax.io/v1',
+  resendApiBase: process.env.RESEND_API_BASE || 'https://api.resend.com',
+  falQueueBase: process.env.FAL_QUEUE_BASE || 'https://queue.fal.run',
+  firebaseAuthApiBase: process.env.FIREBASE_AUTH_API_BASE || 'https://identitytoolkit.googleapis.com/v1',
+  // Zata Storage
+  zataPrefix: process.env.ZATA_PREFIX || process.env.NEXT_PUBLIC_ZATA_PREFIX || 'https://idr01.zata.ai/devstoragev1/',
+  // SMTP Configuration
+  gmailSmtpHost: process.env.GMAIL_SMTP_HOST || 'smtp.gmail.com',
+  gmailSmtpPort: process.env.GMAIL_SMTP_PORT ? parseInt(process.env.GMAIL_SMTP_PORT, 10) : 465,
+  // Frontend Domains
+  productionDomain: process.env.PRODUCTION_DOMAIN || 'https://wildmindai.com',
+  productionWwwDomain: process.env.PRODUCTION_WWW_DOMAIN || 'https://www.wildmindai.com',
+  productionStudioDomain: process.env.PRODUCTION_STUDIO_DOMAIN || 'https://studio.wildmindai.com',
+  // Development URLs
+  devFrontendUrl: process.env.DEV_FRONTEND_URL || 'http://localhost:3000',
+  devCanvasUrl: process.env.DEV_CANVAS_URL || 'http://localhost:3001',
+  devBackendUrl: process.env.DEV_BACKEND_URL || 'http://localhost:5001',
+  // External Services
+  bflApiBase: process.env.BFL_API_BASE || 'https://api.bfl.ai',
+  apiGatewayUrl: process.env.API_GATEWAY_URL,
+  disposableEmailDomainsUrl: process.env.DISPOSABLE_EMAIL_DOMAINS_URL || 'https://raw.githubusercontent.com/disposable/disposable-email-domains/master/domains.json',
+  // Worker Configuration
+  mirrorQueuePollIntervalMs: process.env.MIRROR_QUEUE_POLL_INTERVAL_MS ? parseInt(process.env.MIRROR_QUEUE_POLL_INTERVAL_MS, 10) : undefined,
+  mirrorQueueConcurrency: process.env.MIRROR_QUEUE_CONCURRENCY ? parseInt(process.env.MIRROR_QUEUE_CONCURRENCY, 10) : undefined,
+  mirrorQueueBatchLimit: process.env.MIRROR_QUEUE_BATCH_LIMIT ? parseInt(process.env.MIRROR_QUEUE_BATCH_LIMIT, 10) : undefined,
+  // Media Processing
+  ffmpegMaxConcurrency: process.env.FFMPEG_MAX_CONCURRENCY ? parseInt(process.env.FFMPEG_MAX_CONCURRENCY, 10) : undefined,
 };
 
 

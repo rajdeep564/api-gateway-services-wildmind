@@ -3,13 +3,14 @@ import compression from 'compression';
 import hpp from 'hpp';
 import { v4 as uuidv4 } from 'uuid';
 import { Request, Response, NextFunction } from 'express';
+import { env } from '../config/env';
 
 export const requestId = (req: Request, _res: Response, next: NextFunction) => {
   (req as any).requestId = req.headers['x-request-id'] || uuidv4();
   next();
 };
 
-const isDev = process.env.NODE_ENV !== 'production';
+const isDev = env.nodeEnv !== 'production';
 
 export const securityHeaders = helmet({
   contentSecurityPolicy: {
@@ -19,12 +20,12 @@ export const securityHeaders = helmet({
       "img-src": ["'self'", 'data:', 'https:'],
       "connect-src": [
         "'self'",
-        'https://api.bfl.ai',
-        'http://localhost:5001', 'http://127.0.0.1:5001',
-        'https://api-gateway-services-wildmind.onrender.com',
-        'https://api-gateway-services-wildmind.vercel.app',
-        'https://api.wildmindai.com'
-      ],
+        env.bflApiBase || '',
+        env.devBackendUrl || '',
+        env.apiGatewayUrl || '',
+        // Include production API gateway URL derived from production domain
+        ...(env.productionDomain ? [env.productionDomain.replace(/^https?:\/\/(www\.)?/, 'https://api.')] : [])
+      ].filter(Boolean),
     }
   },
   // Disable COOP/COEP to avoid auth popup issues across domains
@@ -52,21 +53,22 @@ export const originCheck = (req: Request, res: Response, next: NextFunction) => 
   // Allow auth flows (OAuth callbacks may have no/foreign origin)
   if (path.startsWith('/api/auth/')) return next();
 
-  const isProd = process.env.NODE_ENV === 'production';
+  const isProd = env.nodeEnv === 'production';
   // Always include production hosts (even if NODE_ENV isn't set)
   const defaults = [
-    'https://wildmindai.com', 
-    'https://www.wildmindai.com',
-    'https://studio.wildmindai.com'
-  ];
-  const devDefaults = !isProd ? ['http://localhost:3000', 'http://localhost:3001'] : [];
-  const extra = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_ORIGIN || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
+    env.productionDomain,
+    env.productionWwwDomain,
+    env.productionStudioDomain
+  ].filter(Boolean);
+  const devDefaults = !isProd ? [env.devFrontendUrl, env.devCanvasUrl].filter(Boolean) : [];
+  // Combine allowedOrigins array with frontendOrigins if provided
+  const extra = env.allowedOrigins.length > 0 
+    ? env.allowedOrigins 
+    : env.frontendOrigins;
   const all = [...defaults, ...devDefaults, ...extra];
   const allowedHosts = new Set<string>();
   for (const o of all) {
+    if (!o) continue;
     try {
       const u = new URL(o);
       allowedHosts.add(u.host);
@@ -84,10 +86,12 @@ export const originCheck = (req: Request, res: Response, next: NextFunction) => 
       const originUrl = new URL(origin as string);
       const oh = originUrl.host;
       if (allowedHosts.has(oh)) return next();
-      // Allow wildmindai.com and all its subdomains
-      if (originUrl.hostname === 'www.wildmindai.com' || 
-          originUrl.hostname === 'wildmindai.com' ||
-          originUrl.hostname.endsWith('.wildmindai.com')) {
+      // Allow production domain and all its subdomains
+      const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : 'wildmindai.com';
+      const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : 'www.wildmindai.com';
+      if (originUrl.hostname === prodWwwDomain || 
+          originUrl.hostname === prodDomain ||
+          originUrl.hostname.endsWith(`.${prodDomain}`)) {
         return next();
       }
     }
@@ -98,10 +102,12 @@ export const originCheck = (req: Request, res: Response, next: NextFunction) => 
       const refererUrl = new URL(referer as string);
       const rh = refererUrl.host;
       if (allowedHosts.has(rh)) return next();
-      // Allow wildmindai.com and all its subdomains
-      if (refererUrl.hostname === 'www.wildmindai.com' || 
-          refererUrl.hostname === 'wildmindai.com' ||
-          refererUrl.hostname.endsWith('.wildmindai.com')) {
+      // Allow production domain and all its subdomains
+      const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
+      const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
+      if (prodDomain && (refererUrl.hostname === prodWwwDomain || 
+          refererUrl.hostname === prodDomain ||
+          refererUrl.hostname.endsWith(`.${prodDomain}`))) {
         return next();
       }
     }
