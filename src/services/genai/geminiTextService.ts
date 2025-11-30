@@ -202,6 +202,7 @@ For each scene, produce a detailed description:
 - scene_number: matches the scene_outline number
 - heading: same as in scene_outline
 - content: detailed description including action, visuals, character emotions, lighting, camera angles, and any important dialogue or sound. This will be used for image generation, so be vivid and specific.
+  Write naturally using the character and location names you identified in the story world (e.g., "Aryan", "Diya", "Restaurant").
 
 OUTPUT FORMAT (CRITICAL):
 Respond ONLY with a SINGLE JSON object with this EXACT structure:
@@ -251,7 +252,7 @@ Respond ONLY with a SINGLE JSON object with this EXACT structure:
       "content": "John, wearing his blue sweater and glasses, enters the cozy coffee shop. Warm lighting bathes the space. He spots Sarah sitting by the window, reading. He approaches hesitantly."
     }
   ]
-}
+
 
 CRITICAL RULES:
 - Do NOT add any text outside the JSON object
@@ -259,6 +260,11 @@ CRITICAL RULES:
 - Make visual_description fields VERY detailed for consistency
 - Consistency tokens must be UNIQUE and UPPERCASE
 - Include 5-10 scenes maximum
+- **CHARACTER/LOCATION NAME CONSISTENCY**: 
+  * Use the EXACT character and location names from the input story
+  * If the input mentions "Aryan" and "Diya", use those exact names (not "John" or "Sarah")
+  * If the input mentions "Restaurant", use that exact name (not "Coffee Shop" or "Cafe")
+  * This ensures visual consistency - the same character image will be used throughout all scenes
 - Respond ONLY with valid JSON`;
 
 export async function generateScenesFromStory(story: string): Promise<any> {
@@ -270,6 +276,46 @@ export async function generateScenesFromStory(story: string): Promise<any> {
     }
   };
 
+  // Remove @mentions from story - they are only metadata, not part of the story text
+  // Replace @mentions with their display names (capitalize first letter)
+  const mentionRegex = /@(\w+)/gi;
+  let cleanedStory = story;
+  const mentionMatches = Array.from(story.matchAll(mentionRegex));
+  const uniqueMentions = [...new Set(mentionMatches.map(m => m[1].toLowerCase()))];
+  
+  console.log('[GeminiTextService] 📝 Story input received:', {
+    originalStory: story.substring(0, 200) + (story.length > 200 ? '...' : ''),
+    storyLength: story.length,
+    detectedMentions: uniqueMentions,
+    mentionCount: uniqueMentions.length,
+  });
+  
+  if (uniqueMentions.length > 0) {
+    // Replace @mentions with capitalized names (e.g., @aryan -> Aryan)
+    uniqueMentions.forEach(mention => {
+      const displayName = mention.charAt(0).toUpperCase() + mention.slice(1);
+      const regex = new RegExp(`@${mention}\\b`, 'gi');
+      cleanedStory = cleanedStory.replace(regex, displayName);
+    });
+
+    console.log('[GeminiTextService] ✅ Cleaned story (removed @mentions):', {
+      originalLength: story.length,
+      cleanedLength: cleanedStory.length,
+      mentionsRemoved: uniqueMentions,
+      cleanedStoryPreview: cleanedStory.substring(0, 200) + (cleanedStory.length > 200 ? '...' : ''),
+      mentionMapping: uniqueMentions.reduce((acc, m) => {
+        acc[`@${m}`] = m.charAt(0).toUpperCase() + m.slice(1);
+        return acc;
+      }, {} as Record<string, string>),
+    });
+  } else {
+    console.log('[GeminiTextService] ⚠️ No @mentions detected in story text');
+  }
+
+  // Use cleaned story directly - no special instructions needed
+  // Gemini will naturally extract character/location names from the text
+  const userPrompt = cleanedStory;
+
   const contents = [
     {
       role: 'system',
@@ -277,7 +323,7 @@ export async function generateScenesFromStory(story: string): Promise<any> {
     },
     {
       role: 'user',
-      parts: [{ text: story }]
+      parts: [{ text: userPrompt }]
     }
   ];
 
@@ -287,11 +333,42 @@ export async function generateScenesFromStory(story: string): Promise<any> {
     contents,
   });
 
-  const responseText =
+  let responseText =
     typeof result.text === 'function' ? result.text() :
       typeof result.text === 'string' ? result.text :
         result.response?.candidates?.[0]?.content?.parts?.[0]?.text ||
         JSON.stringify(result);
+  
+  // Extract JSON from markdown code blocks if present
+  // Handle cases like: ```json\n{...}\n``` or ```\n{...}\n``` or ```json{...}```
+  responseText = responseText.trim();
+  
+  // Remove markdown code block markers
+  if (responseText.startsWith('```')) {
+    // Remove opening ```json or ```
+    responseText = responseText.replace(/^```(?:json|JSON)?\s*\n?/i, '');
+    // Remove closing ```
+    responseText = responseText.replace(/\n?```\s*$/g, '');
+    responseText = responseText.trim();
+  }
+  
+  // Also handle cases where JSON might be wrapped in other ways
+  // Try to find the first { or [ and last } or ]
+  const firstBrace = responseText.indexOf('{');
+  const firstBracket = responseText.indexOf('[');
+  const lastBrace = responseText.lastIndexOf('}');
+  const lastBracket = responseText.lastIndexOf(']');
+  
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    // Extract JSON object
+    responseText = responseText.substring(firstBrace, lastBrace + 1);
+  } else if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+    // Extract JSON array
+    responseText = responseText.substring(firstBracket, lastBracket + 1);
+  }
+  
+  responseText = responseText.trim();
+  
   try {
     const parsed = JSON.parse(responseText);
 
@@ -323,9 +400,12 @@ export async function generateScenesFromStory(story: string): Promise<any> {
 
     return parsed;
   } catch (e) {
-    console.error("Failed to parse JSON from Gemini response", e);
-    throw new Error("Failed to generate valid JSON for scenes");
+    console.error("[GeminiTextService] Failed to parse JSON from Gemini response", {
+      error: e,
+      errorMessage: e instanceof Error ? e.message : 'Unknown error',
+      responseTextLength: responseText?.length || 0,
+      responseTextPreview: responseText?.substring(0, 500) || 'No text',
+    });
+    throw new Error(`Failed to generate valid JSON for scenes: ${e instanceof Error ? e.message : 'Unknown error'}`);
   }
 }
-
-

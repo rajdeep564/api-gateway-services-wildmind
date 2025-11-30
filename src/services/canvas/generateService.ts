@@ -13,28 +13,29 @@ import { env } from '../../config/env';
 import { probeImageMeta } from '../../utils/media/imageProbe';
 import sharp from 'sharp';
 import axios from 'axios';
+import { createStoryboard, downloadImageAsBuffer, StoryboardFrame } from '../../utils/createStoryboard';
 
 /**
  * Convert width/height to a valid aspect ratio string
  */
 function calculateAspectRatio(width?: number, height?: number): string {
   if (!width || !height) return '1:1';
-  
+
   const ratio = width / height;
-  
+
   // Map to closest standard aspect ratio
   if (Math.abs(ratio - 1) < 0.1) return '1:1';
-  if (Math.abs(ratio - 16/9) < 0.1) return '16:9';
-  if (Math.abs(ratio - 9/16) < 0.1) return '9:16';
-  if (Math.abs(ratio - 4/3) < 0.1) return '4:3';
-  if (Math.abs(ratio - 3/4) < 0.1) return '3:4';
-  if (Math.abs(ratio - 3/2) < 0.1) return '3:2';
-  if (Math.abs(ratio - 2/3) < 0.1) return '2:3';
-  if (Math.abs(ratio - 21/9) < 0.1) return '21:9';
-  if (Math.abs(ratio - 9/21) < 0.1) return '9:21';
-  if (Math.abs(ratio - 16/10) < 0.1) return '16:10';
-  if (Math.abs(ratio - 10/16) < 0.1) return '10:16';
-  
+  if (Math.abs(ratio - 16 / 9) < 0.1) return '16:9';
+  if (Math.abs(ratio - 9 / 16) < 0.1) return '9:16';
+  if (Math.abs(ratio - 4 / 3) < 0.1) return '4:3';
+  if (Math.abs(ratio - 3 / 4) < 0.1) return '3:4';
+  if (Math.abs(ratio - 3 / 2) < 0.1) return '3:2';
+  if (Math.abs(ratio - 2 / 3) < 0.1) return '2:3';
+  if (Math.abs(ratio - 21 / 9) < 0.1) return '21:9';
+  if (Math.abs(ratio - 9 / 21) < 0.1) return '9:21';
+  if (Math.abs(ratio - 16 / 10) < 0.1) return '16:10';
+  if (Math.abs(ratio - 10 / 16) < 0.1) return '10:16';
+
   // Default to 1:1 if no match
   return '1:1';
 }
@@ -44,7 +45,7 @@ function calculateAspectRatio(width?: number, height?: number): string {
  */
 function mapModelToBackend(frontendModel: string): { service: 'bfl' | 'replicate' | 'fal' | 'runway'; backendModel: string } {
   const modelLower = frontendModel.toLowerCase().trim();
-  
+
   // Runway models - check FIRST before other models
   if (modelLower.includes('runway gen4 image turbo') || modelLower.includes('gen4 image turbo') || modelLower === 'runway gen4 image turbo') {
     return { service: 'runway', backendModel: 'gen4_image_turbo' };
@@ -52,17 +53,17 @@ function mapModelToBackend(frontendModel: string): { service: 'bfl' | 'replicate
   if (modelLower.includes('runway gen4 image') || modelLower.includes('gen4 image') || modelLower === 'runway gen4 image') {
     return { service: 'runway', backendModel: 'gen4_image' };
   }
-  
+
   // Replicate Seedream 4K - MUST check this FIRST before general seedream check
   // Check for "seedream" + "4k" or "4 k" or "v4 4k" patterns
   if (modelLower.includes('seedream') && (
-    modelLower.includes('4k') || 
-    modelLower.includes('4 k') || 
+    modelLower.includes('4k') ||
+    modelLower.includes('4 k') ||
     (modelLower.includes('v4') && modelLower.includes('4k'))
   )) {
     return { service: 'replicate', backendModel: 'bytedance/seedream-4' };
   }
-  
+
   // BFL Flux models - check in order of specificity
   if (modelLower.includes('flux-pro-1.1-ultra') || modelLower.includes('pro 1.1 ultra')) {
     return { service: 'bfl', backendModel: 'flux-pro-1.1-ultra' };
@@ -86,7 +87,7 @@ function mapModelToBackend(frontendModel: string): { service: 'bfl' | 'replicate
     // Default to flux-pro for generic "flux" mentions
     return { service: 'bfl', backendModel: 'flux-pro' };
   }
-  
+
   // FAL models - check in order of specificity
   if (modelLower.includes('imagen-4-ultra') || modelLower.includes('imagen 4 ultra')) {
     return { service: 'fal', backendModel: 'imagen-4-ultra' };
@@ -100,11 +101,14 @@ function mapModelToBackend(frontendModel: string): { service: 'bfl' | 'replicate
   if (modelLower.includes('nano banana') || modelLower.includes('gemini')) {
     return { service: 'fal', backendModel: 'gemini-25-flash-image' };
   }
+  if (modelLower.includes('flux 2 pro') || modelLower.includes('flux-2-pro')) {
+    return { service: 'fal', backendModel: 'flux-2-pro' };
+  }
   if (modelLower.includes('seedream')) {
     // This catches "seedream v4" (without 4K) - goes to FAL
     return { service: 'fal', backendModel: 'seedream-v4' };
   }
-  
+
   // Default to FAL (Google Nano Banana)
   return { service: 'fal', backendModel: 'gemini-25-flash-image' };
 }
@@ -115,17 +119,17 @@ export async function generateForCanvas(
 ): Promise<{ mediaId: string; url: string; storagePath: string; generationId?: string; images?: Array<{ mediaId: string; url: string; storagePath: string }> }> {
   // Map frontend model name to backend model name and service
   const { service, backendModel } = mapModelToBackend(request.model);
-  
+
   // Debug logging
   console.log('[generateForCanvas] Model mapping:', {
     frontend: request.model,
     backend: backendModel,
     service,
   });
-  
+
   const imageCount = request.imageCount || 1;
   const clampedImageCount = Math.max(1, Math.min(4, imageCount)); // Limit to 1-4 images
-  
+
   let imageUrl: string;
   let imageStoragePath: string | undefined;
   let generationId: string | undefined;
@@ -137,7 +141,7 @@ export async function generateForCanvas(
     const creator = await authRepository.getUserById(uid);
     const username = creator?.username || uid;
     const canvasKeyPrefix = `users/${username}/canvas/${request.meta.projectId}`;
-    
+
     if (service === 'bfl') {
       // Use BFL service for Flux models
       // BFL supports width/height directly, or frameSize for standard ratios
@@ -147,7 +151,7 @@ export async function generateForCanvas(
         n: clampedImageCount, // Pass imageCount to generate multiple images
         storageKeyPrefixOverride: canvasKeyPrefix,
       };
-      
+
       // Use width/height if provided, otherwise use frameSize from aspectRatio
       if (request.width && request.height) {
         bflPayload.width = request.width;
@@ -155,22 +159,59 @@ export async function generateForCanvas(
       } else {
         bflPayload.frameSize = aspectRatio as any;
       }
-      
-      // If sourceImageUrl is provided, add it to uploadedImages array for image-to-image generation
+
+      // Handle reference images based on scene number
+      // Scene 1: Only reference images (1 input)
+      // Scene 2+: Reference image (first one) + previous scene image (2 inputs)
       const sourceImageUrl = (request as any).sourceImageUrl as string | undefined;
+      const sceneNumber = (request as any).sceneNumber as number | undefined;
+      const previousSceneImageUrl = (request as any).previousSceneImageUrl as string | undefined;
+      
+      if (sourceImageUrl || previousSceneImageUrl) {
+        const referenceImages: string[] = [];
+        
+        if (sceneNumber === 1) {
+          // Scene 1: All reference images
       if (sourceImageUrl) {
-        bflPayload.uploadedImages = [sourceImageUrl];
+            const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
+            referenceImages.push(...refImages);
+          }
+        } else if (sceneNumber && sceneNumber > 1) {
+          // Scene 2+: First reference image + previous scene image
+          if (sourceImageUrl) {
+            const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
+            if (refImages.length > 0) {
+              referenceImages.push(refImages[0]); // Only first reference image
+            }
+          }
+          if (previousSceneImageUrl) {
+            referenceImages.push(previousSceneImageUrl);
+          }
+        } else {
+          // Fallback: Use all provided images
+          if (sourceImageUrl) {
+            const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
+            referenceImages.push(...refImages);
+          }
+          if (previousSceneImageUrl) {
+            referenceImages.push(previousSceneImageUrl);
+          }
+        }
+        
+        if (referenceImages.length > 0) {
+          bflPayload.uploadedImages = referenceImages;
+        }
       }
-      
+
       const result = await bflService.generate(uid, bflPayload);
-      
+
       // Handle multiple images from BFL
       if (clampedImageCount > 1 && result.images && result.images.length > 0) {
         // Process all generated images
         for (const img of result.images) {
           const imgUrl = img.url || img.originalUrl || '';
           const imgStoragePath = (img as any).storagePath;
-          
+
           // Ensure we have a Zata-stored URL
           let finalUrl = imgUrl;
           let finalKey = imgStoragePath || '';
@@ -183,7 +224,7 @@ export async function generateForCanvas(
             finalUrl = zataResult.publicUrl;
             finalKey = zataResult.key;
           }
-          
+
           // Create media record for each image
           const media = await mediaRepository.createMedia({
             url: finalUrl,
@@ -197,23 +238,23 @@ export async function generateForCanvas(
               format: 'jpg',
             },
           });
-          
+
           allImages.push({
             mediaId: media.id,
             url: finalUrl,
             storagePath: finalKey,
           });
         }
-        
+
         // Return first image for backward compatibility, plus all images
         imageUrl = allImages[0]?.url || '';
         imageStoragePath = allImages[0]?.storagePath;
       } else {
         // Single image (backward compatible)
-      imageUrl = result.images?.[0]?.url || result.images?.[0]?.originalUrl || '';
-      imageStoragePath = (result as any)?.images?.[0]?.storagePath;
+        imageUrl = result.images?.[0]?.url || result.images?.[0]?.originalUrl || '';
+        imageStoragePath = (result as any)?.images?.[0]?.storagePath;
       }
-      
+
       generationId = result.historyId;
     } else if (service === 'replicate') {
       // Use Replicate service for Seedream 4K
@@ -222,7 +263,7 @@ export async function generateForCanvas(
         console.error('[generateForCanvas] Invalid Replicate model format:', backendModel);
         throw new ApiError(`Invalid model format for Replicate: ${backendModel}. Expected format: owner/name`, 400);
       }
-      
+
       const replicatePayload: any = {
         prompt: request.prompt,
         model: backendModel, // Use mapped backend model name: 'bytedance/seedream-4'
@@ -233,15 +274,52 @@ export async function generateForCanvas(
           height: request.height,
         }),
       };
-      
-      // If sourceImageUrl is provided, add it to image_input array for image-to-image generation
+
+      // Handle reference images based on scene number
+      // Scene 1: Only reference images (1 input)
+      // Scene 2+: Reference image (first one) + previous scene image (2 inputs)
       const sourceImageUrl = (request as any).sourceImageUrl as string | undefined;
+      const sceneNumber = (request as any).sceneNumber as number | undefined;
+      const previousSceneImageUrl = (request as any).previousSceneImageUrl as string | undefined;
+      
+      if (sourceImageUrl || previousSceneImageUrl) {
+        const referenceImages: string[] = [];
+        
+        if (sceneNumber === 1) {
+          // Scene 1: All reference images
       if (sourceImageUrl) {
-        replicatePayload.image_input = [sourceImageUrl];
+            const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
+            referenceImages.push(...refImages);
+          }
+        } else if (sceneNumber && sceneNumber > 1) {
+          // Scene 2+: First reference image + previous scene image
+          if (sourceImageUrl) {
+            const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
+            if (refImages.length > 0) {
+              referenceImages.push(refImages[0]); // Only first reference image
+            }
+          }
+          if (previousSceneImageUrl) {
+            referenceImages.push(previousSceneImageUrl);
+          }
+        } else {
+          // Fallback: Use all provided images
+          if (sourceImageUrl) {
+            const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
+            referenceImages.push(...refImages);
+          }
+          if (previousSceneImageUrl) {
+            referenceImages.push(previousSceneImageUrl);
+          }
+        }
+        
+        if (referenceImages.length > 0) {
+          replicatePayload.image_input = referenceImages;
+        }
       }
-      
+
       const result = await replicateService.generateImage(uid, replicatePayload);
-      
+
       imageUrl = (result as any)?.images?.[0]?.url || (result as any)?.images?.[0]?.originalUrl || '';
       imageStoragePath = (result as any)?.images?.[0]?.storagePath;
       generationId = result.data?.historyId;
@@ -258,32 +336,69 @@ export async function generateForCanvas(
         '9:21': '912:2112',
       };
       const runwayRatio = runwayRatioMap[aspectRatio] || runwayRatioMap['1:1'] || '1024:1024';
-      
+
       const runwayPayload: any = {
         promptText: request.prompt,
         model: backendModel, // 'gen4_image' or 'gen4_image_turbo'
         ratio: runwayRatio as any,
         generationType: 'text-to-image',
       };
-      
-      // If sourceImageUrl is provided, add it to uploadedImages array for image-to-image generation
+
+      // Handle reference images based on scene number
+      // Scene 1: Only reference images (1 input)
+      // Scene 2+: Reference image (first one) + previous scene image (2 inputs)
       const sourceImageUrl = (request as any).sourceImageUrl as string | undefined;
-      if (sourceImageUrl) {
-        runwayPayload.uploadedImages = [sourceImageUrl];
-      }
+      const sceneNumber = (request as any).sceneNumber as number | undefined;
+      const previousSceneImageUrl = (request as any).previousSceneImageUrl as string | undefined;
       
+      if (sourceImageUrl || previousSceneImageUrl) {
+        const referenceImages: string[] = [];
+        
+        if (sceneNumber === 1) {
+          // Scene 1: All reference images
+      if (sourceImageUrl) {
+            const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
+            referenceImages.push(...refImages);
+          }
+        } else if (sceneNumber && sceneNumber > 1) {
+          // Scene 2+: First reference image + previous scene image
+          if (sourceImageUrl) {
+            const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
+            if (refImages.length > 0) {
+              referenceImages.push(refImages[0]); // Only first reference image
+            }
+          }
+          if (previousSceneImageUrl) {
+            referenceImages.push(previousSceneImageUrl);
+          }
+        } else {
+          // Fallback: Use all provided images
+          if (sourceImageUrl) {
+            const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
+            referenceImages.push(...refImages);
+          }
+          if (previousSceneImageUrl) {
+            referenceImages.push(previousSceneImageUrl);
+          }
+        }
+        
+        if (referenceImages.length > 0) {
+          runwayPayload.uploadedImages = referenceImages;
+        }
+      }
+
       // Runway textToImage returns a taskId and status "pending"
       // We need to poll for completion
       const taskResult = await runwayService.textToImage(uid, runwayPayload);
-      
+
       if (!taskResult.taskId) {
         throw new ApiError('Runway image generation failed: no taskId returned', 500);
       }
-      
+
       if (!taskResult.historyId) {
         throw new ApiError('Runway image generation failed: no historyId returned', 500);
       }
-      
+
       // Poll for completion (max 5 minutes, check every 2 seconds)
       // Note: Runway is async, so we poll the history record which gets updated by the service
       const maxWaitTime = 5 * 60 * 1000; // 5 minutes
@@ -291,10 +406,10 @@ export async function generateForCanvas(
       const startTime = Date.now();
       let completed = false;
       let finalHistory: any = null;
-      
+
       while (!completed && (Date.now() - startTime) < maxWaitTime) {
         await new Promise(resolve => setTimeout(resolve, pollInterval));
-        
+
         // Check the history record which gets updated when Runway completes
         const history = await generationHistoryRepository.get(uid, taskResult.historyId!);
         if (history && history.status === 'completed' && history.images && Array.isArray(history.images) && history.images.length > 0) {
@@ -304,17 +419,17 @@ export async function generateForCanvas(
           throw new ApiError(`Runway image generation failed: ${history.error || 'Unknown error'}`, 500);
         }
       }
-      
+
       if (!completed) {
         throw new ApiError('Runway image generation timed out', 504);
       }
-      
+
       // Extract image from completed history
       const firstImage = finalHistory.images[0];
       if (!firstImage || !firstImage.url) {
         throw new ApiError('Runway image generation completed but no image URL was returned', 500);
       }
-      
+
       imageUrl = firstImage.url;
       imageStoragePath = firstImage.storagePath;
       generationId = taskResult.historyId;
@@ -329,38 +444,114 @@ export async function generateForCanvas(
         storageKeyPrefixOverride: canvasKeyPrefix,
         forceSyncUpload: true,
       };
-      
-      // If sourceImageUrl is provided, add it to uploadedImages array for image-to-image generation
+
+      // Handle reference images based on scene number
+      // Scene 1: Only reference images (from namedImages) - 1 input
+      // Scene 2+: Reference images + previous scene's generated image - 2 inputs
       const sourceImageUrl = (request as any).sourceImageUrl as string | undefined;
+      const sceneNumber = (request as any).sceneNumber as number | undefined;
+      const previousSceneImageUrl = (request as any).previousSceneImageUrl as string | undefined;
+      
+      console.log('[generateForCanvas] Scene and reference image check:', {
+        sceneNumber,
+        hasSourceImageUrl: !!sourceImageUrl,
+        hasPreviousSceneImageUrl: !!previousSceneImageUrl,
+        sourceImageUrl: sourceImageUrl ? sourceImageUrl.substring(0, 100) + '...' : 'none',
+        previousSceneImageUrl: previousSceneImageUrl ? previousSceneImageUrl.substring(0, 100) + '...' : 'none'
+      });
+
+      if (sourceImageUrl || previousSceneImageUrl) {
+        const referenceImages: string[] = [];
+        
+        // Scene 1: Only reference images (1 input)
+        if (sceneNumber === 1) {
       if (sourceImageUrl) {
-        falPayload.uploadedImages = [sourceImageUrl];
+            const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
+            referenceImages.push(...refImages);
+            console.log('[generateForCanvas] ✅ Scene 1: Using reference images only (1 input)', {
+              imageCount: referenceImages.length,
+              images: referenceImages.map(url => url.substring(0, 50) + '...')
+            });
+          }
+        } 
+        // Scene 2+: Reference images + previous scene image (2 inputs)
+        else if (sceneNumber && sceneNumber > 1) {
+          // First input: Reference images (from namedImages)
+          if (sourceImageUrl) {
+            const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
+            // For Scene 2+, use only the FIRST reference image (index 0)
+            if (refImages.length > 0) {
+              referenceImages.push(refImages[0]);
+              console.log('[generateForCanvas] ✅ Scene 2+: Added reference image (index 0)');
+            }
+          }
+          
+          // Second input: Previous scene's generated image
+          if (previousSceneImageUrl) {
+            referenceImages.push(previousSceneImageUrl);
+            console.log('[generateForCanvas] ✅ Scene 2+: Added previous scene image (index 1)');
+          }
+          
+          console.log('[generateForCanvas] ✅ Scene 2+: Using reference + previous scene (2 inputs)', {
+            imageCount: referenceImages.length,
+            images: referenceImages.map(url => url.substring(0, 50) + '...')
+          });
+        }
+        // Fallback: If no scene number, use all provided images
+        else {
+          if (sourceImageUrl) {
+            const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
+            referenceImages.push(...refImages);
+          }
+          if (previousSceneImageUrl) {
+            referenceImages.push(previousSceneImageUrl);
+          }
+        }
+        
+        if (referenceImages.length > 0) {
+          console.log('[generateForCanvas] ✅ STEP 9: Setting uploadedImages for FAL service (image-to-image mode):', {
+            sceneNumber,
+            imageCount: referenceImages.length,
+            images: referenceImages.map((url, idx) => ({
+              index: idx,
+              url: url,
+              preview: url.substring(0, 80) + '...'
+            })),
+            falPayloadModel: falPayload.model,
+          });
+          falPayload.uploadedImages = referenceImages;
+        } else {
+          console.log('[generateForCanvas] ⚠️ STEP 9: Using text-to-image mode (no reference images)');
+        }
+      } else {
+        console.log('[generateForCanvas] Using text-to-image mode (no reference)');
       }
-      
+
       const result = await falService.generate(uid, falPayload);
-      
+
       // Handle multiple images from FAL
       // When imageCount > 1, FAL service returns all images in result.images array
       // FAL service creates parallel promises, each generating 1 image, then returns all in images array
       console.log(`[generateForCanvas] FAL service called with num_images: ${clampedImageCount}`);
       console.log(`[generateForCanvas] FAL result.images:`, result.images ? `${result.images.length} images` : 'no images array');
-      
+
       if (clampedImageCount > 1) {
         // Ensure we have images array - FAL should return all images when num_images > 1
-        const falImages = result.images && Array.isArray(result.images) && result.images.length > 0 
-          ? result.images 
+        const falImages = result.images && Array.isArray(result.images) && result.images.length > 0
+          ? result.images
           : [];
-        
+
         console.log(`[generateForCanvas] Processing ${falImages.length} images (requested ${clampedImageCount})`);
-        
+
         if (falImages.length === 0) {
           console.warn(`[generateForCanvas] WARNING: Requested ${clampedImageCount} images but FAL returned 0 images. Result:`, JSON.stringify(result, null, 2));
         }
-        
+
         // Process all generated images
         for (const img of falImages) {
           const imgUrl = img.url || img.originalUrl || '';
           const imgStoragePath = (img as any).storagePath;
-          
+
           // Ensure we have a Zata-stored URL
           let finalUrl = imgUrl;
           let finalKey = imgStoragePath || '';
@@ -373,7 +564,7 @@ export async function generateForCanvas(
             finalUrl = zataResult.publicUrl;
             finalKey = zataResult.key;
           }
-          
+
           // Create media record for each image
           const media = await mediaRepository.createMedia({
             url: finalUrl,
@@ -387,24 +578,125 @@ export async function generateForCanvas(
               format: 'jpg',
             },
           });
-          
+
           allImages.push({
             mediaId: media.id,
             url: finalUrl,
             storagePath: finalKey,
           });
         }
-        
+
         // Return first image for backward compatibility, plus all images
         imageUrl = allImages[0]?.url || '';
         imageStoragePath = allImages[0]?.storagePath;
       } else {
         // Single image (backward compatible)
-      imageUrl = result.images?.[0]?.url || result.images?.[0]?.originalUrl || '';
-      imageStoragePath = (result as any)?.images?.[0]?.storagePath;
+        imageUrl = result.images?.[0]?.url || result.images?.[0]?.originalUrl || '';
+        imageStoragePath = (result as any)?.images?.[0]?.storagePath;
       }
-      
+
       generationId = result.historyId;
+    }
+
+    // Generate storyboard if sceneNumber and metadata are provided
+    const sceneNumber = (request as any).sceneNumber as number | undefined;
+    const storyboardMetadata = (request as any).storyboardMetadata as Record<string, string> | undefined;
+    const sourceImageUrl = (request as any).sourceImageUrl as string | undefined;
+    const previousSceneImageUrl = (request as any).previousSceneImageUrl as string | undefined;
+    
+    if (sceneNumber && storyboardMetadata && imageUrl) {
+      try {
+        console.log('[generateForCanvas] Generating storyboard for scene:', sceneNumber);
+        
+        const frames: StoryboardFrame[] = [];
+        
+        // Index 0: Reference image (always present - first image from sourceImageUrl)
+        if (sourceImageUrl) {
+          const referenceImageUrl = sourceImageUrl.split(',')[0].trim();
+          try {
+            const referenceImageBuffer = await downloadImageAsBuffer(referenceImageUrl);
+            frames.push({
+              buffer: referenceImageBuffer,
+              metadata: {
+                character: storyboardMetadata.character || '',
+                background: storyboardMetadata.background || '',
+                objects: storyboardMetadata.objects || '',
+                lighting: storyboardMetadata.lighting || '',
+                camera: storyboardMetadata.camera || '',
+                mood: storyboardMetadata.mood || '',
+                style: storyboardMetadata.style || '',
+                environment: storyboardMetadata.environment || '',
+              },
+            });
+            console.log('[generateForCanvas] ✅ Added reference image to storyboard');
+          } catch (error) {
+            console.warn('[generateForCanvas] ⚠️ Failed to download reference image for storyboard:', error);
+          }
+        }
+        
+        // Index 1: Previous scene image (for Scene 2+)
+        if (sceneNumber > 1 && previousSceneImageUrl) {
+          try {
+            const previousSceneBuffer = await downloadImageAsBuffer(previousSceneImageUrl);
+            frames.push({
+              buffer: previousSceneBuffer,
+              metadata: {
+                character: storyboardMetadata.character || '',
+                background: storyboardMetadata.background || '',
+                objects: storyboardMetadata.objects || '',
+                lighting: storyboardMetadata.lighting || '',
+                camera: storyboardMetadata.camera || '',
+                mood: storyboardMetadata.mood || '',
+                style: storyboardMetadata.style || '',
+                environment: storyboardMetadata.environment || '',
+              },
+            });
+            console.log('[generateForCanvas] ✅ Added previous scene image to storyboard');
+          } catch (error) {
+            console.warn('[generateForCanvas] ⚠️ Failed to download previous scene image for storyboard:', error);
+          }
+        }
+        
+        // Index 1 (Scene 1) or Index 2 (Scene 2+): Generated image
+        const generatedImageBuffer = await downloadImageAsBuffer(imageUrl);
+        frames.push({
+          buffer: generatedImageBuffer,
+          metadata: {
+            character: storyboardMetadata.character || '',
+            background: storyboardMetadata.background || '',
+            objects: storyboardMetadata.objects || '',
+            lighting: storyboardMetadata.lighting || '',
+            camera: storyboardMetadata.camera || '',
+            mood: storyboardMetadata.mood || '',
+            style: storyboardMetadata.style || '',
+            environment: storyboardMetadata.environment || '',
+          },
+        });
+        console.log('[generateForCanvas] ✅ Added generated image to storyboard');
+        
+        // Create storyboard only if we have at least 2 frames (reference + generated)
+        if (frames.length >= 2) {
+          const storyboardBuffer = await createStoryboard(frames);
+          
+          // Upload storyboard to Zata
+          const storyboardKey = `${canvasKeyPrefix}/storyboard-scene-${sceneNumber}-${Date.now()}.png`;
+          const storyboardUpload = await uploadBufferToZata(
+            storyboardKey,
+            storyboardBuffer,
+            'image/png'
+          );
+          
+          console.log('[generateForCanvas] ✅ Storyboard generated:', storyboardUpload.publicUrl);
+          
+          // Store storyboard URL in response (optional - can be used by frontend)
+          (request as any).storyboardUrl = storyboardUpload.publicUrl;
+        } else {
+          console.warn('[generateForCanvas] ⚠️ Not enough frames for storyboard (need at least 2, got', frames.length, ')');
+        }
+      } catch (error) {
+        console.error('[generateForCanvas] ⚠️ Failed to generate storyboard:', error);
+        // Don't fail the entire request if storyboard generation fails
+      }
     }
 
     // If we already processed multiple images, return them
@@ -464,12 +756,12 @@ export async function generateForCanvas(
       service,
       backendModel,
     });
-    
+
     // If it's already an ApiError, re-throw it
     if (error instanceof ApiError) {
       throw error;
     }
-    
+
     // Otherwise, wrap it in an ApiError
     throw new ApiError(
       error.message || 'Generation failed',
@@ -491,7 +783,7 @@ interface VideoModelConfig {
 
 function mapVideoModelToBackend(frontendModel: string): VideoModelConfig {
   const modelLower = frontendModel.toLowerCase().trim();
-  
+
   // FAL Models
   if (modelLower.includes('sora 2 pro') || modelLower === 'sora 2 pro') {
     return { service: 'fal', method: 'sora2ProT2vSubmit', backendModel: 'fal-ai/sora-2/text-to-video/pro' };
@@ -514,7 +806,7 @@ function mapVideoModelToBackend(frontendModel: string): VideoModelConfig {
   if (modelLower.includes('ltx v2 pro') || modelLower === 'ltx v2 pro') {
     return { service: 'fal', method: 'ltx2ProT2vSubmit', backendModel: 'fal-ai/ltxv-2/text-to-video', isFast: false };
   }
-  
+
   // Replicate Models
   if (modelLower.includes('seedance 1.0 lite') || modelLower === 'seedance 1.0 lite') {
     return { service: 'replicate', method: 'seedanceT2vSubmit', backendModel: 'bytedance/seedance-1-lite' };
@@ -539,7 +831,7 @@ function mapVideoModelToBackend(frontendModel: string): VideoModelConfig {
     console.warn(`[mapVideoModelToBackend] Unsupported Kling model "${frontendModel}", defaulting to Kling 2.5 Turbo Pro`);
     return { service: 'replicate', method: 'klingT2vSubmit', backendModel: 'kwaivgi/kling-v2.5-turbo-pro', mode: 'pro' };
   }
-  
+
   // MiniMax Models
   if (modelLower.includes('minimax-hailuo-02') || modelLower === 'minimax-hailuo-02' || modelLower.includes('hailuo')) {
     return { service: 'minimax', method: 'generateVideo', backendModel: 'MiniMax-Hailuo-02' };
@@ -553,7 +845,7 @@ function mapVideoModelToBackend(frontendModel: string): VideoModelConfig {
   if (modelLower.includes('s2v-01') || modelLower === 's2v-01') {
     return { service: 'minimax', method: 'generateVideo', backendModel: 'S2V-01' };
   }
-  
+
   // Runway Models
   if (modelLower.includes('gen-4 turbo') || modelLower === 'gen-4 turbo') {
     return { service: 'runway', method: 'videoGenerate', backendModel: 'gen4_turbo', mode: 'text_to_video' };
@@ -561,7 +853,7 @@ function mapVideoModelToBackend(frontendModel: string): VideoModelConfig {
   if (modelLower.includes('gen-3a turbo') || modelLower === 'gen-3a turbo') {
     return { service: 'runway', method: 'videoGenerate', backendModel: 'gen3a_turbo', mode: 'text_to_video' };
   }
-  
+
   // Default to Seedance Pro if model not recognized
   console.warn(`[mapVideoModelToBackend] Unknown model "${frontendModel}", defaulting to Seedance 1.0 Pro`);
   return { service: 'replicate', method: 'seedanceT2vSubmit', backendModel: 'bytedance/seedance-1-pro' };
@@ -691,10 +983,10 @@ export async function generateVideoForCanvas(
 
       // Prepare Replicate payload
       const replicatePayload: any = {
-      prompt: request.prompt,
+        prompt: request.prompt,
         model: modelConfig.backendModel, // Pass backend model name (e.g., 'kwaivgi/kling-v2.1')
         duration: duration,
-      aspect_ratio: aspectRatio,
+        aspect_ratio: aspectRatio,
         isPublic: false,
       };
 
@@ -715,7 +1007,7 @@ export async function generateVideoForCanvas(
         // Map resolution + aspect ratio to WAN size format
         // Valid sizes: "1280*720", "720*1280", "1920*1080", "1080*1920"
         let wanSize = '1280*720'; // Default
-        
+
         if (resolution === '720p') {
           // 720p: 16:9 = 1280*720, 9:16 = 720*1280, 1:1 = 1280*720 (use 16:9 format)
           if (aspectRatio === '9:16') {
@@ -734,7 +1026,7 @@ export async function generateVideoForCanvas(
           // 480p is not supported by WAN, fallback to 720p
           wanSize = aspectRatio === '9:16' ? '720*1280' : '1280*720';
         }
-        
+
         replicatePayload.size = wanSize;
       }
 
@@ -785,7 +1077,7 @@ export async function generateVideoForCanvas(
 
       // MiniMax generateVideo takes (apiKey, groupId, body)
       const taskResult = await method(apiKey, groupId, minimaxPayload);
-      
+
       // Create history entry (similar to minimaxController.videoStart)
       const creator = await authRepository.getUserById(uid);
       const { historyId } = await generationHistoryRepository.create(uid, {
@@ -798,7 +1090,7 @@ export async function generateVideoForCanvas(
         duration: duration,
         resolution: resolution,
       } as any);
-      
+
       await generationHistoryRepository.update(uid, historyId, {
         provider: 'minimax',
         providerTaskId: taskResult.taskId,
@@ -882,11 +1174,11 @@ export async function generateVideoForCanvas(
       model: request.model,
       service: modelConfig.service,
     });
-    
+
     if (error instanceof ApiError) {
       throw error;
     }
-    
+
     throw new ApiError(
       error.message || 'Video generation failed',
       error.statusCode || error.status || 500
@@ -924,7 +1216,7 @@ export async function upscaleForCanvas(
 
   try {
     // Map frontend model name to Replicate model
-    const replicateModel = request.model === 'Crystal Upscaler' 
+    const replicateModel = request.model === 'Crystal Upscaler'
       ? 'philz1337x/crystal-upscaler'
       : 'philz1337x/crystal-upscaler'; // Default to Crystal Upscaler
 
@@ -959,8 +1251,8 @@ export async function upscaleForCanvas(
     // Attach canvas project linkage
     try {
       if (result?.historyId && request.projectId) {
-        await generationHistoryRepository.update(uid, result.historyId, { 
-          canvasProjectId: request.projectId 
+        await generationHistoryRepository.update(uid, result.historyId, {
+          canvasProjectId: request.projectId
         } as any);
       }
     } catch (e) {
@@ -980,11 +1272,11 @@ export async function upscaleForCanvas(
       stack: error.stack,
       model: request.model,
     });
-    
+
     if (error instanceof ApiError) {
       throw error;
     }
-    
+
     throw new ApiError(
       error.message || 'Image upscale failed',
       error.statusCode || error.status || 500
@@ -1024,7 +1316,7 @@ export async function removeBgForCanvas(
 
   try {
     // Map frontend model name to Replicate model
-    const replicateModel = request.model === '851-labs/background-remover' 
+    const replicateModel = request.model === '851-labs/background-remover'
       ? '851-labs/background-remover'
       : '851-labs/background-remover'; // Default to 851-labs/background-remover
 
@@ -1068,8 +1360,8 @@ export async function removeBgForCanvas(
     // Attach canvas project linkage
     try {
       if (result?.historyId && request.projectId) {
-        await generationHistoryRepository.update(uid, result.historyId, { 
-          canvasProjectId: request.projectId 
+        await generationHistoryRepository.update(uid, result.historyId, {
+          canvasProjectId: request.projectId
         } as any);
       }
     } catch (e) {
@@ -1090,11 +1382,11 @@ export async function removeBgForCanvas(
       model: request.model,
       backgroundType: request.backgroundType,
     });
-    
+
     if (error instanceof ApiError) {
       throw error;
     }
-    
+
     throw new ApiError(
       error.message || 'Background removal failed',
       error.statusCode || error.status || 500
@@ -1133,19 +1425,19 @@ export async function vectorizeForCanvas(
     // Ensure the image is accessible by uploading it to Zata if needed
     // This handles cases where the URL might have CORS restrictions or require authentication
     let imageUrl = request.image;
-    
+
     // Check if the image is already an SVG (can't vectorize an SVG)
-    const isSvg = imageUrl.toLowerCase().endsWith('.svg') || 
-                  imageUrl.toLowerCase().includes('.svg') ||
-                  imageUrl.toLowerCase().includes('vectorized');
-    
+    const isSvg = imageUrl.toLowerCase().endsWith('.svg') ||
+      imageUrl.toLowerCase().includes('.svg') ||
+      imageUrl.toLowerCase().includes('vectorized');
+
     if (isSvg) {
       throw new ApiError('Cannot vectorize an SVG file. Please use a raster image (PNG, JPG, etc.)', 400);
     }
-    
+
     // Check if it's already a Zata URL (starts with the Zata domain)
     const isZataUrl = imageUrl.includes('zata.ai') || imageUrl.includes('idr01.zata.ai');
-    
+
     // If it's not a Zata URL, upload it to ensure it's publicly accessible
     if (!isZataUrl) {
       try {
@@ -1153,14 +1445,14 @@ export async function vectorizeForCanvas(
         const creator = await authRepository.getUserById(uid);
         const username = creator?.username || uid;
         const canvasKeyPrefix = `users/${username}/canvas/${request.projectId}`;
-        
+
         // Upload the image to Zata to ensure it's accessible
         const zataResult = await uploadFromUrlToZata({
           sourceUrl: imageUrl,
           keyPrefix: canvasKeyPrefix,
           fileName: `vectorize-source-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         });
-        
+
         imageUrl = zataResult.publicUrl;
         console.log('[vectorizeForCanvas] Image uploaded to Zata:', {
           originalUrl: request.image?.substring(0, 100),
@@ -1171,17 +1463,17 @@ export async function vectorizeForCanvas(
         // Continue with original URL - let FAL API try to download it
       }
     }
-    
+
     // Handle "Detailed" mode: First process through Google Nano Banana, then vectorize
     if (request.mode === 'Detailed') {
       console.log('[vectorizeForCanvas] Detailed mode: Processing through Google Nano Banana first');
-      
+
       // Step 1: Process image through Google Nano Banana with image-to-image
       const nanoBananaPrompt = 'create a simple flat 2d vector style image, minimal colours';
       const creator = await authRepository.getUserById(uid);
       const username = creator?.username || uid;
       const canvasKeyPrefix = `users/${username}/canvas/${request.projectId}`;
-      
+
       const nanoBananaResult = await falService.generate(uid, {
         prompt: nanoBananaPrompt,
         model: 'gemini-25-flash-image', // Google Nano Banana
@@ -1192,28 +1484,28 @@ export async function vectorizeForCanvas(
         forceSyncUpload: true,
         isPublic: false,
       });
-      
+
       console.log('[vectorizeForCanvas] Google Nano Banana completed:', {
         hasImages: !!nanoBananaResult.images,
         imageCount: nanoBananaResult.images?.length || 0,
       });
-      
+
       // Extract the processed image from Nano Banana result
       const processedImage = nanoBananaResult.images && Array.isArray(nanoBananaResult.images) && nanoBananaResult.images.length > 0
         ? nanoBananaResult.images[0]
         : null;
-      
+
       if (!processedImage || !processedImage.url) {
         throw new ApiError('No image returned from Google Nano Banana processing', 500);
       }
-      
+
       // Use the processed image URL for vectorization
       imageUrl = processedImage.url;
       console.log('[vectorizeForCanvas] Using processed image for vectorization:', {
         processedImageUrl: imageUrl?.substring(0, 100),
       });
     }
-    
+
     // Step 2: Call FAL Recraft Vectorize service with the (possibly processed) image
     const result = await falService.recraftVectorize(uid, {
       image: imageUrl,
@@ -1238,8 +1530,8 @@ export async function vectorizeForCanvas(
     // Attach canvas project linkage
     try {
       if (result?.historyId && request.projectId) {
-        await generationHistoryRepository.update(uid, result.historyId, { 
-          canvasProjectId: request.projectId 
+        await generationHistoryRepository.update(uid, result.historyId, {
+          canvasProjectId: request.projectId
         } as any);
       }
     } catch (e) {
@@ -1259,11 +1551,11 @@ export async function vectorizeForCanvas(
       stack: error.stack,
       mode: request.mode,
     });
-    
+
     if (error instanceof ApiError) {
       throw error;
     }
-    
+
     throw new ApiError(
       error.message || 'Vectorization failed',
       error.statusCode || error.status || 500
@@ -1828,7 +2120,7 @@ export async function eraseForCanvas(
     // Create generation history record
     const creator = await authRepository.getUserById(uid);
     const username = creator?.username || uid;
-    
+
     // Create history record - Firestore will auto-generate the ID
     const { historyId } = await generationHistoryRepository.create(uid, {
       prompt: request.prompt || 'Erase selected area',
@@ -1837,9 +2129,9 @@ export async function eraseForCanvas(
       isPublic: false,
       createdBy: creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid },
     });
-    
+
     console.log('[eraseForCanvas] Created history record:', { historyId });
-    
+
     // Link to canvas project
     try {
       await generationHistoryRepository.update(uid, historyId, {
@@ -1851,7 +2143,7 @@ export async function eraseForCanvas(
 
     // Base prompt - enhanced to preserve image vibrancy, color, and temperature
     const basePrompt = 'Edit ONLY the white masked region. Keep the ENTIRE unmasked image IDENTICAL - do not modify any pixels outside the white mask. Reconstruct the masked area with natural continuation that seamlessly matches the surrounding environment. Maintain the EXACT original camera angle, lighting conditions, color temperature, color saturation, vibrancy, brightness, contrast, white balance, and depth of field. Preserve the original image quality, sharpness, color richness, and overall visual appearance. CRITICAL: The unmasked areas must remain pixel-perfect identical to the original image with no color shifts, desaturation, or quality degradation. Do not add new objects or alter any existing ones outside the mask. The result must blend seamlessly while maintaining the original image\'s exact color palette, temperature, and visual characteristics.';
-    
+
     // Combine user prompt with base prompt if provided
     const finalPrompt = request.prompt && request.prompt.trim()
       ? `${request.prompt.trim()}. ${basePrompt}`
@@ -1866,7 +2158,7 @@ export async function eraseForCanvas(
       imagePreview: request.image ? (request.image.substring(0, 100) + '...') : 'null',
       maskPreview: request.mask ? (request.mask.substring(0, 100) + '...') : 'null'
     });
-    
+
     // Upload original image to Zata if it's a data URI
     let originalImageUrl = request.image;
     if (request.image && request.image.startsWith('data:image')) {
@@ -1909,25 +2201,25 @@ export async function eraseForCanvas(
       console.log('[eraseForCanvas] Creating composited image server-side with sharp...');
       const axios = (await import('axios')).default;
       const sharp = (await import('sharp')).default;
-      
+
       // Download original image
       const imageResponse = await axios.get(originalImageUrl, { responseType: 'arraybuffer' });
       const originalImageBuffer = Buffer.from(imageResponse.data);
-      
+
       // Download mask
       const maskResponse = await axios.get(maskUrl, { responseType: 'arraybuffer' });
       const maskBuffer = Buffer.from(maskResponse.data);
-      
+
       // Get original image dimensions
       const originalMetadata = await sharp(originalImageBuffer).metadata();
       const originalWidth = originalMetadata.width || 1024;
       const originalHeight = originalMetadata.height || 1024;
-      
+
       // Resize mask to match original image dimensions
       const resizedMask = await sharp(maskBuffer)
         .resize(originalWidth, originalHeight, { fit: 'fill' })
         .toBuffer();
-      
+
       // Composite: draw original image, then overlay mask using 'screen' blend mode
       // 'screen' blend mode makes white areas visible without darkening the original image
       // This preserves the original image colors and quality while clearly showing the white mask
@@ -1938,7 +2230,7 @@ export async function eraseForCanvas(
         }])
         .png()
         .toBuffer();
-      
+
       // Upload composited image
       const { uploadBufferToZata } = await import('../../utils/storage/zataUpload');
       const compositedUpload = await uploadBufferToZata(
@@ -1987,11 +2279,11 @@ export async function eraseForCanvas(
     };
   } catch (error: any) {
     console.error('[eraseForCanvas] Error:', error);
-    
+
     if (error instanceof ApiError) {
       throw error;
     }
-    
+
     throw new ApiError(
       error.message || 'Image erase failed',
       error.statusCode || error.status || 500
@@ -2042,7 +2334,7 @@ export async function replaceForCanvas(
     // Create generation history record
     const creator = await authRepository.getUserById(uid);
     const username = creator?.username || uid;
-    
+
     // Create history record - Firestore will auto-generate the ID
     const { historyId } = await generationHistoryRepository.create(uid, {
       prompt: request.prompt.trim(), // Store user's prompt
@@ -2051,9 +2343,9 @@ export async function replaceForCanvas(
       isPublic: false,
       createdBy: creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid },
     });
-    
+
     console.log('[replaceForCanvas] Created history record:', { historyId });
-    
+
     // Link to canvas project
     try {
       await generationHistoryRepository.update(uid, historyId, {
@@ -2066,7 +2358,7 @@ export async function replaceForCanvas(
     // For replace, use the user's prompt directly (what to replace the white area with)
     // Combine with base instruction to ensure only masked area is modified
     const baseInstruction = 'Edit ONLY the white masked region. Keep the ENTIRE unmasked image IDENTICAL - do not modify any pixels outside the white mask. Replace the masked area with the requested content. Maintain the EXACT original camera angle, lighting conditions, color temperature, color saturation, vibrancy, brightness, contrast, white balance, and depth of field. Preserve the original image quality, sharpness, color richness, and overall visual appearance. CRITICAL: The unmasked areas must remain pixel-perfect identical to the original image with no color shifts, desaturation, or quality degradation.';
-    
+
     // User's prompt describes what to replace the white area with
     const finalPrompt = `${request.prompt.trim()}. ${baseInstruction}`;
 
@@ -2079,7 +2371,7 @@ export async function replaceForCanvas(
       imagePreview: request.image ? (request.image.substring(0, 100) + '...') : 'null',
       maskPreview: request.mask ? (request.mask.substring(0, 100) + '...') : 'null'
     });
-    
+
     // Upload original image to Zata if it's a data URI
     let originalImageUrl = request.image;
     if (request.image && request.image.startsWith('data:image')) {
@@ -2122,25 +2414,25 @@ export async function replaceForCanvas(
       console.log('[replaceForCanvas] Creating composited image server-side with sharp...');
       const axios = (await import('axios')).default;
       const sharp = (await import('sharp')).default;
-      
+
       // Download original image
       const imageResponse = await axios.get(originalImageUrl, { responseType: 'arraybuffer' });
       const originalImageBuffer = Buffer.from(imageResponse.data);
-      
+
       // Download mask
       const maskResponse = await axios.get(maskUrl, { responseType: 'arraybuffer' });
       const maskBuffer = Buffer.from(maskResponse.data);
-      
+
       // Get original image dimensions
       const originalMetadata = await sharp(originalImageBuffer).metadata();
       const originalWidth = originalMetadata.width || 1024;
       const originalHeight = originalMetadata.height || 1024;
-      
+
       // Resize mask to match original image dimensions
       const resizedMask = await sharp(maskBuffer)
         .resize(originalWidth, originalHeight, { fit: 'fill' })
         .toBuffer();
-      
+
       // Composite: draw original image, then overlay mask using 'screen' blend mode
       // 'screen' blend mode makes white areas visible without darkening the original image
       // This preserves the original image colors and quality while clearly showing the white mask
@@ -2151,7 +2443,7 @@ export async function replaceForCanvas(
         }])
         .png()
         .toBuffer();
-      
+
       // Upload composited image
       const { uploadBufferToZata } = await import('../../utils/storage/zataUpload');
       const compositedUpload = await uploadBufferToZata(
@@ -2200,291 +2492,291 @@ export async function replaceForCanvas(
     };
   } catch (error: any) {
     console.error('[replaceForCanvas] Error:', error);
-    
+
     if (error instanceof ApiError) {
       throw error;
     }
-    
+
     throw new ApiError(
       error.message || 'Image replace failed',
       error.statusCode || error.status || 500
     );
   }
 }
-  
-  /* Removed code below
-  try {
-    console.log('[eraseForCanvas] Starting erase:', {
-      userId: uid,
-      hasImage: !!request.image,
-      hasMask: !!request.mask,
-      hasSelectionCoords: !!request.selectionCoords,
+
+/* Removed code below
+try {
+  console.log('[eraseForCanvas] Starting erase:', {
+    userId: uid,
+    hasImage: !!request.image,
+    hasMask: !!request.mask,
+    hasSelectionCoords: !!request.selectionCoords,
+    selectionCoords: request.selectionCoords,
+    projectId: request.projectId,
+  });
+
+  if (!request.image) {
+    throw new ApiError('Image is required', 400);
+  }
+
+  // Use new crop-edit-composite approach if selectionCoords provided
+  if (request.selectionCoords) {
+    return await eraseForCanvasCropEditComposite(uid, {
+      image: request.image,
       selectionCoords: request.selectionCoords,
       projectId: request.projectId,
+      elementId: request.elementId,
+      prompt: request.prompt
     });
+  }
 
-    if (!request.image) {
-      throw new ApiError('Image is required', 400);
-    }
+  // Fall back to mask-based approach for backward compatibility
+  if (!request.mask) {
+    throw new ApiError('Either mask or selectionCoords is required', 400);
+  }
 
-    // Use new crop-edit-composite approach if selectionCoords provided
-    if (request.selectionCoords) {
-      return await eraseForCanvasCropEditComposite(uid, {
-        image: request.image,
-        selectionCoords: request.selectionCoords,
-        projectId: request.projectId,
-        elementId: request.elementId,
-        prompt: request.prompt
+  // Calculate aspect ratio from image dimensions
+  let aspectRatio = '1024:1024'; // Default
+  
+  try {
+    // Probe image to get dimensions
+    const imageMeta = await probeImageMeta(request.image);
+    if (imageMeta.width && imageMeta.height) {
+      // Map to closest Runway-supported ratio
+      const width = imageMeta.width;
+      const height = imageMeta.height;
+      const ratio = width / height;
+      
+      // Map to Runway-supported ratios
+      const runwayRatioMap: Record<string, string> = {
+        '1:1': '1024:1024',
+        '16:9': '1920:1080',
+        '9:16': '1080:1920',
+        '4:3': '1360:1020',
+        '3:4': '1020:1360',
+        '21:9': '2112:912',
+        '9:21': '912:2112',
+      };
+      
+      // Find closest match
+      if (Math.abs(ratio - 1) < 0.1) aspectRatio = runwayRatioMap['1:1'];
+      else if (Math.abs(ratio - 16/9) < 0.1) aspectRatio = runwayRatioMap['16:9'];
+      else if (Math.abs(ratio - 9/16) < 0.1) aspectRatio = runwayRatioMap['9:16'];
+      else if (Math.abs(ratio - 4/3) < 0.1) aspectRatio = runwayRatioMap['4:3'];
+      else if (Math.abs(ratio - 3/4) < 0.1) aspectRatio = runwayRatioMap['3:4'];
+      else if (Math.abs(ratio - 21/9) < 0.1) aspectRatio = runwayRatioMap['21:9'];
+      else if (Math.abs(ratio - 9/21) < 0.1) aspectRatio = runwayRatioMap['9:21'];
+      else {
+        // Use actual dimensions rounded to nearest valid ratio
+        const roundedWidth = Math.round(width / 100) * 100;
+        const roundedHeight = Math.round(height / 100) * 100;
+        aspectRatio = `${roundedWidth}:${roundedHeight}`;
+      }
+      
+      console.log('[eraseForCanvas] Calculated aspect ratio:', {
+        original: `${width}x${height}`,
+        ratio: aspectRatio,
       });
     }
+  } catch (e) {
+    console.warn('[eraseForCanvas] Could not determine aspect ratio, using default:', e);
+  }
 
-    // Fall back to mask-based approach for backward compatibility
-    if (!request.mask) {
-      throw new ApiError('Either mask or selectionCoords is required', 400);
+  // Analyze mask to provide debug info
+  let maskAnalysis: any = {};
+  try {
+    // Try to decode base64 mask if it's a data URL
+    if (request.mask && request.mask.startsWith('data:image')) {
+      const base64Data = request.mask.split(',')[1];
+      const buffer = Buffer.from(base64Data, 'base64');
+      maskAnalysis = {
+        isDataUrl: true,
+        dataUrlLength: request.mask.length,
+        base64Length: base64Data.length,
+        bufferSize: buffer.length,
+        format: request.mask.substring(5, request.mask.indexOf(';'))
+      };
+    } else {
+      maskAnalysis = {
+        isDataUrl: false,
+        maskLength: request.mask?.length || 0,
+        maskPreview: request.mask ? request.mask.substring(0, 100) + '...' : 'null'
+      };
     }
+  } catch (e) {
+    maskAnalysis = { error: 'Could not analyze mask', errorMessage: (e as Error).message };
+  }
 
-    // Calculate aspect ratio from image dimensions
-    let aspectRatio = '1024:1024'; // Default
+  console.log('[eraseForCanvas] ========== ERASE PROCESS DEBUG ==========');
+  console.log('[eraseForCanvas] Received Request:', {
+    hasImage: !!request.image,
+    imageLength: request.image?.length || 0,
+    imagePreview: request.image ? request.image.substring(0, 100) + '...' : 'null',
+    hasMask: !!request.mask,
+    maskAnalysis,
+    userPrompt: request.prompt || '(none)',
+    projectId: request.projectId,
+    aspectRatio
+  });
+
+  // Use Runway Gen4 Image Turbo for erase/inpainting
+  // The mask (white areas) tells Runway what to remove
+  // CRITICAL: Prompt must be mask-pixel-specific, not object-specific
+  // Combine user prompt (if provided) with predefined prompt
+  // User prompt should be specific to the masked/highlighted area only
+  
+  // Base prompt that explicitly references white pixels in mask, not objects
+  // CRITICAL: This prompt must be pixel-specific, not object-specific, to prevent Runway from removing similar objects
+  const basePrompt = 'Fill ONLY the white pixels shown in the mask image with background that seamlessly matches the surrounding area. The mask image shows exactly which pixels to change - modify ONLY pixels that are white in the mask. Do not modify any black pixels in the mask. Keep all black mask pixels and everything outside the mask exactly as they appear in the original image. CRITICAL RULES: 1) Do NOT remove or modify anything outside the white mask pixels. 2) Do NOT remove similar objects elsewhere in the image. 3) Do NOT modify black pixels in the mask. 4) Only change pixels that are explicitly white in the mask image. 5) Preserve all unmasked areas pixel-perfect. Maintain the exact same lighting, colors, textures, perspective, camera angle, and viewpoint as the original image.';
+  
+  console.log('[eraseForCanvas] Base Prompt:', basePrompt);
+  console.log('[eraseForCanvas] User Input Prompt:', request.prompt || '(none provided)');
+  
+  // If user provided a prompt, make it clear it applies only to the white mask pixels
+  let finalPrompt: string;
+  if (request.prompt && request.prompt.trim()) {
+    // User's prompt is about what's in the white mask pixels only
+    finalPrompt = `In the white pixels of the mask image only, ${request.prompt.trim()}. ${basePrompt}`;
+    console.log('[eraseForCanvas] ✅ Combined Prompt (User + Base):', finalPrompt);
+  } else {
+    finalPrompt = basePrompt;
+    console.log('[eraseForCanvas] ✅ Using Base Prompt Only:', finalPrompt);
+  }
+  
+  const runwayPayload: any = {
+    promptText: finalPrompt,
+    model: 'gen4_image_turbo',
+    ratio: aspectRatio as any,
+    generationType: 'text-to-image', // Runway textToImage endpoint handles image-to-image with referenceImages
+    // Use referenceImages directly with mask tag
+    // First image is the original, second image with tag 'mask' is the mask (white = remove, black = keep)
+    referenceImages: [
+      { uri: request.image },
+      { uri: request.mask, tag: 'mask' }
+    ],
+  };
+
+  console.log('[eraseForCanvas] Runway Payload:', {
+    model: runwayPayload.model,
+    ratio: runwayPayload.ratio,
+    promptText: runwayPayload.promptText,
+    promptLength: runwayPayload.promptText.length,
+    hasReferenceImages: runwayPayload.referenceImages?.length > 0,
+    referenceImageCount: runwayPayload.referenceImages?.length || 0,
+    firstImagePreview: runwayPayload.referenceImages?.[0]?.uri ? runwayPayload.referenceImages[0].uri.substring(0, 100) + '...' : 'null',
+    maskTag: runwayPayload.referenceImages?.[1]?.tag,
+    maskUriPreview: runwayPayload.referenceImages?.[1]?.uri ? runwayPayload.referenceImages[1].uri.substring(0, 100) + '...' : 'null'
+  });
+  console.log('[eraseForCanvas] =========================================');
+
+  // Runway textToImage returns a taskId and status "pending"
+  // Note: Runway SDK may not support negative prompts directly, but we include it in the prompt text
+  // The negative prompt concepts are incorporated into the main prompt for maximum effect
+  const taskResult = await runwayService.textToImage(uid, runwayPayload);
+
+  if (!taskResult.taskId) {
+    throw new ApiError('Runway image generation failed: no taskId returned', 500);
+  }
+
+  if (!taskResult.historyId) {
+    throw new ApiError('Runway image generation failed: no historyId returned', 500);
+  }
+
+  // Poll for completion (max 5 minutes, check every 2 seconds)
+  // Call getStatus to trigger history updates when Runway completes
+  const maxWaitTime = 5 * 60 * 1000; // 5 minutes
+  const pollInterval = 2000; // 2 seconds
+  const startTime = Date.now();
+  let completed = false;
+  let finalHistory: any = null;
+
+  while (!completed && (Date.now() - startTime) < maxWaitTime) {
+    await new Promise(resolve => setTimeout(resolve, pollInterval));
     
     try {
-      // Probe image to get dimensions
-      const imageMeta = await probeImageMeta(request.image);
-      if (imageMeta.width && imageMeta.height) {
-        // Map to closest Runway-supported ratio
-        const width = imageMeta.width;
-        const height = imageMeta.height;
-        const ratio = width / height;
-        
-        // Map to Runway-supported ratios
-        const runwayRatioMap: Record<string, string> = {
-          '1:1': '1024:1024',
-          '16:9': '1920:1080',
-          '9:16': '1080:1920',
-          '4:3': '1360:1020',
-          '3:4': '1020:1360',
-          '21:9': '2112:912',
-          '9:21': '912:2112',
-        };
-        
-        // Find closest match
-        if (Math.abs(ratio - 1) < 0.1) aspectRatio = runwayRatioMap['1:1'];
-        else if (Math.abs(ratio - 16/9) < 0.1) aspectRatio = runwayRatioMap['16:9'];
-        else if (Math.abs(ratio - 9/16) < 0.1) aspectRatio = runwayRatioMap['9:16'];
-        else if (Math.abs(ratio - 4/3) < 0.1) aspectRatio = runwayRatioMap['4:3'];
-        else if (Math.abs(ratio - 3/4) < 0.1) aspectRatio = runwayRatioMap['3:4'];
-        else if (Math.abs(ratio - 21/9) < 0.1) aspectRatio = runwayRatioMap['21:9'];
-        else if (Math.abs(ratio - 9/21) < 0.1) aspectRatio = runwayRatioMap['9:21'];
-        else {
-          // Use actual dimensions rounded to nearest valid ratio
-          const roundedWidth = Math.round(width / 100) * 100;
-          const roundedHeight = Math.round(height / 100) * 100;
-          aspectRatio = `${roundedWidth}:${roundedHeight}`;
-        }
-        
-        console.log('[eraseForCanvas] Calculated aspect ratio:', {
-          original: `${width}x${height}`,
-          ratio: aspectRatio,
+      // Call getStatus to check Runway task and trigger history update if completed
+      try {
+        await runwayService.getStatus(uid, taskResult.taskId);
+      } catch (statusError: any) {
+        // Ignore status check errors, continue polling history
+        console.warn('[eraseForCanvas] Status check error (continuing):', statusError?.message);
+      }
+      
+      // Check the history record which gets updated by getStatus when Runway completes
+      finalHistory = await generationHistoryRepository.get(uid, taskResult.historyId);
+      if (finalHistory && finalHistory.status === 'completed' && finalHistory.images && Array.isArray(finalHistory.images) && finalHistory.images.length > 0) {
+        completed = true;
+        break;
+      }
+      if (finalHistory && finalHistory.status === 'failed') {
+        throw new ApiError('Image erase failed', 500);
+      }
+      
+      // Log polling progress
+      if ((Date.now() - startTime) % 10000 < pollInterval) {
+        console.log('[eraseForCanvas] Polling...', {
+          elapsed: Math.round((Date.now() - startTime) / 1000),
+          status: finalHistory?.status || 'unknown',
+          hasImages: !!finalHistory?.images?.length,
         });
       }
-    } catch (e) {
-      console.warn('[eraseForCanvas] Could not determine aspect ratio, using default:', e);
+    } catch (pollError: any) {
+      console.warn('[eraseForCanvas] Poll error:', pollError);
+      // Continue polling
     }
-
-    // Analyze mask to provide debug info
-    let maskAnalysis: any = {};
-    try {
-      // Try to decode base64 mask if it's a data URL
-      if (request.mask && request.mask.startsWith('data:image')) {
-        const base64Data = request.mask.split(',')[1];
-        const buffer = Buffer.from(base64Data, 'base64');
-        maskAnalysis = {
-          isDataUrl: true,
-          dataUrlLength: request.mask.length,
-          base64Length: base64Data.length,
-          bufferSize: buffer.length,
-          format: request.mask.substring(5, request.mask.indexOf(';'))
-        };
-      } else {
-        maskAnalysis = {
-          isDataUrl: false,
-          maskLength: request.mask?.length || 0,
-          maskPreview: request.mask ? request.mask.substring(0, 100) + '...' : 'null'
-        };
-      }
-    } catch (e) {
-      maskAnalysis = { error: 'Could not analyze mask', errorMessage: (e as Error).message };
-    }
-
-    console.log('[eraseForCanvas] ========== ERASE PROCESS DEBUG ==========');
-    console.log('[eraseForCanvas] Received Request:', {
-      hasImage: !!request.image,
-      imageLength: request.image?.length || 0,
-      imagePreview: request.image ? request.image.substring(0, 100) + '...' : 'null',
-      hasMask: !!request.mask,
-      maskAnalysis,
-      userPrompt: request.prompt || '(none)',
-      projectId: request.projectId,
-      aspectRatio
-    });
-
-    // Use Runway Gen4 Image Turbo for erase/inpainting
-    // The mask (white areas) tells Runway what to remove
-    // CRITICAL: Prompt must be mask-pixel-specific, not object-specific
-    // Combine user prompt (if provided) with predefined prompt
-    // User prompt should be specific to the masked/highlighted area only
-    
-    // Base prompt that explicitly references white pixels in mask, not objects
-    // CRITICAL: This prompt must be pixel-specific, not object-specific, to prevent Runway from removing similar objects
-    const basePrompt = 'Fill ONLY the white pixels shown in the mask image with background that seamlessly matches the surrounding area. The mask image shows exactly which pixels to change - modify ONLY pixels that are white in the mask. Do not modify any black pixels in the mask. Keep all black mask pixels and everything outside the mask exactly as they appear in the original image. CRITICAL RULES: 1) Do NOT remove or modify anything outside the white mask pixels. 2) Do NOT remove similar objects elsewhere in the image. 3) Do NOT modify black pixels in the mask. 4) Only change pixels that are explicitly white in the mask image. 5) Preserve all unmasked areas pixel-perfect. Maintain the exact same lighting, colors, textures, perspective, camera angle, and viewpoint as the original image.';
-    
-    console.log('[eraseForCanvas] Base Prompt:', basePrompt);
-    console.log('[eraseForCanvas] User Input Prompt:', request.prompt || '(none provided)');
-    
-    // If user provided a prompt, make it clear it applies only to the white mask pixels
-    let finalPrompt: string;
-    if (request.prompt && request.prompt.trim()) {
-      // User's prompt is about what's in the white mask pixels only
-      finalPrompt = `In the white pixels of the mask image only, ${request.prompt.trim()}. ${basePrompt}`;
-      console.log('[eraseForCanvas] ✅ Combined Prompt (User + Base):', finalPrompt);
-    } else {
-      finalPrompt = basePrompt;
-      console.log('[eraseForCanvas] ✅ Using Base Prompt Only:', finalPrompt);
-    }
-    
-    const runwayPayload: any = {
-      promptText: finalPrompt,
-      model: 'gen4_image_turbo',
-      ratio: aspectRatio as any,
-      generationType: 'text-to-image', // Runway textToImage endpoint handles image-to-image with referenceImages
-      // Use referenceImages directly with mask tag
-      // First image is the original, second image with tag 'mask' is the mask (white = remove, black = keep)
-      referenceImages: [
-        { uri: request.image },
-        { uri: request.mask, tag: 'mask' }
-      ],
-    };
-
-    console.log('[eraseForCanvas] Runway Payload:', {
-      model: runwayPayload.model,
-      ratio: runwayPayload.ratio,
-      promptText: runwayPayload.promptText,
-      promptLength: runwayPayload.promptText.length,
-      hasReferenceImages: runwayPayload.referenceImages?.length > 0,
-      referenceImageCount: runwayPayload.referenceImages?.length || 0,
-      firstImagePreview: runwayPayload.referenceImages?.[0]?.uri ? runwayPayload.referenceImages[0].uri.substring(0, 100) + '...' : 'null',
-      maskTag: runwayPayload.referenceImages?.[1]?.tag,
-      maskUriPreview: runwayPayload.referenceImages?.[1]?.uri ? runwayPayload.referenceImages[1].uri.substring(0, 100) + '...' : 'null'
-    });
-    console.log('[eraseForCanvas] =========================================');
-
-    // Runway textToImage returns a taskId and status "pending"
-    // Note: Runway SDK may not support negative prompts directly, but we include it in the prompt text
-    // The negative prompt concepts are incorporated into the main prompt for maximum effect
-    const taskResult = await runwayService.textToImage(uid, runwayPayload);
-
-    if (!taskResult.taskId) {
-      throw new ApiError('Runway image generation failed: no taskId returned', 500);
-    }
-
-    if (!taskResult.historyId) {
-      throw new ApiError('Runway image generation failed: no historyId returned', 500);
-    }
-
-    // Poll for completion (max 5 minutes, check every 2 seconds)
-    // Call getStatus to trigger history updates when Runway completes
-    const maxWaitTime = 5 * 60 * 1000; // 5 minutes
-    const pollInterval = 2000; // 2 seconds
-    const startTime = Date.now();
-    let completed = false;
-    let finalHistory: any = null;
-
-    while (!completed && (Date.now() - startTime) < maxWaitTime) {
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
-      
-      try {
-        // Call getStatus to check Runway task and trigger history update if completed
-        try {
-          await runwayService.getStatus(uid, taskResult.taskId);
-        } catch (statusError: any) {
-          // Ignore status check errors, continue polling history
-          console.warn('[eraseForCanvas] Status check error (continuing):', statusError?.message);
-        }
-        
-        // Check the history record which gets updated by getStatus when Runway completes
-        finalHistory = await generationHistoryRepository.get(uid, taskResult.historyId);
-        if (finalHistory && finalHistory.status === 'completed' && finalHistory.images && Array.isArray(finalHistory.images) && finalHistory.images.length > 0) {
-          completed = true;
-          break;
-        }
-        if (finalHistory && finalHistory.status === 'failed') {
-          throw new ApiError('Image erase failed', 500);
-        }
-        
-        // Log polling progress
-        if ((Date.now() - startTime) % 10000 < pollInterval) {
-          console.log('[eraseForCanvas] Polling...', {
-            elapsed: Math.round((Date.now() - startTime) / 1000),
-            status: finalHistory?.status || 'unknown',
-            hasImages: !!finalHistory?.images?.length,
-          });
-        }
-      } catch (pollError: any) {
-        console.warn('[eraseForCanvas] Poll error:', pollError);
-        // Continue polling
-      }
-    }
-
-    if (!completed || !finalHistory) {
-      throw new ApiError('Image erase timed out or failed', 500);
-    }
-
-    const firstImage = finalHistory.images && Array.isArray(finalHistory.images) && finalHistory.images.length > 0
-      ? finalHistory.images[0]
-      : null;
-
-    if (!firstImage || !firstImage.url) {
-      throw new ApiError('No image returned from erase operation', 500);
-    }
-
-    // Attach canvas project linkage
-    try {
-      if (taskResult.historyId && request.projectId) {
-        await generationHistoryRepository.update(uid, taskResult.historyId, { 
-          canvasProjectId: request.projectId 
-        } as any);
-      }
-    } catch (e) {
-      console.warn('[eraseForCanvas] Failed to tag history with canvasProjectId', e);
-    }
-
-    console.log('[eraseForCanvas] Erase completed:', {
-      hasUrl: !!firstImage.url,
-      hasStoragePath: !!firstImage.storagePath,
-    });
-
-    return {
-      url: firstImage.url,
-      storagePath: (firstImage as any).storagePath || firstImage.originalUrl || firstImage.url,
-      mediaId: firstImage.id,
-      generationId: taskResult.historyId,
-    };
-  } catch (error: any) {
-    console.error('[eraseForCanvas] Service error:', {
-      message: error.message,
-      statusCode: error.statusCode,
-      stack: error.stack,
-    });
-    
-    if (error instanceof ApiError) {
-      throw error;
-    }
-    
-    throw new ApiError(
-      error.message || 'Image erase failed',
-      error.statusCode || error.status || 500
-    );
   }
-  */
+
+  if (!completed || !finalHistory) {
+    throw new ApiError('Image erase timed out or failed', 500);
+  }
+
+  const firstImage = finalHistory.images && Array.isArray(finalHistory.images) && finalHistory.images.length > 0
+    ? finalHistory.images[0]
+    : null;
+
+  if (!firstImage || !firstImage.url) {
+    throw new ApiError('No image returned from erase operation', 500);
+  }
+
+  // Attach canvas project linkage
+  try {
+    if (taskResult.historyId && request.projectId) {
+      await generationHistoryRepository.update(uid, taskResult.historyId, { 
+        canvasProjectId: request.projectId 
+      } as any);
+    }
+  } catch (e) {
+    console.warn('[eraseForCanvas] Failed to tag history with canvasProjectId', e);
+  }
+
+  console.log('[eraseForCanvas] Erase completed:', {
+    hasUrl: !!firstImage.url,
+    hasStoragePath: !!firstImage.storagePath,
+  });
+
+  return {
+    url: firstImage.url,
+    storagePath: (firstImage as any).storagePath || firstImage.originalUrl || firstImage.url,
+    mediaId: firstImage.id,
+    generationId: taskResult.historyId,
+  };
+} catch (error: any) {
+  console.error('[eraseForCanvas] Service error:', {
+    message: error.message,
+    statusCode: error.statusCode,
+    stack: error.stack,
+  });
+  
+  if (error instanceof ApiError) {
+    throw error;
+  }
+  
+  throw new ApiError(
+    error.message || 'Image erase failed',
+    error.statusCode || error.status || 500
+  );
+}
+*/
 
 export const generateService = {
   generateForCanvas,

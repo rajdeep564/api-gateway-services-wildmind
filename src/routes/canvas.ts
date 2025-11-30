@@ -44,6 +44,7 @@ router.post('/removebg', requireAuth, generateController.removeBgForCanvas);
 router.post('/vectorize', requireAuth, generateController.vectorizeForCanvas);
 router.post('/erase', requireAuth, generateController.eraseForCanvas);
 router.post('/replace', requireAuth, generateController.replaceForCanvas);
+router.post('/create-stitched-reference', requireAuth, generateController.createStitchedReferenceImage);
 
 // Query (Canvas prompt enhancement)
 router.post('/query', queryController.queryCanvas);

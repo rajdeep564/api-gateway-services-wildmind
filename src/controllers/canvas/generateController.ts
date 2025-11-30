@@ -3,6 +3,8 @@ import { generateService } from '../../services/canvas/generateService';
 import { formatApiResponse } from '../../utils/formatApiResponse';
 import { ApiError } from '../../utils/errorHandler';
 import { CanvasGenerationRequest } from '../../types/canvas';
+import { createReferenceImage, ReferenceImageItem } from '../../utils/createReferenceImage';
+import { uploadBufferToZata } from '../../utils/storage/zataUpload';
 
 export async function generateVideoForCanvas(req: Request, res: Response) {
   try {
@@ -302,6 +304,72 @@ export async function vectorizeForCanvas(req: Request, res: Response) {
         formatApiResponse('error', message, null)
       );
     }
+  }
+}
+
+export async function createStitchedReferenceImage(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      console.error('[createStitchedReferenceImage] Missing userId');
+      return res.status(401).json(
+        formatApiResponse('error', 'Unauthorized', null)
+      );
+    }
+
+    const { images, projectId } = req.body;
+
+    if (!images || !Array.isArray(images) || images.length === 0) {
+      return res.status(400).json(
+        formatApiResponse('error', 'Images array is required and cannot be empty', null)
+      );
+    }
+
+    if (!projectId) {
+      return res.status(400).json(
+        formatApiResponse('error', 'projectId is required', null)
+      );
+    }
+
+    console.log('[createStitchedReferenceImage] Creating stitched reference image:', {
+      userId,
+      projectId,
+      imageCount: images.length,
+    });
+
+    // Build reference image items
+    const referenceItems: ReferenceImageItem[] = images.map((img: any) => ({
+      url: img.url,
+      label: img.label || `${img.type || 'Image'}: ${img.name || 'Unknown'}`,
+      type: img.type || 'character',
+    }));
+
+    // Create stitched reference image
+    const stitchedBuffer = await createReferenceImage(referenceItems);
+
+    // Upload to Zata storage
+    const canvasKeyPrefix = `users/${userId}/canvas/${projectId}`;
+    const fileName = `reference-stitched-${Date.now()}.png`;
+    const key = `${canvasKeyPrefix}/${fileName}`;
+    
+    const { publicUrl } = await uploadBufferToZata(key, stitchedBuffer, 'image/png');
+
+    console.log('[createStitchedReferenceImage] ✅ Stitched reference image created:', {
+      url: publicUrl,
+      key,
+    });
+
+    return res.status(200).json(
+      formatApiResponse('success', 'Stitched reference image created', {
+        url: publicUrl,
+        key,
+      })
+    );
+  } catch (error: any) {
+    console.error('[createStitchedReferenceImage] Error:', error);
+    return res.status(500).json(
+      formatApiResponse('error', error.message || 'Failed to create stitched reference image', null)
+    );
   }
 }
 
