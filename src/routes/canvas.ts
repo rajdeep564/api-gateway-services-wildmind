@@ -22,6 +22,7 @@ router.post('/projects', projectsController.createProject);
 router.get('/projects', projectsController.listProjects);
 router.get('/projects/:id', projectsController.getProject);
 router.patch('/projects/:id', projectsController.updateProject);
+router.delete('/projects/:id', projectsController.deleteProject);
 router.post('/projects/:id/collaborators', projectsController.addCollaborator);
 
 // Operations

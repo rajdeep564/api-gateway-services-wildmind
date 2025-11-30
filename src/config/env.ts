@@ -41,7 +41,7 @@ export interface EnvConfig {
   // Logging
   logLevel: string;
   // BFL polling
-  bflPollIntervalMs?: number;   
+  bflPollIntervalMs?: number;
   bflPollMaxLoops?: number;
   reedemCodeAdminKey?: string;
   // Redis
@@ -92,7 +92,7 @@ export interface EnvConfig {
 
 function normalizeBoolean(value: string | undefined, defaultTrue: boolean): boolean {
   if (value == null) return defaultTrue;
-  const v = value.toLowerCase();        
+  const v = value.toLowerCase();
   if (['1', 'true', 'yes', 'on'].includes(v)) return true;
   if (['0', 'false', 'no', 'off'].includes(v)) return false;
   return defaultTrue;
@@ -145,7 +145,7 @@ export const env: EnvConfig = {
   revokeFirebaseTokens: normalizeBoolean(process.env.REVOKE_FIREBASE_TOKENS, false),
   cookieDomain: process.env.COOKIE_DOMAIN,
   frontendOrigin: process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL,
-  frontendOrigins: (process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL) 
+  frontendOrigins: (process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL)
     ? (process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL || '').split(',').map(s => s.trim()).filter(Boolean)
     : [],
   allowedOrigins: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : [],

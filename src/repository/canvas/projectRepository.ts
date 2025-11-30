@@ -12,7 +12,7 @@ export async function createProject(
   const now = admin.firestore.FieldValue.serverTimestamp();
   const nowTimestamp = admin.firestore.Timestamp.now(); // Use actual Timestamp for arrays
   const projectRef = adminDb.collection('canvasProjects').doc();
-  
+
   // Build project object, excluding undefined values
   // Note: FieldValue.serverTimestamp() cannot be used inside arrays, so we use Timestamp.now() for collaborators
   const projectData: any = {
@@ -35,11 +35,11 @@ export async function createProject(
   }
 
   await projectRef.set(projectData);
-  
+
   // Return with proper typing - read back to get actual timestamps
   const created = await projectRef.get();
   const createdData = created.data();
-  
+
   const project: CanvasProject = {
     id: created.id,
     name: createdData?.name || data.name,
@@ -60,7 +60,7 @@ export async function createProject(
 export async function getProject(projectId: string): Promise<CanvasProject | null> {
   const projectRef = adminDb.collection('canvasProjects').doc(projectId);
   const snap = await projectRef.get();
-  
+
   if (!snap.exists) return null;
   return { id: snap.id, ...snap.data() } as CanvasProject;
 }
@@ -79,6 +79,24 @@ export async function updateProject(
   return { id: updated.id, ...updated.data() } as CanvasProject;
 }
 
+export async function deleteProject(projectId: string): Promise<void> {
+  const projectRef = adminDb.collection('canvasProjects').doc(projectId);
+
+  // Delete all subcollections (snapshots) - Firestore requires manual deletion of subcollections
+  // For now, we'll just delete the main document. A cloud function would be better for cleanup.
+  // Or we can list and delete snapshots here if not too many.
+  const snapshotsRef = projectRef.collection('snapshots');
+  const snapshots = await snapshotsRef.get();
+
+  const batch = adminDb.batch();
+  snapshots.docs.forEach(doc => {
+    batch.delete(doc.ref);
+  });
+  batch.delete(projectRef);
+
+  await batch.commit();
+}
+
 export async function addCollaborator(
   projectId: string,
   uid: string,
@@ -86,9 +104,9 @@ export async function addCollaborator(
 ): Promise<void> {
   const projectRef = adminDb.collection('canvasProjects').doc(projectId);
   const project = await getProject(projectId);
-  
+
   if (!project) throw new Error('Project not found');
-  
+
   // Use actual Timestamp for arrays (FieldValue.serverTimestamp() cannot be used in arrays)
   const collaborator = {
     uid,
@@ -116,7 +134,7 @@ export async function saveSnapshot(
   snapshotOpIndex: number
 ): Promise<void> {
   const batch = adminDb.batch();
-  
+
   // Save snapshot
   const snapshotRef = adminDb
     .collection('canvasProjects')
@@ -173,17 +191,17 @@ export async function getSnapshot(
     .doc(projectId)
     .collection('snapshots')
     .doc(snapshotOpIndex.toString());
-  
+
   const snap = await snapshotRef.get();
   if (!snap.exists) return null;
-  
+
   return snap.data() as CanvasSnapshot;
 }
 
 export async function getLatestSnapshot(projectId: string): Promise<CanvasSnapshot | null> {
   const project = await getProject(projectId);
   if (!project || !project.lastSnapshotOpIndex) return null;
-  
+
   return getSnapshot(projectId, project.lastSnapshotOpIndex);
 }
 
@@ -200,7 +218,7 @@ export async function getCurrentSnapshot(projectId: string): Promise<CanvasSnaps
 
 export async function listUserProjects(uid: string, limit: number = 20): Promise<CanvasProject[]> {
   const projectsRef = adminDb.collection('canvasProjects');
-  
+
   try {
     // Query projects where user is owner, ordered by updatedAt
     // Note: This requires a composite index: ownerUid (ascending) + updatedAt (descending)
@@ -209,15 +227,15 @@ export async function listUserProjects(uid: string, limit: number = 20): Promise
       .where('ownerUid', '==', uid)
       .orderBy('updatedAt', 'desc')
       .limit(limit);
-    
+
     const ownerSnap = await ownerQuery.get();
     const ownerProjects = ownerSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CanvasProject));
-    
+
     // Also get projects where user is a collaborator
     // Note: Firestore doesn't support querying array-contains on nested fields easily
     // So we'll get owner projects and filter client-side, or use a separate query
     // For now, return owner projects. Can be enhanced later with composite queries
-    
+
     return ownerProjects;
   } catch (error: any) {
     // If composite index error, fallback to simple query without orderBy
@@ -226,17 +244,17 @@ export async function listUserProjects(uid: string, limit: number = 20): Promise
       const ownerQuery = projectsRef
         .where('ownerUid', '==', uid)
         .limit(limit);
-      
+
       const ownerSnap = await ownerQuery.get();
       const ownerProjects = ownerSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CanvasProject));
-      
+
       // Sort client-side by updatedAt
       ownerProjects.sort((a, b) => {
         const aTime = a.updatedAt?.toMillis?.() || 0;
         const bTime = b.updatedAt?.toMillis?.() || 0;
         return bTime - aTime;
       });
-      
+
       return ownerProjects.slice(0, limit);
     }
     throw error;
@@ -254,5 +272,6 @@ export const projectRepository = {
   getLatestSnapshot,
   getCurrentSnapshot,
   listUserProjects,
+  deleteProject,
 };
 
