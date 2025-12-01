@@ -108,15 +108,10 @@ async function prepareMask(maskDataUri: string): Promise<string> {
   }
 }
 
-/**
- * Google Nano Banana Edit - Queue-based API
- * Uses fal-ai/nano-banana/edit with queue submit/result pattern
- * Note: The image should already be composited with white mask overlay from frontend
- */
 export async function processGoogleNanoBanana(
   uid: string,
-  compositedImageUrl: string, // Image with white mask overlay already composited
-  maskUrl: string | null | undefined, // Not used anymore - mask is composited into the image
+  inputImageUrl: string, // Original input image (without compositing)
+  maskUrl: string | null | undefined, // Optional mask image URL (black background, white mask)
   prompt: string,
   historyId: string
 ): Promise<{ publicUrl: string; key: string }> {
@@ -128,29 +123,32 @@ export async function processGoogleNanoBanana(
   const model = 'fal-ai/nano-banana/edit';
   
   // Use the prompt as-is (it already contains the base prompt from eraseForCanvas)
-  // The prompt from eraseForCanvas includes: "Edit only the masked region. Keep the entire unmasked image identical..."
   const strictPrompt = prompt;
   
   // Add comprehensive negative prompt to prevent changes outside mask and preserve quality
   const negativePrompt = 'changing unmasked areas, modifying areas outside mask, altering non-masked regions, editing parts not in mask, changing anything outside the white mask area, modifying background, changing other objects, editing non-selected areas, altering black mask regions, modifying areas that are not white in mask, changing anything not explicitly masked, editing unmasked portions, modifying non-white mask areas, desaturated colors, dull colors, washed out colors, low contrast, faded appearance, color loss, reduced vibrancy, muted tones, color temperature shift, white balance change, saturation loss, brightness change, contrast reduction, overall image quality degradation, color cast, tint shift, hue shift, color desaturation, color dullness, color washout, color fade, color temperature alteration, white balance alteration, saturation reduction, brightness alteration, contrast alteration';
   
-  // Google Nano Banana Edit - send only the composited image (with white mask overlay)
-  // The white areas in the composited image indicate what should be edited
-  // Note: FAL API expects image_urls (plural array) not image_url (singular)
   const input: any = {
     prompt: strictPrompt,
-    image_urls: [compositedImageUrl], // Composited image (original + white mask overlay) as array
+    image_urls: [inputImageUrl], // Original image as array
     num_images: 1,
     aspect_ratio: 'auto',
     output_format: 'png', // PNG preserves quality better than JPEG (lossless)
     negative_prompt: negativePrompt,
   };
+
+  // If we have a processed mask, send it as mask_url so Nano Banana erases only
+  // the white area and keeps the black/unmasked area untouched.
+  if (maskUrl) {
+    input.mask_url = maskUrl;
+  }
   
   console.log('[replaceService] ✅ Using composited image (mask already included in image)');
 
   console.log('[replaceService] ========== GOOGLE NANO BANANA REQUEST ==========');
   console.log('[replaceService] Model:', model);
-  console.log('[replaceService] Composited Image URL (with white mask overlay):', compositedImageUrl);
+  console.log('[replaceService] Input Image URL:', inputImageUrl);
+  console.log('[replaceService] Mask URL (if any):', maskUrl);
   console.log('[replaceService] Prompt:', prompt);
   console.log('[replaceService] Input payload:', { 
     prompt: input.prompt,
@@ -160,7 +158,7 @@ export async function processGoogleNanoBanana(
     output_format: input.output_format,
     image_urls: input.image_urls ? (Array.isArray(input.image_urls) ? `[${input.image_urls.length} image(s)]` : 'N/A') : 'N/A',
     image_urls_preview: input.image_urls && Array.isArray(input.image_urls) && input.image_urls[0] ? (input.image_urls[0].slice(0, 100) + '...') : 'N/A',
-    note: 'Mask is already composited into the image (white overlay)'
+    has_mask_url: !!input.mask_url
   });
   console.log('[replaceService] ===============================================');
 
@@ -546,21 +544,23 @@ export async function replaceImage(
 
     // Resolve and prepare mask
     let maskUrl: string;
-    if (masked_image.startsWith('data:')) {
-      // Ensure mask dimensions match input image
-      const resampledMask = await ensureMaskDimensionsMatch(inputImageUrl, masked_image);
-      const processedMask = await prepareMask(resampledMask);
-      
-      const username = creator?.username || uid;
-      const stored = await uploadDataUriToZata({
-        dataUri: processedMask,
-        keyPrefix: `users/${username}/input/${historyId}`,
-        fileName: 'replace-mask',
-      });
-      maskUrl = stored.publicUrl;
-    } else {
-      maskUrl = masked_image;
-    }
+  if (masked_image.startsWith('data:')) {
+    // Ensure mask dimensions match input image and are in the proper black/white format
+    const resampledMask = await ensureMaskDimensionsMatch(inputImageUrl, masked_image);
+    const processedMask = await prepareMask(resampledMask);
+
+    const username = creator?.username || uid;
+
+    // Store processed mask for history / debugging and for Nano Banana mask_url
+    const storedMask = await uploadDataUriToZata({
+      dataUri: processedMask,
+      keyPrefix: `users/${username}/input/${historyId}`,
+      fileName: 'replace-mask',
+    });
+    maskUrl = storedMask.publicUrl;
+  } else {
+    maskUrl = masked_image;
+  }
 
     // Process based on model - default to Google Nano Banana
     let editedImageResult: { publicUrl: string; key: string };
