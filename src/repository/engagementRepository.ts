@@ -98,6 +98,27 @@ async function createEngagementNotification(
   actorUid: string,
   generationId: string
 ): Promise<void> {
+  // Look up the actor to get a nice display name / username for the notification
+  let actorDisplayName: string | undefined;
+  let actorUsername: string | undefined;
+  try {
+    const actorSnap = await adminDb.collection('users').doc(actorUid).get();
+    if (actorSnap.exists) {
+      const actorData = actorSnap.data() as any;
+      actorDisplayName =
+        actorData?.displayName ||
+        actorData?.username ||
+        actorData?.email ||
+        undefined;
+      actorUsername = actorData?.username || undefined;
+    }
+  } catch (e) {
+    console.warn('[engagementRepository] Failed to fetch actor user for notification', {
+      actorUid,
+      error: (e as any)?.message || e,
+    });
+  }
+
   // Look up the generation to find the owner/creator
   const genRef = adminDb.collection('generations').doc(generationId);
   const genSnap = await genRef.get();
@@ -114,14 +135,19 @@ async function createEngagementNotification(
     .doc(ownerUid)
     .collection('items')
     .doc();
-
-  const payload = {
+  const payload: any = {
     type,
     generationId,
     actorUid,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     read: false,
   };
+  if (actorDisplayName) {
+    payload.actorDisplayName = actorDisplayName;
+  }
+  if (actorUsername) {
+    payload.actorUsername = actorUsername;
+  }
 
   await notifRef.set(payload);
 
@@ -149,10 +175,12 @@ async function createEngagementNotification(
 
     if (!tokens.length) return;
 
+    const actorLabel = actorDisplayName || actorUsername || 'Someone';
+
     const title =
       type === 'like'
-        ? 'Someone liked your generation'
-        : 'Someone bookmarked your generation';
+        ? `${actorLabel} liked your generation`
+        : `${actorLabel} bookmarked your generation`;
 
     const body =
       type === 'like'
@@ -168,6 +196,9 @@ async function createEngagementNotification(
       data: {
         type,
         generationId,
+        actorUid,
+        actorDisplayName: actorDisplayName || '',
+        actorUsername: actorUsername || '',
       },
     });
 
