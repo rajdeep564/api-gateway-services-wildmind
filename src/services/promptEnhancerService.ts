@@ -1,15 +1,16 @@
 import axios, { AxiosError } from 'axios';
 import { env } from '../config/env';
+import { generateGeminiTextResponse } from './genai/geminiTextService';
 
 // Get the prompt enhancer service URL from environment
 function getPromptEnhancerUrl(): string {
   // Use env.promptEnhancerUrl which reads from NGROK_LANGUAGE or PROMPT_ENHANCER_URL
   const url = env.promptEnhancerUrl;
-  
+
   if (!url) {
     throw new Error('PROMPT_ENHANCER_URL or NGROK_LANGUAGE environment variable is required');
   }
-  
+
   return url.replace(/\/$/, ''); // Remove trailing slash
 }
 
@@ -44,7 +45,7 @@ export async function enhancePrompt(
 
   try {
     console.log(`[Prompt Enhancer] Enhancing prompt for ${mediaType} generation`);
-    
+
     const response = await axios.post(
       `${baseUrl}/enhance`,
       {
@@ -77,13 +78,13 @@ export async function enhancePrompt(
     };
   } catch (error: any) {
     const axiosError = error as AxiosError;
-    
+
     if (axiosError.response) {
       // Server responded with error status
       const status = axiosError.response.status;
       const statusText = axiosError.response.statusText;
       const errorData = (axiosError.response.data as any)?.detail || axiosError.response.data;
-      
+
       console.error(`[Prompt Enhancer] Service error (${status}):`, errorData);
       throw new Error(`Prompt enhancement failed: ${errorData || statusText}`);
     } else if (axiosError.request) {
@@ -116,7 +117,7 @@ export async function enhancePromptsBatch(
 
   try {
     console.log(`[Prompt Enhancer] Enhancing ${prompts.length} prompts in batch`);
-    
+
     const requests = prompts.map(({ prompt, mediaType = 'image' }) => ({
       prompt: prompt.trim(),
       media_type: mediaType,
@@ -152,11 +153,11 @@ export async function enhancePromptsBatch(
     return results;
   } catch (error: any) {
     const axiosError = error as AxiosError;
-    
+
     if (axiosError.response) {
       const status = axiosError.response.status;
       const errorData = (axiosError.response.data as any)?.detail || axiosError.response.data;
-      
+
       console.error(`[Prompt Enhancer] Batch service error (${status}):`, errorData);
       throw new Error(`Batch prompt enhancement failed: ${errorData || 'Unknown error'}`);
     } else if (axiosError.request) {
@@ -169,5 +170,133 @@ export async function enhancePromptsBatch(
   }
 }
 
-export default { enhancePrompt, enhancePromptsBatch };
+export interface CanvasQueryResult {
+  type: 'image' | 'video' | 'music' | 'answer';
+  enhanced_prompt: string | null;
+  response: string | null;
+}
+
+/**
+ * Query canvas prompt enhancement endpoint
+ * Calls the /canvas/query endpoint on the prompt enhancer service
+ */
+export async function queryCanvasPrompt(
+  text: string,
+  maxNewTokens?: number
+): Promise<CanvasQueryResult> {
+  if (!text || typeof text !== 'string' || !text.trim()) {
+    throw new Error('Text is required');
+  }
+
+  const hasGeminiKey =
+    Boolean(
+      env.googleGenAIApiKey ||
+      process.env.GOOGLE_GENAI_API_KEY ||
+      process.env.GENAI_API_KEY ||
+      process.env.GEMINI_API_KEY
+    );
+
+  if (hasGeminiKey) {
+    try {
+      const enhancedText = await generateGeminiTextResponse(text, {
+        maxOutputTokens: maxNewTokens,
+      });
+
+      return {
+        type: 'answer',
+        enhanced_prompt: enhancedText,
+        response: enhancedText,
+      };
+    } catch (err) {
+      console.error('[Canvas Query] Gemini integration failed, falling back to prompt enhancer service if available:', err);
+      if (!env.promptEnhancerUrl) {
+        throw err;
+      }
+      // otherwise fall through to original service as backup
+    }
+  }
+
+  const baseUrl = getPromptEnhancerUrl();
+  const maxTokens = maxNewTokens || 300;
+
+  try {
+    console.log(`[Canvas Query] Querying prompt enhancement for text: "${text.substring(0, 50)}..."`);
+
+    const response = await axios.post(
+      `${baseUrl}/canvas/query`,
+      {
+        text: text.trim(),
+        max_new_tokens: maxTokens,
+      },
+      {
+        timeout: 120000, // 120 second timeout (2 minutes) - increased for storyboard generation
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const data = response.data;
+
+    if (!data || typeof data.type !== 'string') {
+      console.error('[Canvas Query] Invalid response structure:', data);
+      throw new Error('Invalid response from canvas query service');
+    }
+
+    // Validate type
+    if (!['image', 'video', 'music', 'answer'].includes(data.type)) {
+      console.error('[Canvas Query] Invalid type in response:', data.type);
+      throw new Error('Invalid response type from canvas query service');
+    }
+
+    console.log(`[Canvas Query] Successfully processed query, type: ${data.type}`);
+
+    return {
+      type: data.type,
+      enhanced_prompt: data.enhanced_prompt || null,
+      response: data.response || null,
+    };
+  } catch (error: any) {
+    const axiosError = error as AxiosError;
+
+    if (axiosError.response) {
+      // Server responded with error status
+      const status = axiosError.response.status;
+      const statusText = axiosError.response.statusText;
+      const errorData = (axiosError.response.data as any)?.detail || axiosError.response.data;
+
+      console.error(`[Canvas Query] Service error (${status}):`, errorData);
+      throw new Error(`Canvas query failed: ${errorData || statusText}`);
+    } else if (axiosError.request) {
+      // Request was made but no response received
+      console.error('[Canvas Query] No response from service:', axiosError.message);
+      throw new Error('Canvas query service is unavailable. Please try again later.');
+    } else {
+      // Error setting up the request
+      console.error('[Canvas Query] Request setup error:', axiosError.message);
+      throw new Error(`Failed to query canvas prompt: ${axiosError.message}`);
+    }
+  }
+}
+
+export async function generateScenesFromStory(story: string): Promise<any> {
+  const hasGeminiKey =
+    Boolean(
+      env.googleGenAIApiKey ||
+      process.env.GOOGLE_GENAI_API_KEY ||
+      process.env.GENAI_API_KEY ||
+      process.env.GEMINI_API_KEY
+    );
+
+  if (hasGeminiKey) {
+    // Use local Gemini service
+    const { generateScenesFromStory: generateScenesGemini } = require('./genai/geminiTextService');
+    return generateScenesGemini(story);
+  }
+
+  // Fallback to Python service if needed (not implemented yet, but keeping structure)
+  throw new Error('Gemini API key required for scene generation');
+}
+
+export default { enhancePrompt, enhancePromptsBatch, queryCanvasPrompt, generateScenesFromStory };
 

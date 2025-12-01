@@ -194,12 +194,33 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
       return dateB - dateA;
     });
 
+    // Pagination logic
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const startIndex = (page - 1) * limit;
+    const endIndex = page * limit;
+
+    // Slice arrays based on pagination
+    const paginatedImages = images.slice(startIndex, endIndex);
+    const paginatedVideos = videos.slice(startIndex, endIndex);
+    const paginatedUploaded = uploaded.slice(startIndex, endIndex);
+
     return res.json(
       formatApiResponse('success', 'Media library retrieved', {
-        images,
-        videos,
+        images: paginatedImages,
+        videos: paginatedVideos,
         music: [], // TODO: Add music support later
-        uploaded,
+        uploaded: paginatedUploaded,
+        pagination: {
+          page,
+          limit,
+          totalImages: images.length,
+          totalVideos: videos.length,
+          totalUploaded: uploaded.length,
+          hasMoreImages: endIndex < images.length,
+          hasMoreVideos: endIndex < videos.length,
+          hasMoreUploaded: endIndex < uploaded.length,
+        }
       })
     );
   } catch (err) {
@@ -253,7 +274,7 @@ export async function saveUploadedMedia(req: Request, res: Response, next: NextF
     const fileName = `upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     let stored: { key: string; publicUrl: string; storagePath?: string; originalUrl?: string };
-    
+
     if (isDataUri) {
       const result = await uploadDataUriToZata({
         dataUri: url,

@@ -15,16 +15,16 @@ export async function createProject(
 
 export async function getProject(projectId: string, userId: string): Promise<CanvasProject> {
   const project = await projectRepository.getProject(projectId);
-  
+
   if (!project) {
     throw new ApiError('Project not found', 404);
   }
 
   // Check if user has access
-  const hasAccess = 
+  const hasAccess =
     project.ownerUid === userId ||
     project.collaborators.some(c => c.uid === userId);
-  
+
   if (!hasAccess) {
     throw new ApiError('Access denied', 403);
   }
@@ -38,17 +38,28 @@ export async function updateProject(
   updates: Partial<CanvasProject>
 ): Promise<CanvasProject> {
   const project = await getProject(projectId, userId);
-  
+
   // Check permissions
-  const userRole = project.ownerUid === userId 
-    ? 'owner' 
+  const userRole = project.ownerUid === userId
+    ? 'owner'
     : project.collaborators.find(c => c.uid === userId)?.role;
-  
+
   if (userRole !== 'owner' && userRole !== 'editor') {
     throw new ApiError('Only owners and editors can update projects', 403);
   }
 
   return projectRepository.updateProject(projectId, updates);
+}
+
+export async function deleteProject(projectId: string, userId: string): Promise<void> {
+  const project = await projectRepository.getProject(projectId);
+  if (!project) {
+    throw new Error('Project not found');
+  }
+  if (project.ownerUid !== userId) {
+    throw new Error('Unauthorized');
+  }
+  return projectRepository.deleteProject(projectId);
 }
 
 export async function addCollaboratorToProject(
@@ -58,7 +69,7 @@ export async function addCollaboratorToProject(
   role: 'owner' | 'editor' | 'viewer'
 ): Promise<void> {
   const project = await getProject(projectId, ownerUid);
-  
+
   if (project.ownerUid !== ownerUid) {
     throw new ApiError('Only project owner can add collaborators', 403);
   }
@@ -76,5 +87,6 @@ export const projectService = {
   updateProject,
   addCollaboratorToProject,
   listUserProjects,
+  deleteProject,
 };
 

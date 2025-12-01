@@ -10,6 +10,7 @@ import * as cursorAgentController from '../controllers/canvas/cursorAgentControl
 import * as workersController from '../controllers/canvas/workersController';
 import * as presenceController from '../websocket/canvasPresenceServer';
 import * as mediaLibraryController from '../controllers/canvas/mediaLibraryController';
+import * as queryController from '../controllers/canvas/queryController';
 
 const router = Router();
 
@@ -21,6 +22,7 @@ router.post('/projects', projectsController.createProject);
 router.get('/projects', projectsController.listProjects);
 router.get('/projects/:id', projectsController.getProject);
 router.patch('/projects/:id', projectsController.updateProject);
+router.delete('/projects/:id', projectsController.deleteProject);
 router.post('/projects/:id/collaborators', projectsController.addCollaborator);
 
 // Operations
@@ -39,6 +41,15 @@ router.put('/projects/:id/snapshot/current', snapshotController.setCurrentSnapsh
 router.post('/generate', validateCanvasGenerate, generateController.generateForCanvas);
 router.post('/generate-video', requireAuth, generateController.generateVideoForCanvas);
 router.post('/upscale', requireAuth, generateController.upscaleForCanvas);
+router.post('/removebg', requireAuth, generateController.removeBgForCanvas);
+router.post('/vectorize', requireAuth, generateController.vectorizeForCanvas);
+router.post('/erase', requireAuth, generateController.eraseForCanvas);
+router.post('/replace', requireAuth, generateController.replaceForCanvas);
+router.post('/create-stitched-reference', requireAuth, generateController.createStitchedReferenceImage);
+
+// Query (Canvas prompt enhancement)
+router.post('/query', queryController.queryCanvas);
+router.post('/generate-scenes', queryController.generateScenes);
 
 // Media Library
 router.get('/media-library', mediaLibraryController.getMediaLibrary);

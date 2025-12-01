@@ -152,10 +152,46 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
   // Remove undefined values before saving to Firestore
   const cleanedUpdates = removeUndefinedValues(updates);
   
-  await ref.update({
-    ...cleanedUpdates,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  } as any);
+  // Debug: Check for nested structures in images array
+  if (cleanedUpdates.images && Array.isArray(cleanedUpdates.images)) {
+    console.log('[generationHistoryRepository.update] Checking images array for nested structures:', {
+      imagesCount: cleanedUpdates.images.length,
+      firstImageKeys: cleanedUpdates.images[0] ? Object.keys(cleanedUpdates.images[0]) : [],
+      firstImageTypes: cleanedUpdates.images[0] ? Object.entries(cleanedUpdates.images[0]).map(([k, v]) => ({
+        key: k,
+        type: typeof v,
+        isArray: Array.isArray(v),
+        isObject: typeof v === 'object' && v !== null && !Array.isArray(v) && v.constructor === Object,
+        value: typeof v === 'string' ? v.substring(0, 50) + '...' : v,
+      })) : [],
+    });
+    
+    // Check each image for nested objects
+    cleanedUpdates.images.forEach((img: any, index: number) => {
+      if (img && typeof img === 'object') {
+        Object.entries(img).forEach(([key, value]) => {
+          if (value && typeof value === 'object' && !Array.isArray(value) && value.constructor === Object) {
+            console.error(`[generationHistoryRepository.update] NESTED OBJECT FOUND in images[${index}].${key}:`, value);
+          }
+        });
+      }
+    });
+  }
+  
+  try {
+    await ref.update({
+      ...cleanedUpdates,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    } as any);
+    console.log('[generationHistoryRepository.update] ✅ Successfully updated Firestore');
+  } catch (error: any) {
+    console.error('[generationHistoryRepository.update] ❌ Firestore update failed:', {
+      message: error.message,
+      code: error.code,
+      updates: JSON.stringify(cleanedUpdates, null, 2).substring(0, 1000),
+    });
+    throw error;
+  }
   // Invalidate cache for the single item and user lists
   try {
     await invalidateItem(uid, historyId);

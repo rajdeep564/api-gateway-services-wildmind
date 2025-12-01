@@ -126,6 +126,7 @@ export interface CanvasSnapshot {
   metadata: {
     version: string;
     createdAt: Timestamp;
+    [key: string]: any; // Allow additional metadata fields (e.g., 'stitched-image')
   };
 }
 
@@ -215,6 +216,9 @@ export interface CanvasGenerationRequest {
   seed?: number;
   imageCount?: number; // Number of images to generate (default: 1)
   sourceImageUrl?: string; // Source image URL for image-to-image generation
+  sceneNumber?: number; // Scene number (1, 2, 3, ...) for storyboard generation
+  previousSceneImageUrl?: string; // Previous scene's generated image URL (for Scene 2+)
+  storyboardMetadata?: Record<string, string>; // Metadata for storyboard (character, background, etc.)
   options?: Record<string, any>;
   meta: {
     source: 'canvas';

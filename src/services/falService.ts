@@ -1179,6 +1179,29 @@ export const falService = {
       }
       if (!inputUrl) throw new ApiError('Unable to resolve image_url for Bria Expand', 400);
 
+      // FAL cannot access localhost URLs or proxy URLs - we need to upload to a publicly accessible location
+      const isLocalhost = inputUrl.includes('localhost') || inputUrl.includes('127.0.0.1') || inputUrl.includes('/api/proxy/');
+      const isZataUrl = inputUrl.includes('idr01.zata.ai');
+      
+      if (isLocalhost || isZataUrl) {
+        try {
+          const username = creator?.username || uid;
+          // Download from localhost/proxy/Zata using our backend and re-upload to get a public URL
+          // This ensures FAL can access the image
+          const reuploaded = await uploadFromUrlToZata({ 
+            sourceUrl: inputUrl, 
+            keyPrefix: `users/${username}/input/${historyId}`, 
+            fileName: `bria-expand-fal-${Date.now()}` 
+          });
+          inputUrl = reuploaded.publicUrl;
+          console.log('[falService.briaExpandImage] Re-uploaded image for FAL access:', inputUrl.substring(0, 100) + '...');
+        } catch (err: any) {
+          console.error('[falService.briaExpandImage] Failed to re-upload image for FAL access:', err?.message || err);
+          // If re-upload fails, we'll still try with the original URL, but FAL will likely fail
+          // This gives us a better error message from FAL
+        }
+      }
+
       // Normalize inputs
       const canvas = Array.isArray(body?.canvas_size) && body.canvas_size.length === 2
         ? [Number(body.canvas_size[0]), Number(body.canvas_size[1])]
@@ -1206,46 +1229,292 @@ export const falService = {
       if (body?.sync_mode === true) input.sync_mode = true;
 
       console.log('[falService.briaExpandImage] Calling FAL API:', { model, input: { ...input, image_url: (input.image_url || '').slice(0,100) + '...' } });
+      
+      // Validate that image fits within canvas if both are provided
+      if (input.canvas_size && input.original_image_size && input.original_image_location) {
+        const [canvasW, canvasH] = input.canvas_size;
+        const [imgW, imgH] = input.original_image_size;
+        const [imgX, imgY] = input.original_image_location;
+        
+        // Check if image extends beyond canvas bounds
+        if (imgX < 0 || imgY < 0 || imgX + imgW > canvasW || imgY + imgH > canvasH) {
+          console.warn('[falService.briaExpandImage] Image extends beyond canvas bounds:', {
+            canvas: { w: canvasW, h: canvasH },
+            image: { w: imgW, h: imgH, x: imgX, y: imgY },
+            rightEdge: imgX + imgW,
+            bottomEdge: imgY + imgH,
+          });
+          // Don't throw here - let FAL API handle it, but log for debugging
+        }
+      }
+      
       let result: any;
       try {
         result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
       } catch (falErr: any) {
-        const details = falErr?.response?.data || falErr?.message || falErr;
-        console.error('[falService.briaExpandImage] FAL API error:', JSON.stringify(details, null, 2));
-        throw new ApiError(`FAL API error: ${JSON.stringify(details)}`, 500);
+        // Extract detailed error information
+        const status = falErr?.response?.status || falErr?.status;
+        const statusText = falErr?.response?.statusText || falErr?.statusText;
+        const responseData = falErr?.response?.data || falErr?.data;
+        const errorMessage = falErr?.message || 'Unknown error';
+        
+        console.error('[falService.briaExpandImage] FAL API error details:', {
+          status,
+          statusText,
+          errorMessage,
+          responseData: responseData ? JSON.stringify(responseData, null, 2) : 'No response data',
+          input: JSON.stringify(input, null, 2),
+        });
+        
+        // Try to extract a more helpful error message
+        let userFriendlyMessage = 'FAL API error';
+        if (status === 422) {
+          userFriendlyMessage = 'FAL API validation error: Invalid parameters';
+          if (responseData?.detail) {
+            const detail = Array.isArray(responseData.detail) 
+              ? responseData.detail.map((d: any) => d.msg || d.message || String(d)).join(', ')
+              : JSON.stringify(responseData.detail);
+            userFriendlyMessage += ` - ${detail}`;
+          } else if (responseData?.message) {
+            userFriendlyMessage += ` - ${responseData.message}`;
+          } else if (errorMessage) {
+            userFriendlyMessage += ` - ${errorMessage}`;
+          }
+        } else if (errorMessage) {
+          userFriendlyMessage = `FAL API error: ${errorMessage}`;
+        } else {
+          userFriendlyMessage = `FAL API error: ${statusText || 'Unknown error'}`;
+        }
+        
+        throw new ApiError(userFriendlyMessage, status || 500);
       }
 
-      const imgUrl: string | undefined = (result as any)?.data?.image?.url || (result as any)?.data?.output?.image?.url;
+      // Check multiple possible response structures for the image URL
+      const imgUrl: string | undefined = 
+        (result as any)?.data?.image?.url ||
+        (result as any)?.data?.output?.image?.url ||
+        (result as any)?.data?.images?.[0]?.url ||
+        (result as any)?.data?.output?.images?.[0]?.url ||
+        (result as any)?.image?.url ||
+        (result as any)?.output?.image?.url ||
+        (result as any)?.images?.[0]?.url ||
+        (typeof (result as any)?.data?.image === 'string' ? (result as any).data.image : undefined) ||
+        (typeof (result as any)?.output === 'string' ? (result as any).output : undefined);
+      
+      // Log the full response structure for debugging
+      console.log('[falService.briaExpandImage] FAL API response structure:', {
+        hasData: !!(result as any)?.data,
+        dataKeys: (result as any)?.data ? Object.keys((result as any).data) : [],
+        hasImage: !!(result as any)?.data?.image,
+        hasImages: !!(result as any)?.data?.images,
+        hasOutput: !!(result as any)?.data?.output,
+        imageUrl: imgUrl ? imgUrl.substring(0, 100) + '...' : 'NOT FOUND',
+        responsePreview: JSON.stringify(result, null, 2).substring(0, 500),
+      });
+      
       if (!imgUrl) {
-        console.error('[falService.briaExpandImage] No image in response:', JSON.stringify(result, null, 2));
-        throw new ApiError('No image URL returned from FAL Bria Expand API', 502);
+        console.error('[falService.briaExpandImage] No image in response. Full response:', JSON.stringify(result, null, 2));
+        throw new ApiError('No image URL returned from FAL Bria Expand API. Check response structure.', 502);
       }
 
       const username = creator?.username || uid;
-      const { key, publicUrl } = await uploadFromUrlToZata({ sourceUrl: imgUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'bria-expand' });
-  const images: FalGeneratedImage[] = [ { id: (result as any)?.requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any ];
+      const keyPrefix = `users/${username}/image/${historyId}`;
+      
+      // Handle base64 data URLs - use uploadDataUriToZata, otherwise use uploadFromUrlToZata
+      let key: string;
+      let publicUrl: string;
+      let storedOriginalUrl: string; // Store a URL, not base64 data
+      
+      if (imgUrl.startsWith('data:')) {
+        // Base64 data URL - upload using uploadDataUriToZata
+        const { key: uploadedKey, publicUrl: uploadedUrl } = await uploadDataUriToZata({ 
+          dataUri: imgUrl, 
+          keyPrefix, 
+          fileName: 'bria-expand' 
+        });
+        key = uploadedKey;
+        publicUrl = uploadedUrl;
+        // Don't store the base64 data URL - use the Zata URL instead
+        storedOriginalUrl = uploadedUrl;
+      } else {
+        // Regular URL - upload using uploadFromUrlToZata
+        const uploaded = await uploadFromUrlToZata({ 
+          sourceUrl: imgUrl, 
+          keyPrefix, 
+          fileName: 'bria-expand' 
+        });
+        key = uploaded.key;
+        publicUrl = uploaded.publicUrl;
+        storedOriginalUrl = imgUrl; // Store the original URL (not base64)
+      }
+      
+      const images: FalGeneratedImage[] = [ { 
+        id: (result as any)?.requestId || `fal-${Date.now()}`, 
+        url: publicUrl, 
+        storagePath: key, 
+        originalUrl: storedOriginalUrl // Never store base64 data URLs
+      } as any ];
 
   // Score images
   const scoredImages = await aestheticScoreService.scoreImages(images as any);
   const highestScore = aestheticScoreService.getHighestScore(scoredImages);
 
-  await generationHistoryRepository.update(uid, historyId, { 
-    status: 'completed', 
-    images: scoredImages, 
+  // Deep clean function to ensure Firestore compatibility
+  // Only processes arrays and objects - primitives pass through as-is
+  const deepCleanForFirestore = (obj: any): any => {
+    if (obj === null) return null; // Firestore allows null
+    if (obj === undefined) return undefined; // Will be filtered out by removeUndefinedValues
+    if (typeof obj === 'string' || typeof obj === 'number' || typeof obj === 'boolean') return obj;
+    if (obj instanceof Date) return obj.toISOString();
+    if (Array.isArray(obj)) {
+      const cleaned = obj.map(item => deepCleanForFirestore(item)).filter(item => item !== undefined);
+      return cleaned.length > 0 ? cleaned : []; // Return empty array instead of undefined
+    }
+    if (typeof obj === 'object' && obj.constructor === Object) {
+      // Only process plain objects, not class instances
+      const cleaned: any = {};
+      for (const [key, value] of Object.entries(obj)) {
+        const cleanedValue = deepCleanForFirestore(value);
+        if (cleanedValue !== undefined) {
+          cleaned[key] = cleanedValue;
+        }
+      }
+      return Object.keys(cleaned).length > 0 ? cleaned : undefined;
+    }
+    // For any other type (class instances, functions, etc.), return undefined
+    return undefined;
+  };
+
+  // Clean images array to remove the aesthetic object with nested structures
+  // Extract aestheticScore from aesthetic object but don't include the aesthetic object itself
+  // This matches the pattern used in bflService.expand and outpaintImage
+  const cleanedImages = scoredImages.map((img: any) => {
+    // Handle originalUrl - don't store base64 data URLs (they're too long and can cause Firestore errors)
+    // Use the Zata URL as originalUrl if the original is a data URL
+    let originalUrl = img.originalUrl || img.url;
+    if (typeof originalUrl === 'string' && originalUrl.startsWith('data:')) {
+      // Don't store base64 data URLs - use the Zata URL instead
+      originalUrl = img.url;
+    }
+    
+    // Create a new object with only the properties we want (avoid spreading which might include nested objects)
+    const cleaned: any = {
+      id: img.id,
+      url: img.url,
+      originalUrl: originalUrl,
+    };
+    
+    // Only add primitive properties
+    if (typeof img.storagePath === 'string') cleaned.storagePath = img.storagePath;
+    if (typeof img.avifUrl === 'string') cleaned.avifUrl = img.avifUrl;
+    if (typeof img.thumbnailUrl === 'string') cleaned.thumbnailUrl = img.thumbnailUrl;
+    if (typeof img.blurDataUrl === 'string') cleaned.blurDataUrl = img.blurDataUrl;
+    if (typeof img.optimized === 'boolean') cleaned.optimized = img.optimized;
+    if (typeof img.optimizedAt === 'string') cleaned.optimizedAt = img.optimizedAt;
+    
+    // Extract aestheticScore from aesthetic object if present, otherwise use direct value
+    const aestheticScore = typeof img.aesthetic?.score === 'number' 
+      ? img.aesthetic.score 
+      : (typeof img.aestheticScore === 'number' ? img.aestheticScore : undefined);
+    if (aestheticScore !== undefined) {
+      cleaned.aestheticScore = aestheticScore;
+    }
+    
+    if (typeof img.width === 'number') cleaned.width = img.width;
+    if (typeof img.height === 'number') cleaned.height = img.height;
+    if (typeof img.size === 'number') cleaned.size = img.size;
+    
+    return cleaned;
+  });
+
+  // Log cleaned images for debugging
+  console.log('[falService.briaExpandImage] Cleaned images:', {
+    count: cleanedImages.length,
+    firstImage: cleanedImages[0] ? {
+      id: cleanedImages[0].id,
+      url: cleanedImages[0].url?.substring(0, 50) + '...',
+      keys: Object.keys(cleanedImages[0]),
+      hasAestheticScore: typeof cleanedImages[0].aestheticScore === 'number',
+    } : null,
+  });
+
+  // Deep inspect the cleaned images to ensure no nested structures
+  const inspectForNestedStructures = (obj: any, path = ''): string[] => {
+    const issues: string[] = [];
+    if (obj === null || obj === undefined) return issues;
+    if (typeof obj === 'object' && !Array.isArray(obj) && obj.constructor === Object) {
+      for (const [key, value] of Object.entries(obj)) {
+        const currentPath = path ? `${path}.${key}` : key;
+        if (value === null || value === undefined) continue;
+        if (typeof value === 'object' && !Array.isArray(value) && value.constructor === Object) {
+          issues.push(`Nested object found at ${currentPath}`);
+          issues.push(...inspectForNestedStructures(value, currentPath));
+        } else if (Array.isArray(value)) {
+          value.forEach((item, index) => {
+            if (typeof item === 'object' && item !== null) {
+              issues.push(`Array item at ${currentPath}[${index}] is an object`);
+              issues.push(...inspectForNestedStructures(item, `${currentPath}[${index}]`));
+            }
+          });
+        }
+      }
+    }
+    return issues;
+  };
+
+  const nestedIssues = cleanedImages.flatMap((img, index) => 
+    inspectForNestedStructures(img, `images[${index}]`)
+  );
+  
+  if (nestedIssues.length > 0) {
+    console.error('[falService.briaExpandImage] NESTED STRUCTURES DETECTED:', nestedIssues);
+    console.error('[falService.briaExpandImage] Full cleaned images:', JSON.stringify(cleanedImages, null, 2));
+  } else {
+    console.log('[falService.briaExpandImage] ✅ No nested structures detected in cleaned images');
+  }
+
+  // Create update payload and log it
+  const updatePayload = {
+    status: 'completed' as const,
+    images: cleanedImages,
     aestheticScore: highestScore,
-    updatedAt: new Date().toISOString(), // Set completion time for proper sorting
-  } as any);
+  };
+  
+  console.log('[falService.briaExpandImage] Update payload to Firestore:', {
+    status: updatePayload.status,
+    imagesCount: updatePayload.images.length,
+    aestheticScore: updatePayload.aestheticScore,
+    imagesStructure: updatePayload.images.map((img, i) => ({
+      index: i,
+      keys: Object.keys(img),
+      types: Object.entries(img).map(([k, v]) => [k, typeof v, Array.isArray(v) ? 'array' : '']),
+    })),
+  });
+
+  // Save using the same pattern as outpaintImage - pass cleaned images directly
+  try {
+    await generationHistoryRepository.update(uid, historyId, updatePayload as any);
+    console.log('[falService.briaExpandImage] ✅ Successfully saved to Firestore');
+  } catch (firestoreError: any) {
+    console.error('[falService.briaExpandImage] ❌ Firestore error:', {
+      message: firestoreError.message,
+      code: firestoreError.code,
+      stack: firestoreError.stack,
+      payload: JSON.stringify(updatePayload, null, 2),
+    });
+    throw firestoreError;
+  }
       
       // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
       markGenerationCompleted(uid, historyId, {
         status: "completed",
-        images: scoredImages as any,
+        images: cleanedImages as any,
       }).catch(err => console.error('[FAL] Image optimization failed:', err));
       
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
 
-  return { images: scoredImages as any, historyId, model, status: 'completed' };
+  return { images: cleanedImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
         fallbackMessage: 'Failed to expand image with Bria API',
