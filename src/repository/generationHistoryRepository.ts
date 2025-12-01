@@ -48,6 +48,9 @@ const filterItemsByMode = <T extends { generationType?: string }>(
 export async function create(uid: string, data: {
   prompt: string;
   userPrompt?: string;
+  // Rich text fields for audio/music generations
+  lyrics?: string;
+  fileName?: string;
   model: string;
   generationType: GenerationType | string;
   visibility?: Visibility | string;
@@ -81,6 +84,10 @@ export async function create(uid: string, data: {
     uid,
     prompt: data.prompt,
     userPrompt: data.userPrompt || null,
+    // Persist lyrics and fileName when provided so frontend can restore
+    // the track title and lyrics even after a hard refresh.
+    lyrics: data.lyrics || null,
+    fileName: data.fileName || null,
     model: data.model,
     generationType: data.generationType,
     visibility: (data.visibility as Visibility) || Visibility.Private,

@@ -3,7 +3,7 @@ import { GenerationHistoryItem } from '../types/generate';
 import { mapModeToGenerationTypes } from '../utils/modeTypeMap';
 
 function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
-  const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, audios, createdBy, isPublic, createdAt, updatedAt, isDeleted, aspectRatio, frameSize, aspect_ratio, aestheticScore, scoreUpdatedAt } = data;
+  const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, audios, createdBy, isPublic, createdAt, updatedAt, isDeleted, aspectRatio, frameSize, aspect_ratio, aestheticScore, scoreUpdatedAt, lyrics, fileName } = data;
   
   // Ensure isPublic is explicitly boolean true (not undefined, null, or false)
   // If isPublic is not explicitly true, set it to false to ensure proper filtering
@@ -52,6 +52,8 @@ function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
     id: normalizedId,
     uid: uid ? String(uid) : '',
     prompt,
+    lyrics,
+    fileName,
     model,
     generationType,
     status,
