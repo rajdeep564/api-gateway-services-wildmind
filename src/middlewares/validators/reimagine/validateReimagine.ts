@@ -24,6 +24,16 @@ export const validateReimagine = [
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
     }
+
+    // Check for profanity in prompt
+    if (req.body?.prompt && typeof req.body.prompt === 'string') {
+      const { validatePrompt } = require('../../../utils/profanityFilter');
+      const profanityCheck = validatePrompt(req.body.prompt);
+      if (!profanityCheck.isValid) {
+        return res.status(400).json({ errors: [{ msg: profanityCheck.error || 'Prompt contains inappropriate language' }] });
+      }
+    }
+
     next();
   },
 ];

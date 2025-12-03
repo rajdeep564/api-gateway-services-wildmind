@@ -152,3 +152,152 @@ Need help? Contact us at ${supportEmail}
   `.trim();
 }
 
+export interface PasswordResetEmailData {
+  resetLink: string;
+  email: string;
+  companyName?: string;
+  supportEmail?: string;
+}
+
+/**
+ * Generate HTML email template for password reset (matching OTP email style)
+ */
+export function generatePasswordResetEmailHTML(data: PasswordResetEmailData): string {
+  const {
+    resetLink,
+    email,
+    companyName = 'WildMind AI',
+    supportEmail = 'support@wildmindai.com'
+  } = data;
+
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Reset Your Password - ${companyName}</title>
+  <!--[if mso]>
+  <style type="text/css">
+    body, table, td {font-family: Arial, sans-serif !important;}
+  </style>
+  <![endif]-->
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f4f4f4;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+          
+          <!-- Header -->
+          <tr>
+            <td style="padding: 40px 40px 30px; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px 12px 0 0;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">
+                ${companyName}
+              </h1>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 40px 40px 30px;">
+              <h2 style="margin: 0 0 20px; color: #1a1a1a; font-size: 24px; font-weight: 600; line-height: 1.3;">
+                Reset Your Password
+              </h2>
+              
+              <p style="margin: 0 0 20px; color: #4a4a4a; font-size: 16px; line-height: 1.6;">
+                Hello,
+              </p>
+              
+              <p style="margin: 0 0 30px; color: #4a4a4a; font-size: 16px; line-height: 1.6;">
+                We received a request to reset your password for your ${companyName} account. Click the button below to create a new password:
+              </p>
+              
+              <!-- Reset Button (Styled like OTP code box) -->
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                <tr>
+                  <td align="center" style="padding: 0 0 30px;">
+                    <a href="${resetLink}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-size: 16px; font-weight: 600; letter-spacing: 0.5px; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);">
+                      Reset Password
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              
+              <p style="margin: 0 0 20px; color: #666666; font-size: 14px; line-height: 1.6;">
+                Or copy and paste this link into your browser:
+              </p>
+              
+              <p style="margin: 0 0 30px; color: #667eea; font-size: 14px; line-height: 1.6; word-break: break-all;">
+                <a href="${resetLink}" style="color: #667eea; text-decoration: underline;">${resetLink}</a>
+              </p>
+              
+              <p style="margin: 0 0 20px; color: #666666; font-size: 14px; line-height: 1.6;">
+                <strong style="color: #1a1a1a;">⏱️ This link will expire in 1 hour.</strong>
+              </p>
+              
+              <p style="margin: 0 0 30px; color: #666666; font-size: 14px; line-height: 1.6;">
+                <strong style="color: #d32f2f;">🔒 Security Notice:</strong> If you didn't request a password reset, you can safely ignore this email. Your password will remain unchanged.
+              </p>
+              
+              <div style="background-color: #f8f9fa; border-left: 4px solid #667eea; padding: 15px; margin: 30px 0; border-radius: 4px;">
+                <p style="margin: 0; color: #4a4a4a; font-size: 14px; line-height: 1.6;">
+                  <strong>Having trouble?</strong><br>
+                  If the button doesn't work, copy and paste the link above into your browser. If you continue to have issues, contact us at <a href="mailto:${supportEmail}" style="color: #667eea; text-decoration: none;">${supportEmail}</a>
+                </p>
+              </div>
+            </td>
+          </tr>
+          
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 30px 40px; background-color: #f8f9fa; border-radius: 0 0 12px 12px; border-top: 1px solid #e0e0e0;">
+              <p style="margin: 0 0 10px; color: #666666; font-size: 13px; line-height: 1.6; text-align: center;">
+                Need help? Contact us at <a href="mailto:${supportEmail}" style="color: #667eea; text-decoration: none; font-weight: 500;">${supportEmail}</a>
+              </p>
+              <p style="margin: 0; color: #999999; font-size: 12px; line-height: 1.6; text-align: center;">
+                © ${new Date().getFullYear()} ${companyName}. All rights reserved.
+              </p>
+            </td>
+          </tr>
+          
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim();
+}
+
+/**
+ * Generate plain text version of password reset email (fallback for email clients that don't support HTML)
+ */
+export function generatePasswordResetEmailText(data: PasswordResetEmailData): string {
+  const {
+    resetLink,
+    companyName = 'WildMind AI',
+    supportEmail = 'support@wildmindai.com'
+  } = data;
+
+  return `
+${companyName} - Password Reset
+
+Hello,
+
+We received a request to reset your password for your ${companyName} account. Click the link below to create a new password:
+
+${resetLink}
+
+This link will expire in 1 hour.
+
+SECURITY NOTICE: If you didn't request a password reset, you can safely ignore this email. Your password will remain unchanged.
+
+Having trouble?
+If the link doesn't work, copy and paste it into your browser. If you continue to have issues, contact us at ${supportEmail}
+
+© ${new Date().getFullYear()} ${companyName}. All rights reserved.
+  `.trim();
+}
+
