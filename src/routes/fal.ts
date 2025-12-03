@@ -34,6 +34,7 @@ import {
   validateFalGenerate,
   validateFalElevenDialogue,
   validateFalElevenTts,
+  validateFalElevenSfx,
   validateFalMayaTts,
   validateFalChatterboxMultilingual,
   validateFalChatterboxSts,
@@ -97,7 +98,7 @@ router.post(
 router.post(
   "/eleven/sfx",
   requireAuth,
-  validateFalGenerate as any,
+  validateFalElevenSfx as any,
   makeCreditCost("fal", "generate", computeFalElevenSfxCost) as any,
   falController.generate as any
 );

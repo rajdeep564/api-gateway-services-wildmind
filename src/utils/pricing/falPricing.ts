@@ -757,16 +757,17 @@ export async function computeFalChatterboxMultilingualCost(req: Request): Promis
 // Maya TTS pricing based on estimated duration (6 credits per second)
 // We estimate duration based on text length: ~150 words per minute = ~2.5 words/second
 // Average word length is ~5 characters, so ~12.5 characters per second
-// We use a conservative estimate of 10 characters per second to ensure we don't undercharge
+// Based on actual testing, Maya TTS generates audio at approximately 15 characters per second
+// We use 15 characters per second for more accurate estimation
 export async function computeFalMayaTtsCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { text } = req.body || {};
   if (!text || typeof text !== 'string') {
     throw new Error('text is required for Maya TTS pricing');
   }
   
-  // Estimate duration: ~10 characters per second (conservative estimate)
+  // Estimate duration: ~15 characters per second (more accurate based on actual audio generation)
   // Minimum 1 second
-  const estimatedDuration = Math.max(1, Math.ceil(text.length / 10));
+  const estimatedDuration = Math.max(1, Math.ceil(text.length / 15));
   const creditsPerSecond = 6;
   const cost = estimatedDuration * creditsPerSecond;
   
@@ -778,7 +779,7 @@ export async function computeFalMayaTtsCost(req: Request): Promise<{ cost: numbe
       estimatedDuration,
       creditsPerSecond,
       characterCount: text.length,
-      note: 'Final cost will be adjusted based on actual audio duration after generation',
+      note: 'Cost calculated based on estimated duration from text length',
     },
   };
 }
