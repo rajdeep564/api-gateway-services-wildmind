@@ -1146,6 +1146,7 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
 }
 
 export const authController = {
+  forgotPassword,
   createSession,
   getCurrentUser,
   updateUser,
@@ -1382,5 +1383,66 @@ export async function debugSession(req: Request, res: Response, _next: NextFunct
       error: error?.message,
       stack: error?.stack,
     }));
+  }
+}
+
+async function forgotPassword(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    console.log('[AUTH][forgotPassword] ========== START ==========');
+    const { email } = req.body;
+    
+    if (!email || typeof email !== 'string' || !email.trim()) {
+      throw new ApiError('Email is required', 400);
+    }
+    
+    const normalizedEmail = email.trim().toLowerCase();
+    console.log(`[AUTH][forgotPassword] Password reset request for: ${normalizedEmail}`);
+    
+    // Send password reset email - now returns detailed result
+    const result = await authService.sendPasswordResetEmail(normalizedEmail);
+    
+    console.log('[AUTH][forgotPassword] Result:', result);
+    
+    if (result.success) {
+      console.log('[AUTH][forgotPassword] ========== SUCCESS ==========');
+      res.json(
+        formatApiResponse("success", result.message, {
+          message: result.message
+        })
+      );
+    } else {
+      // Handle different error cases
+      if (result.reason === 'USER_NOT_FOUND') {
+        console.log('[AUTH][forgotPassword] User not found');
+        res.status(404).json(
+          formatApiResponse("error", result.message, {
+            message: result.message,
+            reason: result.reason
+          })
+        );
+      } else if (result.reason === 'GOOGLE_ONLY_USER') {
+        console.log('[AUTH][forgotPassword] Google-only user');
+        res.status(400).json(
+          formatApiResponse("error", result.message, {
+            message: result.message,
+            reason: result.reason
+          })
+        );
+      } else {
+        console.log('[AUTH][forgotPassword] Other error:', result.reason);
+        res.status(500).json(
+          formatApiResponse("error", result.message, {
+            message: result.message,
+            reason: result.reason
+          })
+        );
+      }
+    }
+  } catch (error) {
+    next(error);
   }
 }

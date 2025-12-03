@@ -16,6 +16,25 @@ export const validateMinimaxMusic = [
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    
+    // Check for profanity in prompt
+    if (req.body?.prompt && typeof req.body.prompt === 'string') {
+      const { validatePrompt } = require('../../../utils/profanityFilter');
+      const profanityCheck = validatePrompt(req.body.prompt);
+      if (!profanityCheck.isValid) {
+        return next(new ApiError(profanityCheck.error || 'Prompt contains inappropriate language', 400));
+      }
+    }
+    
+    // Check for profanity in lyrics
+    if (req.body?.lyrics && typeof req.body.lyrics === 'string') {
+      const { validatePrompt } = require('../../../utils/profanityFilter');
+      const profanityCheck = validatePrompt(req.body.lyrics);
+      if (!profanityCheck.isValid) {
+        return next(new ApiError(profanityCheck.error || 'Lyrics contain inappropriate language', 400));
+      }
+    }
+    
     next();
   }
 ];

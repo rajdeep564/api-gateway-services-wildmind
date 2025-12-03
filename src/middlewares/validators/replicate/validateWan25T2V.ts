@@ -34,6 +34,25 @@ export const validateWan25T2V = [
     else if (s.endsWith('*720') || s.startsWith('720*')) req.body.resolution = '720p';
     else if (s.endsWith('*1080') || s.startsWith('1080*')) req.body.resolution = '1080p';
     if (!req.body.mode && !req.body.kind && !req.body.type) req.body.mode = 't2v'; // used by pricing util
+    
+    // Check for profanity in prompt
+    if (req.body?.prompt && typeof req.body.prompt === 'string') {
+      const { validatePrompt } = require('../../../utils/profanityFilter');
+      const profanityCheck = validatePrompt(req.body.prompt);
+      if (!profanityCheck.isValid) {
+        return next(new ApiError(profanityCheck.error || 'Prompt contains inappropriate language', 400));
+      }
+    }
+    
+    // Check for profanity in negative_prompt if provided
+    if (req.body?.negative_prompt && typeof req.body.negative_prompt === 'string') {
+      const { validatePrompt } = require('../../../utils/profanityFilter');
+      const profanityCheck = validatePrompt(req.body.negative_prompt);
+      if (!profanityCheck.isValid) {
+        return next(new ApiError(profanityCheck.error || 'Negative prompt contains inappropriate language', 400));
+      }
+    }
+    
     return next();
   }
 ];

@@ -57,6 +57,11 @@ async function grantTestCredits(userInput: ResolveUserInput, amount: number) {
     // Ensure user is initialized
     await creditsService.ensureUserInit(userId);
 
+    // Ensure user is on launch plan (migrates if needed)
+    console.log(`🚀 Ensuring user is on launch plan...`);
+    await creditsService.ensureLaunchDailyReset(userId);
+    console.log(`   ✅ User is on launch plan\n`);
+
     // Get current balance
     const beforeInfo = await creditsRepository.readUserInfo(userId);
     if (!beforeInfo) {
@@ -94,34 +99,35 @@ async function grantTestCredits(userInput: ResolveUserInput, amount: number) {
       console.log('');
     }
 
-    // Re-read balance after reconciliation
+    // Re-read balance after reconciliation (use reconciled balance as source of truth)
     const currentInfo = await creditsRepository.readUserInfo(userId);
-    const currentBalance = currentInfo?.creditBalance || 0;
+    // Use reconciled balance as it's the true current balance from ledgers
+    const currentBalance = reconciled.calculatedBalance;
 
     console.log(`📊 Before Grant:`);
-    console.log(`   Balance: ${currentBalance} credits`);
+    console.log(`   Stored Balance: ${currentInfo?.creditBalance || 0} credits`);
+    console.log(`   Reconciled Balance: ${currentBalance} credits (using this as source of truth)`);
     console.log(`   Plan: ${currentInfo?.planCode || 'FREE'}`);
     console.log('');
 
-    // Grant credits through ledger system
+    // Grant credits through ledger system using INCREMENT (preserves any debits)
     const requestId = `TEST_GRANT_${Date.now()}`;
-    console.log(`🔄 Granting ${amount} credits...`);
+    console.log(`🔄 Granting ${amount} credits (will be added to current balance)...`);
     console.log(`   Request ID: ${requestId}`);
     console.log('');
 
-    // Calculate new balance (add to current reconciled balance)
-    const newBalance = currentBalance + amount;
-    
-    const result = await creditsRepository.writeGrantAndSetPlanIfAbsent(
+    // Use writeGrantIncrement which ADDS to balance (preserves debits)
+    const result = await creditsRepository.writeGrantIncrement(
       userId,
       requestId,
-      newBalance, // Set to new balance (current + grant amount)
-      currentInfo?.planCode || 'FREE',
+      amount, // Grant amount to ADD (not total balance)
       'testing.manual_grant',
       { 
         grantedAmount: amount,
         previousBalance: currentBalance,
+        storedBalance: currentInfo?.creditBalance || 0,
         reconciledBalance: reconciled.calculatedBalance,
+        planCode: currentInfo?.planCode || 'FREE',
         reason: 'Testing purposes'
       }
     );
@@ -133,23 +139,38 @@ async function grantTestCredits(userInput: ResolveUserInput, amount: number) {
     }
     console.log('');
 
-    // Verify new balance
+    // Verify new balance (reconcile from ledgers to get true balance)
     const afterInfo = await creditsRepository.readUserInfo(userId);
     const afterReconciled = await creditsRepository.reconcileBalanceFromLedgers(userId);
     
-    console.log(`📊 After:`);
-    console.log(`   Balance: ${afterInfo?.creditBalance} credits`);
+    // Expected balance = previous reconciled balance + grant amount
+    const expectedBalance = currentBalance + amount;
+    
+    console.log(`📊 After Grant:`);
+    console.log(`   Stored Balance: ${afterInfo?.creditBalance} credits`);
+    console.log(`   Reconciled Balance: ${afterReconciled.calculatedBalance} credits`);
+    console.log(`   Expected Balance: ${expectedBalance} credits (${currentBalance} + ${amount})`);
     console.log(`   Plan: ${afterInfo?.planCode}`);
-    console.log(`   Change: +${(afterInfo?.creditBalance || 0) - currentBalance} credits`);
     console.log('');
     
-    // Verify balance matches ledger
-    const afterMismatch = Math.abs((afterInfo?.creditBalance || 0) - afterReconciled.calculatedBalance) >= 1;
-    if (afterMismatch) {
-      console.log(`   ⚠️  WARNING: Balance mismatch after grant!`);
+    // Verify balance matches expected (reconciled should equal expected)
+    const balanceMatches = Math.abs(afterReconciled.calculatedBalance - expectedBalance) < 1;
+    const storedMatchesReconciled = Math.abs((afterInfo?.creditBalance || 0) - afterReconciled.calculatedBalance) < 1;
+    
+    if (!balanceMatches) {
+      console.log(`   ⚠️  WARNING: Reconciled balance doesn't match expected!`);
+      console.log(`   Expected: ${expectedBalance}`);
+      console.log(`   Reconciled: ${afterReconciled.calculatedBalance}`);
+      console.log(`   Difference: ${afterReconciled.calculatedBalance - expectedBalance}`);
+      console.log(`   🔧 This might indicate concurrent debits or ledger issues`);
+      console.log('');
+    }
+    
+    if (!storedMatchesReconciled) {
+      console.log(`   ⚠️  WARNING: Stored balance doesn't match reconciled!`);
       console.log(`   Stored: ${afterInfo?.creditBalance}`);
-      console.log(`   Calculated: ${afterReconciled.calculatedBalance}`);
-      console.log(`   🔧 Auto-fixing...`);
+      console.log(`   Reconciled: ${afterReconciled.calculatedBalance}`);
+      console.log(`   🔧 Auto-fixing stored balance...`);
       
       const { adminDb, admin } = await import('../src/config/firebaseAdmin');
       const userRef = adminDb.collection('users').doc(userId);
@@ -159,8 +180,9 @@ async function grantTestCredits(userInput: ResolveUserInput, amount: number) {
       });
       console.log(`   ✅ Balance corrected to ${afterReconciled.calculatedBalance} credits`);
       console.log('');
-    } else {
-      console.log(`   ✅ Balance verified: Matches ledger entries`);
+    } else if (balanceMatches) {
+      console.log(`   ✅ Balance verified: Stored and reconciled match expected`);
+      console.log(`   ✅ Grant amount correctly added: ${currentBalance} → ${afterReconciled.calculatedBalance} (+${amount})`);
       console.log('');
     }
 

@@ -84,6 +84,15 @@ export const validateUsername = [
       console.log(`[VALIDATION] Username validation errors:`, errors.array());
       return next(new ApiError('Validation failed', 400, errors.array()));
     }
+    
+    // Check for profanity
+    const { validateUsername } = require('../utils/profanityFilter');
+    const profanityCheck = validateUsername(req.body.username);
+    if (!profanityCheck.isValid) {
+      console.log(`[VALIDATION] Username contains profanity: ${req.body.username}`);
+      return next(new ApiError(profanityCheck.error || 'Username contains inappropriate language', 400));
+    }
+    
     console.log(`[VALIDATION] Username validation passed`);
     next();
   }
@@ -112,6 +121,31 @@ export const validateLogin = [
       return next(new ApiError('Validation failed', 400, errors.array()));
     }
     console.log(`[VALIDATION] Login validation passed`);
+    next();
+  }
+];
+
+export const validateForgotPassword = [
+  body('email').isEmail().withMessage('Valid email is required'),
+  async (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      console.log(`[VALIDATION] Forgot password validation errors:`, errors.array());
+      return next(new ApiError('Validation failed', 400, errors.array()));
+    }
+    
+    // Additional email validation: check for temporary emails and MX records
+    try {
+      const email = req.body?.email;
+      if (email) {
+        await validateEmail(email);
+      }
+    } catch (error: any) {
+      console.log(`[VALIDATION] Forgot password email validation failed:`, error.message);
+      return next(new ApiError(error.message || 'Invalid email address', 400));
+    }
+    
+    console.log(`[VALIDATION] Forgot password validation passed`);
     next();
   }
 ];
