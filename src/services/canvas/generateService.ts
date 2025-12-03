@@ -109,6 +109,10 @@ function mapModelToBackend(frontendModel: string): { service: 'bfl' | 'replicate
     return { service: 'fal', backendModel: 'seedream-v4' };
   }
 
+  if (modelLower.includes('z image turbo') || modelLower.includes('z-image-turbo')) {
+    return { service: 'replicate', backendModel: 'new-turbo-model' };
+  }
+
   // Default to FAL (Google Nano Banana)
   return { service: 'fal', backendModel: 'gemini-25-flash-image' };
 }
@@ -166,13 +170,13 @@ export async function generateForCanvas(
       const sourceImageUrl = (request as any).sourceImageUrl as string | undefined;
       const sceneNumber = (request as any).sceneNumber as number | undefined;
       const previousSceneImageUrl = (request as any).previousSceneImageUrl as string | undefined;
-      
+
       if (sourceImageUrl || previousSceneImageUrl) {
         const referenceImages: string[] = [];
-        
+
         if (sceneNumber === 1) {
           // Scene 1: All reference images
-      if (sourceImageUrl) {
+          if (sourceImageUrl) {
             const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
             referenceImages.push(...refImages);
           }
@@ -197,7 +201,7 @@ export async function generateForCanvas(
             referenceImages.push(previousSceneImageUrl);
           }
         }
-        
+
         if (referenceImages.length > 0) {
           bflPayload.uploadedImages = referenceImages;
         }
@@ -281,13 +285,13 @@ export async function generateForCanvas(
       const sourceImageUrl = (request as any).sourceImageUrl as string | undefined;
       const sceneNumber = (request as any).sceneNumber as number | undefined;
       const previousSceneImageUrl = (request as any).previousSceneImageUrl as string | undefined;
-      
+
       if (sourceImageUrl || previousSceneImageUrl) {
         const referenceImages: string[] = [];
-        
+
         if (sceneNumber === 1) {
           // Scene 1: All reference images
-      if (sourceImageUrl) {
+          if (sourceImageUrl) {
             const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
             referenceImages.push(...refImages);
           }
@@ -312,7 +316,7 @@ export async function generateForCanvas(
             referenceImages.push(previousSceneImageUrl);
           }
         }
-        
+
         if (referenceImages.length > 0) {
           replicatePayload.image_input = referenceImages;
         }
@@ -350,13 +354,13 @@ export async function generateForCanvas(
       const sourceImageUrl = (request as any).sourceImageUrl as string | undefined;
       const sceneNumber = (request as any).sceneNumber as number | undefined;
       const previousSceneImageUrl = (request as any).previousSceneImageUrl as string | undefined;
-      
+
       if (sourceImageUrl || previousSceneImageUrl) {
         const referenceImages: string[] = [];
-        
+
         if (sceneNumber === 1) {
           // Scene 1: All reference images
-      if (sourceImageUrl) {
+          if (sourceImageUrl) {
             const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
             referenceImages.push(...refImages);
           }
@@ -381,7 +385,7 @@ export async function generateForCanvas(
             referenceImages.push(previousSceneImageUrl);
           }
         }
-        
+
         if (referenceImages.length > 0) {
           runwayPayload.uploadedImages = referenceImages;
         }
@@ -451,7 +455,7 @@ export async function generateForCanvas(
       const sourceImageUrl = (request as any).sourceImageUrl as string | undefined;
       const sceneNumber = (request as any).sceneNumber as number | undefined;
       const previousSceneImageUrl = (request as any).previousSceneImageUrl as string | undefined;
-      
+
       console.log('[generateForCanvas] Scene and reference image check:', {
         sceneNumber,
         hasSourceImageUrl: !!sourceImageUrl,
@@ -462,10 +466,10 @@ export async function generateForCanvas(
 
       if (sourceImageUrl || previousSceneImageUrl) {
         const referenceImages: string[] = [];
-        
+
         // Scene 1: Only reference images (1 input)
         if (sceneNumber === 1) {
-      if (sourceImageUrl) {
+          if (sourceImageUrl) {
             const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
             referenceImages.push(...refImages);
             console.log('[generateForCanvas] ✅ Scene 1: Using reference images only (1 input)', {
@@ -473,7 +477,7 @@ export async function generateForCanvas(
               images: referenceImages.map(url => url.substring(0, 50) + '...')
             });
           }
-        } 
+        }
         // Scene 2+: Reference images + previous scene image (2 inputs)
         else if (sceneNumber && sceneNumber > 1) {
           // First input: Reference images (from namedImages)
@@ -485,13 +489,13 @@ export async function generateForCanvas(
               console.log('[generateForCanvas] ✅ Scene 2+: Added reference image (index 0)');
             }
           }
-          
+
           // Second input: Previous scene's generated image
           if (previousSceneImageUrl) {
             referenceImages.push(previousSceneImageUrl);
             console.log('[generateForCanvas] ✅ Scene 2+: Added previous scene image (index 1)');
           }
-          
+
           console.log('[generateForCanvas] ✅ Scene 2+: Using reference + previous scene (2 inputs)', {
             imageCount: referenceImages.length,
             images: referenceImages.map(url => url.substring(0, 50) + '...')
@@ -507,7 +511,7 @@ export async function generateForCanvas(
             referenceImages.push(previousSceneImageUrl);
           }
         }
-        
+
         if (referenceImages.length > 0) {
           console.log('[generateForCanvas] ✅ STEP 9: Setting uploadedImages for FAL service (image-to-image mode):', {
             sceneNumber,
@@ -603,13 +607,13 @@ export async function generateForCanvas(
     const storyboardMetadata = (request as any).storyboardMetadata as Record<string, string> | undefined;
     const sourceImageUrl = (request as any).sourceImageUrl as string | undefined;
     const previousSceneImageUrl = (request as any).previousSceneImageUrl as string | undefined;
-    
+
     if (sceneNumber && storyboardMetadata && imageUrl) {
       try {
         console.log('[generateForCanvas] Generating storyboard for scene:', sceneNumber);
-        
+
         const frames: StoryboardFrame[] = [];
-        
+
         // Index 0: Reference image (always present - first image from sourceImageUrl)
         if (sourceImageUrl) {
           const referenceImageUrl = sourceImageUrl.split(',')[0].trim();
@@ -633,7 +637,7 @@ export async function generateForCanvas(
             console.warn('[generateForCanvas] ⚠️ Failed to download reference image for storyboard:', error);
           }
         }
-        
+
         // Index 1: Previous scene image (for Scene 2+)
         if (sceneNumber > 1 && previousSceneImageUrl) {
           try {
@@ -656,7 +660,7 @@ export async function generateForCanvas(
             console.warn('[generateForCanvas] ⚠️ Failed to download previous scene image for storyboard:', error);
           }
         }
-        
+
         // Index 1 (Scene 1) or Index 2 (Scene 2+): Generated image
         const generatedImageBuffer = await downloadImageAsBuffer(imageUrl);
         frames.push({
@@ -673,11 +677,11 @@ export async function generateForCanvas(
           },
         });
         console.log('[generateForCanvas] ✅ Added generated image to storyboard');
-        
+
         // Create storyboard only if we have at least 2 frames (reference + generated)
         if (frames.length >= 2) {
           const storyboardBuffer = await createStoryboard(frames);
-          
+
           // Upload storyboard to Zata
           const storyboardKey = `${canvasKeyPrefix}/storyboard-scene-${sceneNumber}-${Date.now()}.png`;
           const storyboardUpload = await uploadBufferToZata(
@@ -685,9 +689,9 @@ export async function generateForCanvas(
             storyboardBuffer,
             'image/png'
           );
-          
+
           console.log('[generateForCanvas] ✅ Storyboard generated:', storyboardUpload.publicUrl);
-          
+
           // Store storyboard URL in response (optional - can be used by frontend)
           (request as any).storyboardUrl = storyboardUpload.publicUrl;
         } else {

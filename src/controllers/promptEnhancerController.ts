@@ -4,8 +4,8 @@ import { formatApiResponse } from '../utils/formatApiResponse';
 
 export async function enhance(req: Request, res: Response, next: NextFunction) {
   try {
-    const { prompt, media_type, max_length } = req.body || {};
-    
+    const { prompt, media_type, max_length, target_model } = req.body || {};
+
     if (!prompt || typeof prompt !== 'string') {
       return res.status(400).json(formatApiResponse('error', 'prompt is required', null));
     }
@@ -18,13 +18,14 @@ export async function enhance(req: Request, res: Response, next: NextFunction) {
     const result = await enhancePrompt(prompt, {
       mediaType: media_type || 'image',
       maxLength: max_length,
+      targetModel: target_model,
     });
 
     if (!result || typeof result.enhancedPrompt !== 'string') {
       return res.status(500).json(formatApiResponse('error', 'Failed to enhance prompt', null));
     }
 
-    return res.json(formatApiResponse('success', 'Prompt enhanced', { 
+    return res.json(formatApiResponse('success', 'Prompt enhanced', {
       enhancedPrompt: result.enhancedPrompt,
       originalPrompt: result.originalPrompt,
       mediaType: result.mediaType,
@@ -39,7 +40,7 @@ export async function enhance(req: Request, res: Response, next: NextFunction) {
 export async function enhanceBatch(req: Request, res: Response, next: NextFunction) {
   try {
     const requests = req.body;
-    
+
     if (!Array.isArray(requests) || requests.length === 0) {
       return res.status(400).json(formatApiResponse('error', 'Requests must be a non-empty array', null));
     }
@@ -63,7 +64,7 @@ export async function enhanceBatch(req: Request, res: Response, next: NextFuncti
       mediaType: r.media_type || 'image',
     })));
 
-    return res.json(formatApiResponse('success', 'Prompts enhanced', { 
+    return res.json(formatApiResponse('success', 'Prompts enhanced', {
       results,
       total: results.length,
     }));
