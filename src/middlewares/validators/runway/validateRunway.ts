@@ -5,6 +5,16 @@ import { ApiError } from '../../../utils/errorHandler';
 const runValidation = (req: Request, _res: Response, next: NextFunction) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+  
+  // Check for profanity in promptText
+  if (req.body?.promptText && typeof req.body.promptText === 'string') {
+    const { validatePrompt } = require('../../../utils/profanityFilter');
+    const profanityCheck = validatePrompt(req.body.promptText);
+    if (!profanityCheck.isValid) {
+      return next(new ApiError(profanityCheck.error || 'Prompt contains inappropriate language', 400));
+    }
+  }
+  
   next();
 };
 

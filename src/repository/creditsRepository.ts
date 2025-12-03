@@ -21,7 +21,7 @@ export async function readUserCredits(uid: string): Promise<number> {
   return Number(data.creditBalance || 0);
 }
 
-export async function readUserInfo(uid: string): Promise<{ creditBalance: number; planCode: string } | null> {
+export async function readUserInfo(uid: string): Promise<{ creditBalance: number; planCode: string; launchTrialStartDate?: any } | null> {
   const ref = adminDb.collection('users').doc(uid);
   const snap = await ref.get();
   if (!snap.exists) return null;
@@ -29,6 +29,7 @@ export async function readUserInfo(uid: string): Promise<{ creditBalance: number
   return {
     creditBalance: Number(data.creditBalance || 0),
     planCode: (data.planCode as string) || 'FREE',
+    launchTrialStartDate: data.launchTrialStartDate,
   };
 }
 
@@ -82,6 +83,28 @@ export async function reconcileBalanceFromLedgers(uid: string): Promise<{ calcul
     totalDebits,
     ledgerCount: snap.docs.length
   };
+}
+
+/**
+ * Delete all ledger documents for a given user.
+ * Used for one-time migrations (e.g. launch offer reset).
+ */
+export async function clearAllLedgersForUser(uid: string): Promise<number> {
+  const userRef = adminDb.collection('users').doc(uid);
+  const ledgersCol = userRef.collection('ledgers');
+  const docs = await ledgersCol.listDocuments();
+
+  let deleted = 0;
+  // Firestore batch limit is 500 ops
+  for (let i = 0; i < docs.length; i += 500) {
+    const batch = adminDb.batch();
+    const slice = docs.slice(i, i + 500);
+    slice.forEach((docRef) => batch.delete(docRef));
+    await batch.commit();
+    deleted += slice.length;
+  }
+
+  return deleted;
 }
 
 export async function writeDebitIfAbsent(uid: string, requestId: string, amount: number, reason: string, meta?: Record<string, any>): Promise<'SKIPPED' | 'WRITTEN'> {
@@ -221,13 +244,79 @@ export async function writeGrantAndSetPlanIfAbsent(
   return outcome;
 }
 
+/**
+ * Write a GRANT ledger entry that INCREMENTS the balance (adds credits).
+ * This is the correct way to grant test credits - it adds to the current balance
+ * rather than overwriting it, preserving any debits that happened between reads.
+ */
+export async function writeGrantIncrement(
+  uid: string,
+  requestId: string,
+  grantAmount: number,
+  reason: string,
+  meta?: Record<string, any>
+): Promise<'SKIPPED' | 'WRITTEN'> {
+  const userRef = adminDb.collection('users').doc(uid);
+  const ledgerRef = userRef.collection('ledgers').doc(requestId);
+
+  let outcome: 'SKIPPED' | 'WRITTEN' = 'SKIPPED';
+  try {
+    logger.info({ uid, requestId, grantAmount, reason }, '[CREDITS] Grant increment transaction start');
+    const sanitize = (obj: any): any => {
+      if (obj == null || typeof obj !== 'object') return obj;
+      if (Array.isArray(obj)) return obj.map((v) => sanitize(v)).filter((v) => v !== undefined);
+      const out: any = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if (v === undefined) continue;
+        const sv = sanitize(v);
+        if (sv !== undefined) out[k] = sv;
+      }
+      return out;
+    };
+    const metaClean = sanitize(meta || {});
+    await adminDb.runTransaction(async (tx) => {
+      const existing = await tx.get(ledgerRef);
+      if (existing.exists) {
+        const data = existing.data() as any;
+        if (data.type === 'GRANT' && data.status === 'CONFIRMED') {
+          logger.info({ uid, requestId }, '[CREDITS] Grant already exists (idempotent)');
+          return;
+        }
+      }
+      // Write GRANT ledger entry with the grant amount (positive)
+      tx.set(ledgerRef, {
+        type: 'GRANT',
+        amount: Math.abs(grantAmount), // Grant amount is positive
+        reason,
+        status: 'CONFIRMED',
+        meta: metaClean,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      } as LedgerEntry);
+      // INCREMENT balance (add to current balance) - preserves any debits
+      tx.update(userRef, {
+        creditBalance: admin.firestore.FieldValue.increment(Math.abs(grantAmount)),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      outcome = 'WRITTEN';
+    });
+    const verify = await ledgerRef.get();
+    logger.info({ uid, requestId, exists: verify.exists, outcome }, '[CREDITS] Grant increment transaction complete');
+  } catch (e) {
+    logger.error({ uid, requestId, err: e }, '[CREDITS] Grant increment transaction error');
+    throw e;
+  }
+  return outcome;
+}
+
 export const creditsRepository = {
   readUserCredits,
   readUserInfo,
   listRecentLedgers,
   writeDebitIfAbsent,
   writeGrantAndSetPlanIfAbsent,
+  writeGrantIncrement,
   reconcileBalanceFromLedgers,
+  clearAllLedgersForUser,
 };
 
 

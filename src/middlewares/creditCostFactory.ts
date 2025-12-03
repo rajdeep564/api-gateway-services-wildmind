@@ -12,11 +12,25 @@ export function makeCreditCost(provider: string, operation: string, computeCost:
       const uid = (req as any).uid;
       if (!uid) throw new ApiError('Unauthorized', 401);
 
-  const { cost, pricingVersion, meta } = await computeCost(req);
-  // Ensure user doc exists then perform monthly reroll (idempotent)
-  await creditsService.ensureUserInit(uid);
-  await creditsService.ensureMonthlyReroll(uid);
-  const creditBalance = await creditsRepository.readUserCredits(uid);
+      const { cost, pricingVersion, meta } = await computeCost(req);
+      // Ensure user doc exists and is on launch plan (one-time migration if needed)
+      await creditsService.ensureUserInit(uid);
+      await creditsService.ensureLaunchDailyReset(uid);
+      
+      // Skip balance check if cost is 0 (free models like z-image-turbo)
+      if (cost === 0) {
+        const idempotencyKey = uuidv4();
+        (req as any).context = {
+          creditCost: 0,
+          reason: `${provider}.${operation}`,
+          idempotencyKey,
+          pricingVersion,
+          meta,
+        };
+        return next();
+      }
+      
+      const creditBalance = await creditsRepository.readUserCredits(uid);
       if (creditBalance < cost) {
         return res.status(402).json({
           responseStatus: 'error',

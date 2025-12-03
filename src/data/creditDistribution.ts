@@ -3,7 +3,7 @@ export interface CreditDistributionPlan {
   planB: number; // 24,720 credits
   planC: number; // 61,800 credits
   planD: number; // 197,760 credits
-  free: number; // 4,120 credits
+  free: number; // 2,000 credits
 }
 
 export interface ModelCreditInfo {
@@ -3574,7 +3574,7 @@ export const PLAN_CREDITS = {
   PLAN_B: 24720,
   PLAN_C: 61800,
   PLAN_D: 197760,
-  FREE: 4120,
+  FREE: 2000,
 } as const;
 
 export const PRICING_VERSION = "bfl-v2";

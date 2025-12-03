@@ -4,7 +4,7 @@ import { authRepository } from '../../repository/auth/authRepository'; // Update
 import { AppUser, ProviderId } from '../../types/authTypes';
 import { ApiError } from '../../utils/errorHandler';
 import { sendEmail, isEmailConfigured } from '../../utils/mailer';
-import { generateOTPEmailHTML, generateOTPEmailText } from '../../utils/emailTemplates';
+import { generateOTPEmailHTML, generateOTPEmailText, generatePasswordResetEmailHTML, generatePasswordResetEmailText } from '../../utils/emailTemplates';
 
 function normalizeUsername(input: string): string {
   return (input || '')
@@ -18,6 +18,13 @@ async function checkUsernameAvailability(username: string): Promise<{ available:
 
   if (!/^[a-z0-9_.-]{3,30}$/.test(normalized)) {
     throw new ApiError('Invalid username', 400);
+  }
+
+  // Check for profanity
+  const { validateUsername } = require('../utils/profanityFilter');
+  const profanityCheck = validateUsername(normalized);
+  if (!profanityCheck.isValid) {
+    throw new ApiError(profanityCheck.error || 'Username contains inappropriate language', 400);
   }
 
   const existing = await authRepository.getUserByUsername(normalized);
@@ -215,6 +222,14 @@ async function verifyEmailOtpAndCreateUser(email: string, username?: string, pas
     console.log(`[AUTH] Invalid username format: ${uname}`);
     throw new ApiError('Invalid username', 400);
   }
+
+  // Check for profanity
+  const { validateUsername } = require('../utils/profanityFilter');
+  const profanityCheck = validateUsername(uname);
+  if (!profanityCheck.isValid) {
+    console.log(`[AUTH] Username contains profanity: ${uname}`);
+    throw new ApiError(profanityCheck.error || 'Username contains inappropriate language', 400);
+  }
   
   let firebaseUser;
   let user;
@@ -345,118 +360,233 @@ async function setUsernameOnly(username: string, deviceInfo?: any, email?: strin
 async function loginWithEmailPassword(email: string, password: string, deviceInfo?: any): Promise<{ user: AppUser; customToken: string; passwordLoginIdToken?: string }> {
   console.log(`[AUTH] Login attempt for email: ${email}`);
   
+  // Step 1: Check if user exists in Firebase Auth
+  let firebaseUser;
   try {
-    // Check if user exists in Firebase Auth
-    const firebaseUser = await admin.auth().getUserByEmail(email);
+    firebaseUser = await admin.auth().getUserByEmail(email);
     console.log(`[AUTH] Found Firebase user: ${firebaseUser.uid}`);
-    
-    // Check if user exists with Google provider
-    const firestoreUser = await authRepository.getUserByEmail(email);
-    if (firestoreUser && firestoreUser.user.provider === 'google') {
-      console.log(`[AUTH] User already signed up with Google, cannot login with email/password`);
-      throw new ApiError('You already have an account with Google. Please sign in with Google instead.', 400);
+  } catch (error: any) {
+    // Handle user not found case
+    if (error.code === 'auth/user-not-found') {
+      console.log(`[AUTH] User not found in Firebase Auth: ${email}`);
+      throw new ApiError('No account found with this email address. Please sign up first.', 404);
     }
-    
-    if (!firebaseUser.emailVerified) {
-      console.log(`[AUTH] User email not verified: ${email}`);
-      throw new ApiError('Email not verified. Please verify your email first.', 400);
-    }
-    
-    // IMPORTANT: Verify the password by attempting to sign in with Firebase
-    // This will fail if the password is wrong or if the user was created without a password (Google users)
+    // Re-throw other Firebase Auth errors
+    throw error;
+  }
+  
+  // Step 2: Check if user exists with Google provider
+  const firestoreUser = await authRepository.getUserByEmail(email);
+  if (firestoreUser && firestoreUser.user.provider === 'google') {
+    console.log(`[AUTH] User already signed up with Google, cannot login with email/password`);
+    throw new ApiError('You already have an account with Google. Please sign in with Google instead.', 400);
+  }
+  
+  // Step 3: Check email verification
+  if (!firebaseUser.emailVerified) {
+    console.log(`[AUTH] User email not verified: ${email}`);
+    throw new ApiError('Email not verified. Please verify your email first.', 400);
+  }
+  
+  // Step 4: Verify the password by attempting to sign in with Firebase
+  // This will fail if the password is wrong or if the user was created without a password
   let passwordLoginIdToken: string | undefined;
   try {
-      // Use Firebase REST API to verify password since Admin SDK doesn't expose signInWithEmailAndPassword
-      // env.firebaseApiKey already handles fallbacks in env.ts
-      const firebaseApiKey = env.firebaseApiKey;
-      if (!firebaseApiKey) {
-        // Explicit configuration error so ops can see it; don't mask as credentials issue
-        throw new Error('FIREBASE_API_KEY missing (server). Set FIREBASE_API_KEY or NEXT_PUBLIC_FIREBASE_API_KEY');
-      }
+    // Use Firebase REST API to verify password since Admin SDK doesn't expose signInWithEmailAndPassword
+    // env.firebaseApiKey already handles fallbacks in env.ts
+    const firebaseApiKey = env.firebaseApiKey;
+    if (!firebaseApiKey) {
+      // Explicit configuration error so ops can see it; don't mask as credentials issue
+      throw new Error('FIREBASE_API_KEY missing (server). Set FIREBASE_API_KEY or NEXT_PUBLIC_FIREBASE_API_KEY');
+    }
 
-      const firebaseAuthApiBase = env.firebaseAuthApiBase;
-      const response = await fetch(`${firebaseAuthApiBase}/accounts:signInWithPassword?key=${firebaseApiKey}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email: email,
-          password: password,
-          returnSecureToken: true
-        })
-      });
-      
-  const result = await response.json();
-      
-      if (!response.ok) {
-        const code = String(result?.error?.message || '').toUpperCase();
-        console.log(`[AUTH] Password verification failed: ${code}`);
-        if (code === 'INVALID_LOGIN_CREDENTIALS' || code === 'INVALID_PASSWORD') {
-          throw new ApiError('Invalid credentials. Please check your email and password.', 401);
-        } else if (code === 'EMAIL_NOT_FOUND') {
-          throw new ApiError('Invalid credentials. User not found.', 401);
-        } else if (code === 'MISSING_PASSWORD') {
-          throw new ApiError('Password required. Please enter your password.', 401);
-        } else {
-          // On misconfiguration or unexpected error, surface a generic 500 to avoid UX confusion
-          throw new ApiError('Authentication service unavailable. Please try again.', 503);
-        }
-      }
-      
-      console.log(`[AUTH] Password verification successful for: ${email}`);
-      // Capture ID token from email/password login for optional immediate session cookie creation
-      if (typeof result?.idToken === 'string' && result.idToken.length > 0) {
-        passwordLoginIdToken = result.idToken;
-      }
-      
-    } catch (error: any) {
-      if (error instanceof ApiError) {
-        throw error;
-      }
-      // If the error is from missing API key, elevate it to 500
-      const msg = String(error?.message || '').toLowerCase();
-      if (msg.includes('firebase_api_key') || msg.includes('missing')) {
-        console.log(`[AUTH] Server configuration error: ${error.message}`);
-        throw new ApiError('Authentication service misconfigured. Please contact support.', 500);
-      }
-      console.log(`[AUTH] Password verification error: ${error.message}`);
-      throw new ApiError('Invalid credentials. Please check your email and password.', 401);
-    }
-    
-    // Get user from Firestore
-    const user = await authRepository.getUserById(firebaseUser.uid);
-    if (!user) {
-      console.log(`[AUTH] User not found in Firestore: ${firebaseUser.uid}`);
-      throw new ApiError('User profile not found. Please complete registration.', 400);
-    }
-    
-    // Update login tracking
-    const updatedUser = await authRepository.updateUser(firebaseUser.uid, {
-      lastLoginAt: new Date().toISOString(),
-      loginCount: (user.loginCount || 0) + 1,
-      lastLoginIP: deviceInfo?.ip,
-      userAgent: deviceInfo?.userAgent,
-      deviceInfo: deviceInfo?.deviceInfo
+    const firebaseAuthApiBase = env.firebaseAuthApiBase;
+    const response = await fetch(`${firebaseAuthApiBase}/accounts:signInWithPassword?key=${firebaseApiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email: email,
+        password: password,
+        returnSecureToken: true
+      })
     });
     
-  // Generate custom token (frontend can signInWithCustomToken to sync Firebase client state)
-    console.log(`[AUTH] Generating custom token for login: ${firebaseUser.uid}`);
-    const customToken = await admin.auth().createCustomToken(firebaseUser.uid);
-    console.log(`[AUTH] Login successful for: ${email}`);
+    const result = await response.json();
     
-  return { user: updatedUser, customToken, passwordLoginIdToken };
+    if (!response.ok) {
+      const errorMessage = String(result?.error?.message || '').toUpperCase();
+      const errorCode = String(result?.error?.code || '').toUpperCase();
+      console.log(`[AUTH] Password verification failed: ${errorMessage} (code: ${errorCode})`);
+      
+      // Handle specific Firebase error codes
+      if (errorMessage.includes('INVALID_PASSWORD') || errorCode === 'INVALID_PASSWORD') {
+        // User exists but password is incorrect
+        throw new ApiError('Invalid password. Please check your password and try again.', 401);
+      } else if (errorMessage.includes('INVALID_LOGIN_CREDENTIALS') || errorCode === 'INVALID_LOGIN_CREDENTIALS') {
+        // Generic invalid credentials (could be email or password)
+        // Since we already verified user exists, this is likely a password issue
+        throw new ApiError('Invalid password. Please check your password and try again.', 401);
+      } else if (errorMessage.includes('EMAIL_NOT_FOUND') || errorCode === 'EMAIL_NOT_FOUND') {
+        // This shouldn't happen since we already checked, but handle it anyway
+        throw new ApiError('No account found with this email address. Please sign up first.', 404);
+      } else if (errorMessage.includes('MISSING_PASSWORD') || errorCode === 'MISSING_PASSWORD') {
+        throw new ApiError('Password is required. Please enter your password.', 400);
+      } else if (errorMessage.includes('TOO_MANY_ATTEMPTS') || errorCode === 'TOO_MANY_ATTEMPTS') {
+        throw new ApiError('Too many failed login attempts. Please try again later.', 429);
+      } else if (errorMessage.includes('USER_DISABLED') || errorCode === 'USER_DISABLED') {
+        throw new ApiError('This account has been disabled. Please contact support.', 403);
+      } else if (errorMessage.includes('OPERATION_NOT_ALLOWED') || errorCode === 'OPERATION_NOT_ALLOWED') {
+        throw new ApiError('Email/password sign-in is not enabled. Please contact support.', 403);
+      } else {
+        // On misconfiguration or unexpected error, surface a generic 500 to avoid UX confusion
+        console.error(`[AUTH] Unexpected Firebase error: ${errorMessage} (code: ${errorCode})`);
+        throw new ApiError('Authentication service unavailable. Please try again later.', 503);
+      }
+    }
+    
+    console.log(`[AUTH] Password verification successful for: ${email}`);
+    // Capture ID token from email/password login for optional immediate session cookie creation
+    if (typeof result?.idToken === 'string' && result.idToken.length > 0) {
+      passwordLoginIdToken = result.idToken;
+    }
     
   } catch (error: any) {
-    console.log(`[AUTH] Login failed for ${email}:`, error.message);
-    
-    if (error.code === 'auth/user-not-found') {
-      throw new ApiError('Invalid credentials. User not found.', 401);
-    } else if (error instanceof ApiError) {
+    // Re-throw ApiError instances (already handled above)
+    if (error instanceof ApiError) {
       throw error;
-    } else {
-      throw new ApiError('Login failed. Please check your credentials.', 401);
     }
+    // If the error is from missing API key, elevate it to 500
+    const msg = String(error?.message || '').toLowerCase();
+    if (msg.includes('firebase_api_key') || msg.includes('missing')) {
+      console.log(`[AUTH] Server configuration error: ${error.message}`);
+      throw new ApiError('Authentication service misconfigured. Please contact support.', 500);
+    }
+    // For any other unexpected errors during password verification
+    console.error(`[AUTH] Password verification error: ${error.message}`, error);
+    throw new ApiError('Invalid password. Please check your password and try again.', 401);
+  }
+  
+  // Step 5: Get user from Firestore
+  const user = await authRepository.getUserById(firebaseUser.uid);
+  if (!user) {
+    console.log(`[AUTH] User not found in Firestore: ${firebaseUser.uid}`);
+    throw new ApiError('User profile not found. Please complete registration.', 400);
+  }
+  
+  // Step 6: Update login tracking
+  const updatedUser = await authRepository.updateUser(firebaseUser.uid, {
+    lastLoginAt: new Date().toISOString(),
+    loginCount: (user.loginCount || 0) + 1,
+    lastLoginIP: deviceInfo?.ip,
+    userAgent: deviceInfo?.userAgent,
+    deviceInfo: deviceInfo?.deviceInfo
+  });
+  
+  // Step 7: Generate custom token (frontend can signInWithCustomToken to sync Firebase client state)
+  console.log(`[AUTH] Generating custom token for login: ${firebaseUser.uid}`);
+  const customToken = await admin.auth().createCustomToken(firebaseUser.uid);
+  console.log(`[AUTH] Login successful for: ${email}`);
+  
+  return { user: updatedUser, customToken, passwordLoginIdToken };
+}
+
+/**
+ * Send password reset email to user
+ * Returns result object with status and message for proper error handling
+ */
+async function sendPasswordResetEmail(email: string): Promise<{ success: boolean; message: string; reason?: string }> {
+  console.log(`[AUTH] Password reset request for email: ${email}`);
+  
+  // Step 1: Check if user exists in Firebase Auth
+  let firebaseUser;
+  try {
+    firebaseUser = await admin.auth().getUserByEmail(email);
+    console.log(`[AUTH] Found Firebase user for password reset: ${firebaseUser.uid}`);
+  } catch (error: any) {
+    if (error.code === 'auth/user-not-found') {
+      console.log(`[AUTH] User not found: ${email}`);
+      return {
+        success: false,
+        message: 'No account found with this email address.',
+        reason: 'USER_NOT_FOUND'
+      };
+    }
+    // Re-throw other Firebase Auth errors
+    throw error;
+  }
+  
+  // Step 2: Check if user signed up with Google only (no password)
+  const firestoreUser = await authRepository.getUserByEmail(email);
+  if (firestoreUser && firestoreUser.user.provider === 'google') {
+    console.log(`[AUTH] User signed up with Google only, cannot reset password: ${email}`);
+    return {
+      success: false,
+      message: 'You signed up with Google. Please sign in with Google instead.',
+      reason: 'GOOGLE_ONLY_USER'
+    };
+  }
+  
+  // Step 3: Generate password reset link using Firebase Admin SDK
+  const frontendUrl = env.productionWwwDomain || env.productionDomain || env.devFrontendUrl || 'http://localhost:3000';
+  const resetRedirectUrl = `${frontendUrl}/auth/reset-password`;
+  
+  console.log(`[AUTH] Using reset redirect URL: ${resetRedirectUrl}`);
+  
+  const actionCodeSettings = {
+    url: resetRedirectUrl,
+    handleCodeInApp: false,
+  };
+  
+  let resetLink: string;
+  try {
+    resetLink = await admin.auth().generatePasswordResetLink(email, actionCodeSettings);
+    console.log(`[AUTH] Generated password reset link for: ${email}`);
+  } catch (error: any) {
+    console.error(`[AUTH] Failed to generate password reset link: ${error.message}`);
+    return {
+      success: false,
+      message: 'Failed to generate password reset link. Please try again later.',
+      reason: 'LINK_GENERATION_FAILED'
+    };
+  }
+  
+  // Step 4: Send password reset email via Resend (using same template style as OTP)
+  try {
+    const emailSubject = 'Reset Your Password - WildMind AI';
+    const emailHTML = generatePasswordResetEmailHTML({
+      resetLink,
+      email,
+      companyName: 'WildMind AI',
+      supportEmail: 'support@wildmindai.com'
+    });
+    const emailText = generatePasswordResetEmailText({
+      resetLink,
+      email,
+      companyName: 'WildMind AI',
+      supportEmail: 'support@wildmindai.com'
+    });
+    
+    await sendEmail(
+      email,
+      emailSubject,
+      emailText,
+      emailHTML
+    );
+    
+    console.log(`[AUTH] Password reset email sent successfully to: ${email}`);
+    return {
+      success: true,
+      message: 'Password reset link has been sent to your email.'
+    };
+  } catch (error: any) {
+    console.error(`[AUTH] Failed to send password reset email: ${error.message}`);
+    return {
+      success: false,
+      message: 'Failed to send password reset email. Please try again later.',
+      reason: 'EMAIL_SEND_FAILED'
+    };
   }
 }
 
@@ -596,5 +726,6 @@ export const authService = {
   loginWithEmailPassword,
   googleSignIn,
   setGoogleUsername,
-  checkUsernameAvailability
+  checkUsernameAvailability,
+  sendPasswordResetEmail
 };
