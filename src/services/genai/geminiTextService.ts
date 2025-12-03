@@ -5,7 +5,50 @@ import { env } from '../../config/env';
 
 const GEMINI_MODEL = process.env.GEMINI_TEXT_MODEL || 'gemini-3-pro-preview';
 
-const STORYBOARD_SYSTEM_INSTRUCTION = `You are a creative storyteller. From the user prompt, craft a short, engaging story.
+export const PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION = `You are a Universal Prompt Enhancer AI designed for multimodal generation.
+
+Your task is to take any short or rough prompt from the user and convert it into a detailed,
+clear, structured, and highly optimized prompt suitable for generative AI models such as:
+text-to-image, image-to-image, text-to-video, image-to-video, or multimodal models.
+
+------------------------ CORE RULES ------------------------
+
+1. Do NOT change the user’s original intention, subject, style, or goal.
+2. Expand the prompt into a rich, descriptive, medium/long version.
+3. Add clarity, professional structure, and creative detail ONLY within the user’s intent.
+4. Add enhancements that help generative models produce better output:
+   - visual details
+   - emotions/mood if relevant
+   - camera angles (optional)
+   - lighting style
+   - environment/background
+   - motion (for video)
+   - color palette
+   - quality settings (HD/4K/8K)
+   - realism or stylization level
+   - framing and composition
+5. Do NOT introduce new characters, objects, or ideas unless the user mentioned them.
+6. If the prompt is for image-to-image or image-to-video:
+   - maintain character identity
+   - maintain clothing, face structure, hairstyles, and theme
+   - enhance only style, quality, realism, lighting, and composition
+7. Keep everything in English unless user writes in another language.
+
+------------------------ OUTPUT FORMAT ------------------------
+
+Always respond in the following structure:
+
+### Enhanced Prompt
+[Write the fully enhanced, detailed, optimized prompt suitable for image or video generation.]
+
+### Recommended Model Settings
+- Type: [text-to-image / image-to-image / text-to-video / image-to-video] (detect automatically)
+- Style: [hyperrealistic / cinematic / anime / vector / etc.]
+- Camera: [angle, lens, framing, if needed]
+- Lighting: [soft light, studio, cinematic, natural, etc.]
+- Quality: [4K, 8K, high detail, ultra sharp, etc.]`;
+
+export const STORYBOARD_SYSTEM_INSTRUCTION = `You are a creative storyteller. From the user prompt, craft a short, engaging story.
 The story should be concise but descriptive, capturing the essence of the user's idea.
 Do not use technical script formatting (like "SCENE 1", "INT.", "EXT.").
 Just write the story in clear, evocative prose.
@@ -42,6 +85,8 @@ export async function generateGeminiTextResponse(
   options?: {
     maxOutputTokens?: number;
     enableGoogleSearchTool?: boolean;
+    systemInstruction?: string;
+    enableThinking?: boolean;
   }
 ): Promise<string> {
   if (!prompt || !prompt.trim()) {
@@ -50,14 +95,19 @@ export async function generateGeminiTextResponse(
 
   const ai = getGeminiClient();
 
-  const tools = options?.enableGoogleSearchTool === false ? [] : [{ googleSearch: {} }];
+  // Default to false for search tool if not explicitly enabled
+  const tools = options?.enableGoogleSearchTool ? [{ googleSearch: {} }] : [];
 
   const config: Record<string, any> = {
-    thinkingConfig: {
-      thinkingLevel: 'HIGH',
-    },
     tools,
   };
+
+  // Only enable thinking if explicitly requested
+  if (options?.enableThinking) {
+    config.thinkingConfig = {
+      thinkingLevel: 'HIGH',
+    };
+  }
 
   if (options?.maxOutputTokens) {
     config.generationConfig = {
@@ -66,12 +116,13 @@ export async function generateGeminiTextResponse(
   }
 
   // Prepend system instruction to contents array as system role message
+  const systemInstruction = options?.systemInstruction || STORYBOARD_SYSTEM_INSTRUCTION;
   const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [
     {
       role: 'system',
       parts: [
         {
-          text: STORYBOARD_SYSTEM_INSTRUCTION,
+          text: systemInstruction,
         },
       ],
     },
@@ -282,14 +333,14 @@ export async function generateScenesFromStory(story: string): Promise<any> {
   let cleanedStory = story;
   const mentionMatches = Array.from(story.matchAll(mentionRegex));
   const uniqueMentions = [...new Set(mentionMatches.map(m => m[1].toLowerCase()))];
-  
+
   console.log('[GeminiTextService] 📝 Story input received:', {
     originalStory: story.substring(0, 200) + (story.length > 200 ? '...' : ''),
     storyLength: story.length,
     detectedMentions: uniqueMentions,
     mentionCount: uniqueMentions.length,
   });
-  
+
   if (uniqueMentions.length > 0) {
     // Replace @mentions with capitalized names (e.g., @aryan -> Aryan)
     uniqueMentions.forEach(mention => {
@@ -338,11 +389,11 @@ export async function generateScenesFromStory(story: string): Promise<any> {
       typeof result.text === 'string' ? result.text :
         result.response?.candidates?.[0]?.content?.parts?.[0]?.text ||
         JSON.stringify(result);
-  
+
   // Extract JSON from markdown code blocks if present
   // Handle cases like: ```json\n{...}\n``` or ```\n{...}\n``` or ```json{...}```
   responseText = responseText.trim();
-  
+
   // Remove markdown code block markers
   if (responseText.startsWith('```')) {
     // Remove opening ```json or ```
@@ -351,14 +402,14 @@ export async function generateScenesFromStory(story: string): Promise<any> {
     responseText = responseText.replace(/\n?```\s*$/g, '');
     responseText = responseText.trim();
   }
-  
+
   // Also handle cases where JSON might be wrapped in other ways
   // Try to find the first { or [ and last } or ]
   const firstBrace = responseText.indexOf('{');
   const firstBracket = responseText.indexOf('[');
   const lastBrace = responseText.lastIndexOf('}');
   const lastBracket = responseText.lastIndexOf(']');
-  
+
   if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
     // Extract JSON object
     responseText = responseText.substring(firstBrace, lastBrace + 1);
@@ -366,9 +417,9 @@ export async function generateScenesFromStory(story: string): Promise<any> {
     // Extract JSON array
     responseText = responseText.substring(firstBracket, lastBracket + 1);
   }
-  
+
   responseText = responseText.trim();
-  
+
   try {
     const parsed = JSON.parse(responseText);
 
