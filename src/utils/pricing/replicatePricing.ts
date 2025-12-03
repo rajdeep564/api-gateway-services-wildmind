@@ -105,8 +105,16 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   }
   if (normalized.includes('leonardoai/lucid-origin') || normalized.includes('lucid origin') || normalized.includes('lucid-origin')) cost = COST_LUCID_ORIGIN;
   if (normalized.includes('phoenix 1.0') || normalized.includes('phoenix-1.0')) cost = COST_PHOENIX_1_0;
-  // TODO: Update model identifier with actual model name
-  if (normalized.includes('new-turbo-model') || normalized.includes('placeholder-model-name')) cost = COST_NEW_TURBO_MODEL;
+  // Z-Image Turbo: Free (0 credits) for launch offer
+  if (
+    normalized.includes('z-image-turbo') || 
+    normalized.includes('zimage-turbo') ||
+    normalized.includes('prunaai/z-image-turbo') ||
+    normalized.includes('new-turbo-model') || 
+    normalized.includes('placeholder-model-name')
+  ) {
+    cost = 0; // Free for launch offer
+  }
   // Google Nano Banana Pro - resolution-based pricing
   if (normalized.includes('google/nano-banana-pro') || normalized.includes('nano-banana-pro')) {
     const resolution = String((req.body as any)?.resolution || '2K').toUpperCase();

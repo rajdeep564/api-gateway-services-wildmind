@@ -70,6 +70,15 @@ export const validateSeedanceI2V = [
     // Set mode for pricing
     if (!req.body.mode && !req.body.kind && !req.body.type) req.body.mode = 'i2v';
     
+    // Check for profanity in prompt
+    if (req.body?.prompt && typeof req.body.prompt === 'string') {
+      const { validatePrompt } = require('../../../utils/profanityFilter');
+      const profanityCheck = validatePrompt(req.body.prompt);
+      if (!profanityCheck.isValid) {
+        return next(new ApiError(profanityCheck.error || 'Prompt contains inappropriate language', 400));
+      }
+    }
+    
     return next();
   }
 ];

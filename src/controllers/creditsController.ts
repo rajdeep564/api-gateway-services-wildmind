@@ -6,6 +6,11 @@ import { formatApiResponse } from '../utils/formatApiResponse';
 async function me(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = req.uid;
+    
+    // Ensure user is initialized and launch plan migration is done (this will set launchTrialStartDate if missing)
+    await creditsService.ensureUserInit(uid);
+    await creditsService.ensureLaunchDailyReset(uid);
+    
     const info = await creditsRepository.readUserInfo(uid);
     const recentLedgers = await creditsRepository.listRecentLedgers(uid, 10);
     // Opportunistic auto-reconcile if mismatch detected
@@ -19,7 +24,7 @@ async function me(req: Request, res: Response, next: NextFunction) {
         const userRef = adminDb.collection('users').doc(uid);
         const ledgerRef = userRef.collection('ledgers').doc(resetId);
         const grantSnap = await ledgerRef.get();
-        let planCredits = info.planCode === 'FREE' ? 4120 : info.creditBalance; // fallback to current balance if non-FREE
+        let planCredits = info.planCode === 'FREE' ? 2000 : info.creditBalance; // fallback to current balance if non-FREE
         if (grantSnap.exists) {
           const g = grantSnap.data() as any;
           if (typeof g?.amount === 'number' && g.amount > 0) planCredits = g.amount;
@@ -38,10 +43,17 @@ async function me(req: Request, res: Response, next: NextFunction) {
         }
       }
     } catch (_) {}
+    // Get full user document to include launchTrialStartDate
+    const { adminDb } = require('../config/firebaseAdmin');
+    const userRef = adminDb.collection('users').doc(uid);
+    const userSnap = await userRef.get();
+    const userData = userSnap.data() as any;
+    
     return res.json(
       formatApiResponse('success', 'Credits fetched', {
         planCode: info?.planCode || 'FREE',
         creditBalance: info?.creditBalance || 0,
+        launchTrialStartDate: userData?.launchTrialStartDate || null,
         recentLedgers,
         autoReconciled,
       })
