@@ -25,24 +25,6 @@ export const validateKlingT2V = [
     // Set pricing kind for util without clobbering provider 'mode'
     if (!req.body.kind && !req.body.type) req.body.kind = 't2v';
     
-    // Check for profanity in prompt
-    if (req.body?.prompt && typeof req.body.prompt === 'string') {
-      const { validatePrompt } = require('../../../utils/profanityFilter');
-      const profanityCheck = validatePrompt(req.body.prompt);
-      if (!profanityCheck.isValid) {
-        return next(new ApiError(profanityCheck.error || 'Prompt contains inappropriate language', 400));
-      }
-    }
-    
-    // Check for profanity in negative_prompt if provided
-    if (req.body?.negative_prompt && typeof req.body.negative_prompt === 'string') {
-      const { validatePrompt } = require('../../../utils/profanityFilter');
-      const profanityCheck = validatePrompt(req.body.negative_prompt);
-      if (!profanityCheck.isValid) {
-        return next(new ApiError(profanityCheck.error || 'Negative prompt contains inappropriate language', 400));
-      }
-    }
-    
     return next();
   }
 ];

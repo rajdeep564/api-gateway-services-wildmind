@@ -20,12 +20,6 @@ async function checkUsernameAvailability(username: string): Promise<{ available:
     throw new ApiError('Invalid username', 400);
   }
 
-  // Check for profanity
-  const { validateUsername } = require('../utils/profanityFilter');
-  const profanityCheck = validateUsername(normalized);
-  if (!profanityCheck.isValid) {
-    throw new ApiError(profanityCheck.error || 'Username contains inappropriate language', 400);
-  }
 
   const existing = await authRepository.getUserByUsername(normalized);
   const available = !existing;
@@ -223,13 +217,6 @@ async function verifyEmailOtpAndCreateUser(email: string, username?: string, pas
     throw new ApiError('Invalid username', 400);
   }
 
-  // Check for profanity
-  const { validateUsername } = require('../utils/profanityFilter');
-  const profanityCheck = validateUsername(uname);
-  if (!profanityCheck.isValid) {
-    console.log(`[AUTH] Username contains profanity: ${uname}`);
-    throw new ApiError(profanityCheck.error || 'Username contains inappropriate language', 400);
-  }
   
   let firebaseUser;
   let user;

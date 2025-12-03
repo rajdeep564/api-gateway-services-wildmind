@@ -1,16 +1,18 @@
 /**
- * Bulk Migration: Clear All Ledgers and Move All Users to Launch Plan
+ * Reset All Users to Launch Plan with December 18, 2025 Trial Start Date
  * 
  * This script:
  * 1. Clears all ledger entries for each user
  * 2. Sets all users to LAUNCH_4000_FIXED plan
  * 3. Sets credit balance to 4000
- * 4. Marks launchMigrationDone = true
- * 5. Sets launchTrialStartDate for 15-day trial tracking
- * 6. Fixes users already on launch plan but missing trial start date
+ * 4. Sets launchTrialStartDate to December 18, 2025 (00:00:00 UTC)
+ * 5. Marks launchMigrationDone = true
+ * 
+ * The trial start date is set to December 18, 2025, so the 15-day trial period
+ * will align with the cutoff date logic in the system.
  * 
  * Usage:
- *   npx ts-node scripts/migrateAllUsersToLaunchPlan.ts [--dry-run] [--limit=N]
+ *   npx ts-node scripts/resetToLaunchPlanDec18.ts [--dry-run] [--limit=N]
  */
 
 import dotenv from 'dotenv';
@@ -25,6 +27,9 @@ import { creditsService } from '../src/services/creditsService';
 
 const LAUNCH_PLAN_CODE = 'LAUNCH_4000_FIXED';
 const LAUNCH_FIXED_CREDITS = 4000;
+// December 18, 2025 at 00:00:00 UTC
+const TRIAL_START_DATE = new Date('2025-12-18T00:00:00.000Z');
+const TRIAL_START_TIMESTAMP = admin.firestore.Timestamp.fromDate(TRIAL_START_DATE);
 
 interface MigrationStats {
   totalUsers: number;
@@ -34,21 +39,21 @@ interface MigrationStats {
   errorDetails: Array<{ uid: string; email?: string; error: string }>;
 }
 
-async function migrateAllUsersToLaunchPlan(options: { dryRun?: boolean; limit?: number } = {}): Promise<MigrationStats> {
+async function resetToLaunchPlanDec18(options: { dryRun?: boolean; limit?: number } = {}): Promise<MigrationStats> {
   const { dryRun = false, limit } = options;
   
-  console.log('\n🚀 ==== Launch Plan Bulk Migration ====\n');
+  console.log('\n🚀 ==== Reset All Users to Launch Plan (Dec 18, 2025) ====\n');
   console.log('📋 Strategy:');
   console.log('  - All users → LAUNCH_4000_FIXED plan');
   console.log('  - All users → 4000 credits (fixed, no daily reset)');
   console.log('  - Clear ALL ledger history for each user');
+  console.log('  - Set launchTrialStartDate to December 18, 2025 00:00:00 UTC');
   console.log('  - Mark launchMigrationDone = true');
-  console.log('  - Set launchTrialStartDate for 15-day trial tracking');
-  console.log('  - Fix users already on launch plan but missing trial start date');
   console.log(`  - Mode: ${dryRun ? 'DRY RUN (no changes)' : 'LIVE'}`);
   if (limit) {
     console.log(`  - Limit: Processing first ${limit} users`);
   }
+  console.log(`  - Trial Start Date: ${TRIAL_START_DATE.toISOString()}`);
   console.log('='.repeat(60) + '\n');
 
   // Ensure launch plan exists
@@ -94,55 +99,13 @@ async function migrateAllUsersToLaunchPlan(options: { dryRun?: boolean; limit?: 
           const email = userData.email || 'N/A';
           const currentPlan = userData.planCode || 'FREE';
           const currentBalance = userData.creditBalance || 0;
-          const alreadyMigrated = Boolean(userData.launchMigrationDone);
-          const hasTrialStartDate = Boolean(userData.launchTrialStartDate);
+          const currentTrialStart = userData.launchTrialStartDate;
 
           try {
-            if (alreadyMigrated && !dryRun) {
-              // Already migrated - check if plan is correct and trial start date exists
-              const needsUpdate: any = {};
-              let needsUpdateFlag = false;
-
-              if (currentPlan !== LAUNCH_PLAN_CODE) {
-                console.log(`  ⚠️  ${email} (${uid}): Already migrated but wrong plan (${currentPlan}), fixing...`);
-                needsUpdate.planCode = LAUNCH_PLAN_CODE;
-                needsUpdateFlag = true;
-              }
-
-              if (!hasTrialStartDate) {
-                console.log(`  ⚠️  ${email} (${uid}): Missing launchTrialStartDate, setting it now...`);
-                needsUpdate.launchTrialStartDate = admin.firestore.FieldValue.serverTimestamp();
-                needsUpdateFlag = true;
-              }
-
-              if (needsUpdateFlag) {
-                needsUpdate.updatedAt = admin.firestore.FieldValue.serverTimestamp();
-                await adminDb.collection('users').doc(uid).update(needsUpdate);
-                console.log(`     ✅ Updated: ${Object.keys(needsUpdate).join(', ')}`);
-                stats.migrated++;
-              } else {
-                stats.skipped++;
-              }
-              return;
-            }
-
-            // Also check if user is on launch plan but missing trial start date (edge case)
-            if (currentPlan === LAUNCH_PLAN_CODE && !hasTrialStartDate && !dryRun) {
-              console.log(`  ⚠️  ${email} (${uid}): On launch plan but missing launchTrialStartDate, setting it...`);
-              await adminDb.collection('users').doc(uid).update({
-                launchTrialStartDate: admin.firestore.FieldValue.serverTimestamp(),
-                launchMigrationDone: true, // Also mark as migrated
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-              });
-              console.log(`     ✅ Set launchTrialStartDate and launchMigrationDone`);
-              stats.migrated++;
-              return;
-            }
-
             if (dryRun) {
-              console.log(`  🔍 [DRY RUN] Would migrate: ${email} (${uid})`);
-              console.log(`     Current: Plan=${currentPlan}, Balance=${currentBalance}, Migrated=${alreadyMigrated}, HasTrialDate=${hasTrialStartDate}`);
-              console.log(`     Would set: Plan=${LAUNCH_PLAN_CODE}, Balance=${LAUNCH_FIXED_CREDITS}, launchTrialStartDate=<now>, Clear ledgers`);
+              console.log(`  🔍 [DRY RUN] Would reset: ${email} (${uid})`);
+              console.log(`     Current: Plan=${currentPlan}, Balance=${currentBalance}, TrialStart=${currentTrialStart ? 'set' : 'not set'}`);
+              console.log(`     Would set: Plan=${LAUNCH_PLAN_CODE}, Balance=${LAUNCH_FIXED_CREDITS}, TrialStart=${TRIAL_START_DATE.toISOString()}, Clear ledgers`);
               stats.migrated++;
               return;
             }
@@ -158,46 +121,26 @@ async function migrateAllUsersToLaunchPlan(options: { dryRun?: boolean; limit?: 
               // Continue even if ledger clear has issues
             }
 
-            // Update user to launch plan
-            console.log(`  🔄 Setting ${email} to launch plan...`);
+            // Update user to launch plan with December 18, 2025 trial start date
+            console.log(`  🔄 Setting ${email} to launch plan with Dec 18, 2025 trial start...`);
             await adminDb.collection('users').doc(uid).update({
               planCode: LAUNCH_PLAN_CODE,
               creditBalance: LAUNCH_FIXED_CREDITS,
               launchMigrationDone: true,
-              launchTrialStartDate: admin.firestore.FieldValue.serverTimestamp(), // Set trial start date for 15-day tracking
+              launchTrialStartDate: TRIAL_START_TIMESTAMP, // December 18, 2025 00:00:00 UTC
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
-            
-            // CRITICAL FIX: Create GRANT ledger entry so reconciliation works correctly
-            console.log(`  💰 Creating migration GRANT ledger entry...`);
-            try {
-              const migrationGrantId = `LAUNCH_MIGRATION_GRANT_${uid}`;
-              const grantResult = await creditsRepository.writeGrantIncrement(
-                uid, 
-                migrationGrantId, 
-                LAUNCH_FIXED_CREDITS, 
-                'Launch plan migration grant', 
-                {
-                  planCode: LAUNCH_PLAN_CODE,
-                  migration: true,
-                  timestamp: new Date().toISOString()
-                }
-              );
-              console.log(`     ✅ Created GRANT ledger entry: ${grantResult}`);
-            } catch (grantError: any) {
-              console.log(`     ⚠️  Grant creation warning: ${grantError.message}`);
-              // Continue even if grant creation has issues (balance is already set)
-            }
 
-            console.log(`  ✅ Migrated: ${email} (${uid})`);
+            console.log(`  ✅ Reset: ${email} (${uid})`);
             console.log(`     Plan: ${currentPlan} → ${LAUNCH_PLAN_CODE}`);
             console.log(`     Balance: ${currentBalance} → ${LAUNCH_FIXED_CREDITS}`);
+            console.log(`     Trial Start: ${TRIAL_START_DATE.toISOString()}`);
             console.log(`     Ledgers cleared: ${deletedCount}`);
             stats.migrated++;
 
           } catch (error: any) {
             const errorMsg = error.message || String(error);
-            console.error(`  ❌ Error migrating ${email} (${uid}): ${errorMsg}`);
+            console.error(`  ❌ Error resetting ${email} (${uid}): ${errorMsg}`);
             stats.errors++;
             stats.errorDetails.push({ uid, email, error: errorMsg });
           }
@@ -206,11 +149,12 @@ async function migrateAllUsersToLaunchPlan(options: { dryRun?: boolean; limit?: 
     }
 
     console.log('\n' + '='.repeat(60));
-    console.log('📊 Migration Summary:');
+    console.log('📊 Reset Summary:');
     console.log(`   Total users: ${stats.totalUsers}`);
-    console.log(`   ✅ Migrated: ${stats.migrated}`);
+    console.log(`   ✅ Reset: ${stats.migrated}`);
     console.log(`   ⏭️  Skipped: ${stats.skipped}`);
     console.log(`   ❌ Errors: ${stats.errors}`);
+    console.log(`   Trial Start Date: ${TRIAL_START_DATE.toISOString()}`);
     console.log('='.repeat(60) + '\n');
 
     if (stats.errorDetails.length > 0) {
@@ -225,11 +169,14 @@ async function migrateAllUsersToLaunchPlan(options: { dryRun?: boolean; limit?: 
       console.log('🔍 This was a DRY RUN. No changes were made.');
       console.log('   Run without --dry-run to apply changes.\n');
     } else {
-      console.log('✅ Migration complete!\n');
+      console.log('✅ Reset complete!');
+      console.log(`   All users are now on ${LAUNCH_PLAN_CODE} with 4000 credits`);
+      console.log(`   Trial start date set to: ${TRIAL_START_DATE.toISOString()}`);
+      console.log(`   (15-day trial period: Dec 18, 2025 - Jan 2, 2026)\n`);
     }
 
   } catch (error) {
-    console.error('\n❌ Fatal error during migration:', error);
+    console.error('\n❌ Fatal error during reset:', error);
     throw error;
   }
 
@@ -251,22 +198,27 @@ for (const arg of args) {
       process.exit(1);
     }
   } else if (arg === '--help' || arg === '-h') {
-    console.log('Usage: npx ts-node scripts/migrateAllUsersToLaunchPlan.ts [--dry-run] [--limit=N]');
+    console.log('Usage: npx ts-node scripts/resetToLaunchPlanDec18.ts [--dry-run] [--limit=N]');
     console.log('\nOptions:');
     console.log('  --dry-run, -d    Run without making changes');
     console.log('  --limit=N         Process only first N users');
     console.log('  --help, -h        Show this help message');
+    console.log('\nThis script will:');
+    console.log('  - Clear all ledgers for all users');
+    console.log('  - Set all users to LAUNCH_4000_FIXED plan');
+    console.log('  - Set credit balance to 4000');
+    console.log('  - Set launchTrialStartDate to December 18, 2025 00:00:00 UTC');
     process.exit(0);
   }
 }
 
-// Run migration
-migrateAllUsersToLaunchPlan({ dryRun, limit })
+// Run reset
+resetToLaunchPlanDec18({ dryRun, limit })
   .then(() => {
     process.exit(0);
   })
   .catch((error) => {
-    console.error('❌ Migration failed:', error);
+    console.error('❌ Reset failed:', error);
     process.exit(1);
   });
 
