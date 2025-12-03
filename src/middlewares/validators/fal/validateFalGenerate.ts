@@ -118,7 +118,7 @@ export const validateFalGenerate = [
 
 // Maya TTS validator (Maya-1-Voice)
 export const validateFalMayaTts = [
-  body('text').isString().notEmpty().withMessage('text is required'),
+  body('text').isString().notEmpty().withMessage('text is required').isLength({ max: 1000 }).withMessage('text must be at most 1000 characters'),
   body('prompt').optional().isString(),
   body('temperature').optional().isFloat({ min: 0, max: 2 }).withMessage('temperature must be a number'),
   body('top_p').optional().isFloat({ min: 0, max: 1 }).withMessage('top_p must be between 0 and 1'),
@@ -134,7 +134,7 @@ export const validateFalMayaTts = [
 
 // Chatterbox Multilingual TTS validator
 export const validateFalChatterboxMultilingual = [
-  body('text').isString().notEmpty().isLength({ max: 300 }).withMessage('text is required and must be <= 300 characters'),
+  body('text').isString().notEmpty().isLength({ max: 2000 }).withMessage('text is required and must be <= 2000 characters'),
   body('voice').optional().isString().withMessage('voice must be a string'),
   body('custom_audio_language').optional().isIn(['english', 'arabic', 'danish', 'german', 'greek', 'spanish', 'finnish', 'french', 'hebrew', 'hindi', 'italian', 'japanese', 'korean', 'malay', 'dutch', 'norwegian', 'polish', 'portuguese', 'russian', 'swedish', 'swahili', 'turkish', 'chinese']).withMessage('custom_audio_language must be one of the allowed language codes'),
   body('voice_file_name').optional().isString().withMessage('voice_file_name must be a string if provided'),
@@ -213,7 +213,7 @@ export const validateFalVeoImageToVideoFast = validateFalVeoImageToVideo;
 // ElevenLabs Text-to-Dialogue validator
 export const validateFalElevenDialogue = [
   body('inputs').isArray({ min: 1 }).withMessage('inputs must be a non-empty array'),
-  body('inputs.*.text').isString().notEmpty().withMessage('each input must contain text'),
+  body('inputs.*.text').isString().notEmpty().withMessage('each input must contain text').isLength({ max: 1000 }).withMessage('each input text must be at most 1000 characters'),
   body('inputs.*.voice').optional().isString(),
   body('stability').optional().isFloat({ min: 0, max: 1 }).withMessage('stability must be between 0 and 1'),
   body('use_speaker_boost').optional().isBoolean(),
@@ -228,7 +228,7 @@ export const validateFalElevenDialogue = [
 
 // ElevenLabs Text-to-Speech (TTS) validator
 export const validateFalElevenTts = [
-  body('text').isString().notEmpty().withMessage('text is required').isLength({ max: 300 }).withMessage('text must be at most 300 characters'),
+  body('text').isString().notEmpty().withMessage('text is required').isLength({ max: 1000 }).withMessage('text must be at most 1000 characters'),
   body('voice').optional().isString().withMessage('voice must be a string'),
   body('custom_audio_language').optional().isIn(['english', 'arabic', 'danish', 'german', 'greek', 'spanish', 'finnish', 'french', 'hebrew', 'hindi', 'italian', 'japanese', 'korean', 'malay', 'dutch', 'norwegian', 'polish', 'portuguese', 'russian', 'swedish', 'swahili', 'turkish', 'chinese']).withMessage('custom_audio_language must be one of the allowed values'),
   body('exaggeration').optional().isFloat({ min: 0.25, max: 2.0 }).withMessage('exaggeration must be between 0.25 and 2.0'),

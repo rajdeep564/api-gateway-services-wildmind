@@ -16,7 +16,8 @@ const COST_CRYSTAL_2160P = 820; // 4K/2160p
 const COST_CRYSTAL_6K = 1620;
 const COST_CRYSTAL_8K = 3220;
 const COST_CRYSTAL_12K = 6420;
-const COST_SEEDREAM4 = 90;
+const COST_SEEDREAM4 = 80;
+const COST_SEEDREAM45 = 100; // Bytedance Seedream-4.5 (from creditDistribution: creditsPerGeneration = 100)
 const COST_IDEOGRAM_V3_TURBO = 90;
 const COST_MAGIC_IMAGE_REFINER = 84;
 const COST_IDEOGRAM_3_QUALITY = 210;
@@ -87,6 +88,10 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   const { model } = req.body || {};
   const normalized = String(model || '').toLowerCase();
   let cost = COST_SEEDREAM4;
+  // Seedream 4.5 - check before seedream-4
+  if (normalized.includes('seedream-4.5') || normalized.includes('bytedance/seedream-4.5')) {
+    cost = COST_SEEDREAM45;
+  }
   // Ideogram Turbo matches
   if (
     normalized.includes('ideogram-ai/ideogram-v3-turbo') ||

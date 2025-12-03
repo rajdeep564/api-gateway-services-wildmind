@@ -637,4 +637,178 @@ export async function computeFalTopazUpscaleImageCost(req: Request): Promise<{ c
   };
 }
 
+// ElevenLabs TTS pricing based on character count
+export async function computeFalElevenTtsCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { text } = req.body || {};
+  if (!text || typeof text !== 'string') {
+    throw new Error('text is required for ElevenLabs TTS pricing');
+  }
+  
+  const charCount = text.length;
+  let display: string;
+  let cost: number | null;
+  
+  if (charCount <= 1000) {
+    display = 'Elevenlabs Eleven v3 TTS 1000 Characters';
+    cost = findCredits(display);
+  } else if (charCount <= 2000) {
+    display = 'Elevenlabs Eleven v3 TTS 2000 Characters';
+    cost = findCredits(display);
+  } else {
+    // For >2000 characters, use 2000 character pricing (shouldn't happen with validation, but handle gracefully)
+    display = 'Elevenlabs Eleven v3 TTS 2000 Characters';
+    cost = findCredits(display);
+  }
+  
+  if (cost == null) {
+    throw new Error(`Unsupported ElevenLabs TTS pricing for ${charCount} characters`);
+  }
+  
+  return {
+    cost,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: display,
+      characterCount: charCount,
+    },
+  };
+}
+
+// ElevenLabs Dialogue pricing based on total character count across all inputs
+export async function computeFalElevenDialogueCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { inputs } = req.body || {};
+  if (!Array.isArray(inputs) || inputs.length === 0) {
+    throw new Error('inputs array is required for ElevenLabs Dialogue pricing');
+  }
+  
+  // Calculate total character count across all inputs
+  const totalCharCount = inputs.reduce((sum, input) => {
+    const text = input?.text || '';
+    return sum + (typeof text === 'string' ? text.length : 0);
+  }, 0);
+  
+  let display: string;
+  let cost: number | null;
+  
+  if (totalCharCount <= 1000) {
+    display = 'Elevenlabs Eleven v3 TTD 1000 Characters';
+    cost = findCredits(display);
+  } else if (totalCharCount <= 2000) {
+    display = 'Elevenlabs Eleven v3 TTD 2000 Characters';
+    cost = findCredits(display);
+  } else {
+    // For >2000 characters, use 2000 character pricing (shouldn't happen with validation, but handle gracefully)
+    display = 'Elevenlabs Eleven v3 TTD 2000 Characters';
+    cost = findCredits(display);
+  }
+  
+  if (cost == null) {
+    throw new Error(`Unsupported ElevenLabs Dialogue pricing for ${totalCharCount} characters`);
+  }
+  
+  return {
+    cost,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: display,
+      totalCharacterCount: totalCharCount,
+      inputCount: inputs.length,
+    },
+  };
+}
+
+// Chatterbox Multilingual TTS pricing based on character count
+export async function computeFalChatterboxMultilingualCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { text } = req.body || {};
+  if (!text || typeof text !== 'string') {
+    throw new Error('text is required for Chatterbox Multilingual TTS pricing');
+  }
+  
+  const charCount = text.length;
+  let display: string;
+  let cost: number | null;
+  
+  if (charCount <= 1000) {
+    display = 'Chatter Box Multilingual 1000 Characters';
+    cost = findCredits(display);
+  } else if (charCount <= 2000) {
+    display = 'Chatter Box Multilingual 2000 Characters';
+    cost = findCredits(display);
+  } else {
+    // For >2000 characters, use 2000 character pricing (shouldn't happen with validation, but handle gracefully)
+    display = 'Chatter Box Multilingual 2000 Characters';
+    cost = findCredits(display);
+  }
+  
+  if (cost == null) {
+    throw new Error(`Unsupported Chatterbox Multilingual TTS pricing for ${charCount} characters`);
+  }
+  
+  return {
+    cost,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: display,
+      characterCount: charCount,
+    },
+  };
+}
+
+// Maya TTS pricing based on estimated duration (6 credits per second)
+// We estimate duration based on text length: ~150 words per minute = ~2.5 words/second
+// Average word length is ~5 characters, so ~12.5 characters per second
+// We use a conservative estimate of 10 characters per second to ensure we don't undercharge
+export async function computeFalMayaTtsCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { text } = req.body || {};
+  if (!text || typeof text !== 'string') {
+    throw new Error('text is required for Maya TTS pricing');
+  }
+  
+  // Estimate duration: ~10 characters per second (conservative estimate)
+  // Minimum 1 second
+  const estimatedDuration = Math.max(1, Math.ceil(text.length / 10));
+  const creditsPerSecond = 6;
+  const cost = estimatedDuration * creditsPerSecond;
+  
+  return {
+    cost,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: 'Maya TTS (per second)',
+      estimatedDuration,
+      creditsPerSecond,
+      characterCount: text.length,
+      note: 'Final cost will be adjusted based on actual audio duration after generation',
+    },
+  };
+}
+
+// ElevenLabs SFX pricing based on duration_seconds (6 credits per second)
+export async function computeFalElevenSfxCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { duration_seconds } = req.body || {};
+  
+  // Default to 5 seconds if not provided (matches frontend default)
+  const duration = duration_seconds != null ? Number(duration_seconds) : 5.0;
+  
+  // Ensure minimum 0.5 seconds and maximum 22 seconds (FAL API limits)
+  const clampedDuration = Math.max(0.5, Math.min(22, duration));
+  
+  // Round up to nearest second for pricing
+  const durationSeconds = Math.ceil(clampedDuration);
+  const creditsPerSecond = 6;
+  const cost = durationSeconds * creditsPerSecond;
+  
+  return {
+    cost,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: 'Elevenlabs Sound-Effects v2 (6 credits per second)',
+      durationSeconds,
+      creditsPerSecond,
+      requestedDuration: duration,
+      clampedDuration: clampedDuration,
+    },
+  };
+}
+
 

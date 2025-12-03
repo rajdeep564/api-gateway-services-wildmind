@@ -398,7 +398,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.03,
     overCharge: 0.01,
     userCost: 0.04,
-    creditsPerGeneration: 60,
+    creditsPerGeneration: 80,
     plans: {
       planA: 154.5,
       planB: 309,
@@ -3288,18 +3288,34 @@ export const creditDistributionData: ModelCreditInfo[] = [
   },
 
   {
-    srNo: 155,
-    modelName: "Elevenlabs Sound-Effects v2 1s",
-    priceToPay: 0.002,
-    overCharge: 0.01,
-    userCost: 0.012,
-    creditsPerGeneration: 24,
+    srNo: 154.5,
+    modelName: "Chatter Box Multilingual 2000 Characters",
+    priceToPay: 0.05,
+    overCharge: 0.02,
+    userCost: 0.07,
+    creditsPerGeneration: 140,
     plans: {
-      planA: 515,
-      planB: 1030,
-      planC: 2575,
-      planD: 8240,
-      free: 83.33333333,
+      planA: 88.28571429,
+      planB: 176.5714286,
+      planC: 441.4285714,
+      planD: 1412.571429,
+      free: 14.28571429,
+    },
+  },
+
+  {
+    srNo: 155,
+    modelName: "Elevenlabs Sound-Effects v2 (6 credits per second)",
+    priceToPay: 0.002,
+    overCharge: 0.001,
+    userCost: 0.003,
+    creditsPerGeneration: 6, // Per second - actual cost calculated dynamically
+    plans: {
+      planA: 2060,
+      planB: 4120,
+      planC: 10300,
+      planD: 32960,
+      free: 333.3333333,
     },
   },
   {
@@ -3337,26 +3353,26 @@ export const creditDistributionData: ModelCreditInfo[] = [
   {
     srNo: 158,
     modelName: "Elevenlabs Eleven v3 TTD 1000 Characters",
-    priceToPay: 0.4,
+    priceToPay: 0.1,
     overCharge: 0.01,
-    userCost: 0.41,
-    creditsPerGeneration: 840,
+    userCost: 0.11,
+    creditsPerGeneration: 220,
     plans: {
-      planA: 56.18181818,
-      planB: 112.3636364,
-      planC: 280.9090909,
-      planD: 898.9090909,
-      free: 9.090909091,
+      planA: 227.2727273,
+      planB: 454.5454545,
+      planC: 1136.363636,
+      planD: 3636.363636,
+      free: 45.45454545,
     },
   },
 
   {
     srNo: 159,
     modelName: "Elevenlabs Eleven v3 TTD 2000 Characters",
-    priceToPay: 0.8,
+    priceToPay: 0.2,
     overCharge: 0.01,
-    userCost: 0.81,
-    creditsPerGeneration: 840,
+    userCost: 0.21,
+    creditsPerGeneration: 420,
     plans: {
       planA: 29.42857143,
       planB: 58.85714286,
@@ -3526,7 +3542,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 32.98153034,
     },
   },
-  
+
   {
     srNo: 170,
     modelName: "z-image-turbo",
@@ -3540,6 +3556,37 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planC: 2376.923077,
       planD: 7606.153846,
       free: 76.92307692,
+    },
+  },
+  {
+    srNo: 171,
+    modelName: "Maya TTS (6 credits per second)",
+    priceToPay: 0.002,
+    overCharge: 0.001,
+    userCost: 0.003,
+    creditsPerGeneration: 6, // Per second - actual cost calculated dynamically
+    plans: {
+      planA: 2060,
+      planB: 4120,
+      planC: 10300,
+      planD: 32960,
+      free: 333.3333333,
+    },
+  },
+
+  {
+    srNo: 172,
+    modelName: "Bytedance Seedream-4.5",
+    priceToPay: 0.04,
+    overCharge: 0.01,
+    userCost: 0.05,
+    creditsPerGeneration: 100,
+    plans: {
+      planA: 123.6,
+      planB: 247.2,
+      planC: 618,
+      planD: 1977.6,
+      free: 20,
     },
   }
 

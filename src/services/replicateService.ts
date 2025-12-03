@@ -940,6 +940,97 @@ export async function generateImage(uid: string, body: any) {
   try {
     const { model: _m, isPublic: _p, ...rest } = body || {};
     const input: any = { prompt: body.prompt };
+    // Seedream 4.5 schema mapping (beta: 2K only, limited aspect ratios)
+    if (modelBase === "bytedance/seedream-4.5") {
+      // size: Only 2K supported in beta
+      input.size = "2K";
+      // aspect_ratio: Only "match_input_image" or "1:1"
+      if (rest.aspect_ratio && ['match_input_image', '1:1'].includes(String(rest.aspect_ratio))) {
+        input.aspect_ratio = String(rest.aspect_ratio);
+      } else {
+        input.aspect_ratio = "match_input_image"; // Default
+      }
+      // sequential_image_generation
+      if (rest.sequential_image_generation) {
+        input.sequential_image_generation = String(rest.sequential_image_generation);
+      }
+      // max_images
+      if (rest.max_images != null) {
+        input.max_images = Math.max(1, Math.min(15, Number(rest.max_images)));
+      }
+      // If user requests multiple images, Seedream requires sequential generation to be 'auto'
+      if ((input.max_images ?? 1) > 1 && input.sequential_image_generation !== "auto") {
+        input.sequential_image_generation = "auto";
+      }
+      // multi-image input: ensure HTTP(S) URLs; upload data URIs to Zata first (up to 14 images)
+      const username = creator?.username || uid;
+      let images: string[] = Array.isArray(rest.image_input)
+        ? rest.image_input.slice(0, 14)
+        : [];
+      if (!images.length && typeof rest.image === "string" && rest.image.length)
+        images = [rest.image];
+      // Track input images for saving to database
+      const inputPersisted: any[] = [];
+      if (images.length > 0) {
+        const resolved: string[] = [];
+        for (let i = 0; i < images.length; i++) {
+          const img = images[i];
+          try {
+            if (typeof img === "string" && img.startsWith("data:")) {
+              const uploaded = await uploadDataUriToZata({
+                dataUri: img,
+                keyPrefix: `users/${username}/input/${historyId}`,
+                fileName: `seedream45-ref-${i + 1}`,
+              });
+              resolved.push(uploaded.publicUrl);
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: uploaded.publicUrl,
+                storagePath: (uploaded as any).key,
+                originalUrl: img,
+              });
+            } else if (typeof img === "string") {
+              resolved.push(img);
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: img,
+                originalUrl: img,
+              });
+            }
+          } catch {
+            if (typeof img === "string") {
+              resolved.push(img);
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: img,
+                originalUrl: img,
+              });
+            }
+          }
+        }
+        if (resolved.length > 0) input.image_input = resolved;
+        // Save input images to database
+        if (inputPersisted.length > 0) {
+          try {
+            await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+            console.log('[replicateService.generateImage] Saved inputImages for Seedream 4.5', { historyId, count: inputPersisted.length });
+          } catch (e) {
+            console.warn('[replicateService.generateImage] Failed to save inputImages for Seedream 4.5:', e);
+          }
+        }
+      }
+      // Enforce total images cap when auto: input_count + max_images <= 15
+      if (input.sequential_image_generation === "auto") {
+        const inputCount = Array.isArray(input.image_input)
+          ? input.image_input.length
+          : 0;
+        const requested =
+          typeof input.max_images === "number" ? input.max_images : 1;
+        if (inputCount + requested > 15) {
+          input.max_images = Math.max(1, 15 - inputCount);
+        }
+      }
+    }
     // Seedream schema mapping
     if (modelBase === "bytedance/seedream-4") {
       // size handling
@@ -1431,7 +1522,7 @@ export async function generateImage(uid: string, body: any) {
       Array.isArray(output) ? output.length : "n/a"
     );
     console.log("[replicateService.generateImage] output", output);
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4.5" || modelBase === "bytedance/seedream-4") {
       try {
         if (Array.isArray(output)) {
           const first = output[0];
@@ -1482,7 +1573,7 @@ export async function generateImage(uid: string, body: any) {
       outputUrls = await resolveOutputUrls(output);
     }
     // If fewer images returned than requested, fall back to sequential reruns
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4.5" || modelBase === "bytedance/seedream-4") {
       const requested =
         typeof input.max_images === "number" ? input.max_images : 1;
       if (requested > 1 && outputUrls.length < requested) {
