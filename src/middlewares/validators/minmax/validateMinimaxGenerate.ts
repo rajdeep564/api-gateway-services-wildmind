@@ -28,15 +28,6 @@ export const validateMinimaxGenerate = [
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
     
-    // Check for profanity in prompt
-    if (req.body?.prompt && typeof req.body.prompt === 'string') {
-      const { validatePrompt } = require('../../../utils/profanityFilter');
-      const profanityCheck = validatePrompt(req.body.prompt);
-      if (!profanityCheck.isValid) {
-        return next(new ApiError(profanityCheck.error || 'Prompt contains inappropriate language', 400));
-      }
-    }
-    
     next();
   }
 ];

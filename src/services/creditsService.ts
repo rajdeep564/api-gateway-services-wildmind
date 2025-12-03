@@ -167,8 +167,47 @@ export const creditsService = {
    * IMPORTANT: Now includes ALL grants (not just monthly reset) to preserve manual grants.
    */
   async reconcileCurrentCycle(uid: string): Promise<{ cycle: string; newBalance: number; debitsSinceReset: number; planCredits: number }> {
+    const logger = require('../utils/logger').logger;
+    logger.info({ uid }, '[CREDITS_SERVICE] reconcileCurrentCycle - Starting reconciliation');
+    
+    // Get current balance before reconciliation
+    const beforeInfo = await creditsRepository.readUserInfo(uid);
+    const beforeBalance = beforeInfo?.creditBalance || 0;
+    logger.info({ uid, beforeBalance }, '[CREDITS_SERVICE] Balance before reconciliation');
+    
     // Use the new reconcileBalanceFromLedgers which calculates from ALL ledger entries
     const reconciled = await creditsRepository.reconcileBalanceFromLedgers(uid);
+    
+    logger.info({ 
+      uid, 
+      calculatedBalance: reconciled.calculatedBalance,
+      totalGrants: reconciled.totalGrants,
+      totalDebits: reconciled.totalDebits,
+      ledgerCount: reconciled.ledgerCount
+    }, '[CREDITS_SERVICE] Reconciliation calculation complete');
+    
+    // CRITICAL: Ensure balance never goes below 0, but also log if it's 0 unexpectedly
+    if (reconciled.calculatedBalance === 0 && reconciled.totalGrants > 0) {
+      logger.warn({ 
+        uid, 
+        calculatedBalance: reconciled.calculatedBalance,
+        totalGrants: reconciled.totalGrants,
+        totalDebits: reconciled.totalDebits,
+        beforeBalance
+      }, '[CREDITS_SERVICE] WARNING: Calculated balance is 0 despite having grants!');
+      
+      // If we had a balance before and now it's 0, this might be a calculation error
+      // Log detailed information for debugging but still proceed with the reconciliation
+      if (beforeBalance > 0) {
+        logger.error({ 
+          uid, 
+          beforeBalance,
+          calculatedBalance: reconciled.calculatedBalance,
+          totalGrants: reconciled.totalGrants,
+          totalDebits: reconciled.totalDebits
+        }, '[CREDITS_SERVICE] ERROR: Balance went from positive to 0 during reconciliation!');
+      }
+    }
     
     // Update balance to match calculated value
     const userRef = adminDb.collection('users').doc(uid);
@@ -176,6 +215,8 @@ export const creditsService = {
       creditBalance: reconciled.calculatedBalance, 
       updatedAt: admin.firestore.FieldValue.serverTimestamp() 
     }, { merge: true });
+    
+    logger.info({ uid, beforeBalance, afterBalance: reconciled.calculatedBalance }, '[CREDITS_SERVICE] Balance updated in database');
     
     // Get plan info for return value
     const user = await creditsRepository.readUserInfo(uid);
@@ -191,6 +232,14 @@ export const creditsService = {
       const pdata = planSnap.data() as any;
       planCredits = Number(pdata?.credits ?? 0) || 0;
     }
+    
+    logger.info({ 
+      uid, 
+      cycle, 
+      newBalance: reconciled.calculatedBalance, 
+      debitsSinceReset: reconciled.totalDebits, 
+      planCredits 
+    }, '[CREDITS_SERVICE] reconcileCurrentCycle - Completed');
     
     return { 
       cycle, 

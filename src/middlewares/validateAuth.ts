@@ -85,14 +85,6 @@ export const validateUsername = [
       return next(new ApiError('Validation failed', 400, errors.array()));
     }
     
-    // Check for profanity
-    const { validateUsername } = require('../utils/profanityFilter');
-    const profanityCheck = validateUsername(req.body.username);
-    if (!profanityCheck.isValid) {
-      console.log(`[VALIDATION] Username contains profanity: ${req.body.username}`);
-      return next(new ApiError(profanityCheck.error || 'Username contains inappropriate language', 400));
-    }
-    
     console.log(`[VALIDATION] Username validation passed`);
     next();
   }
