@@ -103,6 +103,11 @@ function mapModelToBackend(frontendModel: string): { service: 'bfl' | 'replicate
   if ((modelLower.includes('imagen-4') || modelLower.includes('imagen 4')) && !modelLower.includes('ultra') && !modelLower.includes('fast')) {
     return { service: 'fal', backendModel: 'imagen-4' };
   }
+  // Google Nano Banana Pro - Replicate model
+  if (modelLower.includes('google nano banana pro') || modelLower.includes('nano banana pro')) {
+    return { service: 'replicate', backendModel: 'google-nano-banana-pro' };
+  }
+
   if (modelLower.includes('nano banana') || modelLower.includes('gemini')) {
     return { service: 'fal', backendModel: 'gemini-25-flash-image' };
   }
@@ -267,8 +272,8 @@ export async function generateForCanvas(
       generationId = result.historyId;
     } else if (service === 'replicate') {
       // Use Replicate service for Seedream 4K, Z Image Turbo, etc.
-      // Most models use owner/name format, but z-image-turbo is handled specially
-      if (!backendModel.includes('/') && backendModel !== 'z-image-turbo') {
+      // Most models use owner/name format, but z-image-turbo/new-turbo-model is handled specially
+      if (!backendModel.includes('/') && backendModel !== 'z-image-turbo' && backendModel !== 'new-turbo-model' && backendModel !== 'google-nano-banana-pro') {
         console.error('[generateForCanvas] Invalid Replicate model format:', backendModel);
         throw new ApiError(`Invalid model format for Replicate: ${backendModel}. Expected format: owner/name`, 400);
       }

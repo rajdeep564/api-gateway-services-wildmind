@@ -65,8 +65,8 @@ async function downloadToDataUri(
       contentType.includes("jpeg") || contentType.includes("jpg")
         ? "jpg"
         : contentType.includes("webp")
-        ? "webp"
-        : "png";
+          ? "webp"
+          : "png";
     const ab = await res.arrayBuffer();
     const b64 = Buffer.from(new Uint8Array(ab)).toString("base64");
     return { dataUri: `data:${contentType};base64,${b64}`, ext };
@@ -219,8 +219,8 @@ export async function removeBackground(
         String(anyBody.mask_type).toLowerCase() === "manual"
           ? "manual"
           : String(anyBody.mask_type).toLowerCase() === "automatic"
-          ? "automatic"
-          : undefined;
+            ? "automatic"
+            : undefined;
     if (typeof anyBody.preserve_alpha === "boolean")
       input.preserve_alpha = anyBody.preserve_alpha;
     else input.preserve_alpha = true;
@@ -268,7 +268,7 @@ export async function removeBackground(
         status: "failed",
         error: e?.message || "Replicate failed",
       });
-    } catch {}
+    } catch { }
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
       error: e?.message || "Replicate failed",
@@ -309,13 +309,13 @@ export async function removeBackground(
     aestheticScore: highestScore,
     updatedAt: new Date().toISOString(), // Set completion time for proper sorting
   } as any);
-  try { console.log('[Replicate.removeBackground] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch {}
+  try { console.log('[Replicate.removeBackground] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch { }
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
       status: "completed",
       images: scoredImages as any,
     });
-  } catch {}
+  } catch { }
 
   // Trigger optimization and re-enqueue mirror update (non-blocking)
   try {
@@ -392,7 +392,7 @@ export async function upscale(uid: string, body: any) {
   const originalInputImage = body.image;
   let inputImageStoragePath: string | undefined;
   let inputImageUrl: string | undefined;
-  
+
   // If we receive a data URI, persist to Zata and use the public URL for Replicate
   // This is required because Replicate may not accept large data URIs or may timeout
   if (typeof body.image === "string" && body.image.startsWith("data:")) {
@@ -463,7 +463,7 @@ export async function upscale(uid: string, body: any) {
       inputImageUrl = body.image;
     }
   }
-  
+
   // Validate that we have a valid image URL (not a data URI)
   if (typeof body.image === "string" && body.image.startsWith("data:")) {
     throw new ApiError(
@@ -471,11 +471,11 @@ export async function upscale(uid: string, body: any) {
       400
     );
   }
-  
+
   if (!body.image || typeof body.image !== "string" || body.image.trim().length === 0) {
     throw new ApiError("Invalid image URL provided", 400);
   }
-  
+
   // Save input image to database
   if (inputImageUrl) {
     try {
@@ -575,18 +575,18 @@ export async function upscale(uid: string, body: any) {
       inputKeys: Object.keys(input),
       imageUrl: body.image?.substring?.(0, 100) || body.image, // Log first 100 chars of URL
     });
-    
+
     // Add timeout wrapper for Replicate API call (5 minutes max)
     const REPLICATE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
     const timeoutPromise = new Promise((_, reject) => {
       setTimeout(() => reject(new Error("Replicate API call timed out after 5 minutes")), REPLICATE_TIMEOUT);
     });
-    
+
     // Retry logic with exponential backoff for transient errors (500, 502, 503, 504)
     const MAX_RETRIES = 2;
     let lastError: any = null;
     let output: any = null;
-    
+
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         if (attempt > 0) {
@@ -596,42 +596,42 @@ export async function upscale(uid: string, body: any) {
           console.log(`[replicateService.upscale] Retry attempt ${attempt} after ${delay}ms delay`);
           await new Promise(resolve => setTimeout(resolve, delay));
         }
-        
+
         output = await Promise.race([
           replicate.run(modelSpec as any, { input }),
           timeoutPromise,
         ]) as any;
-        
+
         // Success - break out of retry loop
         break;
       } catch (retryError: any) {
         lastError = retryError;
-        
+
         // Extract HTTP status code from various error formats
-        const httpStatus = 
+        const httpStatus =
           retryError?.statusCode ||
           retryError?.response?.status ||
           retryError?.$metadata?.httpStatusCode ||
           retryError?.data?.$metadata?.httpStatusCode ||
           (retryError?.message?.match(/status[:\s]+(\d{3})/i)?.[1] ? Number(retryError.message.match(/status[:\s]+(\d{3})/i)?.[1]) : null);
-        
+
         // Check if this is a parsing/deserialization error (usually indicates HTML response from server)
-        const isParseError = 
+        const isParseError =
           retryError?.message?.includes("Deserialization error") ||
           retryError?.message?.includes("Expected closing tag") ||
           retryError?.message?.includes("to see the raw response") ||
           (retryError?.$metadata && httpStatus >= 500);
-        
+
         // Check if this is a retryable error (500, 502, 503, 504)
         // Parse errors with 5xx status codes are also retryable
-        const isRetryable = 
+        const isRetryable =
           httpStatus === 500 ||
           httpStatus === 502 ||
           httpStatus === 503 ||
           httpStatus === 504 ||
           (isParseError && httpStatus >= 500) ||
           (retryError?.message && /50[0-4]/.test(retryError.message));
-        
+
         // If it's the last attempt or not retryable, throw the error
         if (attempt >= MAX_RETRIES || !isRetryable) {
           // If crystal-upscaler failed and we haven't tried fallback yet, try fallback model
@@ -651,12 +651,12 @@ export async function upscale(uid: string, body: any) {
               if (input.scale_factor) fallbackInput.scale_factor = input.scale_factor;
               if (input.dynamic != null) fallbackInput.dynamic = input.dynamic;
               if (input.sharpen != null) fallbackInput.sharpen = input.sharpen;
-              
+
               output = await Promise.race([
                 replicate.run(fallbackModelSpec as any, { input: fallbackInput }),
                 timeoutPromise,
               ]) as any;
-              
+
               // eslint-disable-next-line no-console
               console.log("[replicateService.upscale] Fallback model succeeded");
               break; // Success with fallback
@@ -671,18 +671,18 @@ export async function upscale(uid: string, body: any) {
         // Continue to next retry attempt
       }
     }
-    
+
     if (!output) {
       throw lastError || new Error("Failed to get output from Replicate");
     }
-    
+
     // eslint-disable-next-line no-console
     console.log(
       "[replicateService.upscale] output",
       typeof output,
       Array.isArray(output) ? output.length : "n/a"
     );
-    
+
     // Robustly resolve Replicate SDK file outputs (which may be objects with url())
     const urlsResolved = await resolveOutputUrls(output);
     if (urlsResolved && urlsResolved.length) {
@@ -702,13 +702,13 @@ export async function upscale(uid: string, body: any) {
     }
   } catch (e: any) {
     // Extract HTTP status code for logging
-    const httpStatusForLog = 
+    const httpStatusForLog =
       e?.statusCode ||
       e?.response?.status ||
       e?.$metadata?.httpStatusCode ||
       e?.data?.$metadata?.httpStatusCode ||
       null;
-    
+
     // eslint-disable-next-line no-console
     console.error("[replicateService.upscale] error", {
       message: e?.message || e,
@@ -721,25 +721,25 @@ export async function upscale(uid: string, body: any) {
       metadata: e?.$metadata || e?.data?.$metadata,
       isParseError: e?.message?.includes("Deserialization error") || e?.message?.includes("Expected closing tag"),
     });
-    
+
     // Extract meaningful error message from HTML responses or API errors
     let errorMessage = "Replicate generation failed";
-    
+
     // Extract HTTP status code from various error formats
-    const httpStatus = 
+    const httpStatus =
       e?.statusCode ||
       e?.response?.status ||
       e?.$metadata?.httpStatusCode ||
       e?.data?.$metadata?.httpStatusCode ||
       (e?.message?.match(/status[:\s]+(\d{3})/i)?.[1] ? Number(e.message.match(/status[:\s]+(\d{3})/i)?.[1]) : null);
-    
+
     // Check if this is a parsing/deserialization error (usually indicates HTML response from server)
-    const isParseError = 
+    const isParseError =
       e?.message?.includes("Deserialization error") ||
       e?.message?.includes("Expected closing tag") ||
       e?.message?.includes("to see the raw response") ||
       (e?.$metadata && httpStatus >= 500);
-    
+
     // Check if error response contains HTML (Cloudflare error page)
     const errorText = String(e?.message || e?.response?.data || e?.data || e || "");
     if (isParseError || errorText.includes("<!DOCTYPE html>") || errorText.includes("Internal server error")) {
@@ -763,13 +763,13 @@ export async function upscale(uid: string, body: any) {
     } else if (e?.message) {
       errorMessage = e.message;
     }
-    
+
     try {
       await replicateRepository.updateGenerationRecord(legacyId, {
         status: "failed",
         error: errorMessage,
       });
-    } catch {}
+    } catch { }
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
       error: errorMessage,
@@ -852,15 +852,15 @@ export async function upscale(uid: string, body: any) {
   if (existing && Array.isArray((existing as any).inputImages) && (existing as any).inputImages.length > 0) {
     updateData.inputImages = (existing as any).inputImages;
   }
-  
+
   await generationHistoryRepository.update(uid, historyId, updateData);
-  try { console.log('[Replicate.upscale] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch {}
+  try { console.log('[Replicate.upscale] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch { }
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
       status: "completed",
       images: scoredImages as any,
     });
-  } catch {}
+  } catch { }
   // Trigger optimization and re-enqueue mirror update (non-blocking)
   try {
     console.log(
@@ -1223,7 +1223,7 @@ export async function generateImage(uid: string, body: any) {
               ? await uploadDataUriToZata({ dataUri: rest.image, keyPrefix, fileName: `input-${++idx}` })
               : await uploadFromUrlToZata({ sourceUrl: rest.image, keyPrefix, fileName: `input-${++idx}` });
             inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: rest.image });
-          } catch {}
+          } catch { }
         }
         // Save style reference images
         if (Array.isArray(rest.style_reference_images) && rest.style_reference_images.length > 0) {
@@ -1234,7 +1234,7 @@ export async function generateImage(uid: string, body: any) {
                 ? await uploadDataUriToZata({ dataUri: refImg, keyPrefix, fileName: `input-${++idx}` })
                 : await uploadFromUrlToZata({ sourceUrl: refImg, keyPrefix, fileName: `input-${++idx}` });
               inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: refImg });
-            } catch {}
+            } catch { }
           }
         }
         if (inputPersisted.length > 0) {
@@ -1247,8 +1247,30 @@ export async function generateImage(uid: string, body: any) {
       // No additional clamping required; validator enforces enumerations and limits
     }
     // Google Nano Banana Pro mapping
-    if (modelBase === "google/nano-banana-pro") {
-      if (rest.resolution) input.resolution = String(rest.resolution);
+    if (modelBase === "google/nano-banana-pro" || modelBase === "google-nano-banana-pro") {
+      console.log('[replicateService] Google Nano Banana Pro request:', {
+        modelBase,
+        width: rest.width,
+        height: rest.height
+      });
+
+      // Map to correct Replicate model ID
+      replicateModelBase = "google/nano-banana-pro";
+
+      // Map width/height if provided (standard Replicate params)
+      if (rest.width) input.width = Number(rest.width);
+      if (rest.height) input.height = Number(rest.height);
+
+      // Also support resolution string if provided, or construct it from width/height
+      if (rest.resolution) {
+        input.resolution = String(rest.resolution);
+      } else if (rest.width && rest.height) {
+        // Some models might prefer "1024x1024" format
+        // input.resolution = `${rest.width}x${rest.height}`; 
+        // Keeping it commented out unless we confirm the model needs it, 
+        // but mapping width/height explicitly is usually safer for Replicate models.
+      }
+
       if (rest.aspect_ratio) input.aspect_ratio = String(rest.aspect_ratio);
       if (rest.output_format) input.output_format = String(rest.output_format);
       if (rest.safety_filter_level) input.safety_filter_level = String(rest.safety_filter_level);
@@ -1310,19 +1332,24 @@ export async function generateImage(uid: string, body: any) {
     // New Turbo Model mapping (z-image-turbo)
     // Using actual Replicate model identifier: prunaai/z-image-turbo with version hash
     if (modelBase === "z-image-turbo" || modelBase === "new-turbo-model" || modelBase === "placeholder-model-name") {
+      console.log('[replicateService] Z Image Turbo request:', {
+        width: rest.width,
+        height: rest.height,
+        num_inference_steps: rest.num_inference_steps,
+        guidance_scale: rest.guidance_scale,
+        image_input: !!rest.image_input,
+        image: !!rest.image
+      });
+
       // Map all supported parameters from schema
       if (rest.width != null) input.width = Math.max(64, Math.min(2048, Number(rest.width)));
       if (rest.height != null) input.height = Math.max(64, Math.min(2048, Number(rest.height)));
       if (rest.num_inference_steps != null) {
         input.num_inference_steps = Math.max(1, Math.min(50, Number(rest.num_inference_steps)));
-      } else {
-        input.num_inference_steps = 14; // Default to 14
       }
-      // Default guidance_scale to 0 if not provided
+
       if (rest.guidance_scale != null) {
         input.guidance_scale = Math.max(0, Math.min(20, Number(rest.guidance_scale)));
-      } else {
-        input.guidance_scale = 0; // Default to 0
       }
       if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
       if (rest.output_format && ['png', 'jpg', 'webp'].includes(String(rest.output_format))) {
@@ -1335,16 +1362,23 @@ export async function generateImage(uid: string, body: any) {
       // Map frontend model name to actual Replicate model identifier
       // Actual Replicate model: prunaai/z-image-turbo with version hash from DEFAULT_VERSION_BY_MODEL
       const ACTUAL_REPLICATE_MODEL = "prunaai/z-image-turbo";
-      
+
       replicateModelBase = ACTUAL_REPLICATE_MODEL;
       // Ensure version is used from DEFAULT_VERSION_BY_MODEL if not provided
       // This ensures the model spec includes the required version hash
       if (!body.version && DEFAULT_VERSION_BY_MODEL[ACTUAL_REPLICATE_MODEL]) {
         body.version = DEFAULT_VERSION_BY_MODEL[ACTUAL_REPLICATE_MODEL];
       }
-      
+
       // Store num_images for later use in the generation logic
       (body as any).__num_images = numImages;
+
+      // Handle image input for image-to-image generation
+      if (rest.image_input && Array.isArray(rest.image_input) && rest.image_input.length > 0) {
+        input.image = rest.image_input[0];
+      } else if (rest.image) {
+        input.image = rest.image;
+      }
     }
     const modelSpec = composeModelSpec(replicateModelBase, body.version);
     // eslint-disable-next-line no-console
@@ -1365,14 +1399,14 @@ export async function generateImage(uid: string, body: any) {
             : 0,
           incoming_first_is_data_uri: Array.isArray(rest.image_input)
             ? typeof rest.image_input[0] === "string" &&
-              rest.image_input[0]?.startsWith("data:")
+            rest.image_input[0]?.startsWith("data:")
             : false,
         };
         console.debug(
           "[seedream] incoming image_input summary",
           JSON.stringify(preDump)
         );
-      } catch {}
+      } catch { }
     }
     if (modelBase === "bytedance/seedream-4") {
       try {
@@ -1394,13 +1428,13 @@ export async function generateImage(uid: string, body: any) {
         };
         // eslint-disable-next-line no-console
         console.debug("[seedream] input dump", JSON.stringify(dump, null, 2));
-      } catch {}
+      } catch { }
     }
     // Handle num_images for z-image-turbo model
     // If num_images > 1, make multiple calls and combine results
     let output: any;
     const numImages = (body as any).__num_images || 1;
-    
+
     if ((modelBase === "new-turbo-model" || modelBase === "placeholder-model-name") && numImages > 1) {
       // Make multiple parallel calls for z-image-turbo
       const outputPromises = Array.from({ length: numImages }, async () => {
@@ -1423,7 +1457,7 @@ export async function generateImage(uid: string, body: any) {
       // Single image generation (default behavior)
       output = await replicate.run(modelSpec as any, { input });
     }
-    
+
     // eslint-disable-next-line no-console
     console.log(
       "[replicateService.generateImage] output",
@@ -1439,8 +1473,8 @@ export async function generateImage(uid: string, body: any) {
             ? typeof first === "string"
               ? first
               : typeof first?.url === "function"
-              ? "[function url()]"
-              : Object.keys(first || {})
+                ? "[function url()]"
+                : Object.keys(first || {})
             : null;
           // eslint-disable-next-line no-console
           console.debug("[seedream] output array[0] info", firstInfo);
@@ -1455,8 +1489,7 @@ export async function generateImage(uid: string, body: any) {
               const val = output[i];
               const url = await resolveItemUrl(val);
               console.debug(
-                `[seedream] output[${i}] typeof=${typeof val} hasUrlFn=${
-                  typeof val?.url === "function"
+                `[seedream] output[${i}] typeof=${typeof val} hasUrlFn=${typeof val?.url === "function"
                 } resolvedUrl=${url || "<none>"}`
               );
             } catch (e) {
@@ -1474,7 +1507,7 @@ export async function generateImage(uid: string, body: any) {
             util.inspect(output, { depth: 4 })
           );
         }
-      } catch {}
+      } catch { }
     }
     // Seedream returns an array of urls per schema; handle multiple
     // Skip if outputUrls already set (for z-turbo num_images handling)
@@ -1488,10 +1521,8 @@ export async function generateImage(uid: string, body: any) {
       if (requested > 1 && outputUrls.length < requested) {
         // eslint-disable-next-line no-console
         console.warn(
-          `[seedream] provider returned ${
-            outputUrls.length
-          }/${requested}; running additional ${
-            requested - outputUrls.length
+          `[seedream] provider returned ${outputUrls.length
+          }/${requested}; running additional ${requested - outputUrls.length
           } times sequentially`
         );
         const runsNeeded = Math.max(
@@ -1569,7 +1600,7 @@ export async function generateImage(uid: string, body: any) {
           "[replicateService.generateImage] no urls – raw output dump (truncated)",
           JSON.stringify(output, null, 2).slice(0, 2000)
         );
-      } catch {}
+      } catch { }
       throw new Error("No output URL returned by Replicate");
     }
   } catch (e: any) {
@@ -1581,7 +1612,7 @@ export async function generateImage(uid: string, body: any) {
       errorMessage: e?.message,
       errorDetails: e?.response?.data || e?.data || e,
     });
-    
+
     // Extract more detailed error message
     let errorMessage = "Replicate generation failed";
     if (e?.message) {
@@ -1593,13 +1624,13 @@ export async function generateImage(uid: string, body: any) {
     } else if (typeof e === 'string') {
       errorMessage = e;
     }
-    
+
     try {
       await replicateRepository.updateGenerationRecord(legacyId, {
         status: "failed",
         error: errorMessage || "Replicate failed",
       });
-    } catch {}
+    } catch { }
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
       error: errorMessage || "Replicate failed",
@@ -1665,13 +1696,13 @@ export async function generateImage(uid: string, body: any) {
     updateData.inputImages = (existing as any).inputImages;
   }
   await generationHistoryRepository.update(uid, historyId, updateData);
-  try { console.log('[Replicate.generateImage] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch {}
+  try { console.log('[Replicate.generateImage] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch { }
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
       status: "completed",
       images: scoredImages as any,
     });
-  } catch {}
+  } catch { }
   // Trigger optimization and re-enqueue mirror update (non-blocking)
   try {
     console.log(
@@ -1804,10 +1835,10 @@ export async function wanI2V(uid: string, body: any) {
         ? await uploadDataUriToZata({ dataUri: body.image, keyPrefix, fileName: 'input-1' })
         : await uploadFromUrlToZata({ sourceUrl: body.image, keyPrefix, fileName: 'input-1' });
       await generationHistoryRepository.update(uid, historyId, {
-        inputImages: [ { id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.image } ],
+        inputImages: [{ id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.image }],
       } as any);
     }
-  } catch {}
+  } catch { }
   try {
     const version = (body as any).version as string | undefined;
     const modelSpec = composeModelSpec(modelBase, version);
@@ -1834,7 +1865,7 @@ export async function wanI2V(uid: string, body: any) {
         status: "failed",
         error: e?.message || "Replicate failed",
       });
-    } catch {}
+    } catch { }
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
       error: e?.message || "Replicate failed",
@@ -1875,13 +1906,13 @@ export async function wanI2V(uid: string, body: any) {
     videos: scoredVideos,
     aestheticScore: highestScore,
   } as any);
-  try { console.log('[Replicate.wanI2V] Video history updated with scores', { historyId, videoCount: scoredVideos.length, highestScore }); } catch {}
+  try { console.log('[Replicate.wanI2V] Video history updated with scores', { historyId, videoCount: scoredVideos.length, highestScore }); } catch { }
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
       status: "completed",
       videos: scoredVideos as any,
     });
-  } catch {}
+  } catch { }
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
   return {
@@ -1937,8 +1968,8 @@ export async function wanT2V(uid: string, body: any) {
     size.includes("*480") || size.startsWith("480*")
       ? "480p"
       : size.includes("*1080") || size.startsWith("1080*")
-      ? "1080p"
-      : "720p";
+        ? "1080p"
+        : "720p";
 
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
@@ -1996,7 +2027,7 @@ export async function wanT2V(uid: string, body: any) {
         status: "failed",
         error: e?.message || "Replicate failed",
       });
-    } catch {}
+    } catch { }
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
       error: e?.message || "Replicate failed",
@@ -2052,13 +2083,13 @@ export async function wanT2V(uid: string, body: any) {
       aestheticScore: highestScore,
     } as any);
   }
-  try { console.log('[Replicate.wanT2V] Video history updated with scores', { historyId, videoCount: scoredVideos.length, highestScore }); } catch {}
+  try { console.log('[Replicate.wanT2V] Video history updated with scores', { historyId, videoCount: scoredVideos.length, highestScore }); } catch { }
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
       status: "completed",
       videos: scoredVideos as any,
     });
-  } catch {}
+  } catch { }
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
   return {
@@ -2144,8 +2175,8 @@ export async function wanT2vSubmit(
     size.includes("*480") || size.startsWith("480*")
       ? "480p"
       : size.includes("*1080") || size.startsWith("1080*")
-      ? "1080p"
-      : "720p";
+        ? "1080p"
+        : "720p";
 
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
@@ -2312,7 +2343,7 @@ export async function replicateQueueStatus(
       status: e?.status || e?.statusCode,
       response: e?.response?.data,
     });
-    
+
     // Handle 404 specifically - prediction not found
     const statusCode = e?.status || e?.statusCode || e?.response?.status;
     if (statusCode === 404) {
@@ -2322,7 +2353,7 @@ export async function replicateQueueStatus(
         e
       );
     }
-    
+
     // Extract error message from response
     let errorMessage = e?.message || "Failed to fetch Replicate status";
     if (e?.response?.data) {
@@ -2334,7 +2365,7 @@ export async function replicateQueueStatus(
         errorMessage = e.response.data.message;
       }
     }
-    
+
     throw new ApiError(errorMessage, statusCode || 502, e);
   }
 }
@@ -2364,7 +2395,7 @@ export async function replicateQueueResult(
     try {
       const freshHistory = await generationHistoryRepository.get(uid, historyId);
       canvasProjectId = (freshHistory as any)?.canvasProjectId || (located.item as any)?.canvasProjectId;
-    } catch {}
+    } catch { }
     try {
       const creator = await authRepository.getUserById(uid);
       const username = creator?.username || uid;
@@ -2378,7 +2409,7 @@ export async function replicateQueueResult(
       });
       storedUrl = uploaded.publicUrl;
       storagePath = uploaded.key;
-    } catch {}
+    } catch { }
     const videoItem: any = {
       id: requestId,
       url: storedUrl,
@@ -2551,7 +2582,7 @@ export async function replicateQueueResult(
           { ...meta, historyId, provider: "replicate", pricingVersion }
         );
       }
-    } catch {}
+    } catch { }
     return {
       videos: scoredVideos,
       historyId,
@@ -2680,7 +2711,7 @@ export async function klingT2vSubmit(
     // Extract error message from various sources
     let errorMessage = e?.message || "Replicate API error";
     const statusCode = e?.statusCode || e?.response?.status || e?.status;
-    
+
     // Check if error message contains HTML (Cloudflare error page)
     if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
       // Try to extract meaningful info from HTML error
@@ -2714,9 +2745,8 @@ export async function klingT2vSubmit(
       statusCode === 404 ||
       (errorMessage && errorMessage.includes("404"))
     ) {
-      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${
-        errorMessage || "Model not found"
-      }`;
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${errorMessage || "Model not found"
+        }`;
       throw new ApiError(notFoundMessage, 404, e);
     }
 
@@ -2768,8 +2798,8 @@ export async function klingI2vSubmit(
     body.model && String(body.model).length > 0
       ? String(body.model)
       : body.start_image
-      ? "kwaivgi/kling-v2.1"
-      : "kwaivgi/kling-v2.5-turbo-pro";
+        ? "kwaivgi/kling-v2.1"
+        : "kwaivgi/kling-v2.5-turbo-pro";
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
@@ -2815,10 +2845,10 @@ export async function klingI2vSubmit(
           ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
           : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
         inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
-      } catch {}
+      } catch { }
     }
     if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-  } catch {}
+  } catch { }
 
   const input: any = { prompt: body.prompt, duration: durationSec };
   if (body.image) input.image = String(body.image);
@@ -2911,13 +2941,13 @@ export async function klingLipsyncSubmit(
         const stored = /^data:/i.test(body.video_url)
           ? await uploadDataUriToZata({ dataUri: body.video_url, keyPrefix, fileName: 'input-video-1' })
           : await uploadFromUrlToZata({ sourceUrl: body.video_url, keyPrefix, fileName: 'input-video-1' });
-        await generationHistoryRepository.update(uid, historyId, { inputVideos: [ { id: 'vin-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.video_url } ] } as any);
-      } catch {}
+        await generationHistoryRepository.update(uid, historyId, { inputVideos: [{ id: 'vin-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.video_url }] } as any);
+      } catch { }
     }
-  } catch {}
+  } catch { }
 
   const input: any = {};
-  
+
   // Video input (either video_url or video_id)
   if (body.video_url) {
     input.video_url = String(body.video_url);
@@ -3013,19 +3043,19 @@ export async function wanAnimateReplaceSubmit(
         const stored = /^data:/i.test(body.video)
           ? await uploadDataUriToZata({ dataUri: body.video, keyPrefix: base, fileName: 'input-video-1' })
           : await uploadFromUrlToZata({ sourceUrl: body.video, keyPrefix: base, fileName: 'input-video-1' });
-        updates.inputVideos = [ { id: 'vin-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.video } ];
-      } catch {}
+        updates.inputVideos = [{ id: 'vin-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.video }];
+      } catch { }
     }
     if (typeof body.character_image === 'string' && body.character_image) {
       try {
         const stored = /^data:/i.test(body.character_image)
           ? await uploadDataUriToZata({ dataUri: body.character_image, keyPrefix: base, fileName: 'input-1' })
           : await uploadFromUrlToZata({ sourceUrl: body.character_image, keyPrefix: base, fileName: 'input-1' });
-        updates.inputImages = [ { id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.character_image } ];
-      } catch {}
+        updates.inputImages = [{ id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.character_image }];
+      } catch { }
     }
     if (Object.keys(updates).length > 0) await generationHistoryRepository.update(uid, historyId, updates);
-  } catch {}
+  } catch { }
 
   const input: any = {
     video: String(body.video),
@@ -3142,19 +3172,19 @@ export async function wanAnimateAnimationSubmit(
         const stored = /^data:/i.test(body.video)
           ? await uploadDataUriToZata({ dataUri: body.video, keyPrefix: base, fileName: 'input-video-1' })
           : await uploadFromUrlToZata({ sourceUrl: body.video, keyPrefix: base, fileName: 'input-video-1' });
-        updates.inputVideos = [ { id: 'vin-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.video } ];
-      } catch {}
+        updates.inputVideos = [{ id: 'vin-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.video }];
+      } catch { }
     }
     if (typeof body.character_image === 'string' && body.character_image) {
       try {
         const stored = /^data:/i.test(body.character_image)
           ? await uploadDataUriToZata({ dataUri: body.character_image, keyPrefix: base, fileName: 'input-1' })
           : await uploadFromUrlToZata({ sourceUrl: body.character_image, keyPrefix: base, fileName: 'input-1' });
-        updates.inputImages = [ { id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.character_image } ];
-      } catch {}
+        updates.inputImages = [{ id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.character_image }];
+      } catch { }
     }
     if (Object.keys(updates).length > 0) await generationHistoryRepository.update(uid, historyId, updates);
-  } catch {}
+  } catch { }
 
   const input: any = {
     video: String(body.video),
@@ -3287,10 +3317,10 @@ export async function seedanceT2vSubmit(
           ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
           : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
         inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
-      } catch {}
+      } catch { }
     }
     if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-  } catch {}
+  } catch { }
 
   const input: any = {
     prompt: body.prompt,
@@ -3372,7 +3402,7 @@ export async function seedanceT2vSubmit(
     // Extract error message from various sources
     let errorMessage = e?.message || "Replicate API error";
     const statusCode = e?.statusCode || e?.response?.status || e?.status;
-    
+
     // Check if error message contains HTML (Cloudflare error page)
     if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
       // Try to extract meaningful info from HTML error
@@ -3406,9 +3436,8 @@ export async function seedanceT2vSubmit(
       statusCode === 404 ||
       (errorMessage && errorMessage.includes("404"))
     ) {
-      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${
-        errorMessage || "Model not found"
-      }`;
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${errorMessage || "Model not found"
+        }`;
       throw new ApiError(notFoundMessage, 404, e);
     }
 
@@ -3505,10 +3534,10 @@ export async function seedanceI2vSubmit(
           ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
           : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
         inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
-      } catch {}
+      } catch { }
     }
     if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-  } catch {}
+  } catch { }
 
   const input: any = {
     prompt: body.prompt,
@@ -3595,7 +3624,7 @@ export async function seedanceI2vSubmit(
     // Extract error message from various sources
     let errorMessage = e?.message || "Replicate API error";
     const statusCode = e?.statusCode || e?.response?.status || e?.status;
-    
+
     // Check if error message contains HTML (Cloudflare error page)
     if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
       // Try to extract meaningful info from HTML error
@@ -3629,9 +3658,8 @@ export async function seedanceI2vSubmit(
       statusCode === 404 ||
       (errorMessage && errorMessage.includes("404"))
     ) {
-      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${
-        errorMessage || "Model not found"
-      }`;
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${errorMessage || "Model not found"
+        }`;
       throw new ApiError(notFoundMessage, 404, e);
     }
 
@@ -3754,7 +3782,7 @@ export async function pixverseT2vSubmit(
     };
     if (input.seed != null) cleanInput.seed = input.seed;
     if (input.negative_prompt != null) cleanInput.negative_prompt = input.negative_prompt;
-    
+
     // eslint-disable-next-line no-console
     console.log("[pixverseT2vSubmit] Creating prediction", {
       modelBase,
@@ -3762,7 +3790,7 @@ export async function pixverseT2vSubmit(
       input: cleanInput,
       inputKeys: Object.keys(cleanInput),
     });
-    
+
     const pred = await replicate.predictions.create(
       version ? { version, input: cleanInput } : { model: modelBase, input: cleanInput }
     );
@@ -3789,7 +3817,7 @@ export async function pixverseT2vSubmit(
     // Extract error message from various sources
     let errorMessage = e?.message || "Replicate API error";
     const statusCode = e?.statusCode || e?.response?.status || e?.status;
-    
+
     // Check if error message contains HTML (Cloudflare error page)
     if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
       // Try to extract meaningful info from HTML error
@@ -3823,9 +3851,8 @@ export async function pixverseT2vSubmit(
       statusCode === 404 ||
       (errorMessage && errorMessage.includes("404"))
     ) {
-      const notFoundMessage = `Model "${modelBase}" not found on Replicate. The model may have been removed or renamed. Please verify the model name is correct. Error: ${
-        errorMessage || "Model not found"
-      }`;
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. The model may have been removed or renamed. Please verify the model name is correct. Error: ${errorMessage || "Model not found"
+        }`;
       throw new ApiError(notFoundMessage, 404, e);
     }
 
@@ -3911,9 +3938,9 @@ export async function pixverseI2vSubmit(
       const stored = /^data:/i.test(src)
         ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: 'input-1' })
         : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: 'input-1' });
-      await generationHistoryRepository.update(uid, historyId, { inputImages: [ { id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src } ] } as any);
+      await generationHistoryRepository.update(uid, historyId, { inputImages: [{ id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src }] } as any);
     }
-  } catch {}
+  } catch { }
 
   const input: any = {
     prompt: body.prompt,
