@@ -1,6 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import { env } from '../config/env';
-import { generateGeminiTextResponse } from './genai/geminiTextService';
+import { generateGeminiTextResponse, PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION } from './genai/geminiTextService';
+import { generateReplicateTextResponse } from './genai/replicateTextService';
 
 // Get the prompt enhancer service URL from environment
 function getPromptEnhancerUrl(): string {
@@ -19,6 +20,7 @@ export type MediaType = 'image' | 'video' | 'music';
 export interface EnhancePromptOptions {
   mediaType?: MediaType;
   maxLength?: number;
+  targetModel?: string;
 }
 
 export interface EnhancePromptResult {
@@ -39,12 +41,79 @@ export async function enhancePrompt(
     throw new Error('Prompt is required');
   }
 
-  const baseUrl = getPromptEnhancerUrl();
-  const mediaType = options?.mediaType || 'image'; // Default to image
+  const mediaType = options?.mediaType || 'image';
   const maxLength = options?.maxLength || 512;
+  const targetModel = options?.targetModel;
+
+  // 1. Try Replicate (GPT-4o)
+  // If targetModel is specified as gpt-4o, we MUST use it (or fail/fallback to python, but skip gemini)
+  // If targetModel is NOT specified, we prioritize Replicate if key exists.
+  const shouldTryReplicate = env.replicateApiKey && (!targetModel || targetModel === 'openai/gpt-4o');
+
+  if (shouldTryReplicate) {
+    try {
+      console.log(`[Prompt Enhancer] Enhancing prompt using Replicate (GPT-4o)`);
+      const enhancedText = await generateReplicateTextResponse(prompt, {
+        maxOutputTokens: maxLength,
+        systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
+      });
+
+      return {
+        enhancedPrompt: enhancedText,
+        originalPrompt: prompt,
+        mediaType: mediaType,
+        model: 'openai/gpt-4o',
+      };
+    } catch (err) {
+      console.error('[Prompt Enhancer] Replicate failed:', err);
+      // If user specifically requested GPT-4o, we might want to throw here or fallback to Python service?
+      // User said "only use gpt-4o not gemini in just frontend of wild".
+      // So if Replicate fails, we should NOT use Gemini.
+      if (targetModel === 'openai/gpt-4o') {
+        console.warn('[Prompt Enhancer] Skipping Gemini fallback because targetModel is openai/gpt-4o');
+      }
+    }
+  }
+
+  // 2. Try Gemini
+  // Only try Gemini if targetModel is NOT set or explicitly allows it (not implemented here, assuming default allows)
+  // AND if targetModel is NOT 'openai/gpt-4o' (unless Replicate failed and we want to fallback? User said "not gemini")
+  const shouldTryGemini = !targetModel || targetModel !== 'openai/gpt-4o';
+
+  const hasGeminiKey =
+    Boolean(
+      env.googleGenAIApiKey ||
+      process.env.GOOGLE_GENAI_API_KEY ||
+      process.env.GENAI_API_KEY ||
+      process.env.GEMINI_API_KEY
+    );
+
+  if (shouldTryGemini && hasGeminiKey) {
+    try {
+      console.log(`[Prompt Enhancer] Enhancing prompt using Gemini`);
+      const enhancedText = await generateGeminiTextResponse(prompt, {
+        maxOutputTokens: maxLength,
+        systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
+        enableGoogleSearchTool: false,
+        enableThinking: false,
+      });
+
+      return {
+        enhancedPrompt: enhancedText,
+        originalPrompt: prompt,
+        mediaType: mediaType,
+        model: 'gemini-1.5-pro',
+      };
+    } catch (err) {
+      console.error('[Prompt Enhancer] Gemini failed, falling back:', err);
+    }
+  }
+
+  // 3. Fallback to Python Service
+  const baseUrl = getPromptEnhancerUrl();
 
   try {
-    console.log(`[Prompt Enhancer] Enhancing prompt for ${mediaType} generation`);
+    console.log(`[Prompt Enhancer] Enhancing prompt using Python Service for ${mediaType} generation`);
 
     const response = await axios.post(
       `${baseUrl}/enhance`,
@@ -188,6 +257,25 @@ export async function queryCanvasPrompt(
     throw new Error('Text is required');
   }
 
+  // Prioritize Replicate (GPT-4o) if available
+  if (env.replicateApiKey) {
+    try {
+      const enhancedText = await generateReplicateTextResponse(text, {
+        maxOutputTokens: maxNewTokens,
+        systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
+      });
+
+      return {
+        type: 'answer',
+        enhanced_prompt: enhancedText,
+        response: enhancedText,
+      };
+    } catch (err) {
+      console.error('[Canvas Query] Replicate integration failed, falling back to Gemini:', err);
+      // Fallback to Gemini
+    }
+  }
+
   const hasGeminiKey =
     Boolean(
       env.googleGenAIApiKey ||
@@ -200,6 +288,9 @@ export async function queryCanvasPrompt(
     try {
       const enhancedText = await generateGeminiTextResponse(text, {
         maxOutputTokens: maxNewTokens,
+        systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
+        enableGoogleSearchTool: false,
+        enableThinking: false,
       });
 
       return {
