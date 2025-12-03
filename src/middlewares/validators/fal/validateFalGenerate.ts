@@ -241,6 +241,24 @@ export const validateFalElevenTts = [
   }
 ];
 
+// ElevenLabs Sound Effects (SFX) validator
+export const validateFalElevenSfx = [
+  body('text').isString().notEmpty().withMessage('text is required'),
+  body('duration_seconds').optional().isFloat({ min: 0.5, max: 22 }).withMessage('duration_seconds must be between 0.5 and 22 seconds'),
+  body('prompt_influence').optional().isFloat({ min: 0, max: 1 }).withMessage('prompt_influence must be between 0 and 1'),
+  body('output_format').optional().isIn(['mp3_44100_128', 'mp3_44100_192', 'mp3_44100_256', 'pcm_16000', 'pcm_22050', 'pcm_24000', 'pcm_44100', 'ulaw_8000']).withMessage('output_format must be one of the allowed audio formats'),
+  body('loop').optional().isBoolean().withMessage('loop must be a boolean'),
+  body('fileName').optional().isString().withMessage('fileName must be a string'),
+  body('lyrics').optional().isString().withMessage('lyrics must be a string'),
+  body('generationType').optional().isIn(['sfx']).withMessage('generationType must be sfx'),
+  body('model').optional().isString().withMessage('model must be a string'),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
 // Queue validators
 export const validateFalQueueStatus = [
   body('requestId').optional().isString(), // in case of POST body

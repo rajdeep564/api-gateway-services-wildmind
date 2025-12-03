@@ -84,6 +84,9 @@ async function generate(
     aspect_ratio: (payload as any).aspect_ratio || resolvedAspect,
     // Store characterName only for text-to-character generation type
     ...(generationType === 'text-to-character' && characterName ? { characterName } : {}),
+    // Store fileName and lyrics for audio/music generations (same as music generation)
+    fileName: (payload as any).fileName || undefined,
+    lyrics: (payload as any).lyrics || undefined,
     createdBy,
     
     
@@ -242,7 +245,10 @@ async function generate(
         status: 'completed', 
         audio: audioObj,
         audios: audiosArray,
-        images: imagesArray
+        images: imagesArray,
+        // Preserve fileName and lyrics if provided (same as music generation)
+        ...((payload as any).fileName ? { fileName: (payload as any).fileName } : {}),
+        ...((payload as any).lyrics ? { lyrics: (payload as any).lyrics } : {}),
       } as any);
       await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj, audios: audiosArray } as any);
       await syncToMirror(uid, historyId);
@@ -335,7 +341,10 @@ async function generate(
         status: 'completed', 
         audio: audioObj,
         audios: audiosArray,
-        images: imagesArray
+        images: imagesArray,
+        // Preserve fileName and lyrics if provided (same as music generation)
+        ...((payload as any).fileName ? { fileName: (payload as any).fileName } : {}),
+        ...((payload as any).lyrics ? { lyrics: (payload as any).lyrics } : {}),
       } as any);
       await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj, audios: audiosArray } as any);
       await syncToMirror(uid, historyId);
@@ -444,7 +453,10 @@ async function generate(
           audio: audioObj,
           audios: audiosArray,
           images: imagesArray,
-          generationType: 'sfx'
+          generationType: 'sfx',
+          // Preserve fileName and lyrics if provided (same as music generation)
+          ...((payload as any).fileName ? { fileName: (payload as any).fileName } : {}),
+          ...((payload as any).lyrics ? { lyrics: (payload as any).lyrics } : {}),
         } as any);
         await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj, audios: audiosArray } as any);
         await syncToMirror(uid, historyId);
@@ -501,7 +513,10 @@ async function generate(
           status: 'completed', 
           audio: audioObj,
           audios: audiosArray,
-          images: imagesArray
+          images: imagesArray,
+          // Preserve fileName and lyrics if provided (same as music generation)
+          ...((payload as any).fileName ? { fileName: (payload as any).fileName } : {}),
+          ...((payload as any).lyrics ? { lyrics: (payload as any).lyrics } : {}),
         } as any);
         await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj, audios: audiosArray } as any);
         await syncToMirror(uid, historyId);
@@ -557,7 +572,10 @@ async function generate(
           status: 'completed',
           audio: audioObj,
           audios: audiosArray,
-          images: imagesArray
+          images: imagesArray,
+          // Preserve fileName and lyrics if provided (same as music generation)
+          ...((payload as any).fileName ? { fileName: (payload as any).fileName } : {}),
+          ...((payload as any).lyrics ? { lyrics: (payload as any).lyrics } : {}),
         } as any);
         await falRepository.updateGenerationRecord(legacyId, { status: 'completed', audio: audioObj, audios: audiosArray } as any);
         await syncToMirror(uid, historyId);
