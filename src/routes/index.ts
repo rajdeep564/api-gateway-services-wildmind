@@ -17,6 +17,7 @@ import replaceRoutes from './replace';
 import reimagineRoutes from './reimagine';
 import libraryRoutes from './library';
 import uploadsRoutes from './uploads';
+import videoProxyRoutes from './canvas/videoProxy';
 
 const router = Router();
 
@@ -35,8 +36,10 @@ router.use('/proxy', proxyRoutes);
 router.use('/stickers', stickerRoutes);
 router.use('/replicate', replicateRoutes);
 router.use('/canvas', canvasRoutes);
+router.use('/canvas/video', videoProxyRoutes);
 router.use('/prompt-enhancer', promptEnhancerRoutes);
 router.use('/replace', replaceRoutes);
 router.use('/reimagine', reimagineRoutes);
 
 export default router;
+
