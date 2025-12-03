@@ -150,21 +150,41 @@ export async function computeFalVeoI2vSubmitCost(req: Request, isFast: boolean):
 
 export async function computeFalVeo31TtvSubmitCost(req: Request, isFast: boolean): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { duration, generate_audio } = req.body || {};
-  const display = resolveVeo31Display(isFast, 't2v', duration);
+  const baseDisplay = resolveVeo31Display(isFast, 't2v', duration);
+  const hasAudio = generate_audio !== false;
+  const display = `${baseDisplay} ${hasAudio ? 'AUDIO ON' : 'AUDIO OFF'}`;
   const base = findCredits(display);
   if (base == null) throw new Error('Unsupported FAL Veo 3.1 T2V pricing');
-  // Apply 33% discount if generate_audio is explicitly false
-  const discounted = (generate_audio === false) ? Math.ceil(base * 0.67) : Math.ceil(base);
-  return { cost: discounted, pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: duration || '8s', generate_audio: generate_audio !== false } };
+  // creditDistribution already encodes the AUDIO ON/OFF price, so no extra discount here
+  const cost = Math.ceil(base);
+  return {
+    cost,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: display,
+      duration: duration || '8s',
+      generate_audio: hasAudio,
+    },
+  };
 }
 
 export async function computeFalVeo31I2vSubmitCost(req: Request, isFast: boolean): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { duration, generate_audio } = req.body || {};
-  const display = resolveVeo31Display(isFast, 'i2v', duration);
+  const baseDisplay = resolveVeo31Display(isFast, 'i2v', duration);
+  const hasAudio = generate_audio !== false;
+  const display = `${baseDisplay} ${hasAudio ? 'AUDIO ON' : 'AUDIO OFF'}`;
   const base = findCredits(display);
   if (base == null) throw new Error('Unsupported FAL Veo 3.1 I2V pricing');
-  const discounted = (generate_audio === false) ? Math.ceil(base * 0.67) : Math.ceil(base);
-  return { cost: discounted, pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: duration || '8s', generate_audio: generate_audio !== false } };
+  const cost = Math.ceil(base);
+  return {
+    cost,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: display,
+      duration: duration || '8s',
+      generate_audio: hasAudio,
+    },
+  };
 }
 
 // Sora 2 pricing
