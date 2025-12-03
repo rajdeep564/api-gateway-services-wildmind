@@ -121,13 +121,25 @@ async function resetAllUsersToLaunchPlan(options: { dryRun?: boolean; limit?: nu
             if (dryRun) {
               console.log(`  🔍 [DRY RUN] Would reset: ${email} (${uid})`);
               console.log(`     Current: Plan=${currentPlan}, Balance=${currentBalance}`);
-              console.log(`     Would set: Plan=${LAUNCH_PLAN_CODE}, Balance=${LAUNCH_FIXED_CREDITS}`);
-              console.log(`     Would: Clear all ledgers, Create GRANT entry, Set launchTrialStartDate`);
+              console.log(`     Steps:`);
+              console.log(`       1. Set balance to 0`);
+              console.log(`       2. Clear all ledgers`);
+              console.log(`       3. Set plan=${LAUNCH_PLAN_CODE}, launchTrialStartDate`);
+              console.log(`       4. Create GRANT entry (balance: 0 → ${LAUNCH_FIXED_CREDITS})`);
               stats.reset++;
               return;
             }
 
-            // Step 1: Clear all ledgers
+            // Step 1: Set balance to 0 first (clean slate)
+            console.log(`  🔄 Setting balance to 0 first...`);
+            const now = admin.firestore.FieldValue.serverTimestamp();
+            await adminDb.collection('users').doc(uid).update({
+              creditBalance: 0,
+              updatedAt: now,
+            });
+            console.log(`     ✅ Balance set to 0`);
+
+            // Step 2: Clear all ledgers
             console.log(`  🗑️  Clearing all ledgers for ${email} (${uid})...`);
             let deletedCount = 0;
             try {
@@ -138,19 +150,17 @@ async function resetAllUsersToLaunchPlan(options: { dryRun?: boolean; limit?: nu
               // Continue even if ledger clear has issues
             }
 
-            // Step 2: Reset user to launch plan with clean state
-            console.log(`  🔄 Resetting ${email} to launch plan...`);
-            const now = admin.firestore.FieldValue.serverTimestamp();
+            // Step 3: Set plan and launch date
+            console.log(`  🔄 Setting plan and launch date...`);
             await adminDb.collection('users').doc(uid).update({
               planCode: LAUNCH_PLAN_CODE,
-              creditBalance: LAUNCH_FIXED_CREDITS,
               launchMigrationDone: true,
               launchTrialStartDate: now, // Set trial start date for 15-day tracking
               updatedAt: now,
             });
-            console.log(`     ✅ User document updated`);
+            console.log(`     ✅ Plan and launch date set`);
 
-            // Step 3: Create GRANT ledger entry for proper reconciliation
+            // Step 4: Create GRANT ledger entry (this will increment from 0 to 4000)
             console.log(`  💰 Creating GRANT ledger entry...`);
             try {
               const migrationGrantId = `LAUNCH_MIGRATION_GRANT_${uid}_${Date.now()}`;
@@ -168,13 +178,18 @@ async function resetAllUsersToLaunchPlan(options: { dryRun?: boolean; limit?: nu
               );
               
               if (grantResult === 'WRITTEN') {
-                console.log(`     ✅ Created GRANT ledger entry`);
+                console.log(`     ✅ Created GRANT ledger entry (balance: 0 → ${LAUNCH_FIXED_CREDITS})`);
               } else {
                 console.log(`     ⚠️  GRANT entry already exists (idempotent): ${grantResult}`);
               }
             } catch (grantError: any) {
               console.log(`     ⚠️  Grant creation warning: ${grantError.message}`);
-              // Continue even if grant creation has issues (balance is already set)
+              // If grant creation fails, manually set balance
+              await adminDb.collection('users').doc(uid).update({
+                creditBalance: LAUNCH_FIXED_CREDITS,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              });
+              console.log(`     ✅ Manually set balance to ${LAUNCH_FIXED_CREDITS} as fallback`);
             }
 
             // Step 4: Verify final state
