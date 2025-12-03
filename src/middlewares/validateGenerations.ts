@@ -46,7 +46,13 @@ export const validateListGenerations = [
   query('cursor').optional().isString(),
   query('status').optional().isIn(['generating','completed','failed']),
   // Accept legacy alias 'logo-generation' and normalize downstream
-  query('generationType').optional().isIn(['text-to-image','logo','logo-generation','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat','text-to-character']),
+  // Also accept audio generation types: text-to-speech, tts, sfx, text-to-dialogue, dialogue, voicecloning
+  query('generationType').optional().isIn([
+    'text-to-image','logo','logo-generation','sticker-generation','text-to-video','text-to-music',
+    'mockup-generation','product-generation','ad-generation','live-chat','text-to-character',
+    'text-to-speech','tts','text_to_speech','sfx','sound-effect','sound_effect','sound-effects','sound_effects',
+    'text-to-dialogue','dialogue','text_to_dialogue','voicecloning','voice-cloning'
+  ]),
   query('sortBy').optional().isIn(['createdAt','updatedAt','prompt']),
   query('sortOrder').optional().isIn(['asc','desc']),
   query('search').optional().isString().trim().isLength({ max: 200 }),

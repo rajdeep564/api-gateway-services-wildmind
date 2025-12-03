@@ -48,6 +48,9 @@ const filterItemsByMode = <T extends { generationType?: string }>(
 export async function create(uid: string, data: {
   prompt: string;
   userPrompt?: string;
+  // Rich text fields for audio/music generations
+  lyrics?: string;
+  fileName?: string;
   model: string;
   generationType: GenerationType | string;
   visibility?: Visibility | string;
@@ -81,6 +84,10 @@ export async function create(uid: string, data: {
     uid,
     prompt: data.prompt,
     userPrompt: data.userPrompt || null,
+    // Persist lyrics and fileName when provided so frontend can restore
+    // the track title and lyrics even after a hard refresh.
+    lyrics: data.lyrics || null,
+    fileName: data.fileName || null,
     model: data.model,
     generationType: data.generationType,
     visibility: (data.visibility as Visibility) || Visibility.Private,
@@ -141,10 +148,49 @@ function removeUndefinedValues(obj: any): any {
 
 export async function update(uid: string, historyId: string, updates: Partial<GenerationHistoryItem>): Promise<void> {
   const ref = adminDb.collection('generationHistory').doc(uid).collection('items').doc(historyId);
-  
+
+  // Sanitize large / nested structures before saving to Firestore
+  const safeUpdates: Partial<GenerationHistoryItem> = { ...updates };
+
+  // 1) Guard against very large data URLs inside inputImages / images, which can
+  //    trigger "Property array contains an invalid nested entity" when an element
+  //    exceeds Firestore's per‑field size limit (~1 MiB).
+  const sanitizeOriginalUrl = (value: any): string | undefined => {
+    if (typeof value !== 'string') return undefined;
+    // Strip huge base64 data URLs – we only need the storage URL we persist separately.
+    if (value.startsWith('data:image') || value.startsWith('data:video')) {
+      return undefined;
+    }
+    // Guard against accidentally passing extremely long strings.
+    if (value.length > 5000) {
+      return value.slice(0, 5000);
+    }
+    return value;
+  };
+
+  if (Array.isArray((safeUpdates as any).inputImages)) {
+    (safeUpdates as any).inputImages = (safeUpdates as any).inputImages.map((img: any) => ({
+      id: img?.id,
+      url: img?.url,
+      storagePath: img?.storagePath,
+      // Drop or trim problematic originals; Firestore already has the binary file in storage.
+      originalUrl: sanitizeOriginalUrl(img?.originalUrl),
+    }));
+  }
+
+  if (Array.isArray((safeUpdates as any).images)) {
+    (safeUpdates as any).images = (safeUpdates as any).images.map((img: any) => ({
+      url: img?.url,
+      storagePath: img?.storagePath,
+      originalUrl: sanitizeOriginalUrl(img?.originalUrl),
+      thumbUrl: img?.thumbUrl,
+      avifUrl: img?.avifUrl,
+    }));
+  }
+
   // Remove undefined values before saving to Firestore
-  const cleanedUpdates = removeUndefinedValues(updates);
-  
+  const cleanedUpdates = removeUndefinedValues(safeUpdates);
+
   // Debug: Check for nested structures in images array
   if (cleanedUpdates.images && Array.isArray(cleanedUpdates.images)) {
     console.log('[generationHistoryRepository.update] Checking images array for nested structures:', {
@@ -206,10 +252,10 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
     // Only enqueue if there are meaningful updates (avoid noise). For simplicity,
     // enqueue when updates contains images, videos, isPublic, visibility, status, or error fields.
     const interesting = ['images', 'videos', 'isPublic', 'visibility', 'status', 'error'];
-    const hasInteresting = Object.keys(updates || {}).some(k => interesting.includes(k));
+    const hasInteresting = Object.keys(cleanedUpdates || {}).some(k => interesting.includes(k));
     if (hasInteresting) {
       // Fire-and-forget
-      mirrorQueueRepository.enqueueUpdate({ uid, historyId, updates });
+      mirrorQueueRepository.enqueueUpdate({ uid, historyId, updates: cleanedUpdates });
     }
   } catch (e) {
     try { logger.warn({ uid, historyId, err: e }, '[generationHistoryRepository.update] Failed to enqueue mirror update'); } catch {}

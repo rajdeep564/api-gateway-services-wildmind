@@ -35,10 +35,17 @@ async function generateImage(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
     const data = await replicateService.generateImage(uid, req.body || {});
-  (res as any).locals = { ...(res as any).locals, success: true };
-  const ctx = (req as any).context || {};
-  try { await postSuccessDebit(uid, data, ctx, 'replicate', 'generate'); } catch {}
-  res.json({ responseStatus: 'success', message: 'OK', data });
+    (res as any).locals = { ...(res as any).locals, success: true };
+    const ctx = (req as any).context || {};
+    // Perform debit and include credit info in response, similar to FAL image generation
+    const debitOutcome = await postSuccessDebit(uid, data, ctx, 'replicate', 'generate');
+    res.json(
+      formatApiResponse('success', 'OK', {
+        ...data,
+        debitedCredits: ctx.creditCost,
+        debitStatus: debitOutcome,
+      })
+    );
   } catch (e) {
     next(e);
     return;

@@ -23,7 +23,8 @@ const COST_IDEOGRAM_3_QUALITY = 210;
 const COST_LUCID_ORIGIN = 183;
 const COST_PHOENIX_1_0 = 180;
 // TODO: Update with actual pricing for new Turbo model
-const COST_NEW_TURBO_MODEL = 120; // Placeholder - update with actual cost
+// Z Image Turbo pricing (from creditDistribution: creditsPerGeneration = 26)
+const COST_Z_IMAGE_TURBO = 26;
 const COST_NANO_BANANA_PRO_1K = 300;
 const COST_NANO_BANANA_PRO_2K = 300;
 const COST_NANO_BANANA_PRO_4K = 500;
@@ -106,7 +107,10 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   if (normalized.includes('leonardoai/lucid-origin') || normalized.includes('lucid origin') || normalized.includes('lucid-origin')) cost = COST_LUCID_ORIGIN;
   if (normalized.includes('phoenix 1.0') || normalized.includes('phoenix-1.0')) cost = COST_PHOENIX_1_0;
   // TODO: Update model identifier with actual model name
-  if (normalized.includes('new-turbo-model') || normalized.includes('placeholder-model-name')) cost = COST_NEW_TURBO_MODEL;
+  // Z Image Turbo (frontend: 'z-image-turbo', backend: 'prunaai/z-image-turbo')
+  if (normalized.includes('z-image-turbo') || normalized.includes('prunaai/z-image-turbo')) {
+    cost = COST_Z_IMAGE_TURBO;
+  }
   // Google Nano Banana Pro - resolution-based pricing
   if (normalized.includes('google/nano-banana-pro') || normalized.includes('nano-banana-pro')) {
     const resolution = String((req.body as any)?.resolution || '2K').toUpperCase();

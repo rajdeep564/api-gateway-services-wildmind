@@ -12,8 +12,8 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
   const isLucidOrigin = m.includes('leonardoai/lucid-origin');
   const isPhoenix = m.includes('leonardoai/phoenix-1.0');
   const isNanoBananaPro = m.includes('google/nano-banana-pro') || m.includes('nano-banana-pro');
-  // TODO: Update model name placeholder with actual model identifier
-  const isNewTurboModel = m.includes('new-turbo-model') || m.includes('placeholder-model-name');
+  // Z Image Turbo model (prunaai/z-image-turbo)
+  const isNewTurboModel = m.includes('z-image-turbo') || m.includes('new-turbo-model') || m.includes('placeholder-model-name');
 
   if (isSeedream) {
     if (size != null && !['1K', '2K', '4K', 'custom'].includes(String(size))) return next(new ApiError("size must be one of '1K' | '2K' | '4K' | 'custom'", 400));

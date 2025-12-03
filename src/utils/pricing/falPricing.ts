@@ -150,30 +150,50 @@ export async function computeFalVeoI2vSubmitCost(req: Request, isFast: boolean):
 
 export async function computeFalVeo31TtvSubmitCost(req: Request, isFast: boolean): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { duration, generate_audio } = req.body || {};
-  const display = resolveVeo31Display(isFast, 't2v', duration);
+  const baseDisplay = resolveVeo31Display(isFast, 't2v', duration);
+  const hasAudio = generate_audio !== false;
+  const display = `${baseDisplay} ${hasAudio ? 'AUDIO ON' : 'AUDIO OFF'}`;
   const base = findCredits(display);
   if (base == null) throw new Error('Unsupported FAL Veo 3.1 T2V pricing');
-  // Apply 33% discount if generate_audio is explicitly false
-  const discounted = (generate_audio === false) ? Math.ceil(base * 0.67) : Math.ceil(base);
-  return { cost: discounted, pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: duration || '8s', generate_audio: generate_audio !== false } };
+  // creditDistribution already encodes the AUDIO ON/OFF price, so no extra discount here
+  const cost = Math.ceil(base);
+  return {
+    cost,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: display,
+      duration: duration || '8s',
+      generate_audio: hasAudio,
+    },
+  };
 }
 
 export async function computeFalVeo31I2vSubmitCost(req: Request, isFast: boolean): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { duration, generate_audio } = req.body || {};
-  const display = resolveVeo31Display(isFast, 'i2v', duration);
+  const baseDisplay = resolveVeo31Display(isFast, 'i2v', duration);
+  const hasAudio = generate_audio !== false;
+  const display = `${baseDisplay} ${hasAudio ? 'AUDIO ON' : 'AUDIO OFF'}`;
   const base = findCredits(display);
   if (base == null) throw new Error('Unsupported FAL Veo 3.1 I2V pricing');
-  const discounted = (generate_audio === false) ? Math.ceil(base * 0.67) : Math.ceil(base);
-  return { cost: discounted, pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: duration || '8s', generate_audio: generate_audio !== false } };
+  const cost = Math.ceil(base);
+  return {
+    cost,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: display,
+      duration: duration || '8s',
+      generate_audio: hasAudio,
+    },
+  };
 }
 
 // Sora 2 pricing
 export async function computeFalSora2I2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { duration } = req.body || {};
   const dur = String(duration ?? '8');
-  let display = 'Sora 2 8s';
-  if (dur.startsWith('4')) display = 'Sora 2 4s';
-  else if (dur.startsWith('12')) display = 'Sora 2 12s';
+  let display = 'Sora 2 I2V 8s';
+  if (dur.startsWith('4')) display = 'Sora 2 I2V 4s';
+  else if (dur.startsWith('12')) display = 'Sora 2 I2V 12s';
   const base = findCredits(display);
   if (base == null) throw new Error('Unsupported Sora 2 I2V pricing');
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: `${dur}s` } };
@@ -183,7 +203,7 @@ export async function computeFalSora2ProI2vSubmitCost(req: Request): Promise<{ c
   const { duration, resolution } = req.body || {};
   const dur = String(duration ?? '8');
   const res = (String(resolution || 'auto').toLowerCase() === '1080p') ? '1080p' : '720p'; // map auto->720p
-  const display = `Sora 2 Pro ${dur}s ${res}`;
+  const display = `Sora 2 Pro I2V ${dur}s ${res}`;
   const base = findCredits(display);
   if (base == null) throw new Error('Unsupported Sora 2 Pro I2V pricing');
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: `${dur}s`, resolution: res } };
@@ -193,9 +213,9 @@ export async function computeFalSora2ProI2vSubmitCost(req: Request): Promise<{ c
 export async function computeFalSora2T2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { duration } = req.body || {};
   const dur = String(duration ?? '8');
-  let display = 'Sora 2 8s';
-  if (dur.startsWith('4')) display = 'Sora 2 4s';
-  else if (dur.startsWith('12')) display = 'Sora 2 12s';
+  let display = 'Sora 2 T2V 8s';
+  if (dur.startsWith('4')) display = 'Sora 2 T2V 4s';
+  else if (dur.startsWith('12')) display = 'Sora 2 T2V 12s';
   const base = findCredits(display);
   if (base == null) throw new Error('Unsupported Sora 2 T2V pricing');
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: `${dur}s` } };
@@ -205,7 +225,7 @@ export async function computeFalSora2ProT2vSubmitCost(req: Request): Promise<{ c
   const { duration, resolution } = req.body || {};
   const dur = String(duration ?? '8');
   const res = (String(resolution || 'auto').toLowerCase() === '1080p') ? '1080p' : '720p';
-  const display = `Sora 2 Pro ${dur}s ${res}`;
+  const display = `Sora 2 Pro T2V ${dur}s ${res}`;
   const base = findCredits(display);
   if (base == null) throw new Error('Unsupported Sora 2 Pro T2V pricing');
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: `${dur}s`, resolution: res } };
@@ -217,7 +237,7 @@ function computeLtxCredits(req: Request, variant: 'Pro' | 'Fast'): { cost: numbe
   const dur = String(duration ?? '8');
   const resIn = String(resolution || '1080p').toLowerCase();
   const res = resIn.includes('2160') ? '2160p' : resIn.includes('1440') ? '1440p' : '1080p';
-  const display = `LTX V2 ${variant} ${dur}s ${res}`;
+  const display = `LTX V2 ${variant} T2V/I2V ${dur}s ${res}`;
   const base = findCredits(display);
   if (base == null) throw new Error(`Unsupported LTX V2 ${variant} pricing`);
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: `${dur}s`, resolution: res } };
@@ -282,49 +302,49 @@ export function computeFalVeoCostFromModel(model: string, meta?: any): { cost: n
   // Sora 2 mapping using stored meta for duration/resolution
   else if (normalized === 'fal-ai/sora-2/image-to-video') {
     const dur = String(meta?.duration ?? '8');
-    if (dur.startsWith('4')) display = 'Sora 2 4s';
-    else if (dur.startsWith('12')) display = 'Sora 2 12s';
-    else display = 'Sora 2 8s';
+    if (dur.startsWith('4')) display = 'Sora 2 I2V 4s';
+    else if (dur.startsWith('12')) display = 'Sora 2 I2V 12s';
+    else display = 'Sora 2 I2V 8s';
   } else if (normalized === 'fal-ai/sora-2/image-to-video/pro') {
     const dur = String(meta?.duration ?? '8');
     const res = String(meta?.resolution ?? '720p').toLowerCase() === '1080p' ? '1080p' : '720p';
-    display = `Sora 2 Pro ${dur}s ${res}`;
+    display = `Sora 2 Pro I2V ${dur}s ${res}`;
   } else if (normalized === 'fal-ai/sora-2/text-to-video') {
     const dur = String(meta?.duration ?? '8');
-    if (dur.startsWith('4')) display = 'Sora 2 4s';
-    else if (dur.startsWith('12')) display = 'Sora 2 12s';
-    else display = 'Sora 2 8s';
+    if (dur.startsWith('4')) display = 'Sora 2 T2V 4s';
+    else if (dur.startsWith('12')) display = 'Sora 2 T2V 12s';
+    else display = 'Sora 2 T2V 8s';
   } else if (normalized === 'fal-ai/sora-2/text-to-video/pro') {
     const dur = String(meta?.duration ?? '8');
     const res = String(meta?.resolution ?? '720p').toLowerCase() === '1080p' ? '1080p' : '720p';
-    display = `Sora 2 Pro ${dur}s ${res}`;
+    display = `Sora 2 Pro T2V ${dur}s ${res}`;
   } else if (normalized === 'fal-ai/sora-2/video-to-video/remix') {
     // Remix cost equals source Sora SKU; rely on stored source_* meta saved at submission time
     const dur = String(meta?.source_duration ?? meta?.duration ?? '8');
     const res = String(meta?.source_resolution ?? meta?.resolution ?? '720p').toLowerCase();
     const isPro = String(meta?.source_is_pro ?? '').toLowerCase() === 'true' || res === '1080p';
-    if (isPro) display = `Sora 2 Pro ${dur}s ${res === '1080p' ? '1080p' : '720p'}`;
-    else display = dur.startsWith('4') ? 'Sora 2 4s' : (dur.startsWith('12') ? 'Sora 2 12s' : 'Sora 2 8s');
+    if (isPro) display = `Sora 2 Pro T2V ${dur}s ${res === '1080p' ? '1080p' : '720p'}`;
+    else display = dur.startsWith('4') ? 'Sora 2 T2V 4s' : (dur.startsWith('12') ? 'Sora 2 T2V 12s' : 'Sora 2 T2V 8s');
   } else if (normalized === 'fal-ai/ltxv-2/image-to-video') {
     const dur = String(meta?.duration ?? '8');
     const resIn = String(meta?.resolution || '1080p').toLowerCase();
     const res = resIn.includes('2160') ? '2160p' : resIn.includes('1440') ? '1440p' : '1080p';
-    display = `LTX V2 Pro ${dur}s ${res}`;
+    display = `LTX V2 Pro T2V/I2V ${dur}s ${res}`;
   } else if (normalized === 'fal-ai/ltxv-2/image-to-video/fast') {
     const dur = String(meta?.duration ?? '8');
     const resIn = String(meta?.resolution || '1080p').toLowerCase();
     const res = resIn.includes('2160') ? '2160p' : resIn.includes('1440') ? '1440p' : '1080p';
-    display = `LTX V2 Fast ${dur}s ${res}`;
+    display = `LTX V2 Fast T2V/I2V ${dur}s ${res}`;
   } else if (normalized === 'fal-ai/ltxv-2/text-to-video') {
     const dur = String(meta?.duration ?? '8');
     const resIn = String(meta?.resolution || '1080p').toLowerCase();
     const res = resIn.includes('2160') ? '2160p' : resIn.includes('1440') ? '1440p' : '1080p';
-    display = `LTX V2 Pro ${dur}s ${res}`;
+    display = `LTX V2 Pro T2V/I2V ${dur}s ${res}`;
   } else if (normalized === 'fal-ai/ltxv-2/text-to-video/fast') {
     const dur = String(meta?.duration ?? '8');
     const resIn = String(meta?.resolution || '1080p').toLowerCase();
     const res = resIn.includes('2160') ? '2160p' : resIn.includes('1440') ? '1440p' : '1080p';
-    display = `LTX V2 Fast ${dur}s ${res}`;
+    display = `LTX V2 Fast T2V/I2V ${dur}s ${res}`;
   }
   const base = display ? findCredits(display) : null;
   if (base == null) throw new Error('Unsupported FAL Veo model');

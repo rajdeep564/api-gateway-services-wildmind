@@ -90,6 +90,9 @@ export interface GenerationHistoryItem {
   uid: string;
   prompt: string;
   userPrompt?: string; // Original user-entered prompt (e.g., "@buddy is dancing with @emily")
+  // Optional rich text fields for audio/music generations
+  lyrics?: string;      // Full lyrics text for text-to-music
+  fileName?: string;    // User-facing display name for audio track
   model: string;
   generationType: GenerationType;
   status: GenerationStatus;

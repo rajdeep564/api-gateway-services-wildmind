@@ -14,6 +14,7 @@ import { getRedisClient, isRedisEnabled } from '../config/redisClient';
 
 const app = express();
 
+
 // Trust proxy settings (safe for rate limiting)
 const isProd = env.nodeEnv === 'production';
 app.set('trust proxy', isProd ? 1 : false);

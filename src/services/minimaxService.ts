@@ -581,6 +581,10 @@ async function musicGenerateAndStore(
   const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt || body.lyrics || '',
+    // Persist rich music metadata on the canonical history document so the
+    // frontend can render track titles and lyrics after a hard refresh.
+    lyrics: body.lyrics,
+    fileName: (body as any)?.fileName,
     model: 'music-2.0',
     generationType: body?.generationType || 'text-to-music',
     visibility: (body as any)?.visibility || 'private',

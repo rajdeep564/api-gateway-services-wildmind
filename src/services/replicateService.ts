@@ -1309,7 +1309,7 @@ export async function generateImage(uid: string, body: any) {
     }
     // New Turbo Model mapping (z-image-turbo)
     // Using actual Replicate model identifier: prunaai/z-image-turbo with version hash
-    if (modelBase === "new-turbo-model" || modelBase === "placeholder-model-name") {
+    if (modelBase === "z-image-turbo" || modelBase === "new-turbo-model" || modelBase === "placeholder-model-name") {
       // Map all supported parameters from schema
       if (rest.width != null) input.width = Math.max(64, Math.min(2048, Number(rest.width)));
       if (rest.height != null) input.height = Math.max(64, Math.min(2048, Number(rest.height)));

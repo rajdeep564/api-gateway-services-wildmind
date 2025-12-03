@@ -64,6 +64,11 @@ function mapModelToBackend(frontendModel: string): { service: 'bfl' | 'replicate
     return { service: 'replicate', backendModel: 'bytedance/seedream-4' };
   }
 
+  // Z Image Turbo - Replicate model (prunaai/z-image-turbo)
+  if (modelLower.includes('z-image-turbo') || modelLower === 'z-image-turbo') {
+    return { service: 'replicate', backendModel: 'z-image-turbo' };
+  }
+
   // BFL Flux models - check in order of specificity
   if (modelLower.includes('flux-pro-1.1-ultra') || modelLower.includes('pro 1.1 ultra')) {
     return { service: 'bfl', backendModel: 'flux-pro-1.1-ultra' };
@@ -261,9 +266,9 @@ export async function generateForCanvas(
 
       generationId = result.historyId;
     } else if (service === 'replicate') {
-      // Use Replicate service for Seedream 4K
-      // Ensure model is in correct format (owner/name)
-      if (!backendModel.includes('/')) {
+      // Use Replicate service for Seedream 4K, Z Image Turbo, etc.
+      // Most models use owner/name format, but z-image-turbo is handled specially
+      if (!backendModel.includes('/') && backendModel !== 'z-image-turbo') {
         console.error('[generateForCanvas] Invalid Replicate model format:', backendModel);
         throw new ApiError(`Invalid model format for Replicate: ${backendModel}. Expected format: owner/name`, 400);
       }
