@@ -11,7 +11,6 @@ export enum ModerationCategory {
   PROFANITY = 'profanity',
   RACISM = 'racism',
   HATE_SPEECH = 'hate_speech',
-  VIOLENCE = 'violence',
   SEXUAL = 'sexual',
   HARASSMENT = 'harassment',
   SELF_HARM = 'self_harm',
@@ -44,12 +43,7 @@ const LGBTQ_SLURS = new Set([
   'homo', 'queer' // Context-dependent, but often used as slur
 ]);
 
-// Violence & Threats
-const VIOLENCE_TERMS = new Set([
-  'kill', 'murder', 'assassinate', 'rape', 'torture', 'shoot',
-  'stab', 'strangle', 'bomb', 'attack', 'lynch', 'massacre',
-  'genocide', 'terrorist', 'terrorism', 'suicide bomber'
-]);
+
 
 // Sexual Content
 const SEXUAL_TERMS = new Set([
@@ -171,7 +165,6 @@ export class ContentModerator {
       ])],
       [ModerationCategory.RACISM, RACISM_SLURS],
       [ModerationCategory.HATE_SPEECH, new Set([...RACISM_SLURS, ...LGBTQ_SLURS])],
-      [ModerationCategory.VIOLENCE, VIOLENCE_TERMS],
       [ModerationCategory.SEXUAL, SEXUAL_TERMS],
       [ModerationCategory.SELF_HARM, SELF_HARM_TERMS],
       [ModerationCategory.ILLEGAL, ILLEGAL_TERMS]
@@ -267,8 +260,7 @@ export class ContentModerator {
    * Calculate severity based on categories
    */
   private calculateSeverity(categories: Set<ModerationCategory>): 'low' | 'medium' | 'high' | 'critical' {
-    if (categories.has(ModerationCategory.RACISM) ||
-        categories.has(ModerationCategory.VIOLENCE) ||
+    if (categories.has(ModerationCategory.RACISM)  ||
         categories.has(ModerationCategory.SELF_HARM)) {
       return 'critical';
     }
@@ -294,14 +286,12 @@ export class ContentModerator {
         [ModerationCategory.PROFANITY]: 'Username contains inappropriate language. Please choose a different username.',
         [ModerationCategory.RACISM]: 'Username contains offensive terms. Please choose a respectful username.',
         [ModerationCategory.HATE_SPEECH]: 'Username violates our community guidelines. Please choose a different username.',
-        [ModerationCategory.VIOLENCE]: 'Username contains violent language. Please choose a different username.',
         [ModerationCategory.SEXUAL]: 'Username contains inappropriate content. Please choose a different username.'
       },
       prompt: {
         [ModerationCategory.PROFANITY]: 'Your input contains inappropriate language. Please revise and try again.',
         [ModerationCategory.RACISM]: 'Your input contains offensive content. Please be respectful.',
         [ModerationCategory.HATE_SPEECH]: 'Your input violates our community guidelines. Please revise.',
-        [ModerationCategory.VIOLENCE]: 'Your input contains violent content. Please revise.',
         [ModerationCategory.SEXUAL]: 'Your input contains inappropriate content. Please revise.',
         [ModerationCategory.SELF_HARM]: 'We noticed concerning content in your message. If you need support, please reach out to a mental health professional.',
         [ModerationCategory.ILLEGAL]: 'Your input references illegal activities. Please revise.'
@@ -310,14 +300,12 @@ export class ContentModerator {
         [ModerationCategory.PROFANITY]: 'Comment contains inappropriate language and cannot be posted.',
         [ModerationCategory.RACISM]: 'Comment contains offensive terms and violates our community standards.',
         [ModerationCategory.HATE_SPEECH]: 'Comment contains hate speech and cannot be posted.',
-        [ModerationCategory.VIOLENCE]: 'Comment contains violent or threatening language.',
         [ModerationCategory.HARASSMENT]: 'Comment appears to be harassment and cannot be posted.'
       },
       post: {
         [ModerationCategory.PROFANITY]: 'Post contains inappropriate language. Please edit before publishing.',
         [ModerationCategory.RACISM]: 'Post contains offensive content and cannot be published.',
         [ModerationCategory.HATE_SPEECH]: 'Post violates our community guidelines.',
-        [ModerationCategory.VIOLENCE]: 'Post contains violent content and cannot be published.',
         [ModerationCategory.SEXUAL]: 'Post contains inappropriate sexual content.',
         [ModerationCategory.SPAM]: 'Post appears to be spam and cannot be published.'
       }
