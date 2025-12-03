@@ -24,6 +24,11 @@ import {
   computeFalSeedVrUpscaleCost,
   computeFalTopazUpscaleImageCost,
   computeFalBirefnetVideoCost,
+  computeFalElevenTtsCost,
+  computeFalElevenDialogueCost,
+  computeFalChatterboxMultilingualCost,
+  computeFalMayaTtsCost,
+  computeFalElevenSfxCost,
 } from "../utils/pricing/falPricing";
 import {
   validateFalGenerate,
@@ -75,7 +80,7 @@ router.post(
   "/eleven/dialogue",
   requireAuth,
   validateFalElevenDialogue as any,
-  makeCreditCost("fal", "generate", computeFalImageCost) as any,
+  makeCreditCost("fal", "generate", computeFalElevenDialogueCost) as any,
   falController.generate as any
 );
 
@@ -84,7 +89,16 @@ router.post(
   "/eleven/tts",
   requireAuth,
   validateFalElevenTts as any,
-  makeCreditCost("fal", "generate", computeFalImageCost) as any,
+  makeCreditCost("fal", "generate", computeFalElevenTtsCost) as any,
+  falController.generate as any
+);
+
+// ElevenLabs Sound Effects (SFX)
+router.post(
+  "/eleven/sfx",
+  requireAuth,
+  validateFalGenerate as any,
+  makeCreditCost("fal", "generate", computeFalElevenSfxCost) as any,
   falController.generate as any
 );
 
@@ -93,7 +107,7 @@ router.post(
   "/maya/tts",
   requireAuth,
   validateFalMayaTts as any,
-  makeCreditCost("fal", "generate", computeFalImageCost) as any,
+  makeCreditCost("fal", "generate", computeFalMayaTtsCost) as any,
   falController.generate as any
 );
 
@@ -102,7 +116,7 @@ router.post(
   "/chatterbox/multilingual",
   requireAuth,
   validateFalChatterboxMultilingual as any,
-  makeCreditCost("fal", "generate", computeFalImageCost) as any,
+  makeCreditCost("fal", "generate", computeFalChatterboxMultilingualCost) as any,
   falController.generate as any
 );
 
