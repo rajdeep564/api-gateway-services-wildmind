@@ -17,10 +17,18 @@ function findCredits(modelName: string): number | null {
 
 export async function computeFalImageCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { uploadedImages = [], n = 1, model } = req.body || {};
-  // Prefer explicit Imagen 4 variants if selected by client; fallback to Google Nano Banana rows
+  // Prefer explicit model rows where available (e.g. Imagen 4, Seedream 4.5); otherwise
+  // fallback to Google Nano Banana rows (Gemini image).
   let display: string | null = null;
   const m = (model || '').toLowerCase();
-  if (m.includes('imagen-4')) {
+
+  // Bytedance Seedream 4.5 on FAL (text-to-image / edit)
+  if (m.includes('seedream-4.5') || m.includes('seedream_v45') || m.includes('seedreamv45')) {
+    // Matches creditDistribution row:
+    //   modelName: "Bytedance Seedream-4.5", creditsPerGeneration: 100
+    display = 'Bytedance Seedream-4.5';
+  } else if (m.includes('imagen-4')) {
+    // Imagen 4 family
     if (m.includes('ultra')) display = 'Imagen 4 Ultra';
     else if (m.includes('fast')) display = 'Imagen 4 Fast';
     else display = 'Imagen 4';

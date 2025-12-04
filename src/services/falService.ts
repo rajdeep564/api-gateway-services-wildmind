@@ -125,7 +125,12 @@ async function generate(
     if (modelLower.includes('ultra')) modelEndpoint = 'fal-ai/imagen4/preview/ultra';
     else if (modelLower.includes('fast')) modelEndpoint = 'fal-ai/imagen4/preview/fast';
     else modelEndpoint = 'fal-ai/imagen4/preview'; // standard
+  } else if (modelLower.includes('seedream-4.5') || modelLower.includes('seedream_v45') || modelLower.includes('seedreamv45')) {
+    // Seedream 4.5 (v4.5) on FAL – official app slug from your Fal dashboard
+    // Example code: await fal.subscribe("fal-ai/bytedance/seedream/v4.5/edit", { input: { ... } })
+    modelEndpoint = 'fal-ai/bytedance/seedream/v4.5/edit';
   } else if (modelLower.includes('seedream')) {
+    // Seedream v4 text-to-image on FAL
     modelEndpoint = 'fal-ai/bytedance/seedream/v4/text-to-image';
   } else {
     // Default to Google Nano Banana (Gemini)
@@ -602,7 +607,7 @@ async function generate(
   try {
     const fileNameForIndex = (index: number) => buildGenerationImageFileName(historyId, index);
     const imagePromises = Array.from({ length: imagesRequested }, async (_, index) => {
-  const input: any = { prompt: finalPrompt, output_format, num_images: 1 };
+      const input: any = { prompt: finalPrompt, output_format, num_images: 1 };
       // Flux 2 Pro expects image_size instead of aspect_ratio
       if (modelEndpoint.includes('flux-2-pro')) {
         const explicit = (payload as any).image_size;
@@ -660,20 +665,81 @@ async function generate(
         if ((payload as any).enable_safety_checker !== undefined) input.enable_safety_checker = Boolean((payload as any).enable_safety_checker);
         if ((payload as any).seed != null) input.seed = Number((payload as any).seed);
       } else if (modelEndpoint.includes('seedream')) {
-        // Seedream expects image_size instead of aspect_ratio; allow explicit image_size override
-        const explicit = (payload as any).image_size;
-        if (explicit) {
-          input.image_size = explicit;
+        // Seedream models expect `image_size` instead of `aspect_ratio`
+        const explicitSize = (payload as any).image_size;
+        const isSeedream45 =
+          modelLower.includes('seedream-4.5') ||
+          modelLower.includes('seedream_v45') ||
+          modelLower.includes('seedreamv45');
+
+        if (isSeedream45) {
+          // Seedream 4.5 (v45) – use Fal schema:
+          // - image_size: enum ('square_hd' | 'square' | 'portrait_4_3' | 'portrait_16_9' | 'landscape_4_3' | 'landscape_16_9' | 'auto_2K' | 'auto_4K')
+          //   or custom { width, height }
+          if (explicitSize) {
+            input.image_size = explicitSize;
+          } else {
+            // Map aspect_ratio/frameSize to proper enum values
+            const aspectRatioMap: Record<string, string> = {
+              '1:1': 'square_hd',
+              'square': 'square_hd',
+              '4:3': 'landscape_4_3',
+              '3:4': 'portrait_4_3',
+              '16:9': 'landscape_16_9',
+              '9:16': 'portrait_16_9',
+            };
+            
+            const aspect = String(resolvedAspect || '1:1');
+            const mappedEnum = aspectRatioMap[aspect] || 'square_hd';
+            
+            // If resolution is explicitly set to 4K or 2K, use auto modes; otherwise use aspect ratio enum
+            const resolution = (payload as any).resolution;
+            if (resolution === '4K') {
+              input.image_size = 'auto_4K';
+            } else if (resolution === '2K' || resolution === '1K') {
+              input.image_size = 'auto_2K';
+            } else {
+              // Use proper frame size enum based on aspect ratio
+              input.image_size = mappedEnum;
+            }
+          }
+
+          // Pass through optional Seedream 4.5 fields from schema
+          if ((payload as any).num_images != null) {
+            const nImg = Number((payload as any).num_images);
+            if (Number.isFinite(nImg)) input.num_images = Math.max(1, Math.min(10, Math.round(nImg)));
+          }
+          if ((payload as any).max_images != null) {
+            const maxImg = Number((payload as any).max_images);
+            if (Number.isFinite(maxImg)) input.max_images = Math.max(1, Math.min(15, Math.round(maxImg)));
+          }
+          if ((payload as any).seed != null) input.seed = Number((payload as any).seed);
+          if ((payload as any).sync_mode != null) input.sync_mode = Boolean((payload as any).sync_mode);
+          if ((payload as any).enable_safety_checker != null) {
+            input.enable_safety_checker = Boolean((payload as any).enable_safety_checker);
+          }
+
+          // For edit / multi-image flows, send `image_urls` as per schema
+          const refs = publicImageUrls.length > 0 ? publicImageUrls : uploadedImages;
+          if (Array.isArray(refs) && refs.length > 0) {
+            // Schema: if >10 images are sent, only the last 10 will be used
+            const lastTen = refs.slice(-10);
+            input.image_urls = lastTen;
+          }
         } else {
-          // Map common aspect ratios to Seedream enums
-          const map: Record<string, string> = {
-            '1:1': 'square',
-            '4:3': 'landscape_4_3',
-            '3:4': 'portrait_4_3',
-            '16:9': 'landscape_16_9',
-            '9:16': 'portrait_16_9',
-          };
-          input.image_size = map[String(resolvedAspect)] || 'square';
+          // Seedream v4 – legacy mapping using aspect ratios to enums
+          if (explicitSize) {
+            input.image_size = explicitSize;
+          } else {
+            const map: Record<string, string> = {
+              '1:1': 'square',
+              '4:3': 'landscape_4_3',
+              '3:4': 'portrait_4_3',
+              '16:9': 'landscape_16_9',
+              '9:16': 'portrait_16_9',
+            };
+            input.image_size = map[String(resolvedAspect)] || 'square';
+          }
         }
       } else if (resolvedAspect) {
         input.aspect_ratio = resolvedAspect;

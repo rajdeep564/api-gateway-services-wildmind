@@ -88,10 +88,6 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   const { model } = req.body || {};
   const normalized = String(model || '').toLowerCase();
   let cost = COST_SEEDREAM4;
-  // Seedream 4.5 - check before seedream-4
-  if (normalized.includes('seedream-4.5') || normalized.includes('bytedance/seedream-4.5')) {
-    cost = COST_SEEDREAM45;
-  }
   // Ideogram Turbo matches
   if (
     normalized.includes('ideogram-ai/ideogram-v3-turbo') ||

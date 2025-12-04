@@ -8,7 +8,7 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
 
   const m = String(model || '').toLowerCase();
   const isSeedream = m.includes('bytedance/seedream-4');
-  const isSeedream45 = m.includes('bytedance/seedream-4.5') || m.includes('seedream-4.5');
+  const isSeedream45 = false; // Seedream 4.5 moved to FAL; no longer validated here
   const isIdeogram = m.includes('ideogram-ai/ideogram-v3');
   const isLucidOrigin = m.includes('leonardoai/lucid-origin');
   const isPhoenix = m.includes('leonardoai/phoenix-1.0');
@@ -16,27 +16,7 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
   // Z Image Turbo model (prunaai/z-image-turbo)
   const isNewTurboModel = m.includes('z-image-turbo') || m.includes('new-turbo-model') || m.includes('placeholder-model-name');
 
-  if (isSeedream45) {
-    // Seedream 4.5: Only 2K size supported in beta, limited aspect ratios
-    if (size != null && String(size) !== '2K') return next(new ApiError("size must be '2K' (only 2K resolution supported in beta)", 400));
-    if (aspect_ratio != null && !['match_input_image', '1:1'].includes(String(aspect_ratio))) return next(new ApiError("aspect_ratio must be 'match_input_image' or '1:1'", 400));
-    if (max_images != null && (typeof max_images !== 'number' || max_images < 1 || max_images > 15)) return next(new ApiError('max_images must be 1-15', 400));
-    if (sequential_image_generation != null && !['disabled', 'auto'].includes(String(sequential_image_generation))) return next(new ApiError("sequential_image_generation must be 'disabled' | 'auto'", 400));
-    if (image_input != null) {
-      if (!Array.isArray(image_input)) return next(new ApiError('image_input must be array of urls', 400));
-      if (image_input.length > 14) return next(new ApiError('image_input supports up to 14 images', 400));
-      for (const u of image_input) {
-        if (typeof u !== 'string') return next(new ApiError('image_input must contain url strings', 400));
-      }
-    }
-    if (String(sequential_image_generation) === 'auto') {
-      const inputCount = Array.isArray(image_input) ? image_input.length : (typeof image === 'string' ? 1 : 0);
-      const requested = typeof max_images === 'number' ? max_images : 1;
-      if (inputCount + requested > 15) {
-        return next(new ApiError('input images + max_images must be <= 15', 400));
-      }
-    }
-  }
+  // Seedream 4.5 branch removed: model is now handled by FAL backend.
 
   if (isSeedream && !isSeedream45) {
     if (size != null && !['1K', '2K', '4K', 'custom'].includes(String(size))) return next(new ApiError("size must be one of '1K' | '2K' | '4K' | 'custom'", 400));

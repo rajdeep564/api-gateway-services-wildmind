@@ -8,6 +8,7 @@ import { uploadDataUriToZata } from '../../../utils/storage/zataUpload';
 export const ALLOWED_FAL_MODELS = [
   'gemini-25-flash-image',
   'seedream-v4',
+  'seedream-4.5',
   // Imagen 4 image generation variants (frontend model keys)
   'imagen-4-ultra',
   'imagen-4',
@@ -42,7 +43,16 @@ export const validateFalGenerate = [
   body('image_size').optional().custom((value) => {
     // Allow enum string or custom object with width/height
     if (typeof value === 'string') {
-      return ['square_hd', 'square', 'portrait_4_3', 'portrait_16_9', 'landscape_4_3', 'landscape_16_9'].includes(value);
+      return [
+        'square_hd',
+        'square',
+        'portrait_4_3',
+        'portrait_16_9',
+        'landscape_4_3',
+        'landscape_16_9',
+        'auto_2K',
+        'auto_4K',
+      ].includes(value);
     }
     if (typeof value === 'object' && value !== null) {
       const width = Number(value.width);
@@ -57,7 +67,7 @@ export const validateFalGenerate = [
   body('num_images').optional().isInt({ min: 1, max: 10 }),
   body('uploadedImages').optional().isArray(),
   body('output_format').optional().isIn(['jpeg', 'png', 'webp']),
-  body('resolution').optional().isIn(['1K','2K']),
+  body('resolution').optional().isIn(['1K','2K','4K']),
   body('seed').optional().isInt(),
   body('negative_prompt').optional().isString(),
   (req: Request, _res: Response, next: NextFunction) => {

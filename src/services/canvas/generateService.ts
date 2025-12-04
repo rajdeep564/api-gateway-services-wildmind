@@ -54,10 +54,7 @@ function mapModelToBackend(frontendModel: string): { service: 'bfl' | 'replicate
     return { service: 'runway', backendModel: 'gen4_image' };
   }
 
-  // Replicate Seedream 4.5 - MUST check this FIRST before other seedream checks
-  if (modelLower.includes('seedream-4.5') || modelLower.includes('seedream 4.5') || modelLower === 'seedream-4.5') {
-    return { service: 'replicate', backendModel: 'bytedance/seedream-4.5' };
-  }
+  // Seedream 4.5 now handled via Fal image pipeline; canvas uses generic model mapping.
   // Replicate Seedream 4K - MUST check this before general seedream check
   // Check for "seedream" + "4k" or "4 k" or "v4 4k" patterns
   if (modelLower.includes('seedream') && (
