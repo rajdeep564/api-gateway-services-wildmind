@@ -143,16 +143,22 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
   }
   // New Turbo Model validations (placeholder - update model name)
   if (isNewTurboModel) {
-    // Width validation: 64-2048, default 1024
+    // Width validation: 64-2048, must be divisible by 16
     if (req.body.width != null) {
       if (typeof req.body.width !== 'number' || !Number.isInteger(req.body.width) || req.body.width < 64 || req.body.width > 2048) {
         return next(new ApiError('width must be an integer between 64 and 2048', 400));
       }
+      if (req.body.width % 16 !== 0) {
+        return next(new ApiError(`width must be divisible by 16 (got ${req.body.width})`, 400));
+      }
     }
-    // Height validation: 64-2048, default 1024
+    // Height validation: 64-2048, must be divisible by 16
     if (req.body.height != null) {
       if (typeof req.body.height !== 'number' || !Number.isInteger(req.body.height) || req.body.height < 64 || req.body.height > 2048) {
         return next(new ApiError('height must be an integer between 64 and 2048', 400));
+      }
+      if (req.body.height % 16 !== 0) {
+        return next(new ApiError(`height must be divisible by 16 (got ${req.body.height})`, 400));
       }
     }
     // Num inference steps validation: 1-50, default 8
