@@ -10,7 +10,7 @@ import { generationsMirrorRepository } from "../repository/generationsMirrorRepo
 import { authRepository } from "../repository/auth/authRepository";
 import { GenerationHistoryItem, GenerationType, VideoMedia } from "../types/generate";
 import { env } from "../config/env";
-import { uploadFromUrlToZata, uploadDataUriToZata } from "../utils/storage/zataUpload";
+import { uploadFromUrlToZata, uploadDataUriToZata, uploadBufferToZata } from "../utils/storage/zataUpload";
 import { falRepository } from "../repository/falRepository";
 import { creditsRepository } from "../repository/creditsRepository";
 import { computeFalVeoCostFromModel } from "../utils/pricing/falPricing";
@@ -19,6 +19,8 @@ import { aestheticScoreService } from "./aestheticScoreService";
 import { markGenerationCompleted } from "./generationHistoryService";
 import { buildFalApiError } from "../utils/falErrorMapper";
 import fetch from "node-fetch";
+import sharp from "sharp";
+import axios from "axios";
 
 const buildGenerationImageFileName = (historyId?: string, index: number = 0) => {
   if (historyId) {
@@ -26,6 +28,45 @@ const buildGenerationImageFileName = (historyId?: string, index: number = 0) => 
   }
   return `image-${Date.now()}-${index + 1}-${Math.random().toString(36).slice(2, 6)}`;
 };
+
+/**
+ * Resize image to 1MP (1,000,000 pixels) while maintaining aspect ratio
+ * @param imageBuffer - The image buffer to resize
+ * @returns Resized image buffer
+ */
+async function resizeImageTo1MP(imageBuffer: Buffer): Promise<Buffer> {
+  try {
+    const metadata = await sharp(imageBuffer).metadata();
+    const { width = 0, height = 0 } = metadata;
+    const currentPixels = width * height;
+    const targetPixels = 1000000; // 1MP = 1,000,000 pixels
+    
+    // If image is already <= 1MP, return as-is
+    if (currentPixels <= targetPixels) {
+      return imageBuffer;
+    }
+    
+    // Calculate new dimensions maintaining aspect ratio
+    const scale = Math.sqrt(targetPixels / currentPixels);
+    const newWidth = Math.round(width * scale);
+    const newHeight = Math.round(height * scale);
+    
+    // Resize image
+    const resizedBuffer = await sharp(imageBuffer)
+      .resize(newWidth, newHeight, {
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .jpeg({ quality: 90 }) // Convert to JPEG with good quality
+      .toBuffer();
+    
+    return resizedBuffer;
+  } catch (error) {
+    console.error('[falService] Error resizing image to 1MP:', error);
+    // Return original buffer if resize fails
+    return imageBuffer;
+  }
+}
 
 async function generate(
   uid: string,
@@ -55,6 +96,9 @@ async function generate(
   const imagesRequested = Number.isFinite(num_images) && (num_images as number) > 0 ? (num_images as number) : (Number.isFinite(n) && (n as number) > 0 ? (n as number) : 1);
   const imagesRequestedClamped = Math.max(1, Math.min(10, imagesRequested));
   const resolvedAspect = (aspect_ratio || frameSize || '1:1') as any;
+  
+  // Declare modelLower early so it can be used for Flux 2 Pro image resizing check
+  const modelLower = (model || '').toLowerCase();
 
   const falKey = env.falKey as string;
   if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
@@ -62,7 +106,7 @@ async function generate(
   // Check if this is a dialogue request (uses inputs array instead of prompt)
   // Skip prompt validation for dialogue requests
   const hasDialogueInputs = Array.isArray((payload as any).inputs) && (payload as any).inputs.length > 0;
-  const isDialogueRequest = hasDialogueInputs || String(model || '').toLowerCase().includes('dialogue') || String(model || '').toLowerCase().includes('text-to-dialogue');
+  const isDialogueRequest = hasDialogueInputs || modelLower.includes('dialogue') || modelLower.includes('text-to-dialogue');
   if (!isDialogueRequest && !prompt) throw new ApiError("Prompt is required", 400);
 
   fal.config({ credentials: falKey });
@@ -95,6 +139,7 @@ async function generate(
   // Use 'character' folder for text-to-character generation input images
   const inputFolder = generationType === 'text-to-character' ? 'character' : 'input';
   let publicImageUrls: string[] = [];
+  const isFlux2Pro = modelLower.includes('flux-2-pro');
   try {
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/${inputFolder}/${historyId}`;
@@ -103,10 +148,45 @@ async function generate(
     for (const src of (uploadedImages || [])) {
       if (!src || typeof src !== 'string') continue;
       try {
-        const stored = /^data:/i.test(src)
-          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
-          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
-        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+        let stored: any;
+        if (isFlux2Pro) {
+          // For Flux 2 Pro, resize images to 1MP before uploading
+          let imageBuffer: Buffer;
+          if (/^data:/i.test(src)) {
+            // Data URI - decode base64
+            const match = /^data:([^;]+);base64,(.*)$/.exec(src);
+            if (match) {
+              imageBuffer = Buffer.from(match[2], 'base64');
+            } else {
+              continue; // Skip invalid data URI
+            }
+          } else {
+            // URL - download first
+            const resp = await axios.get<ArrayBuffer>(src, {
+              responseType: 'arraybuffer',
+              validateStatus: () => true,
+            });
+            if (resp.status < 200 || resp.status >= 300) {
+              continue; // Skip failed downloads
+            }
+            imageBuffer = Buffer.from(resp.data as any);
+          }
+          
+          // Resize to 1MP
+          const resizedBuffer = await resizeImageTo1MP(imageBuffer);
+          
+          // Upload resized image
+          const ext = 'jpg'; // Always use JPEG after resize
+          const key = `${keyPrefix}/input-${++idx}.${ext}`;
+          stored = await uploadBufferToZata(key, resizedBuffer, 'image/jpeg');
+          stored.originalUrl = src;
+        } else {
+          // For other models, use existing upload logic
+          stored = /^data:/i.test(src)
+            ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
+            : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+        }
+        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: stored.originalUrl || src });
         publicImageUrls.push(stored.publicUrl);
       } catch {}
     }
@@ -117,18 +197,25 @@ async function generate(
 
   // Map our model key to FAL endpoints
   let modelEndpoint: string;
-  const modelLower = (model || '').toLowerCase();
   if (modelLower.includes('flux-2-pro')) {
-    modelEndpoint = 'fal-ai/flux-2-pro';
+    // Flux 2 Pro: use /edit endpoint when images are uploaded, otherwise use text-to-image endpoint
+    const hasImages = Array.isArray(uploadedImages) && uploadedImages.length > 0;
+    modelEndpoint = hasImages
+      ? 'fal-ai/flux-2-pro/edit'
+      : 'fal-ai/flux-2-pro';
   } else if (modelLower.includes('imagen-4')) {
     // Imagen 4 family
     if (modelLower.includes('ultra')) modelEndpoint = 'fal-ai/imagen4/preview/ultra';
     else if (modelLower.includes('fast')) modelEndpoint = 'fal-ai/imagen4/preview/fast';
     else modelEndpoint = 'fal-ai/imagen4/preview'; // standard
   } else if (modelLower.includes('seedream-4.5') || modelLower.includes('seedream_v45') || modelLower.includes('seedreamv45')) {
-    // Seedream 4.5 (v4.5) on FAL – official app slug from your Fal dashboard
-    // Example code: await fal.subscribe("fal-ai/bytedance/seedream/v4.5/edit", { input: { ... } })
-    modelEndpoint = 'fal-ai/bytedance/seedream/v4.5/edit';
+    // Seedream 4.5 (v4.5) on FAL – use /edit endpoint only when images are provided
+    // For text-to-image (no uploaded images), use text-to-image endpoint
+    // For image-to-image (with uploaded images), use /edit endpoint
+    const hasImages = Array.isArray(uploadedImages) && uploadedImages.length > 0;
+    modelEndpoint = hasImages
+      ? 'fal-ai/bytedance/seedream/v4.5/edit'
+      : 'fal-ai/bytedance/seedream/v4.5/text-to-image';
   } else if (modelLower.includes('seedream')) {
     // Seedream v4 text-to-image on FAL
     modelEndpoint = 'fal-ai/bytedance/seedream/v4/text-to-image';
@@ -664,6 +751,23 @@ async function generate(
         if ((payload as any).safety_tolerance) input.safety_tolerance = String((payload as any).safety_tolerance);
         if ((payload as any).enable_safety_checker !== undefined) input.enable_safety_checker = Boolean((payload as any).enable_safety_checker);
         if ((payload as any).seed != null) input.seed = Number((payload as any).seed);
+        
+        // Add image_urls for I2I (image-to-image) when using /edit endpoint
+        // The /edit endpoint requires image_urls with at least 1 item
+        const isEditEndpoint = modelEndpoint.includes('/edit');
+        if (isEditEndpoint) {
+          const refs = publicImageUrls.length > 0 ? publicImageUrls : uploadedImages;
+          if (Array.isArray(refs) && refs.length > 0) {
+            // Flux 2 Pro supports up to 10 reference images
+            const lastTen = refs.slice(-10);
+            input.image_urls = lastTen;
+          } else {
+            // Edit endpoint requires at least 1 image, but we have none
+            // This shouldn't happen if endpoint selection is correct, but handle gracefully
+            throw new ApiError('Image-to-image mode requires at least one input image', 400);
+          }
+        }
+        // For text-to-image endpoint, don't include image_urls
       } else if (modelEndpoint.includes('seedream')) {
         // Seedream models expect `image_size` instead of `aspect_ratio`
         const explicitSize = (payload as any).image_size;
@@ -720,12 +824,22 @@ async function generate(
           }
 
           // For edit / multi-image flows, send `image_urls` as per schema
-          const refs = publicImageUrls.length > 0 ? publicImageUrls : uploadedImages;
-          if (Array.isArray(refs) && refs.length > 0) {
-            // Schema: if >10 images are sent, only the last 10 will be used
-            const lastTen = refs.slice(-10);
-            input.image_urls = lastTen;
+          // Only include image_urls when using /edit endpoint (which requires at least 1 image)
+          // For text-to-image endpoint, don't include image_urls
+          const isEditEndpoint = modelEndpoint.includes('/edit');
+          if (isEditEndpoint) {
+            const refs = publicImageUrls.length > 0 ? publicImageUrls : uploadedImages;
+            if (Array.isArray(refs) && refs.length > 0) {
+              // Schema: if >10 images are sent, only the last 10 will be used
+              const lastTen = refs.slice(-10);
+              input.image_urls = lastTen;
+            } else {
+              // Edit endpoint requires at least 1 image, but we have none
+              // This shouldn't happen if endpoint selection is correct, but handle gracefully
+              throw new ApiError('Image-to-image mode requires at least one input image', 400);
+            }
           }
+          // For text-to-image endpoint, don't include image_urls at all
         } else {
           // Seedream v4 – legacy mapping using aspect ratios to enums
           if (explicitSize) {

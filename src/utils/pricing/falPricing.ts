@@ -16,17 +16,29 @@ function findCredits(modelName: string): number | null {
 }
 
 export async function computeFalImageCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
-  const { uploadedImages = [], n = 1, model } = req.body || {};
+  const { uploadedImages = [], n = 1, model, resolution } = req.body || {};
   // Prefer explicit model rows where available (e.g. Imagen 4, Seedream 4.5); otherwise
   // fallback to Google Nano Banana rows (Gemini image).
   let display: string | null = null;
   const m = (model || '').toLowerCase();
+  const hasUploadedImages = Array.isArray(uploadedImages) && uploadedImages.length > 0;
+  const res = String(resolution || '').toUpperCase();
 
   // Bytedance Seedream 4.5 on FAL (text-to-image / edit)
   if (m.includes('seedream-4.5') || m.includes('seedream_v45') || m.includes('seedreamv45')) {
     // Matches creditDistribution row:
     //   modelName: "Bytedance Seedream-4.5", creditsPerGeneration: 100
     display = 'Bytedance Seedream-4.5';
+  } else if (m.includes('flux-2-pro') || m.includes('flux2pro') || m.includes('flux 2 pro')) {
+    // Flux 2 Pro: Use I2I pricing when images are uploaded, T2I pricing otherwise
+    // Resolution determines 1K (1080p) vs 2K
+    if (hasUploadedImages) {
+      // I2I pricing: 110 credits for 1K, 190 credits for 2K
+      display = (res === '2K') ? 'FLUX.2 [pro] I2I 2K' : 'FLUX.2 [pro] I2I 1080p';
+    } else {
+      // T2I pricing: 80 credits for 1K, 160 credits for 2K
+      display = (res === '2K') ? 'FLUX.2 [pro] 2K' : 'FLUX.2 [pro] 1080p';
+    }
   } else if (m.includes('imagen-4')) {
     // Imagen 4 family
     if (m.includes('ultra')) display = 'Imagen 4 Ultra';
@@ -34,7 +46,7 @@ export async function computeFalImageCost(req: Request): Promise<{ cost: number;
     else display = 'Imagen 4';
   } else {
     // Map Gemini image to our Google rows (choose I2I when uploadedImages provided)
-    display = Array.isArray(uploadedImages) && uploadedImages.length > 0
+    display = hasUploadedImages
       ? 'Google nano banana (I2I)'
       : 'Google nano banana (T2I)';
   }

@@ -1344,15 +1344,20 @@ export async function generateImage(uid: string, body: any) {
 
       // Map all supported parameters from schema
       // z-image-turbo requires width and height to be divisible by 16
+      // Schema: width/height max 1440, min 64, default 1024
       if (rest.width != null) {
         const w = Number(rest.width);
         const rounded = Math.round(w / 16) * 16; // Round to nearest multiple of 16
-        input.width = Math.max(64, Math.min(2048, rounded));
+        input.width = Math.max(64, Math.min(1440, rounded));
+      } else {
+        input.width = 1024; // Schema default
       }
       if (rest.height != null) {
         const h = Number(rest.height);
         const rounded = Math.round(h / 16) * 16; // Round to nearest multiple of 16
-        input.height = Math.max(64, Math.min(2048, rounded));
+        input.height = Math.max(64, Math.min(1440, rounded));
+      } else {
+        input.height = 1024; // Schema default
       }
       if (rest.num_inference_steps != null) {
         input.num_inference_steps = Math.max(1, Math.min(50, Number(rest.num_inference_steps)));
