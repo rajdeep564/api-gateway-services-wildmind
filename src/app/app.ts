@@ -233,6 +233,35 @@ let cachePopulateStarted = false;
   }
 })();
 
+// Email configuration check on startup
+(async () => {
+  try {
+    const { isEmailConfigured } = await import('../utils/mailer');
+    const { env } = await import('../config/env');
+    
+    if (!isEmailConfigured()) {
+      console.warn('[EMAIL CONFIG] ⚠️  Email service is not properly configured!');
+      console.warn('[EMAIL CONFIG] For production, you need:');
+      console.warn('[EMAIL CONFIG]   - RESEND_API_KEY (preferred)');
+      console.warn('[EMAIL CONFIG]   - SMTP_FROM (e.g., no-reply@wildmindai.com)');
+      console.warn('[EMAIL CONFIG] Or as fallback:');
+      console.warn('[EMAIL CONFIG]   - EMAIL_USER (Gmail address)');
+      console.warn('[EMAIL CONFIG]   - EMAIL_APP_PASSWORD (Gmail app password)');
+      console.warn('[EMAIL CONFIG] Current status:', {
+        hasResendKey: !!env.resendApiKey,
+        hasSmtpFrom: !!env.smtpFrom,
+        hasEmailUser: !!env.emailUser,
+        hasEmailAppPassword: !!env.emailAppPassword,
+        environment: env.nodeEnv
+      });
+    } else {
+      console.log('[EMAIL CONFIG] ✅ Email service is configured');
+    }
+  } catch (_e) {
+    // Non-fatal: email check failed
+  }
+})();
+
 // Start automatic 24-hour cache refresh (runs ONCE globally, not per user)
 let refreshSchedulerStarted = false;
 (async () => {
