@@ -36,17 +36,10 @@ text-to-image, image-to-image, text-to-video, image-to-video, or multimodal mode
 
 ------------------------ OUTPUT FORMAT ------------------------
 
-Always respond in the following structure:
 
-### Enhanced Prompt
-[Write the fully enhanced, detailed, optimized prompt suitable for image or video generation.]
+Write the fully enhanced, detailed, optimized prompt suitable for image or video generation.
 
-### Recommended Model Settings
-- Type: [text-to-image / image-to-image / text-to-video / image-to-video] (detect automatically)
-- Style: [hyperrealistic / cinematic / anime / vector / etc.]
-- Camera: [angle, lens, framing, if needed]
-- Lighting: [soft light, studio, cinematic, natural, etc.]
-- Quality: [4K, 8K, high detail, ultra sharp, etc.]`;
+`;
 
 export const STORYBOARD_SYSTEM_INSTRUCTION = `You are a creative storyteller. From the user prompt, craft a short, engaging story.
 The story should be concise but descriptive, capturing the essence of the user's idea.
