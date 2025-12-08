@@ -7,10 +7,10 @@ async function removeBackground(req: Request, res: Response, next: NextFunction)
   try {
     const uid = (req as any).uid as string;
     const data = await replicateService.removeBackground(uid, req.body || {});
-  (res as any).locals = { ...(res as any).locals, success: true };
-  const ctx = (req as any).context || {};
-  try { await postSuccessDebit(uid, data, ctx, 'replicate', 'bg-remove'); } catch {}
-  res.json({ responseStatus: 'success', message: 'OK', data });
+    (res as any).locals = { ...(res as any).locals, success: true };
+    const ctx = (req as any).context || {};
+    try { await postSuccessDebit(uid, data, ctx, 'replicate', 'bg-remove'); } catch { }
+    res.json({ responseStatus: 'success', message: 'OK', data });
   } catch (e) {
     next(e);
     return;
@@ -21,10 +21,10 @@ async function upscale(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
     const data = await replicateService.upscale(uid, req.body || {});
-  (res as any).locals = { ...(res as any).locals, success: true };
-  const ctx = (req as any).context || {};
-  try { await postSuccessDebit(uid, data, ctx, 'replicate', 'upscale'); } catch {}
-  res.json({ responseStatus: 'success', message: 'OK', data });
+    (res as any).locals = { ...(res as any).locals, success: true };
+    const ctx = (req as any).context || {};
+    try { await postSuccessDebit(uid, data, ctx, 'replicate', 'upscale'); } catch { }
+    res.json({ responseStatus: 'success', message: 'OK', data });
   } catch (e) {
     next(e);
     return;
@@ -148,9 +148,15 @@ export async function seedanceT2vSubmit(req: Request, res: Response, next: NextF
   try {
     const uid = (req as any).uid as string;
     const result = await (replicateService as any).seedanceT2vSubmit(uid, req.body || {});
-    const debitedCredits = (req as any)?.cost?.cost ?? null;
-    const debitStatus = (req as any)?.cost?.status ?? null;
-    res.json(formatApiResponse('success', 'Submitted', { ...result, debitedCredits, debitStatus }));
+
+    const ctx = (req as any).context || {};
+    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'seedance-t2v');
+
+    res.json(formatApiResponse('success', 'Submitted', {
+      ...result,
+      debitedCredits: ctx.creditCost,
+      debitStatus: debitOutcome
+    }));
   } catch (e) { next(e); }
 }
 
@@ -158,9 +164,15 @@ export async function seedanceI2vSubmit(req: Request, res: Response, next: NextF
   try {
     const uid = (req as any).uid as string;
     const result = await (replicateService as any).seedanceI2vSubmit(uid, req.body || {});
-    const debitedCredits = (req as any)?.cost?.cost ?? null;
-    const debitStatus = (req as any)?.cost?.status ?? null;
-    res.json(formatApiResponse('success', 'Submitted', { ...result, debitedCredits, debitStatus }));
+
+    const ctx = (req as any).context || {};
+    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'seedance-i2v');
+
+    res.json(formatApiResponse('success', 'Submitted', {
+      ...result,
+      debitedCredits: ctx.creditCost,
+      debitStatus: debitOutcome
+    }));
   } catch (e) { next(e); }
 }
 
