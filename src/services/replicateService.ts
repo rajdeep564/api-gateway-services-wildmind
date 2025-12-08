@@ -1792,7 +1792,7 @@ export async function wanI2V(uid: string, body: any) {
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
     model: modelBase,
-    generationType: "text-to-video",
+    generationType: "image-to-video",
     visibility: body.isPublic ? "public" : "private",
     isPublic: body.isPublic ?? false,
     createdBy,
@@ -2459,6 +2459,8 @@ export async function replicateQueueResult(
     // Robust mirror sync with retry logic
     await syncToMirror(uid, historyId);
     // Compute and write debit (use stored history fields)
+    let debitedCredits: number | null = null;
+    let debitStatus: 'WRITTEN' | 'SKIPPED' | 'ERROR' | null = null;
     try {
       const fresh = await generationHistoryRepository.get(uid, historyId);
       const model = (fresh as any)?.model?.toString().toLowerCase() || "";
@@ -2473,16 +2475,16 @@ export async function replicateQueueResult(
             model: (fresh as any)?.model,
           },
         } as any;
-        const { cost, pricingVersion, meta } = await computeWanVideoCost(
-          fakeReq
-        );
-        await creditsRepository.writeDebitIfAbsent(
+        const { cost, pricingVersion, meta } = await computeWanVideoCost(fakeReq);
+        const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
           cost,
           `replicate.queue.wan-${modeGuess}`,
           { ...meta, historyId, provider: "replicate", pricingVersion }
         );
+        debitedCredits = cost;
+        debitStatus = status;
       } else if (model.includes("kling-v2.")) {
         const { computeKlingVideoCost } = await import(
           "../utils/pricing/klingPricing"
@@ -2496,38 +2498,42 @@ export async function replicateQueueResult(
             kling_mode: (fresh as any)?.kling_mode,
           },
         } as any;
-        const { cost, pricingVersion, meta } = await computeKlingVideoCost(
-          fakeReq as any
-        );
-        await creditsRepository.writeDebitIfAbsent(
+        const { cost, pricingVersion, meta } = await computeKlingVideoCost(fakeReq as any);
+        const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
           cost,
           `replicate.queue.kling-${modeGuess}`,
           { ...meta, historyId, provider: "replicate", pricingVersion }
         );
+        debitedCredits = cost;
+        debitStatus = status;
       } else if (model.includes("seedance")) {
         const { computeSeedanceVideoCost } = await import(
           "../utils/pricing/seedancePricing"
         );
+        const kindFromHistory =
+          (fresh as any)?.generationType && String((fresh as any)?.generationType).toLowerCase().includes("image")
+            ? "i2v"
+            : modeGuess;
         const fakeReq = {
           body: {
-            kind: modeGuess,
+            kind: kindFromHistory,
             duration: (fresh as any)?.duration,
             resolution: (fresh as any)?.resolution,
             model: (fresh as any)?.model,
           },
         } as any;
-        const { cost, pricingVersion, meta } = await computeSeedanceVideoCost(
-          fakeReq as any
-        );
-        await creditsRepository.writeDebitIfAbsent(
+        const { cost, pricingVersion, meta } = await computeSeedanceVideoCost(fakeReq as any);
+        const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
           cost,
           `replicate.queue.seedance-${modeGuess}`,
           { ...meta, historyId, provider: "replicate", pricingVersion }
         );
+        debitedCredits = cost;
+        debitStatus = status;
       } else if (model.includes("pixverse")) {
         const { computePixverseVideoCost } = await import(
           "../utils/pricing/pixversePricing"
@@ -2540,16 +2546,16 @@ export async function replicateQueueResult(
             model: (fresh as any)?.model,
           },
         } as any;
-        const { cost, pricingVersion, meta } = await computePixverseVideoCost(
-          fakeReq as any
-        );
-        await creditsRepository.writeDebitIfAbsent(
+        const { cost, pricingVersion, meta } = await computePixverseVideoCost(fakeReq as any);
+        const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
           cost,
           `replicate.queue.pixverse-${modeGuess}`,
           { ...meta, historyId, provider: "replicate", pricingVersion }
         );
+        debitedCredits = cost;
+        debitStatus = status;
       } else if (model.includes("wan-2.2-animate-replace")) {
         const { computeWanAnimateReplaceCost } = await import(
           "../utils/pricing/wanAnimatePricing"
@@ -2563,16 +2569,16 @@ export async function replicateQueueResult(
             video_duration: estimatedRuntime,
           },
         } as any;
-        const { cost, pricingVersion, meta } = await computeWanAnimateReplaceCost(
-          fakeReq as any
-        );
-        await creditsRepository.writeDebitIfAbsent(
+        const { cost, pricingVersion, meta } = await computeWanAnimateReplaceCost(fakeReq as any);
+        const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
           cost,
           `replicate.queue.wan-animate-replace`,
           { ...meta, historyId, provider: "replicate", pricingVersion }
         );
+        debitedCredits = cost;
+        debitStatus = status;
       } else if (model.includes("wan-2.2-animate-animation")) {
         const { computeWanAnimateAnimationCost } = await import(
           "../utils/pricing/wanAnimateAnimationPricing"
@@ -2586,24 +2592,26 @@ export async function replicateQueueResult(
             video_duration: estimatedRuntime,
           },
         } as any;
-        const { cost, pricingVersion, meta } = await computeWanAnimateAnimationCost(
-          fakeReq as any
-        );
-        await creditsRepository.writeDebitIfAbsent(
+        const { cost, pricingVersion, meta } = await computeWanAnimateAnimationCost(fakeReq as any);
+        const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
           cost,
           `replicate.queue.wan-animate-animation`,
           { ...meta, historyId, provider: "replicate", pricingVersion }
         );
+        debitedCredits = cost;
+        debitStatus = status;
       }
-    } catch { }
+    } catch { debitStatus = 'ERROR'; }
     return {
       videos: scoredVideos,
       historyId,
       model: (located.item as any)?.model,
       requestId,
       status: "completed",
+      debitedCredits,
+      debitStatus,
     } as any;
   } catch (e: any) {
     throw new ApiError(e?.message || "Failed to fetch Replicate result", 502);

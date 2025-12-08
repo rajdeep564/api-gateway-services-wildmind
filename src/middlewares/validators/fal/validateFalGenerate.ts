@@ -268,7 +268,22 @@ export const validateFalQueueResult = validateFalQueueStatus;
 export const validateFalVeoTextToVideoSubmit = validateFalVeoTextToVideo;
 export const validateFalVeoTextToVideoFastSubmit = validateFalVeoTextToVideoFast;
 export const validateFalVeoImageToVideoSubmit = validateFalVeoImageToVideo;
-export const validateFalVeoImageToVideoFastSubmit = validateFalVeoImageToVideoFast;
+// Allow 4s/6s/8s for fast I2V and coerce numeric durations to the expected string format
+export const validateFalVeoImageToVideoFastSubmit = [
+  ...validateFalVeoImageToVideoFast,
+  (req: Request, _res: Response, next: NextFunction) => {
+    const d = (req.body as any)?.duration;
+    if (typeof d === 'number') {
+      const mapped = d === 4 || d === 6 || d === 8 ? `${d}s` : '8s';
+      (req.body as any).duration = mapped;
+    }
+    // If duration is not in allowed list, default to 8s
+    if (req.body.duration && !['4s', '6s', '8s'].includes(req.body.duration)) {
+      req.body.duration = '8s';
+    }
+    next();
+  }
+];
 
 // NanoBanana uses unified generate/queue; no separate validators
 

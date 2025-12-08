@@ -148,7 +148,9 @@ export async function seedanceT2vSubmit(req: Request, res: Response, next: NextF
   try {
     const uid = (req as any).uid as string;
     const result = await (replicateService as any).seedanceT2vSubmit(uid, req.body || {});
-    res.json(formatApiResponse('success', 'Submitted', result));
+    const debitedCredits = (req as any)?.cost?.cost ?? null;
+    const debitStatus = (req as any)?.cost?.status ?? null;
+    res.json(formatApiResponse('success', 'Submitted', { ...result, debitedCredits, debitStatus }));
   } catch (e) { next(e); }
 }
 
@@ -156,7 +158,9 @@ export async function seedanceI2vSubmit(req: Request, res: Response, next: NextF
   try {
     const uid = (req as any).uid as string;
     const result = await (replicateService as any).seedanceI2vSubmit(uid, req.body || {});
-    res.json(formatApiResponse('success', 'Submitted', result));
+    const debitedCredits = (req as any)?.cost?.cost ?? null;
+    const debitStatus = (req as any)?.cost?.status ?? null;
+    res.json(formatApiResponse('success', 'Submitted', { ...result, debitedCredits, debitStatus }));
   } catch (e) { next(e); }
 }
 
