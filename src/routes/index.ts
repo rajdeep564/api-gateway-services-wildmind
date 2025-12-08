@@ -19,10 +19,26 @@ import reimagineRoutes from './reimagine';
 import libraryRoutes from './library';
 import uploadsRoutes from './uploads';
 import wildmindRoutes from './wildmind';
+import { contentModerationMiddleware } from '../middlewares/contentModeration';
 
 const router = Router();
 
 router.use('/auth', authRoutes);
+// Apply prompt-level moderation to generation-capable services
+router.use(
+  [
+    '/bfl',
+    '/fal',
+    '/minimax',
+    '/runway',
+    '/replicate',
+    '/prompt-enhancer',
+    '/replace',
+    '/reimagine',
+    '/wildmind',
+  ],
+  contentModerationMiddleware
+);
 router.use('/bfl', bflRoutes);
 router.use('/fal', falRoutes);
 router.use('/minimax', minimaxRoutes);
