@@ -2879,11 +2879,24 @@ export const falQueueService = {
     const firstUrl = body.first_frame_url || body.start_image_url;
     const lastUrl = body.last_frame_url || body.last_frame_image_url;
     if (!firstUrl) throw new ApiError('first_frame_url is required', 400);
-    if (!lastUrl) throw new ApiError('last_frame_url is required', 400);
+
+    // If only first frame provided, downgrade to fast I2V path
+    if (!lastUrl) {
+      return this.veo31I2vSubmit(uid, {
+        ...body,
+        image_url: firstUrl,
+        prompt: body.prompt,
+        aspect_ratio: body.aspect_ratio,
+        duration: body.duration,
+        resolution: body.resolution,
+        generate_audio: body.generate_audio,
+      }, true);
+    }
+
     const model = 'fal-ai/veo3.1/fast/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
     // Persist first and last frame images
-    await persistInputImagesFromUrls(uid, historyId, [body.start_image_url, body.last_frame_image_url]);
+    await persistInputImagesFromUrls(uid, historyId, [body.start_image_url || firstUrl, body.last_frame_image_url || lastUrl]);
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
@@ -2905,7 +2918,20 @@ export const falQueueService = {
     const firstUrl = body.first_frame_url || body.start_image_url;
     const lastUrl = body.last_frame_url || body.last_frame_image_url;
     if (!firstUrl) throw new ApiError('first_frame_url is required', 400);
-    if (!lastUrl) throw new ApiError('last_frame_url is required', 400);
+
+    // If only first frame provided, downgrade to standard I2V path
+    if (!lastUrl) {
+      return this.veo31I2vSubmit(uid, {
+        ...body,
+        image_url: firstUrl,
+        prompt: body.prompt,
+        aspect_ratio: body.aspect_ratio,
+        duration: body.duration,
+        resolution: body.resolution,
+        generate_audio: body.generate_audio,
+      }, false);
+    }
+
     const model = 'fal-ai/veo3.1/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
     // Persist first and last frame images

@@ -318,6 +318,7 @@ export function computeFalVeoCostFromModel(model: string, meta?: any): { cost: n
   else if (normalized === 'fal-ai/veo3.1/image-to-video') display = 'Veo 3.1 I2V 8s';
   else if (normalized === 'fal-ai/veo3.1/fast/image-to-video') display = 'Veo 3.1 Fast I2V 8s';
   else if (normalized === 'fal-ai/veo3.1/first-last-frame-to-video') display = 'Veo 3.1 I2V 8s';
+  else if (normalized === 'fal-ai/veo3.1/fast/first-last-frame-to-video') display = 'Veo 3.1 Fast I2V 8s';
   else if (normalized === 'fal-ai/veo3.1/reference-to-video') display = 'Veo 3.1 I2V 8s';
   // Sora 2 mapping using stored meta for duration/resolution
   else if (normalized === 'fal-ai/sora-2/image-to-video') {
