@@ -19,6 +19,7 @@ import reimagineRoutes from './reimagine';
 import libraryRoutes from './library';
 import uploadsRoutes from './uploads';
 import wildmindRoutes from './wildmind';
+import chatCompanionRoutes from './chatCompanion';
 import { contentModerationMiddleware } from '../middlewares/contentModeration';
 
 const router = Router();
@@ -58,5 +59,6 @@ router.use('/prompt-enhancer', promptEnhancerRoutes);
 router.use('/replace', replaceRoutes);
 router.use('/reimagine', reimagineRoutes);
 router.use('/wildmind', wildmindRoutes);
+router.use('/chat', chatCompanionRoutes);
 
 export default router;
