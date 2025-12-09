@@ -3,7 +3,6 @@ import { requireAuth } from '../middlewares/authMiddleware';
 import * as generateController from '../controllers/canvas/generateController';
 import { falController } from '../controllers/falController';
 import { makeCreditCost } from '../middlewares/creditCostFactory';
-import { computeFalOutpaintCost } from '../utils/pricing/falPricing';
 import { validateFalBriaExpand } from '../middlewares/validators/fal/validateFalGenerate';
 import type { Request } from 'express';
 
@@ -29,6 +28,15 @@ async function computeWildmindEditCost(req: Request): Promise<{ cost: number; pr
     };
 }
 
+// Bria expand (replicate/bria/expand-image) fixed 100 credits
+async function computeWildmindExpandCost(_req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+    return {
+        cost: 100,
+        pricingVersion: 'replicate-bria-expand-v1',
+        meta: { model: 'replicate/bria/expand-image', operation: 'canvas-expand' },
+    };
+}
+
 // Erase: Uses existing canvas logic
 // Payload must match expected structure: { image, mask?, prompt?, meta: { source: 'canvas', projectId } }
 router.post('/erase',
@@ -46,7 +54,7 @@ router.post('/replace',
 router.post(
     '/expand',
     validateFalBriaExpand,
-    makeCreditCost("fal", "bria_expand", (req) => computeFalOutpaintCost(req)),
+    makeCreditCost("wildmind", "expand", computeWildmindExpandCost),
     falController.briaExpandImage
 );
 
