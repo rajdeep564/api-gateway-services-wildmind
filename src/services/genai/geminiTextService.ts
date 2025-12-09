@@ -317,6 +317,84 @@ export async function generateScenesFromStory(story: string): Promise<any> {
   const config: any = {
     generationConfig: {
       responseMimeType: "application/json",
+      responseSchema: {
+        type: "OBJECT",
+        properties: {
+          storyWorld: {
+            type: "OBJECT",
+            properties: {
+              characters: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    id: { type: "STRING" },
+                    name: { type: "STRING" },
+                    role: { type: "STRING" },
+                    visual_description: { type: "STRING" },
+                    emotion_baseline: { type: "STRING" },
+                    consistency_token: { type: "STRING" }
+                  },
+                  required: ["id", "name", "role", "visual_description", "emotion_baseline", "consistency_token"]
+                }
+              },
+              locations: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    id: { type: "STRING" },
+                    name: { type: "STRING" },
+                    visual_description: { type: "STRING" },
+                    color_palette: { type: "STRING" },
+                    consistency_token: { type: "STRING" }
+                  },
+                  required: ["id", "name", "visual_description", "color_palette", "consistency_token"]
+                }
+              },
+              global_style: {
+                type: "OBJECT",
+                properties: {
+                  art_style: { type: "STRING" },
+                  color_palette: { type: "STRING" },
+                  aspect_ratio: { type: "STRING" },
+                  camera_style: { type: "STRING" }
+                },
+                required: ["art_style", "color_palette", "aspect_ratio", "camera_style"]
+              },
+              scene_outline: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    scene_number: { type: "INTEGER" },
+                    heading: { type: "STRING" },
+                    summary: { type: "STRING" },
+                    mood: { type: "STRING" },
+                    character_ids: { type: "ARRAY", items: { type: "STRING" } },
+                    location_id: { type: "STRING" }
+                  },
+                  required: ["scene_number", "heading", "summary", "mood", "character_ids", "location_id"]
+                }
+              }
+            },
+            required: ["characters", "locations", "global_style", "scene_outline"]
+          },
+          scenes: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: {
+                scene_number: { type: "INTEGER" },
+                heading: { type: "STRING" },
+                content: { type: "STRING" }
+              },
+              required: ["scene_number", "heading", "content"]
+            }
+          }
+        },
+        required: ["storyWorld", "scenes"]
+      }
     }
   };
 

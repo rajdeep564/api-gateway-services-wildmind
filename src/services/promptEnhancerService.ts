@@ -371,6 +371,14 @@ export async function queryCanvasPrompt(
 }
 
 export async function generateScenesFromStory(story: string): Promise<any> {
+  const hasReplicateKey = Boolean(env.replicateApiKey);
+
+  if (hasReplicateKey) {
+    // Use Replicate (GPT-4o) service
+    const { generateScenesFromStory: generateScenesReplicate } = require('./genai/replicateTextService');
+    return generateScenesReplicate(story);
+  }
+
   const hasGeminiKey =
     Boolean(
       env.googleGenAIApiKey ||
@@ -380,13 +388,12 @@ export async function generateScenesFromStory(story: string): Promise<any> {
     );
 
   if (hasGeminiKey) {
-    // Use local Gemini service
+    console.warn('[Prompt Enhancer] Replicate key missing, falling back to Gemini for scene generation');
     const { generateScenesFromStory: generateScenesGemini } = require('./genai/geminiTextService');
     return generateScenesGemini(story);
   }
 
-  // Fallback to Python service if needed (not implemented yet, but keeping structure)
-  throw new Error('Gemini API key required for scene generation');
+  throw new Error('Replicate API key (or Gemini fallback) required for scene generation');
 }
 
 export default { enhancePrompt, enhancePromptsBatch, queryCanvasPrompt, generateScenesFromStory };

@@ -43,7 +43,7 @@ function calculateAspectRatio(width?: number, height?: number): string {
 /**
  * Map frontend model names to backend model names
  */
-function mapModelToBackend(frontendModel: string): { service: 'bfl' | 'replicate' | 'fal' | 'runway'; backendModel: string } {
+export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 'replicate' | 'fal' | 'runway'; backendModel: string } {
   const modelLower = frontendModel.toLowerCase().trim();
 
   // Runway models - check FIRST before other models

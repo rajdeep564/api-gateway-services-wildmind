@@ -25,7 +25,7 @@ export async function computeFalImageCost(req: Request): Promise<{ cost: number;
   const res = String(resolution || '').toUpperCase();
 
   // Bytedance Seedream 4.5 on FAL (text-to-image / edit)
-  if (m.includes('seedream-4.5') || m.includes('seedream_v45') || m.includes('seedreamv45')) {
+  if (m.includes('seedream-4.5') || m.includes('seedream_v45') || m.includes('seedreamv45') || m.includes('seedream-v4')) {
     // Matches creditDistribution row:
     //   modelName: "Bytedance Seedream-4.5", creditsPerGeneration: 100
     display = 'Bytedance Seedream-4.5';

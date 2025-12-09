@@ -5,7 +5,8 @@
  * This maintains consistency between balance and ledger history
  * 
  * Usage:
- *   npx ts-node scripts/grantTestCredits.ts <email> <amount>
+ *   npx ts-node scripts/grantTestCredits.ts <email> <amount> [--reason <text>] [--dry-run]
+ *   npx ts-node scripts/grantTestCredits.ts --username <username> <amount> [--reason <text>] [--dry-run]
  */
 
 import dotenv from 'dotenv';
@@ -41,9 +42,14 @@ async function resolveUserIdentifier(input: ResolveUserInput): Promise<ResolvedU
 }
 
 async function grantTestCredits(userInput: ResolveUserInput, amount: number) {
+  const reason = options.reason || 'testing.manual_grant';
+  const dryRun = options.dryRun === true;
+
   console.log('\n💰 ==== Grant Test Credits ====\n');
   console.log(userInput.type === 'email' ? `Email: ${userInput.value}` : `Username: ${userInput.value}`);
   console.log(`Amount: ${amount} credits`);
+  console.log(`Reason: ${reason}`);
+  console.log(`Dry run: ${dryRun ? 'YES (no writes)' : 'no'}`);
   console.log('-----------------------------------\n');
 
   try {
@@ -116,35 +122,46 @@ async function grantTestCredits(userInput: ResolveUserInput, amount: number) {
     console.log(`   Request ID: ${requestId}`);
     console.log('');
 
-    // Use writeGrantIncrement which ADDS to balance (preserves debits)
-    const result = await creditsRepository.writeGrantIncrement(
-      userId,
-      requestId,
-      amount, // Grant amount to ADD (not total balance)
-      'testing.manual_grant',
-      { 
-        grantedAmount: amount,
-        previousBalance: currentBalance,
-        storedBalance: currentInfo?.creditBalance || 0,
-        reconciledBalance: reconciled.calculatedBalance,
-        planCode: currentInfo?.planCode || 'FREE',
-        reason: 'Testing purposes'
-      }
-    );
+    let grantResult: 'WRITTEN' | 'SKIPPED' | 'DRY_RUN' = 'SKIPPED';
 
-    if (result === 'WRITTEN') {
+    if (dryRun) {
+      grantResult = 'DRY_RUN';
+      console.log('🧪 Dry run enabled: skipping writeGrantIncrement');
+    } else {
+      // Use writeGrantIncrement which ADDS to balance (preserves debits)
+      const result = await creditsRepository.writeGrantIncrement(
+        userId,
+        requestId,
+        amount, // Grant amount to ADD (not total balance)
+        reason,
+        { 
+          grantedAmount: amount,
+          previousBalance: currentBalance,
+          storedBalance: currentInfo?.creditBalance || 0,
+          reconciledBalance: reconciled.calculatedBalance,
+          planCode: currentInfo?.planCode || 'FREE',
+          reason: options.reason || 'Testing purposes'
+        }
+      );
+
+      grantResult = result === 'WRITTEN' ? 'WRITTEN' : 'SKIPPED';
+    }
+
+    if (grantResult === 'WRITTEN') {
       console.log('✅ Credits granted successfully!');
+    } else if (grantResult === 'DRY_RUN') {
+      console.log('ℹ️  Dry run complete (no ledger writes performed).');
     } else {
       console.log('⚠️  Transaction was skipped (idempotency)');
     }
     console.log('');
 
-    // Verify new balance (reconcile from ledgers to get true balance)
-    const afterInfo = await creditsRepository.readUserInfo(userId);
-    const afterReconciled = await creditsRepository.reconcileBalanceFromLedgers(userId);
+    // Verify new balance (reconcile from ledgers to get true balance) - skip on dry run
+    const afterInfo = dryRun ? currentInfo : await creditsRepository.readUserInfo(userId);
+    const afterReconciled = dryRun ? reconciled : await creditsRepository.reconcileBalanceFromLedgers(userId);
     
-    // Expected balance = previous reconciled balance + grant amount
-    const expectedBalance = currentBalance + amount;
+    // Expected balance = previous reconciled balance + grant amount (or same on dry run)
+    const expectedBalance = dryRun ? currentBalance : currentBalance + amount;
     
     console.log(`📊 After Grant:`);
     console.log(`   Stored Balance: ${afterInfo?.creditBalance} credits`);
@@ -223,6 +240,7 @@ async function grantTestCredits(userInput: ResolveUserInput, amount: number) {
 const args = process.argv.slice(2);
 let identifier: ResolveUserInput | null = null;
 let amount = 0;
+let options: { reason?: string; dryRun?: boolean } = {};
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -234,6 +252,16 @@ for (let i = 0; i < args.length; i++) {
     }
     identifier = { type: 'username', value };
     i++;
+  } else if (arg === '--reason') {
+    const value = args[i + 1];
+    if (!value) {
+      console.error('❌ Missing value for --reason');
+      process.exit(1);
+    }
+    options.reason = value;
+    i++;
+  } else if (arg === '--dry-run' || arg === '--dryrun') {
+    options.dryRun = true;
   } else if (!identifier) {
     identifier = { type: 'email', value: arg };
   } else if (!amount) {
@@ -242,10 +270,11 @@ for (let i = 0; i < args.length; i++) {
 }
 
 if (!identifier || !amount || amount <= 0) {
-  console.error('❌ Usage: npx ts-node scripts/grantTestCredits.ts [--username <username> | <email>] <amount>');
+  console.error('❌ Usage: npx ts-node scripts/grantTestCredits.ts [--username <username> | <email>] <amount> [--reason <text>] [--dry-run]');
   console.error('\nExamples:');
   console.error('  npx ts-node scripts/grantTestCredits.ts user@example.com 10000');
-  console.error('  npx ts-node scripts/grantTestCredits.ts --username jane_doe 5000');
+  console.error('  npx ts-node scripts/grantTestCredits.ts --username jane_doe 5000 --reason "qa.test.grant"');
+  console.error('  npx ts-node scripts/grantTestCredits.ts user@example.com 500 --dry-run');
   process.exit(1);
 }
 
