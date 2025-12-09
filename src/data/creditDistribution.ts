@@ -3166,7 +3166,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     },
   }
 
-  
+
   , {
     srNo: 146,
     modelName: "FLUX.2 [pro] 2K",
@@ -3620,6 +3620,21 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planC: 618,
       planD: 1977.6,
       free: 20,
+    },
+  },
+  {
+    srNo: 173,
+    modelName: "Storyboard Script Generation",
+    priceToPay: 0.005,
+    overCharge: 0.001,
+    userCost: 0.006,
+    creditsPerGeneration: 10,
+    plans: {
+      planA: 1236,
+      planB: 2472,
+      planC: 6180,
+      planD: 19776,
+      free: 412,
     },
   }
 
