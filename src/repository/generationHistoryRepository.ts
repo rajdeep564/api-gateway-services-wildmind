@@ -60,6 +60,9 @@ export async function create(uid: string, data: {
   aspect_ratio?: string;
   isPublic?: boolean;
   characterName?: string;
+  quality?: string;
+  resolution?: string;
+  duration?: number | string;
   createdBy?: { uid: string; username?: string; email?: string };
 }): Promise<{ historyId: string }> {
   // Centralized isPublic validation and audit logging
@@ -98,6 +101,10 @@ export async function create(uid: string, data: {
     isPublic: normalizedIsPublic,
     // Store characterName only for text-to-character generation type
     ...(data.generationType === 'text-to-character' && data.characterName ? { characterName: data.characterName } : {}),
+    // Video generation specific fields
+    ...(data.quality ? { quality: data.quality } : {}),
+    ...(data.resolution ? { resolution: data.resolution } : {}),
+    ...(data.duration ? { duration: data.duration } : {}),
     createdBy: data.createdBy ? {
       uid: data.createdBy.uid,
       username: data.createdBy.username || null,
@@ -119,7 +126,7 @@ export async function create(uid: string, data: {
     await invalidateUserLists(uid);
   } catch (e) {
     // Non-blocking: logging only
-    try { logger.warn({ uid, err: e }, '[generationHistoryRepository.create] Failed to invalidate cache'); } catch {}
+    try { logger.warn({ uid, err: e }, '[generationHistoryRepository.create] Failed to invalidate cache'); } catch { }
   }
   return { historyId: docRef.id };
 }
@@ -132,11 +139,11 @@ function removeUndefinedValues(obj: any): any {
   if (obj === null || typeof obj !== 'object') {
     return obj;
   }
-  
+
   if (Array.isArray(obj)) {
     return obj.map(item => removeUndefinedValues(item));
   }
-  
+
   const cleaned: any = {};
   for (const [key, value] of Object.entries(obj)) {
     if (value !== undefined) {
@@ -204,7 +211,7 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
         value: typeof v === 'string' ? v.substring(0, 50) + '...' : v,
       })) : [],
     });
-    
+
     // Check each image for nested objects
     cleanedUpdates.images.forEach((img: any, index: number) => {
       if (img && typeof img === 'object') {
@@ -216,7 +223,7 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
       }
     });
   }
-  
+
   try {
     await ref.update({
       ...cleanedUpdates,
@@ -235,7 +242,7 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
   try {
     await invalidateItem(uid, historyId);
   } catch (e) {
-    try { logger.warn({ uid, historyId, err: e }, '[generationHistoryRepository.update] Failed to invalidate cache'); } catch {}
+    try { logger.warn({ uid, historyId, err: e }, '[generationHistoryRepository.update] Failed to invalidate cache'); } catch { }
   }
 
   // Enqueue mirror update asynchronously so public mirror reflects repository changes.
@@ -245,10 +252,10 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
     const isBeingDeleted = (updates as any)?.isDeleted === true;
     if (isBeingDeleted) {
       // Item is being deleted - don't enqueue mirror update (deletion is handled by softDelete/update service)
-      try { logger.info({ uid, historyId }, '[generationHistoryRepository.update] Skipping mirror update - item is being deleted'); } catch {}
+      try { logger.info({ uid, historyId }, '[generationHistoryRepository.update] Skipping mirror update - item is being deleted'); } catch { }
       return;
     }
-    
+
     // Only enqueue if there are meaningful updates (avoid noise). For simplicity,
     // enqueue when updates contains images, videos, isPublic, visibility, status, or error fields.
     const interesting = ['images', 'videos', 'isPublic', 'visibility', 'status', 'error'];
@@ -258,7 +265,7 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
       mirrorQueueRepository.enqueueUpdate({ uid, historyId, updates: cleanedUpdates });
     }
   } catch (e) {
-    try { logger.warn({ uid, historyId, err: e }, '[generationHistoryRepository.update] Failed to enqueue mirror update'); } catch {}
+    try { logger.warn({ uid, historyId, err: e }, '[generationHistoryRepository.update] Failed to enqueue mirror update'); } catch { }
   }
 }
 
@@ -287,7 +294,7 @@ export async function list(uid: string, params: {
   const col = adminDb.collection('generationHistory').doc(uid).collection('items');
   const normalizedMode = normalizeMode(params.mode);
   const hasModeFilter = Boolean(normalizedMode && normalizedMode !== 'all');
-  
+
   // Determine if we're using new optimized pagination or legacy mode
   // Allow explicit sortBy=createdAt without disabling optimized path. Optimized path triggers if:
   // - nextCursor provided OR
@@ -297,7 +304,7 @@ export async function list(uid: string, params: {
       !params.sortBy || params.sortBy === 'createdAt'
     )
   );
-  
+
   // NEW OPTIMIZED PATH: Use createdAt DESC with timestamp cursor
   if (useOptimizedPagination) {
     // IMPORTANT: Do NOT filter by isDeleted at query level.
@@ -306,12 +313,12 @@ export async function list(uid: string, params: {
     // pages to appear nearly empty when most docs lacked the field.
     // We now filter isDeleted in-memory after fetching, while keeping the query fully indexed.
     let q: FirebaseFirestore.Query = col.orderBy('createdAt', 'desc');
-    
+
     // Apply filters with proper composite index support
     if (params.status) {
       q = q.where('status', '==', params.status);
     }
-    
+
     if (params.generationType) {
       // Build a synonym set to capture legacy underscore vs hyphen variants and short forms
       const buildTypeSynonyms = (t: string): string[] => {
@@ -362,7 +369,7 @@ export async function list(uid: string, params: {
         console.warn('[list] Invalid nextCursor, ignoring:', e);
       }
     }
-    
+
     // Fetch more than requested to compensate for in-memory filters (e.g., isDeleted true)
     // and still return a full page. Cap to a safe value to avoid large reads.
     const modeMultiplier = hasModeFilter ? 6 : 3;
@@ -370,7 +377,7 @@ export async function list(uid: string, params: {
       400,
       Math.max(params.limit * modeMultiplier, params.limit + (hasModeFilter ? 40 : 10))
     );
-    
+
     let snap: FirebaseFirestore.QuerySnapshot;
     try {
       snap = await q.limit(fetchLimit).get();
@@ -381,7 +388,7 @@ export async function list(uid: string, params: {
         codeStr === 'failed-precondition' ||
         e?.code === 9 ||
         /index|composite/i.test(String(e?.message || ''));
-      
+
       if (isMissingIndexError) {
         console.warn(
           `[list] Missing Firestore composite index. Falling back to legacy pagination. ` +
@@ -393,7 +400,7 @@ export async function list(uid: string, params: {
       }
       throw e;
     }
-    
+
     if (snap.empty) {
       return { items: [], nextCursor: null, hasMore: false, diagnostics: params.debug ? { path: 'optimized', empty: true } : undefined };
     }
@@ -452,24 +459,26 @@ export async function list(uid: string, params: {
       }
     }
 
-    return { items: pageItems, nextCursor, hasMore, diagnostics: params.debug ? {
-      path: 'optimized',
-  requestedLimit: params.limit,
-  fetchLimit,
-  fetchedRaw: snap.docs.length,
-      filteredAfterDelete: items.length,
-      returned: pageItems.length,
-      hasMore,
-      appliedFilters: {
-        status: params.status || null,
-        generationType: params.generationType || null,
-        mode: normalizedMode || null,
-      },
-      generationTypeSynonymsUsed: params.generationType ? (Array.isArray(params.generationType) ? params.generationType : [params.generationType]) : [],
-      removedByMode,
-    } : undefined };
+    return {
+      items: pageItems, nextCursor, hasMore, diagnostics: params.debug ? {
+        path: 'optimized',
+        requestedLimit: params.limit,
+        fetchLimit,
+        fetchedRaw: snap.docs.length,
+        filteredAfterDelete: items.length,
+        returned: pageItems.length,
+        hasMore,
+        appliedFilters: {
+          status: params.status || null,
+          generationType: params.generationType || null,
+          mode: normalizedMode || null,
+        },
+        generationTypeSynonymsUsed: params.generationType ? (Array.isArray(params.generationType) ? params.generationType : [params.generationType]) : [],
+        removedByMode,
+      } : undefined
+    };
   }
-  
+
   // LEGACY PATH: Support old pagination with sortBy, sortOrder, dateStart, dateEnd
   const legacyResult = await listLegacy(uid, params);
   return { ...legacyResult, diagnostics: params.debug ? { path: 'legacy', requestedLimit: params.limit, returned: legacyResult.items.length } : undefined } as any;
@@ -489,25 +498,25 @@ async function listLegacy(uid: string, params: {
   mode?: 'video' | 'image' | 'music' | 'branding' | 'all';
 }): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string; totalCount?: number }> {
   const col = adminDb.collection('generationHistory').doc(uid).collection('items');
-  
+
   // Default sorting
   const sortBy = params.sortBy || 'createdAt';
   const sortOrder = params.sortOrder || 'desc';
-  
+
   let q: FirebaseFirestore.Query = col.orderBy(sortBy, sortOrder);
-  
+
   // Get total count for pagination context
   let totalCount: number | undefined;
   if (params.generationType || params.status) {
     const countQuery = await col.get();
     totalCount = countQuery.docs.length;
   }
-  
+
   // Apply filters
   if (params.status) {
     q = q.where('status', '==', params.status);
   }
-  
+
   if (params.generationType) {
     if (Array.isArray(params.generationType)) {
       const types = (params.generationType as string[]).filter(t => !!t);
@@ -520,7 +529,7 @@ async function listLegacy(uid: string, params: {
       q = q.where('generationType', '==', params.generationType);
     }
   }
-  
+
   // Optional date filtering
   const wantsDateFilter = typeof params.dateStart === 'string' && typeof params.dateEnd === 'string';
   if (wantsDateFilter) {
@@ -528,8 +537,8 @@ async function listLegacy(uid: string, params: {
       const start = new Date(params.dateStart as string);
       const end = new Date(params.dateEnd as string);
       q = col.where('createdAt', '>=', admin.firestore.Timestamp.fromDate(start))
-             .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(end))
-             .orderBy('createdAt', sortOrder);
+        .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(end))
+        .orderBy('createdAt', sortOrder);
     } catch {
       // Ignore date filter if invalid
     }
@@ -542,12 +551,12 @@ async function listLegacy(uid: string, params: {
       q = q.startAfter(cursorDoc);
     }
   }
-  
+
   const legacyModeMultiplier = (params.mode && params.mode !== 'all') ? 6 : 1;
-  const fetchCount = params.status || params.generationType ? 
-    Math.max(params.limit * 2 * legacyModeMultiplier, params.limit) : 
+  const fetchCount = params.status || params.generationType ?
+    Math.max(params.limit * 2 * legacyModeMultiplier, params.limit) :
     Math.max(params.limit * 4 * legacyModeMultiplier, params.limit);
-  
+
   let snap: FirebaseFirestore.QuerySnapshot;
   try {
     snap = await q.limit(fetchCount).get();
@@ -576,7 +585,7 @@ async function listLegacy(uid: string, params: {
       throw e;
     }
   }
-  
+
   let items: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
   items = items.filter((it: any) => it.isDeleted !== true);
 
@@ -624,10 +633,10 @@ async function listLegacy(uid: string, params: {
     const cmp = ax > bx ? 1 : ax < bx ? -1 : 0;
     return sortOrder === 'asc' ? cmp : -cmp;
   });
-  
+
   const page = items.slice(0, params.limit);
   const nextCursor = page.length === params.limit ? page[page.length - 1].id : undefined;
-  
+
   return { items: page, nextCursor, totalCount };
 }
 

@@ -5,6 +5,7 @@ import { ApiError } from '../../utils/errorHandler';
 import { CanvasGenerationRequest } from '../../types/canvas';
 import { createReferenceImage, ReferenceImageItem } from '../../utils/createReferenceImage';
 import { uploadBufferToZata } from '../../utils/storage/zataUpload';
+import { postSuccessDebit } from '../../utils/creditDebit';
 
 export async function generateVideoForCanvas(req: Request, res: Response) {
   try {
@@ -56,13 +57,22 @@ export async function generateVideoForCanvas(req: Request, res: Response) {
       hasUrl: !!result.url,
     });
 
+
+    // Debit credits
+    const ctx = (req as any).context || {};
+    const debitResult = {
+      ...result,
+      historyId: result.generationId
+    };
+    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'generate-video');
+
     return res.json(formatApiResponse('success', 'Video generation completed', result));
   } catch (error: any) {
     console.error('[generateVideoForCanvas] Error:', error);
     console.error('[generateVideoForCanvas] Error stack:', error.stack);
     const statusCode = error.statusCode || error.status || 500;
     const message = error.message || 'Failed to generate video';
-    
+
     if (!res.headersSent) {
       return res.status(statusCode).json(
         formatApiResponse('error', message, null)
@@ -107,6 +117,15 @@ export async function generateForCanvas(req: Request, res: Response) {
 
     const result = await generateService.generateForCanvas(userId, request);
 
+    // Debit credits
+    const ctx = (req as any).context || {};
+    // Ensure historyId is available for debit logic
+    const debitResult = {
+      ...result,
+      historyId: (result as any).generationId
+    };
+    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'generate');
+
     console.log('[generateForCanvas] Generation completed:', {
       hasUrl: !!result.url,
       imageCount: result.images?.length || 1,
@@ -118,7 +137,7 @@ export async function generateForCanvas(req: Request, res: Response) {
     console.error('[generateForCanvas] Error stack:', error.stack);
     const statusCode = error.statusCode || error.status || 500;
     const message = error.message || 'Failed to generate image';
-    
+
     if (!res.headersSent) {
       return res.status(statusCode).json(
         formatApiResponse('error', message, null)
@@ -172,13 +191,22 @@ export async function upscaleForCanvas(req: Request, res: Response) {
       hasUrl: !!result.url,
     });
 
+
+    // Debit credits
+    const ctx = (req as any).context || {};
+    const debitResult = {
+      ...result,
+      historyId: result.generationId
+    };
+    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'upscale');
+
     return res.json(formatApiResponse('success', 'Image upscale completed', result));
   } catch (error: any) {
     console.error('[upscaleForCanvas] Error:', error);
     console.error('[upscaleForCanvas] Error stack:', error.stack);
     const statusCode = error.statusCode || error.status || 500;
     const message = error.message || 'Failed to upscale image';
-    
+
     if (!res.headersSent) {
       return res.status(statusCode).json(
         formatApiResponse('error', message, null)
@@ -232,13 +260,22 @@ export async function removeBgForCanvas(req: Request, res: Response) {
       hasUrl: !!result.url,
     });
 
+
+    // Debit credits
+    const ctx = (req as any).context || {};
+    const debitResult = {
+      ...result,
+      historyId: result.generationId
+    };
+    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'removebg');
+
     return res.json(formatApiResponse('success', 'Background removal completed', result));
   } catch (error: any) {
     console.error('[removeBgForCanvas] Error:', error);
     console.error('[removeBgForCanvas] Error stack:', error.stack);
     const statusCode = error.statusCode || error.status || 500;
     const message = error.message || 'Failed to remove background';
-    
+
     if (!res.headersSent) {
       return res.status(statusCode).json(
         formatApiResponse('error', message, null)
@@ -292,13 +329,22 @@ export async function vectorizeForCanvas(req: Request, res: Response) {
       hasUrl: !!result.url,
     });
 
+
+    // Debit credits
+    const ctx = (req as any).context || {};
+    const debitResult = {
+      ...result,
+      historyId: result.generationId
+    };
+    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'vectorize');
+
     return res.json(formatApiResponse('success', 'Image vectorization completed', result));
   } catch (error: any) {
     console.error('[vectorizeForCanvas] Error:', error);
     console.error('[vectorizeForCanvas] Error stack:', error.stack);
     const statusCode = error.statusCode || error.status || 500;
     const message = error.message || 'Failed to vectorize image';
-    
+
     if (!res.headersSent) {
       return res.status(statusCode).json(
         formatApiResponse('error', message, null)
@@ -351,7 +397,7 @@ export async function createStitchedReferenceImage(req: Request, res: Response) 
     const canvasKeyPrefix = `users/${userId}/canvas/${projectId}`;
     const fileName = `reference-stitched-${Date.now()}.png`;
     const key = `${canvasKeyPrefix}/${fileName}`;
-    
+
     const { publicUrl } = await uploadBufferToZata(key, stitchedBuffer, 'image/png');
 
     console.log('[createStitchedReferenceImage] ✅ Stitched reference image created:', {
@@ -426,13 +472,22 @@ export async function eraseForCanvas(req: Request, res: Response) {
       hasUrl: !!result.url,
     });
 
+
+    // Debit credits
+    const ctx = (req as any).context || {};
+    const debitResult = {
+      ...result,
+      historyId: result.generationId
+    };
+    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'erase');
+
     return res.json(formatApiResponse('success', 'Image erase completed', result));
   } catch (error: any) {
     console.error('[eraseForCanvas] Error:', error);
     console.error('[eraseForCanvas] Error stack:', error.stack);
     const statusCode = error.statusCode || error.status || 500;
     const message = error.message || 'Failed to erase image';
-    
+
     if (!res.headersSent) {
       return res.status(statusCode).json(
         formatApiResponse('error', message, null)
@@ -502,13 +557,22 @@ export async function replaceForCanvas(req: Request, res: Response) {
       hasUrl: !!result.url,
     });
 
+
+    // Debit credits
+    const ctx = (req as any).context || {};
+    const debitResult = {
+      ...result,
+      historyId: result.generationId
+    };
+    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'replace');
+
     return res.json(formatApiResponse('success', 'Image replace completed', result));
   } catch (error: any) {
     console.error('[replaceForCanvas] Error:', error);
     console.error('[replaceForCanvas] Error stack:', error.stack);
     const statusCode = error.statusCode || error.status || 500;
     const message = error.message || 'Failed to replace image';
-    
+
     if (!res.headersSent) {
       return res.status(statusCode).json(
         formatApiResponse('error', message, null)

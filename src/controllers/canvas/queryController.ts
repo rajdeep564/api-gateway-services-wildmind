@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { queryCanvasPrompt } from '../../services/promptEnhancerService';
 import { formatApiResponse } from '../../utils/formatApiResponse';
+import { postSuccessDebit } from '../../utils/creditDebit';
 
 /**
  * POST /api/canvas/query
@@ -61,7 +62,11 @@ export async function generateScenes(req: Request, res: Response, next: NextFunc
     const { generateScenesFromStory } = require('../../services/promptEnhancerService');
     const result = await generateScenesFromStory(story);
 
-    return res.json(formatApiResponse('success', 'Scenes generated successfully', result));
+    const uid = (req as any).uid;
+    const ctx = (req as any).context || {};
+    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'canvas', 'generate-scenes');
+
+    return res.json(formatApiResponse('success', 'Scenes generated successfully', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
   } catch (err: any) {
     console.error('[Generate Scenes Controller] Error:', err);
     next(err);

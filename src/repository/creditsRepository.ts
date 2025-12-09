@@ -31,9 +31,9 @@ export async function readUserInfo(uid: string): Promise<{ creditBalance: number
   const data = snap.data() as any;
   const creditBalance = Number(data.creditBalance || 0);
   const planCode = (data.planCode as string) || 'FREE';
-  
+
   logger.info({ uid, creditBalance, planCode }, '[CREDITS_REPO] readUserInfo - User info read');
-  
+
   return {
     creditBalance,
     planCode,
@@ -58,27 +58,27 @@ export async function listRecentLedgers(uid: string, limit: number = 10): Promis
  */
 export async function reconcileBalanceFromLedgers(uid: string): Promise<{ calculatedBalance: number; totalGrants: number; totalDebits: number; ledgerCount: number }> {
   logger.info({ uid }, '[CREDITS_REPO] reconcileBalanceFromLedgers - Starting');
-  
+
   const userRef = adminDb.collection('users').doc(uid);
   const ledgersCol = userRef.collection('ledgers');
-  
+
   // Get all CONFIRMED ledger entries (without orderBy to avoid index requirement)
   // We'll sort in memory if needed
   const snap = await ledgersCol
     .where('status', '==', 'CONFIRMED')
     .get();
-  
+
   logger.info({ uid, ledgerCount: snap.docs.length }, '[CREDITS_REPO] reconcileBalanceFromLedgers - Fetched confirmed ledgers');
-  
+
   let totalGrants = 0;
   let totalDebits = 0;
   const grantDetails: Array<{ id: string; amount: number; reason: string }> = [];
   const debitDetails: Array<{ id: string; amount: number; reason: string }> = [];
-  
+
   snap.docs.forEach(doc => {
     const entry = doc.data() as LedgerEntry;
     const amount = Number(entry.amount || 0);
-    
+
     if (entry.type === 'GRANT' || entry.type === 'REFUND') {
       // GRANT and REFUND are positive amounts
       const absAmount = Math.abs(amount);
@@ -91,32 +91,32 @@ export async function reconcileBalanceFromLedgers(uid: string): Promise<{ calcul
       debitDetails.push({ id: doc.id, amount: absAmount, reason: entry.reason });
     }
   });
-  
+
   // Balance = grants - debits
   const calculatedBalance = totalGrants - totalDebits;
   const finalBalance = Math.max(0, calculatedBalance); // Never go negative
-  
-  logger.info({ 
-    uid, 
-    totalGrants, 
-    totalDebits, 
-    calculatedBalance, 
+
+  logger.info({
+    uid,
+    totalGrants,
+    totalDebits,
+    calculatedBalance,
     finalBalance,
     grantCount: grantDetails.length,
     debitCount: debitDetails.length,
     topGrants: grantDetails.slice(0, 5),
     topDebits: debitDetails.slice(0, 5)
   }, '[CREDITS_REPO] reconcileBalanceFromLedgers - Calculation complete');
-  
+
   if (finalBalance === 0 && totalGrants > 0) {
-    logger.warn({ 
-      uid, 
-      totalGrants, 
-      totalDebits, 
-      calculatedBalance 
+    logger.warn({
+      uid,
+      totalGrants,
+      totalDebits,
+      calculatedBalance
     }, '[CREDITS_REPO] WARNING: Final balance is 0 despite having grants!');
   }
-  
+
   return {
     calculatedBalance: finalBalance,
     totalGrants,
@@ -171,7 +171,7 @@ export async function writeDebitIfAbsent(uid: string, requestId: string, amount:
       logger.error({ uid, requestId, amount }, '[CREDITS] Invalid debit amount');
       throw new Error(`Invalid debit amount: ${amount}`);
     }
-    
+
     await adminDb.runTransaction(async (tx) => {
       const existing = await tx.get(ledgerRef);
       if (existing.exists) {
@@ -181,28 +181,28 @@ export async function writeDebitIfAbsent(uid: string, requestId: string, amount:
           return;
         }
       }
-      
+
       // Get current user balance to validate
       const userSnap = await tx.get(userRef);
       if (!userSnap.exists) {
         logger.error({ uid, requestId }, '[CREDITS] User document does not exist');
         throw new Error(`User ${uid} does not exist`);
       }
-      
+
       const currentBalance = Number(userSnap.data()?.creditBalance || 0);
-      
+
       // CRITICAL: Validate balance won't go negative (for logging and safety)
       if (currentBalance < debitAmount) {
-        logger.error({ 
-          uid, 
-          requestId, 
-          currentBalance, 
-          debitAmount, 
-          shortfall: debitAmount - currentBalance 
+        logger.error({
+          uid,
+          requestId,
+          currentBalance,
+          debitAmount,
+          shortfall: debitAmount - currentBalance
         }, '[CREDITS] Insufficient credits - balance would go negative');
         // Still proceed (might be race condition), but log the issue
       }
-      
+
       tx.set(ledgerRef, {
         type: 'DEBIT',
         amount: -debitAmount,
@@ -216,24 +216,24 @@ export async function writeDebitIfAbsent(uid: string, requestId: string, amount:
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       outcome = 'WRITTEN';
-      logger.info({ 
-        uid, 
-        requestId, 
-        debitAmount, 
-        currentBalance, 
-        newBalance: currentBalance - debitAmount 
+      logger.info({
+        uid,
+        requestId,
+        debitAmount,
+        currentBalance,
+        newBalance: currentBalance - debitAmount
       }, '[CREDITS] Debit transaction committed');
     });
-    
+
     // Final safety check after transaction
     const userAfter = await userRef.get();
     const finalBalance = Number(userAfter.data()?.creditBalance || 0);
     if (finalBalance < 0) {
-      logger.error({ 
-        uid, 
-        requestId, 
-        finalBalance, 
-        debitAmount 
+      logger.error({
+        uid,
+        requestId,
+        finalBalance,
+        debitAmount
       }, '[CREDITS] WARNING: Balance went negative after debit!');
     }
     const verify = await ledgerRef.get();
@@ -270,11 +270,11 @@ export async function writeGrantAndSetPlanIfAbsent(
       return out;
     };
     const metaClean = sanitize(meta || {});
-    
+
     // CRITICAL FIX: Read ledgers BEFORE transaction (can't query subcollections in transaction)
     // This prevents the bug where debits are lost when balance is overwritten
     let finalBalance = credits; // Default to grant amount
-    
+
     // Check if grant already exists (idempotency check before transaction)
     const existingLedger = await ledgerRef.get();
     if (existingLedger.exists) {
@@ -298,18 +298,18 @@ export async function writeGrantAndSetPlanIfAbsent(
         return 'SKIPPED';
       }
     }
-    
+
     // Calculate final balance by accounting for existing debits
     const userSnap = await userRef.get();
     const userExists = userSnap.exists;
-    
+
     if (userExists) {
       // Get all CONFIRMED ledger entries to calculate actual balance
       const ledgersCol = userRef.collection('ledgers');
       const allLedgersSnap = await ledgersCol
         .where('status', '==', 'CONFIRMED')
         .get();
-      
+
       // Find the most recent grant before this one (excluding this requestId)
       const previousGrants = allLedgersSnap.docs
         .filter(doc => {
@@ -321,7 +321,7 @@ export async function writeGrantAndSetPlanIfAbsent(
           const bTime = b.data().createdAt?.toMillis?.() || 0;
           return bTime - aTime; // Most recent first
         });
-      
+
       if (previousGrants.length > 0) {
         // There was a previous grant - calculate debits since then
         const lastGrantTime = previousGrants[0].data().createdAt?.toMillis?.() || 0;
@@ -335,16 +335,16 @@ export async function writeGrantAndSetPlanIfAbsent(
             const amount = Math.abs(Number(doc.data().amount || 0));
             return sum + amount;
           }, 0);
-        
+
         // New balance = grant amount - debits since last grant
         finalBalance = Math.max(0, credits - debitsSinceLastGrant);
-        logger.info({ 
-          uid, 
-          requestId, 
-          credits, 
-          debitsSinceLastGrant, 
+        logger.info({
+          uid,
+          requestId,
+          credits,
+          debitsSinceLastGrant,
           finalBalance,
-          lastGrantTime 
+          lastGrantTime
         }, '[CREDITS] Calculated balance accounting for debits since last grant');
       } else {
         // No previous grants - this is the first grant
@@ -358,18 +358,18 @@ export async function writeGrantAndSetPlanIfAbsent(
             const amount = Math.abs(Number(doc.data().amount || 0));
             return sum + amount;
           }, 0);
-        
+
         finalBalance = Math.max(0, credits - totalDebits);
-        logger.info({ 
-          uid, 
-          requestId, 
-          credits, 
-          totalDebits, 
-          finalBalance 
+        logger.info({
+          uid,
+          requestId,
+          credits,
+          totalDebits,
+          finalBalance
         }, '[CREDITS] First grant - calculated balance accounting for all debits');
       }
     }
-    
+
     await adminDb.runTransaction(async (tx) => {
       // Re-check ledger in transaction for idempotency (race condition protection)
       const existing = await tx.get(ledgerRef);
@@ -380,11 +380,11 @@ export async function writeGrantAndSetPlanIfAbsent(
           return;
         }
       }
-      
+
       // Re-check user exists in transaction
       const userSnapInTx = await tx.get(userRef);
       const userExistsInTx = userSnapInTx.exists;
-      
+
       tx.set(ledgerRef, {
         type: 'GRANT',
         amount: Math.abs(credits),
@@ -393,7 +393,7 @@ export async function writeGrantAndSetPlanIfAbsent(
         meta: { ...metaClean, planCode: newPlanCode },
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       } as LedgerEntry);
-      
+
       // Set balance to calculated value (accounts for debits)
       // Use update() if user exists, set() with merge if not
       if (userExistsInTx) {
@@ -493,6 +493,70 @@ export const creditsRepository = {
   writeGrantIncrement,
   reconcileBalanceFromLedgers,
   clearAllLedgersForUser,
+  writeRefund,
 };
+
+/**
+ * Write a REFUND ledger entry that INCREMENTS the balance.
+ * Used when a generation fails after credits were debited.
+ */
+export async function writeRefund(
+  uid: string,
+  requestId: string,
+  amount: number,
+  reason: string,
+  meta?: Record<string, any>
+): Promise<'SKIPPED' | 'WRITTEN'> {
+  const userRef = adminDb.collection('users').doc(uid);
+  const ledgerRef = userRef.collection('ledgers').doc(`refund-${requestId}`);
+
+  let outcome: 'SKIPPED' | 'WRITTEN' = 'SKIPPED';
+  try {
+    logger.info({ uid, requestId, amount, reason }, '[CREDITS] Refund transaction start');
+    const sanitize = (obj: any): any => {
+      if (obj == null || typeof obj !== 'object') return obj;
+      if (Array.isArray(obj)) return obj.map((v) => sanitize(v)).filter((v) => v !== undefined);
+      const out: any = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if (v === undefined) continue;
+        const sv = sanitize(v);
+        if (sv !== undefined) out[k] = sv;
+      }
+      return out;
+    };
+    const metaClean = sanitize(meta || {});
+
+    await adminDb.runTransaction(async (tx) => {
+      const existing = await tx.get(ledgerRef);
+      if (existing.exists) {
+        logger.info({ uid, requestId }, '[CREDITS] Refund already exists (idempotent)');
+        return;
+      }
+
+      // Write REFUND ledger entry
+      tx.set(ledgerRef, {
+        type: 'REFUND',
+        amount: Math.abs(amount), // Refund is positive
+        reason,
+        status: 'CONFIRMED',
+        meta: { ...metaClean, originalRequestId: requestId },
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      } as LedgerEntry);
+
+      // INCREMENT balance
+      tx.update(userRef, {
+        creditBalance: admin.firestore.FieldValue.increment(Math.abs(amount)),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      outcome = 'WRITTEN';
+    });
+
+    logger.info({ uid, requestId, outcome }, '[CREDITS] Refund transaction complete');
+  } catch (e) {
+    logger.error({ uid, requestId, err: e }, '[CREDITS] Refund transaction error');
+    throw e;
+  }
+  return outcome;
+}
 
 
