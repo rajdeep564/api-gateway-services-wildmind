@@ -2761,11 +2761,15 @@ async function queueResult(uid: string, model: string | undefined, requestId: st
       storagePath: v.storagePath,
       originalUrl: v.originalUrl || providerUrl,
     }));
+    let debitedCredits: number | null = null;
+    let debitStatus: 'WRITTEN' | 'SKIPPED' | 'ERROR' | null = null;
     try {
       const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(resolvedModel, (located as any)?.item);
-      await creditsRepository.writeDebitIfAbsent(uid, located.id, cost, 'fal.queue.veo', { ...meta, historyId: located.id, provider: 'fal', pricingVersion });
-    } catch {}
-    return { videos: enrichedVideos, historyId: located.id, model: resolvedModel, requestId, status: 'completed' } as any;
+      const status = await creditsRepository.writeDebitIfAbsent(uid, located.id, cost, 'fal.queue.veo', { ...meta, historyId: located.id, provider: 'fal', pricingVersion });
+      debitedCredits = cost;
+      debitStatus = status;
+    } catch { debitStatus = 'ERROR'; }
+    return { videos: enrichedVideos, historyId: located.id, model: resolvedModel, requestId, status: 'completed', debitedCredits, debitStatus } as any;
   }
   // Handle image outputs (T2I/I2I)
   if (located && (result?.data?.images?.length || result?.data?.image?.url)) {
@@ -2835,7 +2839,20 @@ export const falQueueService = {
     if (!body?.prompt) throw new ApiError('Prompt is required', 400);
     if (!body?.image_url) throw new ApiError('image_url is required', 400);
     const model = fast ? 'fal-ai/veo3.1/fast/image-to-video' : 'fal-ai/veo3.1/image-to-video';
-    const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    const duration = typeof body.duration === 'number' ? `${body.duration}s` : (body.duration || '8s');
+    const resolution = body.resolution || '720p';
+
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt: body.prompt,
+      model,
+      isPublic: body.isPublic,
+      // store meta fields for later pricing/debit
+      duration,
+      resolution,
+      aspect_ratio: body.aspect_ratio ?? 'auto',
+      generate_audio: body.generate_audio ?? true,
+    } as any);
+
     // Persist input image
     await persistInputImagesFromUrls(uid, historyId, [body.image_url]);
     const { request_id } = await fal.queue.submit(model, {
@@ -2843,12 +2860,12 @@ export const falQueueService = {
         prompt: body.prompt,
         image_url: body.image_url,
         aspect_ratio: body.aspect_ratio ?? 'auto',
-        duration: body.duration ?? '8s',
+        duration,
         generate_audio: body.generate_audio ?? true,
-        resolution: body.resolution ?? '720p',
+        resolution,
       },
     } as any);
-    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration, resolution } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   async veo31ReferenceToVideoSubmit(uid: string, body: any): Promise<SubmitReturn> {
@@ -2879,11 +2896,24 @@ export const falQueueService = {
     const firstUrl = body.first_frame_url || body.start_image_url;
     const lastUrl = body.last_frame_url || body.last_frame_image_url;
     if (!firstUrl) throw new ApiError('first_frame_url is required', 400);
-    if (!lastUrl) throw new ApiError('last_frame_url is required', 400);
+
+    // If only first frame provided, downgrade to fast I2V path
+    if (!lastUrl) {
+      return this.veo31I2vSubmit(uid, {
+        ...body,
+        image_url: firstUrl,
+        prompt: body.prompt,
+        aspect_ratio: body.aspect_ratio,
+        duration: body.duration,
+        resolution: body.resolution,
+        generate_audio: body.generate_audio,
+      }, true);
+    }
+
     const model = 'fal-ai/veo3.1/fast/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
     // Persist first and last frame images
-    await persistInputImagesFromUrls(uid, historyId, [body.start_image_url, body.last_frame_image_url]);
+    await persistInputImagesFromUrls(uid, historyId, [body.start_image_url || firstUrl, body.last_frame_image_url || lastUrl]);
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
@@ -2905,7 +2935,20 @@ export const falQueueService = {
     const firstUrl = body.first_frame_url || body.start_image_url;
     const lastUrl = body.last_frame_url || body.last_frame_image_url;
     if (!firstUrl) throw new ApiError('first_frame_url is required', 400);
-    if (!lastUrl) throw new ApiError('last_frame_url is required', 400);
+
+    // If only first frame provided, downgrade to standard I2V path
+    if (!lastUrl) {
+      return this.veo31I2vSubmit(uid, {
+        ...body,
+        image_url: firstUrl,
+        prompt: body.prompt,
+        aspect_ratio: body.aspect_ratio,
+        duration: body.duration,
+        resolution: body.resolution,
+        generate_audio: body.generate_audio,
+      }, false);
+    }
+
     const model = 'fal-ai/veo3.1/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
     // Persist first and last frame images

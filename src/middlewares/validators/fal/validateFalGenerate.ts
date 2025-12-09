@@ -268,7 +268,22 @@ export const validateFalQueueResult = validateFalQueueStatus;
 export const validateFalVeoTextToVideoSubmit = validateFalVeoTextToVideo;
 export const validateFalVeoTextToVideoFastSubmit = validateFalVeoTextToVideoFast;
 export const validateFalVeoImageToVideoSubmit = validateFalVeoImageToVideo;
-export const validateFalVeoImageToVideoFastSubmit = validateFalVeoImageToVideoFast;
+// Allow 4s/6s/8s for fast I2V and coerce numeric durations to the expected string format
+export const validateFalVeoImageToVideoFastSubmit = [
+  ...validateFalVeoImageToVideoFast,
+  (req: Request, _res: Response, next: NextFunction) => {
+    const d = (req.body as any)?.duration;
+    if (typeof d === 'number') {
+      const mapped = d === 4 || d === 6 || d === 8 ? `${d}s` : '8s';
+      (req.body as any).duration = mapped;
+    }
+    // If duration is not in allowed list, default to 8s
+    if (req.body.duration && !['4s', '6s', '8s'].includes(req.body.duration)) {
+      req.body.duration = '8s';
+    }
+    next();
+  }
+];
 
 // NanoBanana uses unified generate/queue; no separate validators
 
@@ -280,16 +295,15 @@ export const validateFalVeo31FirstLastFast = [
   body('last_frame_image_url').optional().isString(),
   body('first_frame_url').optional().isString(),
   body('last_frame_url').optional().isString(),
-  body('aspect_ratio').optional().isIn(['16:9', '9:16', '1:1','auto']),
-  body('duration').optional().isIn(['8s']),
+  body('aspect_ratio').optional().isIn(['auto','16:9', '9:16']),
+  body('duration').optional().isIn(['4s','6s','8s']),
   body('generate_audio').optional().isBoolean(),
   body('resolution').optional().isIn(['720p', '1080p']),
   (req: Request, _res: Response, next: NextFunction) => {
-    // Ensure at least one pair of first/last is provided
-    const hasStart = typeof (req.body?.start_image_url) === 'string' || typeof (req.body?.first_frame_url) === 'string';
-    const hasLast = typeof (req.body?.last_frame_image_url) === 'string' || typeof (req.body?.last_frame_url) === 'string';
-    if (!hasStart || !hasLast) {
-      return next(new ApiError('first/last frame URLs are required (use first_frame_url/last_frame_url or start_image_url/last_frame_image_url)', 400));
+    // Require at least a first frame; last frame optional (if provided we treat as FLF2V)
+    const hasFirst = typeof (req.body?.start_image_url) === 'string' || typeof (req.body?.first_frame_url) === 'string';
+    if (!hasFirst) {
+      return next(new ApiError('first_frame_url is required (alias: start_image_url)', 400));
     }
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
@@ -370,15 +384,14 @@ export const validateFalVeo31FirstLast = [
   // Support alias keys as well for flexibility
   body('start_image_url').optional().isString(),
   body('last_frame_image_url').optional().isString(),
-  body('aspect_ratio').optional().isIn(['auto','16:9', '9:16', '1:1']),
+  body('aspect_ratio').optional().isIn(['auto','16:9', '9:16']),
   body('duration').optional().isIn(['8s','4s','6s']),
   body('generate_audio').optional().isBoolean(),
   body('resolution').optional().isIn(['720p', '1080p']),
   (req: Request, _res: Response, next: NextFunction) => {
     const hasFirst = typeof (req.body?.first_frame_url) === 'string' || typeof (req.body?.start_image_url) === 'string';
-    const hasLast = typeof (req.body?.last_frame_url) === 'string' || typeof (req.body?.last_frame_image_url) === 'string';
-    if (!hasFirst || !hasLast) {
-      return next(new ApiError('first_frame_url and last_frame_url are required (aliases: start_image_url, last_frame_image_url)', 400));
+    if (!hasFirst) {
+      return next(new ApiError('first_frame_url is required (aliases: start_image_url)', 400));
     }
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
