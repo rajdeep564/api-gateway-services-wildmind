@@ -1,8 +1,9 @@
 /**
- * Backend: Video Proxy Generation Endpoint
+ * Backend: Video Proxy Generation Endpoint (Zata Storage)
  * 
  * Handles video uploads and generates low-resolution proxies for smooth editing.
  * Proxies are used during editing; originals are used for final export.
+ * Uses Zata storage instead of S3.
  */
 
 import express, { Request, Response } from 'express';
@@ -11,6 +12,14 @@ import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { uploadBufferToZata } from '../../utils/storage/zataUpload';
+
+// Use npm-installed FFmpeg binaries
+const ffmpegPath = require('ffmpeg-static');
+const ffprobePath = require('ffprobe-static').path;
+
+console.log('[ProxyGeneration] Using FFmpeg from:', ffmpegPath);
+console.log('[ProxyGeneration] Using FFprobe from:', ffprobePath);
 
 const router = express.Router();
 
@@ -36,8 +45,13 @@ const upload = multer({
  * Uploads a video and generates resolution proxies (720p, 1080p)
  */
 router.post('/create-proxy', upload.single('video'), async (req: Request, res: Response) => {
+    console.log('[ProxyGeneration] 📥 REQUEST RECEIVED');
+    console.log('[ProxyGeneration] Body:', req.body);
+    console.log('[ProxyGeneration] File:', req.file ? { name: req.file.originalname, size: req.file.size, type: req.file.mimetype } : 'NO FILE');
+
     try {
         if (!req.file) {
+            console.error('[ProxyGeneration] ❌ No file in request');
             return res.status(400).json({
                 responseStatus: 'error',
                 message: 'No video file uploaded',
@@ -49,15 +63,15 @@ router.post('/create-proxy', upload.single('video'), async (req: Request, res: R
         const originalPath = req.file.path;
         const originalFilename = req.file.originalname;
 
-        console.log('[ProxyGeneration] Starting for video:', originalFilename);
+        console.log('[ProxyGeneration] 🎬 Starting for video:', originalFilename, 'ID:', videoId);
 
         // Get video metadata
         const metadata = await getVideoMetadata(originalPath);
         console.log('[ProxyGeneration] Metadata:', metadata);
 
-        // Upload original to S3
-        const originalUrl = await uploadToS3(originalPath, `videos/originals/${userId}/${videoId}/${originalFilename}`);
-        console.log('[ProxyGeneration] Original uploaded:', originalUrl);
+        // Upload original to Zata
+        const originalUrl = await uploadToZata(originalPath, `videos/originals/${userId}/${videoId}/${originalFilename}`);
+        console.log('[ProxyGeneration] Original uploaded to Zata:', originalUrl);
 
         // Determine proxy resolutions based on original size
         const proxyResolutions = determineProxyResolutions(metadata.width, metadata.height);
@@ -93,8 +107,11 @@ router.post('/create-proxy', upload.single('video'), async (req: Request, res: R
             },
         });
 
+        console.log('[ProxyGeneration] ✅ SUCCESS - Sending response');
+
     } catch (error) {
-        console.error('[ProxyGeneration] Error:', error);
+        console.error('[ProxyGeneration] ❌ ERROR:', error);
+        console.error('[ProxyGeneration] Stack:', error instanceof Error ? error.stack : 'No stack');
         res.status(500).json({
             responseStatus: 'error',
             message: error instanceof Error ? error.message : 'Failed to generate proxy',
@@ -113,7 +130,7 @@ async function getVideoMetadata(videoPath: string): Promise<{
     fps: number;
 }> {
     return new Promise((resolve, reject) => {
-        const ffprobe = spawn('ffprobe', [
+        const ffprobe = spawn(ffprobePath, [
             '-v', 'quiet',
             '-print_format', 'json',
             '-show_format',
@@ -191,7 +208,7 @@ async function generateProxy(
     const targetHeight = resolution === '720p' ? 720 : 1080;
 
     return new Promise((resolve, reject) => {
-        const ffmpeg = spawn('ffmpeg', [
+        const ffmpeg = spawn(ffmpegPath, [
             '-i', originalPath,
             '-vf', `scale=-2:${targetHeight}`,  // -2 maintains aspect ratio with even width
             '-c:v', 'libx264',
@@ -218,8 +235,8 @@ async function generateProxy(
             }
 
             try {
-                // Upload proxy to S3
-                const proxyUrl = await uploadToS3(
+                // Upload proxy to Zata
+                const proxyUrl = await uploadToZata(
                     outputPath,
                     `videos/proxies/${userId}/${videoId}/${resolution}.mp4`
                 );
@@ -236,13 +253,29 @@ async function generateProxy(
 }
 
 /**
- * Upload file to S3 (placeholder - implement based on your S3 setup)
+ * Upload file to Zata storage
  */
-async function uploadToS3(filePath: string, s3Key: string): Promise<string> {
-    // TODO: Implement actual S3 upload using @aws-sdk/client-s3
-    // For now, return a placeholder URL
-    const bucketName = process.env.AWS_S3_BUCKET || 'wildmind-videos';
-    return `https://${bucketName}.s3.amazonaws.com/${s3Key}`;
+async function uploadToZata(filePath: string, key: string): Promise<string> {
+    console.log('[uploadToZata] 📤 Uploading:', key);
+    try {
+        // Read file as buffer
+        const buffer = await fs.readFile(filePath);
+        console.log('[uploadToZata] 📄 File read:', buffer.length, 'bytes');
+
+        // Upload to Zata
+        console.log('[uploadToZata] ⬆️ Calling uploadBufferToZata...');
+        const { publicUrl } = await uploadBufferToZata(
+            key,
+            buffer,
+            'video/mp4'
+        );
+
+        console.log('[uploadToZata] ✅ Success! URL:', publicUrl);
+        return publicUrl;
+    } catch (error) {
+        console.error('[uploadToZata] ❌ Failed:', error);
+        throw new Error('Failed to upload to Zata storage');
+    }
 }
 
 export default router;

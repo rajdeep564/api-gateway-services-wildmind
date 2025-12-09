@@ -18,6 +18,7 @@ import reimagineRoutes from './reimagine';
 import libraryRoutes from './library';
 import uploadsRoutes from './uploads';
 import videoProxyRoutes from './canvas/videoProxy';
+import videoExportRoutes from './videoExport';
 
 const router = Router();
 
@@ -40,6 +41,7 @@ router.use('/canvas/video', videoProxyRoutes);
 router.use('/prompt-enhancer', promptEnhancerRoutes);
 router.use('/replace', replaceRoutes);
 router.use('/reimagine', reimagineRoutes);
+router.use('/video-export', videoExportRoutes);
 
 export default router;
 
