@@ -139,8 +139,11 @@ function resolveVeo31Display(isFast: boolean, kind: 't2v' | 'i2v', duration?: st
     if (kind === 't2v') {
       if (dur.startsWith('4')) return 'Veo 3.1 Fast T2V 4s';
       if (dur.startsWith('6')) return 'Veo 3.1 Fast T2V 6s';
-      return 'Veo 3.1 Fast T2V 8s'; 
+      return 'Veo 3.1 Fast T2V 8s';
     }
+    // Fix: Handle duration for I2V Fast as well
+    if (dur.startsWith('4')) return 'Veo 3.1 Fast I2V 4s';
+    if (dur.startsWith('6')) return 'Veo 3.1 Fast I2V 6s';
     return 'Veo 3.1 Fast I2V 8s';
   } else {
     if (kind === 't2v') {
@@ -148,6 +151,9 @@ function resolveVeo31Display(isFast: boolean, kind: 't2v' | 'i2v', duration?: st
       if (dur.startsWith('6')) return 'Veo 3.1 T2V 6s';
       return 'Veo 3.1 T2V 8s';
     }
+    // Fix: Handle duration for I2V (non-fast) as well
+    if (dur.startsWith('4')) return 'Veo 3.1 I2V 4s';
+    if (dur.startsWith('6')) return 'Veo 3.1 I2V 6s';
     return 'Veo 3.1 I2V 8s';
   }
 }
@@ -315,11 +321,45 @@ export function computeFalVeoCostFromModel(model: string, meta?: any): { cost: n
   else if (normalized === 'fal-ai/veo3/fast/image-to-video') display = 'veo3 fast i2v 8s';
   else if (normalized === 'fal-ai/veo3.1') display = 'Veo 3.1 T2V 8s';
   else if (normalized === 'fal-ai/veo3.1/fast') display = 'Veo 3.1 Fast T2V 8s';
-  else if (normalized === 'fal-ai/veo3.1/image-to-video') display = 'Veo 3.1 I2V 8s';
-  else if (normalized === 'fal-ai/veo3.1/fast/image-to-video') display = 'Veo 3.1 Fast I2V 8s';
-  else if (normalized === 'fal-ai/veo3.1/first-last-frame-to-video') display = 'Veo 3.1 I2V 8s';
-  else if (normalized === 'fal-ai/veo3.1/fast/first-last-frame-to-video') display = 'Veo 3.1 Fast I2V 8s';
-  else if (normalized === 'fal-ai/veo3.1/reference-to-video') display = 'Veo 3.1 I2V 8s';
+  else if (normalized === 'fal-ai/veo3.1/image-to-video') {
+    // Handle duration and audio flag for Veo 3.1 I2V (image-to-video)
+    const dur = String(meta?.duration ?? '8');
+    const hasAudio = meta?.generate_audio !== false; // default ON
+    if (dur.startsWith('4')) display = hasAudio ? 'Veo 3.1 I2V 4s AUDIO ON' : 'Veo 3.1 I2V 4s AUDIO OFF';
+    else if (dur.startsWith('6')) display = hasAudio ? 'Veo 3.1 I2V 6s AUDIO ON' : 'Veo 3.1 I2V 6s AUDIO OFF';
+    else display = hasAudio ? 'Veo 3.1 I2V 8s AUDIO ON' : 'Veo 3.1 I2V 8s AUDIO OFF';
+  }
+  else if (normalized === 'fal-ai/veo3.1/fast/image-to-video') {
+    // Handle duration and audio flag for Veo 3.1 Fast I2V (image-to-video)
+    const dur = String(meta?.duration ?? '8');
+    const hasAudio = meta?.generate_audio !== false; // default ON
+    if (dur.startsWith('4')) display = hasAudio ? 'Veo 3.1 Fast I2V 4s AUDIO ON' : 'Veo 3.1 Fast I2V 4s AUDIO OFF';
+    else if (dur.startsWith('6')) display = hasAudio ? 'Veo 3.1 Fast I2V 6s AUDIO ON' : 'Veo 3.1 Fast I2V 6s AUDIO OFF';
+    else display = hasAudio ? 'Veo 3.1 Fast I2V 8s AUDIO ON' : 'Veo 3.1 Fast I2V 8s AUDIO OFF';
+  }
+  else if (normalized === 'fal-ai/veo3.1/first-last-frame-to-video') {
+    // Handle duration and audio flag for Veo 3.1 first-last-frame I2V
+    const dur = String(meta?.duration ?? '8');
+    const hasAudio = meta?.generate_audio !== false; // default ON
+    if (dur.startsWith('4')) display = hasAudio ? 'Veo 3.1 I2V 4s AUDIO ON' : 'Veo 3.1 I2V 4s AUDIO OFF';
+    else if (dur.startsWith('6')) display = hasAudio ? 'Veo 3.1 I2V 6s AUDIO ON' : 'Veo 3.1 I2V 6s AUDIO OFF';
+    else display = hasAudio ? 'Veo 3.1 I2V 8s AUDIO ON' : 'Veo 3.1 I2V 8s AUDIO OFF';
+  }
+  else if (normalized === 'fal-ai/veo3.1/fast/first-last-frame-to-video') {
+    // Handle duration and audio flag for Veo 3.1 Fast first-last-frame I2V
+    const dur = String(meta?.duration ?? '8');
+    const hasAudio = meta?.generate_audio !== false; // default ON
+    if (dur.startsWith('4')) display = hasAudio ? 'Veo 3.1 Fast I2V 4s AUDIO ON' : 'Veo 3.1 Fast I2V 4s AUDIO OFF';
+    else if (dur.startsWith('6')) display = hasAudio ? 'Veo 3.1 Fast I2V 6s AUDIO ON' : 'Veo 3.1 Fast I2V 6s AUDIO OFF';
+    else display = hasAudio ? 'Veo 3.1 Fast I2V 8s AUDIO ON' : 'Veo 3.1 Fast I2V 8s AUDIO OFF';
+  }
+  else if (normalized === 'fal-ai/veo3.1/reference-to-video') {
+    // Fix: Handle duration for Veo 3.1 I2V (reference-to-video)
+    const dur = String(meta?.duration ?? '8');
+    if (dur.startsWith('4')) display = 'Veo 3.1 I2V 4s';
+    else if (dur.startsWith('6')) display = 'Veo 3.1 I2V 6s';
+    else display = 'Veo 3.1 I2V 8s';
+  }
   // Sora 2 mapping using stored meta for duration/resolution
   else if (normalized === 'fal-ai/sora-2/image-to-video') {
     const dur = String(meta?.duration ?? '8');
@@ -373,21 +413,21 @@ export function computeFalVeoCostFromModel(model: string, meta?: any): { cost: n
 }
 
 // Image utilities pricing
-export async function computeFalImage2SvgCost(_req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+export async function computeFalImage2SvgCost(_req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const display = 'fal-ai/image2svg';
   const base = findCredits(display);
   if (base == null) throw new Error('Unsupported FAL image2svg pricing');
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display } };
 }
 
-export async function computeFalRecraftVectorizeCost(_req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+export async function computeFalRecraftVectorizeCost(_req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const display = 'fal-ai/recraft/vectorize';
   const base = findCredits(display);
   if (base == null) throw new Error('Unsupported FAL recraft/vectorize pricing');
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display } };
 }
 
-export async function computeFalBriaGenfillCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+export async function computeFalBriaGenfillCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const display = 'fal-ai/bria/genfill';
   const base = findCredits(display);
   if (base == null) throw new Error('Unsupported FAL bria/genfill pricing');
@@ -399,11 +439,11 @@ export async function computeFalBriaGenfillCost(req: Request): Promise<{ cost: n
 
 // SeedVR2 Video Upscaler dynamic pricing
 // Rule: $0.001 per megapixel of upscaled video data (width x height x frames)
-export async function computeFalSeedVrUpscaleCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+export async function computeFalSeedVrUpscaleCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const body: any = req.body || {};
   const url: string = body.video_url;
   if (!url) throw new Error('video_url is required');
-  
+
   // Use validator-stashed probe if available; otherwise probe now
   let meta: any = (req as any).seedvrProbe;
   if (!meta) {
@@ -414,21 +454,21 @@ export async function computeFalSeedVrUpscaleCost(req: Request): Promise<{ cost:
       meta = {};
     }
   }
-  
+
   const durationSec = Number(meta?.durationSec || 0);
   const inW = Number(meta?.width || 0);
   const inH = Number(meta?.height || 0);
   let frames = Number(meta?.frames || 0);
   const fps = Number(meta?.fps || 0);
-  
+
   if ((!frames || !isFinite(frames)) && isFinite(durationSec) && isFinite(fps) && fps > 0) {
     frames = Math.round(durationSec * fps);
   }
-  
+
   // If metadata is incomplete, use conservative defaults for pricing
   // Default: assume 1080p video, 30fps, 10 seconds (max allowed)
   const useDefaults = !isFinite(durationSec) || durationSec <= 0 || !isFinite(inW) || !isFinite(inH) || inW <= 0 || inH <= 0 || !isFinite(frames) || frames <= 0;
-  
+
   if (useDefaults) {
     console.warn('[computeFalSeedVrUpscaleCost] Using conservative default estimates for pricing (metadata unavailable)');
     // Use conservative defaults: 1080p (1920x1080), 30fps, 10 seconds
@@ -437,7 +477,7 @@ export async function computeFalSeedVrUpscaleCost(req: Request): Promise<{ cost:
     const defaultFps = 30;
     const defaultDuration = 10; // Conservative: assume 10 seconds
     const defaultFrames = defaultDuration * defaultFps;
-    
+
     // Use defaults for calculation
     const mode: 'factor' | 'target' = (body.upscale_mode === 'target' ? 'target' : 'factor');
     let outW = defaultW;
@@ -458,7 +498,7 @@ export async function computeFalSeedVrUpscaleCost(req: Request): Promise<{ cost:
     const megapixels = totalPixels / 1_000_000;
     const dollars = megapixels * 0.001;
     const credits = Math.max(1, Math.ceil(dollars * CREDITS_PER_USD));
-    
+
     return {
       cost: credits,
       pricingVersion: FAL_PRICING_VERSION,
@@ -474,7 +514,7 @@ export async function computeFalSeedVrUpscaleCost(req: Request): Promise<{ cost:
       }
     };
   }
-  
+
   if (durationSec > 30.5) throw new Error('Input video too long. Maximum allowed duration is 30 seconds.');
   // Compute output dimensions based on requested mode
   const mode: 'factor' | 'target' = (body.upscale_mode === 'target' ? 'target' : 'factor');
@@ -512,7 +552,7 @@ export async function computeFalSeedVrUpscaleCost(req: Request): Promise<{ cost:
 }
 
 // BiRefNet v2 Background Removal pricing: similar to SeedVR (per output megapixel)
-export async function computeFalBirefnetVideoCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+export async function computeFalBirefnetVideoCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const body: any = req.body || {};
   let url: string | undefined = body.video_url;
   // Handle data URI videos: upload to Zata to get a public URL for probing
@@ -526,7 +566,7 @@ export async function computeFalBirefnetVideoCost(req: Request): Promise<{ cost:
     }
   }
   if (!url) throw new Error('video_url or video (data URI) is required');
-  
+
   // Use validator-stashed probe if available; otherwise probe now
   let meta: any = (req as any).birefnetProbe;
   if (!meta) {
@@ -537,7 +577,7 @@ export async function computeFalBirefnetVideoCost(req: Request): Promise<{ cost:
       meta = {};
     }
   }
-  
+
   const durationSec = Number(meta?.durationSec || 0);
   const inW = Number(meta?.width || 0);
   const inH = Number(meta?.height || 0);
@@ -546,11 +586,11 @@ export async function computeFalBirefnetVideoCost(req: Request): Promise<{ cost:
   if ((!frames || !isFinite(frames)) && isFinite(durationSec) && isFinite(fps) && fps > 0) {
     frames = Math.round(durationSec * fps);
   }
-  
+
   // If metadata is incomplete, use conservative defaults for pricing
   // Default: assume 1080p video, 30fps, 10 seconds (max allowed)
   const useDefaults = !isFinite(durationSec) || durationSec <= 0 || !isFinite(inW) || !isFinite(inH) || inW <= 0 || inH <= 0 || !isFinite(frames) || frames <= 0;
-  
+
   if (useDefaults) {
     console.warn('[computeFalBirefnetVideoCost] Using conservative default estimates for pricing (metadata unavailable)');
     // Use conservative defaults: 1080p (1920x1080), 30fps, 10 seconds
@@ -559,7 +599,7 @@ export async function computeFalBirefnetVideoCost(req: Request): Promise<{ cost:
     const defaultFps = 30;
     const defaultDuration = 10; // Conservative: assume 10 seconds
     const defaultFrames = defaultDuration * defaultFps;
-    
+
     // Assume output same resolution as input for pricing purposes
     const outW = defaultW;
     const outH = defaultH;
@@ -567,7 +607,7 @@ export async function computeFalBirefnetVideoCost(req: Request): Promise<{ cost:
     const megapixels = totalPixels / 1_000_000;
     const dollars = megapixels * 0.001;
     const credits = Math.max(1, Math.ceil(dollars * CREDITS_PER_USD));
-    
+
     return {
       cost: credits,
       pricingVersion: FAL_PRICING_VERSION,
@@ -589,7 +629,7 @@ export async function computeFalBirefnetVideoCost(req: Request): Promise<{ cost:
       }
     };
   }
-  
+
   // Assume output same resolution as input for pricing purposes
   const outW = inW;
   const outH = inH;
@@ -620,7 +660,7 @@ export async function computeFalBirefnetVideoCost(req: Request): Promise<{ cost:
 
 // Topaz Image Upscaler dynamic pricing
 // Rule: 70 credits per output megapixel (width x height / 1e6)
-export async function computeFalTopazUpscaleImageCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
+export async function computeFalTopazUpscaleImageCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const body: any = req.body || {};
   let url: string | undefined = body.image_url;
   // Allow data URI input (image); upload to Zata to obtain a public URL for probing
@@ -664,11 +704,11 @@ export async function computeFalElevenTtsCost(req: Request): Promise<{ cost: num
   if (!text || typeof text !== 'string') {
     throw new Error('text is required for ElevenLabs TTS pricing');
   }
-  
+
   const charCount = text.length;
   let display: string;
   let cost: number | null;
-  
+
   if (charCount <= 1000) {
     display = 'Elevenlabs Eleven v3 TTS 1000 Characters';
     cost = findCredits(display);
@@ -680,11 +720,11 @@ export async function computeFalElevenTtsCost(req: Request): Promise<{ cost: num
     display = 'Elevenlabs Eleven v3 TTS 2000 Characters';
     cost = findCredits(display);
   }
-  
+
   if (cost == null) {
     throw new Error(`Unsupported ElevenLabs TTS pricing for ${charCount} characters`);
   }
-  
+
   return {
     cost,
     pricingVersion: FAL_PRICING_VERSION,
@@ -701,16 +741,16 @@ export async function computeFalElevenDialogueCost(req: Request): Promise<{ cost
   if (!Array.isArray(inputs) || inputs.length === 0) {
     throw new Error('inputs array is required for ElevenLabs Dialogue pricing');
   }
-  
+
   // Calculate total character count across all inputs
   const totalCharCount = inputs.reduce((sum, input) => {
     const text = input?.text || '';
     return sum + (typeof text === 'string' ? text.length : 0);
   }, 0);
-  
+
   let display: string;
   let cost: number | null;
-  
+
   if (totalCharCount <= 1000) {
     display = 'Elevenlabs Eleven v3 TTD 1000 Characters';
     cost = findCredits(display);
@@ -722,11 +762,11 @@ export async function computeFalElevenDialogueCost(req: Request): Promise<{ cost
     display = 'Elevenlabs Eleven v3 TTD 2000 Characters';
     cost = findCredits(display);
   }
-  
+
   if (cost == null) {
     throw new Error(`Unsupported ElevenLabs Dialogue pricing for ${totalCharCount} characters`);
   }
-  
+
   return {
     cost,
     pricingVersion: FAL_PRICING_VERSION,
@@ -744,11 +784,11 @@ export async function computeFalChatterboxMultilingualCost(req: Request): Promis
   if (!text || typeof text !== 'string') {
     throw new Error('text is required for Chatterbox Multilingual TTS pricing');
   }
-  
+
   const charCount = text.length;
   let display: string;
   let cost: number | null;
-  
+
   if (charCount <= 1000) {
     display = 'Chatter Box Multilingual 1000 Characters';
     cost = findCredits(display);
@@ -760,11 +800,11 @@ export async function computeFalChatterboxMultilingualCost(req: Request): Promis
     display = 'Chatter Box Multilingual 2000 Characters';
     cost = findCredits(display);
   }
-  
+
   if (cost == null) {
     throw new Error(`Unsupported Chatterbox Multilingual TTS pricing for ${charCount} characters`);
   }
-  
+
   return {
     cost,
     pricingVersion: FAL_PRICING_VERSION,
@@ -785,13 +825,13 @@ export async function computeFalMayaTtsCost(req: Request): Promise<{ cost: numbe
   if (!text || typeof text !== 'string') {
     throw new Error('text is required for Maya TTS pricing');
   }
-  
+
   // Estimate duration: ~15 characters per second (more accurate based on actual audio generation)
   // Minimum 1 second
   const estimatedDuration = Math.max(1, Math.ceil(text.length / 15));
   const creditsPerSecond = 6;
   const cost = estimatedDuration * creditsPerSecond;
-  
+
   return {
     cost,
     pricingVersion: FAL_PRICING_VERSION,
@@ -808,18 +848,18 @@ export async function computeFalMayaTtsCost(req: Request): Promise<{ cost: numbe
 // ElevenLabs SFX pricing based on duration_seconds (6 credits per second)
 export async function computeFalElevenSfxCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { duration_seconds } = req.body || {};
-  
+
   // Default to 5 seconds if not provided (matches frontend default)
   const duration = duration_seconds != null ? Number(duration_seconds) : 5.0;
-  
+
   // Ensure minimum 0.5 seconds and maximum 22 seconds (FAL API limits)
   const clampedDuration = Math.max(0.5, Math.min(22, duration));
-  
+
   // Round up to nearest second for pricing
   const durationSeconds = Math.ceil(clampedDuration);
   const creditsPerSecond = 6;
   const cost = durationSeconds * creditsPerSecond;
-  
+
   return {
     cost,
     pricingVersion: FAL_PRICING_VERSION,

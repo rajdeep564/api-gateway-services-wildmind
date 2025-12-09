@@ -2284,13 +2284,30 @@ export async function wanI2vSubmit(
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
     model: modelBase,
-    generationType: "text-to-video",
+    generationType: "image-to-video",
     visibility: body.isPublic ? "public" : "private",
     isPublic: body.isPublic ?? false,
     createdBy,
     duration: durationSec as any,
     resolution: res as any,
   } as any);
+
+  // Persist input image to Zata so UI can show "Your Uploads"
+  try {
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    if (typeof body.image === 'string' && body.image.length > 0) {
+      const stored = /^data:/i.test(body.image)
+        ? await uploadDataUriToZata({ dataUri: body.image, keyPrefix, fileName: 'input-1' })
+        : await uploadFromUrlToZata({ sourceUrl: body.image, keyPrefix, fileName: 'input-1' });
+      await generationHistoryRepository.update(uid, historyId, {
+        inputImages: [{ id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.image }],
+      } as any);
+      console.log('[replicateQueue.wanI2vSubmit] Saved inputImages to database', { historyId });
+    }
+  } catch (e) {
+    console.warn('[replicateQueue.wanI2vSubmit] Failed to save inputImages:', e);
+  }
 
   const input: any = {
     image: body.image,
@@ -2385,6 +2402,35 @@ export async function replicateQueueStatus(
   }
 }
 
+/**
+ * Polls a prediction until it completes (succeeded, failed, canceled) or times out.
+ * @param predictionId ID of the prediction to poll
+ * @param timeoutMs Max wait time in ms (default 5 mins)
+ * @param intervalMs Polling interval in ms (default 2s)
+ */
+export async function waitForPrediction(
+  predictionId: string,
+  timeoutMs: number = 5 * 60 * 1000,
+  intervalMs: number = 2000
+): Promise<any> {
+  const replicate = ensureReplicate();
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
+    const prediction = await replicate.predictions.get(predictionId);
+    const status = prediction.status;
+
+    if (status === 'succeeded') {
+      return prediction;
+    } else if (status === 'failed' || status === 'canceled') {
+      throw new Error(`Prediction ${status}: ${prediction.error || 'Unknown error'}`);
+    }
+
+    // Wait before next poll
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`Prediction timed out after ${timeoutMs}ms`);
+}
+
 export async function replicateQueueResult(
   uid: string,
   requestId: string
@@ -2434,10 +2480,21 @@ export async function replicateQueueResult(
     // Score queued video result
     const scoredVideos = await aestheticScoreService.scoreVideos([videoItem]);
     const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
+    // Get current history to preserve duration/resolution/quality/inputImages if they exist
+    const currentHistory = await generationHistoryRepository.get(uid, historyId).catch(() => null);
     await generationHistoryRepository.update(uid, historyId, {
       status: "completed",
       videos: scoredVideos,
       aestheticScore: highestScore,
+      // Preserve duration and resolution from original history if they exist
+      ...(currentHistory && (currentHistory as any)?.duration ? { duration: (currentHistory as any).duration } : {}),
+      ...(currentHistory && (currentHistory as any)?.resolution ? { resolution: (currentHistory as any).resolution } : {}),
+      // Preserve quality field (for PixVerse models)
+      ...(currentHistory && (currentHistory as any)?.quality ? { quality: (currentHistory as any).quality } : {}),
+      // Preserve inputImages if they exist (for showing "Your Uploads" in UI)
+      ...(currentHistory && Array.isArray((currentHistory as any)?.inputImages) && (currentHistory as any).inputImages.length > 0
+        ? { inputImages: (currentHistory as any).inputImages }
+        : {}),
       ...(canvasProjectId ? { canvasProjectId } : {}),
     } as any);
 
@@ -2461,21 +2518,38 @@ export async function replicateQueueResult(
     // Compute and write debit (use stored history fields)
     let debitedCredits: number | null = null;
     let debitStatus: 'WRITTEN' | 'SKIPPED' | 'ERROR' | null = null;
+    let fresh: any = null;
     try {
-      const fresh = await generationHistoryRepository.get(uid, historyId);
+      fresh = await generationHistoryRepository.get(uid, historyId);
       const model = (fresh as any)?.model?.toString().toLowerCase() || "";
-      const modeGuess =
-        (fresh as any)?.prompt && model.includes("i2v") ? "i2v" : "t2v";
+      // Determine mode from generationType first (most reliable), then fallback to model name
+      const generationType = String((fresh as any)?.generationType || "").toLowerCase();
+      const isI2vFromType = generationType.includes("image-to-video") || generationType.includes("image_to_video") || generationType === "i2v";
+      const modeGuess = isI2vFromType || (model.includes("i2v") && !model.includes("t2v")) ? "i2v" : "t2v";
       if (model.includes("wan-2.5")) {
+        // Ensure duration and resolution have defaults if not stored in history
+        const duration = (fresh as any)?.duration ?? 5;
+        const resolution = (fresh as any)?.resolution ?? "720p";
         const fakeReq = {
           body: {
             mode: modeGuess,
-            duration: (fresh as any)?.duration,
-            resolution: (fresh as any)?.resolution,
+            duration: duration,
+            resolution: resolution,
             model: (fresh as any)?.model,
           },
         } as any;
+        console.log('[replicateQueueResult] Computing WAN cost', {
+          historyId,
+          model,
+          modeGuess,
+          duration: duration,
+          resolution: resolution,
+          generationType,
+          freshDuration: (fresh as any)?.duration,
+          freshResolution: (fresh as any)?.resolution,
+        });
         const { cost, pricingVersion, meta } = await computeWanVideoCost(fakeReq);
+        console.log('[replicateQueueResult] WAN cost computed', { cost, pricingVersion, meta });
         const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
@@ -2489,16 +2563,32 @@ export async function replicateQueueResult(
         const { computeKlingVideoCost } = await import(
           "../utils/pricing/klingPricing"
         );
+        // Ensure duration and resolution have defaults if not stored in history
+        const duration = (fresh as any)?.duration ?? 5;
+        const resolution = (fresh as any)?.resolution ?? "720p";
         const fakeReq = {
           body: {
             kind: modeGuess,
-            duration: (fresh as any)?.duration,
-            resolution: (fresh as any)?.resolution,
+            duration: duration,
+            resolution: resolution,
             model: (fresh as any)?.model,
-            kling_mode: (fresh as any)?.kling_mode,
+            kling_mode: (fresh as any)?.kling_mode || (fresh as any)?.mode,
+            mode: (fresh as any)?.kling_mode || (fresh as any)?.mode,
           },
         } as any;
+        console.log('[replicateQueueResult] Computing Kling cost', {
+          historyId,
+          model,
+          modeGuess,
+          duration: duration,
+          resolution: resolution,
+          generationType,
+          kling_mode: (fresh as any)?.kling_mode || (fresh as any)?.mode,
+          freshDuration: (fresh as any)?.duration,
+          freshResolution: (fresh as any)?.resolution,
+        });
         const { cost, pricingVersion, meta } = await computeKlingVideoCost(fakeReq as any);
+        console.log('[replicateQueueResult] Kling cost computed', { cost, pricingVersion, meta });
         const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
@@ -2512,24 +2602,37 @@ export async function replicateQueueResult(
         const { computeSeedanceVideoCost } = await import(
           "../utils/pricing/seedancePricing"
         );
+        // Use generationType first (most reliable), then fallback to modeGuess
         const kindFromHistory =
           (fresh as any)?.generationType && String((fresh as any)?.generationType).toLowerCase().includes("image")
             ? "i2v"
             : modeGuess;
+        // Ensure duration and resolution have defaults if not stored in history
+        const duration = (fresh as any)?.duration ?? 5;
+        const resolution = (fresh as any)?.resolution ?? "1080p";
         const fakeReq = {
           body: {
             kind: kindFromHistory,
-            duration: (fresh as any)?.duration,
-            resolution: (fresh as any)?.resolution,
+            duration: duration,
+            resolution: resolution,
             model: (fresh as any)?.model,
           },
         } as any;
+        console.log('[replicateQueueResult] Computing Seedance cost', {
+          historyId,
+          model,
+          kindFromHistory,
+          duration: duration,
+          resolution: resolution,
+          generationType,
+        });
         const { cost, pricingVersion, meta } = await computeSeedanceVideoCost(fakeReq as any);
+        console.log('[replicateQueueResult] Seedance cost computed', { cost, pricingVersion, meta });
         const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
           cost,
-          `replicate.queue.seedance-${modeGuess}`,
+          `replicate.queue.seedance-${kindFromHistory}`,
           { ...meta, historyId, provider: "replicate", pricingVersion }
         );
         debitedCredits = cost;
@@ -2538,20 +2641,41 @@ export async function replicateQueueResult(
         const { computePixverseVideoCost } = await import(
           "../utils/pricing/pixversePricing"
         );
+        // Use generationType first (most reliable), then fallback to modeGuess
+        const kindFromHistory =
+          (fresh as any)?.generationType && String((fresh as any)?.generationType).toLowerCase().includes("image")
+            ? "i2v"
+            : modeGuess;
+        // Ensure duration and quality/resolution have defaults if not stored in history
+        const duration = (fresh as any)?.duration ?? 5;
+        // For PixVerse, quality is stored separately, but also check resolution as fallback
+        const quality = (fresh as any)?.quality || (fresh as any)?.resolution || "720p";
         const fakeReq = {
           body: {
-            kind: modeGuess,
-            duration: (fresh as any)?.duration,
-            quality: (fresh as any)?.quality || (fresh as any)?.resolution,
+            kind: kindFromHistory,
+            duration: duration,
+            quality: quality,
+            resolution: quality, // Also pass as resolution for compatibility
             model: (fresh as any)?.model,
           },
         } as any;
+        console.log('[replicateQueueResult] Computing PixVerse cost', {
+          historyId,
+          model,
+          kindFromHistory,
+          duration: duration,
+          quality: quality,
+          storedQuality: (fresh as any)?.quality,
+          storedResolution: (fresh as any)?.resolution,
+          generationType,
+        });
         const { cost, pricingVersion, meta } = await computePixverseVideoCost(fakeReq as any);
+        console.log('[replicateQueueResult] PixVerse cost computed', { cost, pricingVersion, meta });
         const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
           cost,
-          `replicate.queue.pixverse-${modeGuess}`,
+          `replicate.queue.pixverse-${kindFromHistory}`,
           { ...meta, historyId, provider: "replicate", pricingVersion }
         );
         debitedCredits = cost;
@@ -2603,7 +2727,15 @@ export async function replicateQueueResult(
         debitedCredits = cost;
         debitStatus = status;
       }
-    } catch { debitStatus = 'ERROR'; }
+    } catch (err: any) {
+      console.error('[replicateQueueResult] Credit debit error', {
+        historyId,
+        error: err?.message || err,
+        stack: err?.stack,
+        model: (fresh as any)?.model,
+      });
+      debitStatus = 'ERROR';
+    }
     return {
       videos: scoredVideos,
       historyId,
@@ -2665,6 +2797,7 @@ export async function klingT2vSubmit(
       if (isV21 && m === "pro") return "1080p";
       return "720p";
     })(),
+    kling_mode: body?.mode || undefined,
   } as any);
 
   const input: any = {
@@ -2839,7 +2972,7 @@ export async function klingI2vSubmit(
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
     model: modelBase,
-    generationType: "text-to-video",
+    generationType: "image-to-video",
     visibility: body.isPublic ? "public" : "private",
     isPublic: body.isPublic ?? false,
     createdBy,
@@ -2850,6 +2983,7 @@ export async function klingI2vSubmit(
       if (isV21 && m === "pro") return "1080p";
       return "720p";
     })(),
+    kling_mode: body?.mode || undefined,
   } as any);
 
   // Persist input images (image/start_image/end_image) to history
@@ -3531,7 +3665,7 @@ export async function seedanceI2vSubmit(
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
     model: modelBase,
-    generationType: "text-to-video",
+    generationType: "image-to-video",
     visibility: body.isPublic ? "public" : "private",
     isPublic: body.isPublic ?? false,
     createdBy,
@@ -3760,6 +3894,7 @@ export async function pixverseT2vSubmit(
     createdBy,
     duration: durationSec as any,
     resolution: quality as any,
+    quality: quality as any, // Store quality separately for PixVerse pricing
   } as any);
 
   const input: any = {
@@ -3944,12 +4079,13 @@ export async function pixverseI2vSubmit(
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
     model: modelBase,
-    generationType: "text-to-video",
+    generationType: "image-to-video",
     visibility: body.isPublic ? "public" : "private",
     isPublic: body.isPublic ?? false,
     createdBy,
     duration: durationSec as any,
     resolution: quality as any,
+    quality: quality as any, // Store quality separately for PixVerse pricing
   } as any);
 
   // Persist input image to history so preview shows uploads

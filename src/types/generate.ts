@@ -111,6 +111,10 @@ export interface GenerationHistoryItem {
   aspectRatio?: string;
   aspect_ratio?: string;
   style?: string;
+  // Video generation specific fields
+  quality?: string;
+  resolution?: string;
+  duration?: number | string;
   // replaced by isPublic in repositories/services
   isPublic?: boolean;
   // soft delete flag; when true item should be hidden everywhere

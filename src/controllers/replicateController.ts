@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-import { replicateService } from '../services/replicateService';
+import { replicateService, waitForPrediction } from '../services/replicateService';
 import { formatApiResponse } from '../utils/formatApiResponse';
-import { postSuccessDebit } from '../utils/creditDebit';
+import { postSuccessDebit, issueRefund } from '../utils/creditDebit';
 
 async function removeBackground(req: Request, res: Response, next: NextFunction) {
   try {
@@ -142,7 +142,6 @@ export async function klingI2vSubmit(req: Request, res: Response, next: NextFunc
 }
 
 Object.assign(replicateController, { klingT2vSubmit, klingI2vSubmit });
-
 // Seedance queue handlers
 export async function seedanceT2vSubmit(req: Request, res: Response, next: NextFunction) {
   try {
@@ -152,6 +151,31 @@ export async function seedanceT2vSubmit(req: Request, res: Response, next: NextF
     const ctx = (req as any).context || {};
     const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'seedance-t2v');
 
+    // Synchronous wait for video generation
+    try {
+      const requestId = result.requestId;
+      if (requestId) {
+        const finalPrediction = await waitForPrediction(requestId);
+        // If successful, we might want to update the result with the final output
+        // replicateQueueResult handles the finalization (upload, history update)
+        // So we call it here to ensure everything is processed
+        const finalResult = await (replicateService as any).replicateQueueResult(uid, requestId);
+
+        // Return the final result
+        res.json(formatApiResponse('success', 'Completed', {
+          ...finalResult,
+          debitedCredits: ctx.creditCost,
+          debitStatus: debitOutcome
+        }));
+        return;
+      }
+    } catch (err: any) {
+      // Refund if generation failed
+      await issueRefund(uid, result.requestId, ctx.creditCost, 'replicate.seedance-t2v.failed', { error: err.message });
+      throw err;
+    }
+
+    // Fallback if no requestId (shouldn't happen)
     res.json(formatApiResponse('success', 'Submitted', {
       ...result,
       debitedCredits: ctx.creditCost,
@@ -167,6 +191,28 @@ export async function seedanceI2vSubmit(req: Request, res: Response, next: NextF
 
     const ctx = (req as any).context || {};
     const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'seedance-i2v');
+
+    // Synchronous wait for video generation
+    try {
+      const requestId = result.requestId;
+      if (requestId) {
+        const finalPrediction = await waitForPrediction(requestId);
+        // Finalize result
+        const finalResult = await (replicateService as any).replicateQueueResult(uid, requestId);
+
+        // Return the final result
+        res.json(formatApiResponse('success', 'Completed', {
+          ...finalResult,
+          debitedCredits: ctx.creditCost,
+          debitStatus: debitOutcome
+        }));
+        return;
+      }
+    } catch (err: any) {
+      // Refund if generation failed
+      await issueRefund(uid, result.requestId, ctx.creditCost, 'replicate.seedance-i2v.failed', { error: err.message });
+      throw err;
+    }
 
     res.json(formatApiResponse('success', 'Submitted', {
       ...result,

@@ -40,17 +40,17 @@ async function resizeImageTo1MP(imageBuffer: Buffer): Promise<Buffer> {
     const { width = 0, height = 0 } = metadata;
     const currentPixels = width * height;
     const targetPixels = 1000000; // 1MP = 1,000,000 pixels
-    
+
     // If image is already <= 1MP, return as-is
     if (currentPixels <= targetPixels) {
       return imageBuffer;
     }
-    
+
     // Calculate new dimensions maintaining aspect ratio
     const scale = Math.sqrt(targetPixels / currentPixels);
     const newWidth = Math.round(width * scale);
     const newHeight = Math.round(height * scale);
-    
+
     // Resize image
     const resizedBuffer = await sharp(imageBuffer)
       .resize(newWidth, newHeight, {
@@ -59,7 +59,7 @@ async function resizeImageTo1MP(imageBuffer: Buffer): Promise<Buffer> {
       })
       .jpeg({ quality: 90 }) // Convert to JPEG with good quality
       .toBuffer();
-    
+
     return resizedBuffer;
   } catch (error) {
     console.error('[falService] Error resizing image to 1MP:', error);
@@ -96,13 +96,13 @@ async function generate(
   const imagesRequested = Number.isFinite(num_images) && (num_images as number) > 0 ? (num_images as number) : (Number.isFinite(n) && (n as number) > 0 ? (n as number) : 1);
   const imagesRequestedClamped = Math.max(1, Math.min(10, imagesRequested));
   const resolvedAspect = (aspect_ratio || frameSize || '1:1') as any;
-  
+
   // Declare modelLower early so it can be used for Flux 2 Pro image resizing check
   const modelLower = (model || '').toLowerCase();
 
   const falKey = env.falKey as string;
   if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
-  
+
   // Check if this is a dialogue request (uses inputs array instead of prompt)
   // Skip prompt validation for dialogue requests
   const hasDialogueInputs = Array.isArray((payload as any).inputs) && (payload as any).inputs.length > 0;
@@ -132,8 +132,8 @@ async function generate(
     fileName: (payload as any).fileName || undefined,
     lyrics: (payload as any).lyrics || undefined,
     createdBy,
-    
-    
+
+
   });
   // Persist any user-uploaded input images to Zata and get public URLs
   // Use 'character' folder for text-to-character generation input images
@@ -171,10 +171,10 @@ async function generate(
             }
             imageBuffer = Buffer.from(resp.data as any);
           }
-          
+
           // Resize to 1MP
           const resizedBuffer = await resizeImageTo1MP(imageBuffer);
-          
+
           // Upload resized image
           const ext = 'jpg'; // Always use JPEG after resize
           const key = `${keyPrefix}/input-${++idx}.${ext}`;
@@ -188,10 +188,10 @@ async function generate(
         }
         inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: stored.originalUrl || src });
         publicImageUrls.push(stored.publicUrl);
-      } catch {}
+      } catch { }
     }
     if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-  } catch {}
+  } catch { }
   // Create public generations record for FAL (like BFL)
   const legacyId = await falRepository.createGenerationRecord({ prompt, model, n: imagesRequested, isPublic: (payload as any).isPublic === true }, createdBy);
 
@@ -238,14 +238,14 @@ async function generate(
   // @Aryan -> "the character from the second reference image" (image 1)
   const transformPromptWithImageReferences = (promptText: string, imageCount: number): string => {
     if (!promptText || imageCount === 0) return promptText;
-    
+
     const refMatches = Array.from((promptText || '').matchAll(/@(\w+)/gi)) as RegExpMatchArray[];
     if (refMatches.length === 0) return promptText;
-    
+
     // Create a map of character names to their image indices (in order of appearance)
     const characterToIndex = new Map<string, number>();
     let currentIndex = 0;
-    
+
     refMatches.forEach((match) => {
       const charName = match[1].toLowerCase();
       if (!characterToIndex.has(charName)) {
@@ -253,31 +253,31 @@ async function generate(
         currentIndex++;
       }
     });
-    
+
     // Replace @references with explicit image references
     let transformedPrompt = promptText;
     characterToIndex.forEach((imageIndex, charName) => {
       const regex = new RegExp(`@${charName}\\b`, 'gi');
-      const imageRef = imageIndex === 0 
+      const imageRef = imageIndex === 0
         ? 'the character from the first reference image'
         : imageIndex === 1
-        ? 'the character from the second reference image'
-        : imageIndex === 2
-        ? 'the character from the third reference image'
-        : `the character from reference image ${imageIndex + 1}`;
+          ? 'the character from the second reference image'
+          : imageIndex === 2
+            ? 'the character from the third reference image'
+            : `the character from reference image ${imageIndex + 1}`;
       transformedPrompt = transformedPrompt.replace(regex, imageRef);
     });
-    
+
     return transformedPrompt;
   };
 
   // Transform prompt if we have character references and images
   const hasCharacterRefs = prompt && /@\w+/i.test(prompt);
   const hasImages = (publicImageUrls.length > 0 || uploadedImages.length > 0);
-  let finalPrompt = (hasCharacterRefs && hasImages) 
+  let finalPrompt = (hasCharacterRefs && hasImages)
     ? transformPromptWithImageReferences(prompt, publicImageUrls.length || uploadedImages.length)
     : prompt;
-  
+
   // For text-to-character generation, enhance prompt for passport photo style in square format with exact skin details
   if (generationType === 'text-to-character') {
     finalPrompt = `${finalPrompt}, passport photo style, front facing, looking directly at camera, neutral expression, head and shoulders visible, hands partially visible, preserve exact skin texture and details from reference image, natural looking, maintain identical skin tone and complexion, professional photography, high quality, photorealistic, square format, light neutral background, even studio lighting, no white borders, no white padding, no white margins, no frames, no white space, edge-to-edge, full frame character, seamless background integration`;
@@ -328,13 +328,13 @@ async function generate(
       }
 
       const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
-      
+
       // Store in multiple formats for frontend compatibility (matching ElevenLabs TTS and Chatterbox format)
       const audiosArray = [audioObj];
       const imagesArray = [{ ...audioObj, type: 'audio' }];
 
-      await generationHistoryRepository.update(uid, historyId, { 
-        status: 'completed', 
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
         audio: audioObj,
         audios: audiosArray,
         images: imagesArray,
@@ -370,19 +370,19 @@ async function generate(
       const inputBody: any = {
         text: (payload as any).text || finalPrompt,
       };
-      
+
       // Handle custom voice URL: only upload to Zata if it's NOT already a Zata URL
       let voiceValue = (payload as any).voice;
       if (voiceValue && typeof voiceValue === 'string' && (voiceValue.startsWith('http://') || voiceValue.startsWith('https://'))) {
         // Check if it's already a Zata URL - if so, use it directly without re-uploading
         const isZataUrl = voiceValue.includes('idr01.zata.ai') || voiceValue.includes('zata.ai');
-        
+
         if (!isZataUrl) {
           // This is a custom voice URL from external source - upload it to Zata storage
           const username = creator?.username || uid;
           const voiceFileName = (payload as any).voice_file_name || `custom-voice-${Date.now()}`;
           const keyPrefix = `users/${username}/inputaudio`;
-          
+
           try {
             console.log('[falService.generate] Uploading custom voice file to Zata:', { originalUrl: voiceValue, fileName: voiceFileName });
             const voiceStored = await uploadFromUrlToZata({
@@ -400,7 +400,7 @@ async function generate(
           console.log('[falService.generate] Voice URL is already a Zata URL, using directly:', voiceValue);
         }
       }
-      
+
       if (voiceValue) inputBody.voice = voiceValue;
       if ((payload as any).custom_audio_language) inputBody.custom_audio_language = (payload as any).custom_audio_language;
       if ((payload as any).exaggeration != null) inputBody.exaggeration = (payload as any).exaggeration;
@@ -424,13 +424,13 @@ async function generate(
       }
 
       const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
-      
+
       // Store in multiple formats for frontend compatibility (matching ElevenLabs TTS format)
       const audiosArray = [audioObj];
       const imagesArray = [{ ...audioObj, type: 'audio' }];
 
-      await generationHistoryRepository.update(uid, historyId, { 
-        status: 'completed', 
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
         audio: audioObj,
         audios: audiosArray,
         images: imagesArray,
@@ -566,7 +566,7 @@ async function generate(
         throw new ApiError(message, 500);
       }
     }
-    
+
     if (isElevenTts) {
       // Text-to-Speech flow
       const ttsEndpoint = 'fal-ai/elevenlabs/tts/eleven-v3';
@@ -596,13 +596,13 @@ async function generate(
         }
 
         const audioObj = { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: audioUrl } as any;
-        
+
         // Store in multiple formats for frontend compatibility
         const audiosArray = [audioObj];
         const imagesArray = [{ ...audioObj, type: 'audio' }];
 
-        await generationHistoryRepository.update(uid, historyId, { 
-          status: 'completed', 
+        await generationHistoryRepository.update(uid, historyId, {
+          status: 'completed',
           audio: audioObj,
           audios: audiosArray,
           images: imagesArray,
@@ -699,7 +699,7 @@ async function generate(
       if (modelEndpoint.includes('flux-2-pro')) {
         const explicit = (payload as any).image_size;
         const resolution = (payload as any).resolution; // '1K' | '2K'
-        
+
         if (explicit) {
           input.image_size = explicit;
         } else {
@@ -707,7 +707,7 @@ async function generate(
           // For 1K: use enum values (costs $0.03)
           // For 2K: use custom dimensions that meet 2K requirements (costs $0.07)
           // Special case: 1024x2048 (9:16 portrait) costs $0.05
-          
+
           const aspectMap: Record<string, { enum: string; enum1K?: string; custom2K?: { width: number; height: number } }> = {
             '1:1': { enum: 'square_hd', enum1K: 'square_hd', custom2K: { width: 2048, height: 2048 } }, // 1K: square_hd (1024x1024), 2K: 2048x2048
             '4:3': { enum: 'landscape_4_3', custom2K: { width: 2048, height: 1536 } },
@@ -716,9 +716,9 @@ async function generate(
             '9:16': { enum: 'portrait_16_9', custom2K: { width: 1152, height: 2048 } },
             'square_hd': { enum: 'square_hd', enum1K: 'square_hd', custom2K: { width: 2048, height: 2048 } },
           };
-          
+
           const mapping = aspectMap[String(resolvedAspect)] || aspectMap['1:1'];
-          
+
           if (resolution === '2K') {
             // Use custom dimensions for 2K
             if (mapping.custom2K) {
@@ -746,12 +746,12 @@ async function generate(
             input.image_size = mapping.enum;
           }
         }
-        
+
         // Flux 2 Pro specific parameters
         if ((payload as any).safety_tolerance) input.safety_tolerance = String((payload as any).safety_tolerance);
         if ((payload as any).enable_safety_checker !== undefined) input.enable_safety_checker = Boolean((payload as any).enable_safety_checker);
         if ((payload as any).seed != null) input.seed = Number((payload as any).seed);
-        
+
         // Add image_urls for I2I (image-to-image) when using /edit endpoint
         // The /edit endpoint requires image_urls with at least 1 item
         const isEditEndpoint = modelEndpoint.includes('/edit');
@@ -792,10 +792,10 @@ async function generate(
               '16:9': 'landscape_16_9',
               '9:16': 'portrait_16_9',
             };
-            
+
             const aspect = String(resolvedAspect || '1:1');
             const mappedEnum = aspectRatioMap[aspect] || 'square_hd';
-            
+
             // If resolution is explicitly set to 4K or 2K, use auto modes; otherwise use aspect ratio enum
             const resolution = (payload as any).resolution;
             if (resolution === '4K') {
@@ -870,12 +870,12 @@ async function generate(
         // Images are already ordered by frontend to match @references in prompt
         // @Rajdeep -> image[0], @Aryan -> image[1], etc.
         input.image_urls = Array.isArray(refs) ? refs.slice(0, 10) : [];
-        
+
         // For text-to-character generation, add negative prompt to preserve skin details and prevent white padding
         if (generationType === 'text-to-character') {
           input.negative_prompt = 'white padding, white borders, white frames, white margins, thick white space, white background padding, white edges, white space around subject, white space around character, white border around image, white frame around image, pure white background, bright white background, white backdrop, white canvas, altered skin texture, smoothed skin, airbrushed, beautified skin, changed skin tone, different complexion, modified skin details, enhanced skin, retouched skin, changed facial expression, smiling, laughing, frowning, exaggerated expression, looking away, side profile, tilted head, three quarter view, cropped shoulders, missing hands, cut off hands, artistic interpretation, stylized, cartoon, illustration, landscape orientation, busy background, textured background, shadows on background, multiple people, group photo, blurry, low quality, distorted features, unnatural lighting, harsh shadows';
         }
-        
+
         // Log for debugging character mapping
         if (prompt && refs.length > 0) {
           const characterRefs = parseCharacterReferences(prompt);
@@ -887,12 +887,12 @@ async function generate(
               imageCount: refs.length,
               firstImage: refs[0]?.substring(0, 50) + '...',
             });
-          } catch {}
+          } catch { }
         }
       }
 
       // Debug log for final body
-      try { console.log('[falService.generate] request', { modelEndpoint, input }); } catch {}
+      try { console.log('[falService.generate] request', { modelEndpoint, input }); } catch { }
 
       const result = await fal.subscribe(modelEndpoint as any, ({ input, logs: true } as unknown) as any);
 
@@ -911,12 +911,12 @@ async function generate(
     });
 
     const images = await Promise.all(imagePromises);
-    
+
     // For text-to-character, upload to Zata synchronously to ensure storagePath is set
     // For other types, use background upload for faster response
     const username = creator?.username || uid;
     const outputFolder = generationType === 'text-to-character' ? 'character' : 'image';
-    
+
     let storedImages: any[];
     if (generationType === 'text-to-character') {
       // Synchronous upload for character generation to ensure storagePath is available
@@ -986,7 +986,7 @@ async function generate(
         }
       }
 
-  return { images: scoredImages as any, historyId, model, status: 'completed' };
+      return { images: scoredImages as any, historyId, model, status: 'completed' };
     } else {
       // For canvas flows, force synchronous upload using override (so we have storagePath immediately)
       if ((payload as any)?.forceSyncUpload === true || (payload as any)?.storageKeyPrefixOverride) {
@@ -1008,8 +1008,8 @@ async function generate(
         await generationHistoryRepository.update(uid, historyId, { status: 'completed', images: storedImages, frameSize: resolvedAspect } as any);
         await ensureMirrorSync(uid, historyId);
         try {
-          markGenerationCompleted(uid, historyId, { status: 'completed', images: storedImages, isPublic: (payload as any).isPublic === true }).catch(() => {});
-        } catch {}
+          markGenerationCompleted(uid, historyId, { status: 'completed', images: storedImages, isPublic: (payload as any).isPublic === true }).catch(() => { });
+        } catch { }
         return { images: storedImages as any, historyId, model, status: 'completed' };
       }
       // For non-character generation, use background upload for faster response
@@ -1070,12 +1070,12 @@ async function generate(
           }
         } catch (e) {
           console.error('[falService.generate] Background Zata upload failed:', e);
-          try { await falRepository.updateGenerationRecord(legacyId, { status: 'completed' }); } catch {}
+          try { await falRepository.updateGenerationRecord(legacyId, { status: 'completed' }); } catch { }
         }
       });
 
       // Respond quickly with provider URLs & initial aesthetic score
-  return { images: scoredQuick as any, historyId, model, status: 'completed' };
+      return { images: scoredQuick as any, historyId, model, status: 'completed' };
     }
   } catch (err: any) {
     const falError = buildFalApiError(err, {
@@ -1106,7 +1106,7 @@ async function veoTextToVideo(uid: string, payload: {
   resolution?: '720p' | '1080p';
   generate_audio?: boolean;
   isPublic?: boolean;
-}): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }>{
+}): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }> {
   const falKey = env.falKey as string;
   if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   if (!payload.prompt) throw new ApiError('Prompt is required', 400);
@@ -1123,17 +1123,19 @@ async function veoTextToVideo(uid: string, payload: {
   });
 
   try {
-    const result = await fal.subscribe('fal-ai/veo3' as any, ({ input: {
-      prompt: payload.prompt,
-      aspect_ratio: payload.aspect_ratio ?? '16:9',
-      duration: payload.duration ?? '8s',
-      negative_prompt: payload.negative_prompt,
-      enhance_prompt: payload.enhance_prompt ?? true,
-      seed: payload.seed,
-      auto_fix: payload.auto_fix ?? true,
-      resolution: payload.resolution ?? '720p',
-      generate_audio: payload.generate_audio ?? true,
-    }, logs: true } as unknown) as any);
+    const result = await fal.subscribe('fal-ai/veo3' as any, ({
+      input: {
+        prompt: payload.prompt,
+        aspect_ratio: payload.aspect_ratio ?? '16:9',
+        duration: payload.duration ?? '8s',
+        negative_prompt: payload.negative_prompt,
+        enhance_prompt: payload.enhance_prompt ?? true,
+        seed: payload.seed,
+        auto_fix: payload.auto_fix ?? true,
+        resolution: payload.resolution ?? '720p',
+        generate_audio: payload.generate_audio ?? true,
+      }, logs: true
+    } as unknown) as any);
 
     const videoUrl: string | undefined = (result as any)?.data?.video?.url;
     if (!videoUrl) throw new ApiError('No video URL returned from FAL API', 502);
@@ -1145,7 +1147,7 @@ async function veoTextToVideo(uid: string, payload: {
     const scoredVideos = await aestheticScoreService.scoreVideos(videos);
     const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
 
-    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
+    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore, duration: payload.duration ?? '8s', resolution: payload.resolution ?? '720p', aspect_ratio: payload.aspect_ratio ?? '16:9', generate_audio: payload.generate_audio ?? true } as any);
     // Sync to mirror with retries
     await syncToMirror(uid, historyId);
     return { videos: scoredVideos, historyId, model: 'fal-ai/veo3', status: 'completed' };
@@ -1183,17 +1185,19 @@ async function veoTextToVideoFast(uid: string, payload: Parameters<typeof veoTex
   });
 
   try {
-    const result = await fal.subscribe('fal-ai/veo3/fast' as any, ({ input: {
-      prompt: payload.prompt,
-      aspect_ratio: payload.aspect_ratio ?? '16:9',
-      duration: payload.duration ?? '8s',
-      negative_prompt: payload.negative_prompt,
-      enhance_prompt: payload.enhance_prompt ?? true,
-      seed: payload.seed,
-      auto_fix: payload.auto_fix ?? true,
-      resolution: payload.resolution ?? '720p',
-      generate_audio: payload.generate_audio ?? true,
-    }, logs: true } as unknown) as any);
+    const result = await fal.subscribe('fal-ai/veo3/fast' as any, ({
+      input: {
+        prompt: payload.prompt,
+        aspect_ratio: payload.aspect_ratio ?? '16:9',
+        duration: payload.duration ?? '8s',
+        negative_prompt: payload.negative_prompt,
+        enhance_prompt: payload.enhance_prompt ?? true,
+        seed: payload.seed,
+        auto_fix: payload.auto_fix ?? true,
+        resolution: payload.resolution ?? '720p',
+        generate_audio: payload.generate_audio ?? true,
+      }, logs: true
+    } as unknown) as any);
     const videoUrl: string | undefined = (result as any)?.data?.video?.url;
     if (!videoUrl) throw new ApiError('No video URL returned from FAL API', 502);
     const videos: VideoMedia[] = [
@@ -1204,7 +1208,7 @@ async function veoTextToVideoFast(uid: string, payload: Parameters<typeof veoTex
     const scoredVideos = await aestheticScoreService.scoreVideos(videos);
     const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
 
-    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
+    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore, duration: payload.duration ?? '8s', resolution: payload.resolution ?? '720p', aspect_ratio: payload.aspect_ratio ?? '16:9', generate_audio: payload.generate_audio ?? true } as any);
     // Sync to mirror with retries
     await syncToMirror(uid, historyId);
     return { videos: scoredVideos, historyId, model: 'fal-ai/veo3/fast', status: 'completed' };
@@ -1251,14 +1255,16 @@ async function veoImageToVideo(uid: string, payload: {
   });
 
   try {
-    const result = await fal.subscribe('fal-ai/veo3/image-to-video' as any, ({ input: {
-      prompt: payload.prompt,
-      image_url: payload.image_url,
-      aspect_ratio: payload.aspect_ratio ?? 'auto',
-      duration: payload.duration ?? '8s',
-      generate_audio: payload.generate_audio ?? true,
-      resolution: payload.resolution ?? '720p',
-    }, logs: true } as unknown) as any);
+    const result = await fal.subscribe('fal-ai/veo3/image-to-video' as any, ({
+      input: {
+        prompt: payload.prompt,
+        image_url: payload.image_url,
+        aspect_ratio: payload.aspect_ratio ?? 'auto',
+        duration: payload.duration ?? '8s',
+        generate_audio: payload.generate_audio ?? true,
+        resolution: payload.resolution ?? '720p',
+      }, logs: true
+    } as unknown) as any);
     const videoUrl: string | undefined = (result as any)?.data?.video?.url;
     if (!videoUrl) throw new ApiError('No video URL returned from FAL API', 502);
     const videos: VideoMedia[] = [
@@ -1269,7 +1275,7 @@ async function veoImageToVideo(uid: string, payload: {
     const scoredVideos = await aestheticScoreService.scoreVideos(videos);
     const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
 
-    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
+    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore, duration: payload.duration ?? '8s', resolution: payload.resolution ?? '720p', aspect_ratio: payload.aspect_ratio ?? 'auto', generate_audio: payload.generate_audio ?? true } as any);
     // Sync to mirror with retries
     await syncToMirror(uid, historyId);
     return { videos: scoredVideos, historyId, model: 'fal-ai/veo3/image-to-video', status: 'completed' };
@@ -1308,14 +1314,16 @@ async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoIm
   });
 
   try {
-    const result = await fal.subscribe('fal-ai/veo3/fast/image-to-video' as any, ({ input: {
-      prompt: payload.prompt,
-      image_url: payload.image_url,
-      aspect_ratio: payload.aspect_ratio ?? 'auto',
-      duration: payload.duration ?? '8s',
-      generate_audio: payload.generate_audio ?? true,
-      resolution: payload.resolution ?? '720p',
-    }, logs: true } as unknown) as any);
+    const result = await fal.subscribe('fal-ai/veo3/fast/image-to-video' as any, ({
+      input: {
+        prompt: payload.prompt,
+        image_url: payload.image_url,
+        aspect_ratio: payload.aspect_ratio ?? 'auto',
+        duration: payload.duration ?? '8s',
+        generate_audio: payload.generate_audio ?? true,
+        resolution: payload.resolution ?? '720p',
+      }, logs: true
+    } as unknown) as any);
     const videoUrl: string | undefined = (result as any)?.data?.video?.url;
     if (!videoUrl) throw new ApiError('No video URL returned from FAL API', 502);
     const videos: VideoMedia[] = [
@@ -1326,7 +1334,7 @@ async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoIm
     const scoredVideos = await aestheticScoreService.scoreVideos(videos);
     const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
 
-    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
+    await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore, duration: payload.duration ?? '8s', resolution: payload.resolution ?? '720p', aspect_ratio: payload.aspect_ratio ?? 'auto', generate_audio: payload.generate_audio ?? true } as any);
     // Sync to mirror with retries
     await syncToMirror(uid, historyId);
     return { videos: scoredVideos, historyId, model: 'fal-ai/veo3/fast/image-to-video', status: 'completed' };
@@ -1373,23 +1381,23 @@ export const falService = {
           const username = creator?.username || uid;
           const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${username}/input/${historyId}`, fileName: 'bria-expand-source' });
           inputUrl = stored.publicUrl;
-        } catch {}
+        } catch { }
       }
       if (!inputUrl) throw new ApiError('Unable to resolve image_url for Bria Expand', 400);
 
       // FAL cannot access localhost URLs or proxy URLs - we need to upload to a publicly accessible location
       const isLocalhost = inputUrl.includes('localhost') || inputUrl.includes('127.0.0.1') || inputUrl.includes('/api/proxy/');
       const isZataUrl = inputUrl.includes('idr01.zata.ai');
-      
+
       if (isLocalhost || isZataUrl) {
         try {
           const username = creator?.username || uid;
           // Download from localhost/proxy/Zata using our backend and re-upload to get a public URL
           // This ensures FAL can access the image
-          const reuploaded = await uploadFromUrlToZata({ 
-            sourceUrl: inputUrl, 
-            keyPrefix: `users/${username}/input/${historyId}`, 
-            fileName: `bria-expand-fal-${Date.now()}` 
+          const reuploaded = await uploadFromUrlToZata({
+            sourceUrl: inputUrl,
+            keyPrefix: `users/${username}/input/${historyId}`,
+            fileName: `bria-expand-fal-${Date.now()}`
           });
           inputUrl = reuploaded.publicUrl;
           console.log('[falService.briaExpandImage] Re-uploaded image for FAL access:', inputUrl.substring(0, 100) + '...');
@@ -1410,7 +1418,7 @@ export const falService = {
       const origLoc = Array.isArray(body?.original_image_location) && body.original_image_location.length === 2
         ? [Number(body.original_image_location[0]), Number(body.original_image_location[1])]
         : undefined;
-      const aspect = typeof body?.aspect_ratio === 'string' && ['1:1','2:3','3:2','3:4','4:3','4:5','5:4','9:16','16:9'].includes(body.aspect_ratio)
+      const aspect = typeof body?.aspect_ratio === 'string' && ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9'].includes(body.aspect_ratio)
         ? body.aspect_ratio
         : undefined;
 
@@ -1426,14 +1434,14 @@ export const falService = {
       if (typeof body?.negative_prompt === 'string') input.negative_prompt = String(body.negative_prompt);
       if (body?.sync_mode === true) input.sync_mode = true;
 
-      console.log('[falService.briaExpandImage] Calling FAL API:', { model, input: { ...input, image_url: (input.image_url || '').slice(0,100) + '...' } });
-      
+      console.log('[falService.briaExpandImage] Calling FAL API:', { model, input: { ...input, image_url: (input.image_url || '').slice(0, 100) + '...' } });
+
       // Validate that image fits within canvas if both are provided
       if (input.canvas_size && input.original_image_size && input.original_image_location) {
         const [canvasW, canvasH] = input.canvas_size;
         const [imgW, imgH] = input.original_image_size;
         const [imgX, imgY] = input.original_image_location;
-        
+
         // Check if image extends beyond canvas bounds
         if (imgX < 0 || imgY < 0 || imgX + imgW > canvasW || imgY + imgH > canvasH) {
           console.warn('[falService.briaExpandImage] Image extends beyond canvas bounds:', {
@@ -1445,7 +1453,7 @@ export const falService = {
           // Don't throw here - let FAL API handle it, but log for debugging
         }
       }
-      
+
       let result: any;
       try {
         result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
@@ -1455,7 +1463,7 @@ export const falService = {
         const statusText = falErr?.response?.statusText || falErr?.statusText;
         const responseData = falErr?.response?.data || falErr?.data;
         const errorMessage = falErr?.message || 'Unknown error';
-        
+
         console.error('[falService.briaExpandImage] FAL API error details:', {
           status,
           statusText,
@@ -1463,13 +1471,13 @@ export const falService = {
           responseData: responseData ? JSON.stringify(responseData, null, 2) : 'No response data',
           input: JSON.stringify(input, null, 2),
         });
-        
+
         // Try to extract a more helpful error message
         let userFriendlyMessage = 'FAL API error';
         if (status === 422) {
           userFriendlyMessage = 'FAL API validation error: Invalid parameters';
           if (responseData?.detail) {
-            const detail = Array.isArray(responseData.detail) 
+            const detail = Array.isArray(responseData.detail)
               ? responseData.detail.map((d: any) => d.msg || d.message || String(d)).join(', ')
               : JSON.stringify(responseData.detail);
             userFriendlyMessage += ` - ${detail}`;
@@ -1483,12 +1491,12 @@ export const falService = {
         } else {
           userFriendlyMessage = `FAL API error: ${statusText || 'Unknown error'}`;
         }
-        
+
         throw new ApiError(userFriendlyMessage, status || 500);
       }
 
       // Check multiple possible response structures for the image URL
-      const imgUrl: string | undefined = 
+      const imgUrl: string | undefined =
         (result as any)?.data?.image?.url ||
         (result as any)?.data?.output?.image?.url ||
         (result as any)?.data?.images?.[0]?.url ||
@@ -1498,7 +1506,7 @@ export const falService = {
         (result as any)?.images?.[0]?.url ||
         (typeof (result as any)?.data?.image === 'string' ? (result as any).data.image : undefined) ||
         (typeof (result as any)?.output === 'string' ? (result as any).output : undefined);
-      
+
       // Log the full response structure for debugging
       console.log('[falService.briaExpandImage] FAL API response structure:', {
         hasData: !!(result as any)?.data,
@@ -1509,7 +1517,7 @@ export const falService = {
         imageUrl: imgUrl ? imgUrl.substring(0, 100) + '...' : 'NOT FOUND',
         responsePreview: JSON.stringify(result, null, 2).substring(0, 500),
       });
-      
+
       if (!imgUrl) {
         console.error('[falService.briaExpandImage] No image in response. Full response:', JSON.stringify(result, null, 2));
         throw new ApiError('No image URL returned from FAL Bria Expand API. Check response structure.', 502);
@@ -1517,18 +1525,18 @@ export const falService = {
 
       const username = creator?.username || uid;
       const keyPrefix = `users/${username}/image/${historyId}`;
-      
+
       // Handle base64 data URLs - use uploadDataUriToZata, otherwise use uploadFromUrlToZata
       let key: string;
       let publicUrl: string;
       let storedOriginalUrl: string; // Store a URL, not base64 data
-      
+
       if (imgUrl.startsWith('data:')) {
         // Base64 data URL - upload using uploadDataUriToZata
-        const { key: uploadedKey, publicUrl: uploadedUrl } = await uploadDataUriToZata({ 
-          dataUri: imgUrl, 
-          keyPrefix, 
-          fileName: 'bria-expand' 
+        const { key: uploadedKey, publicUrl: uploadedUrl } = await uploadDataUriToZata({
+          dataUri: imgUrl,
+          keyPrefix,
+          fileName: 'bria-expand'
         });
         key = uploadedKey;
         publicUrl = uploadedUrl;
@@ -1536,183 +1544,183 @@ export const falService = {
         storedOriginalUrl = uploadedUrl;
       } else {
         // Regular URL - upload using uploadFromUrlToZata
-        const uploaded = await uploadFromUrlToZata({ 
-          sourceUrl: imgUrl, 
-          keyPrefix, 
-          fileName: 'bria-expand' 
+        const uploaded = await uploadFromUrlToZata({
+          sourceUrl: imgUrl,
+          keyPrefix,
+          fileName: 'bria-expand'
         });
         key = uploaded.key;
         publicUrl = uploaded.publicUrl;
         storedOriginalUrl = imgUrl; // Store the original URL (not base64)
       }
-      
-      const images: FalGeneratedImage[] = [ { 
-        id: (result as any)?.requestId || `fal-${Date.now()}`, 
-        url: publicUrl, 
-        storagePath: key, 
+
+      const images: FalGeneratedImage[] = [{
+        id: (result as any)?.requestId || `fal-${Date.now()}`,
+        url: publicUrl,
+        storagePath: key,
         originalUrl: storedOriginalUrl // Never store base64 data URLs
-      } as any ];
+      } as any];
 
-  // Score images
-  const scoredImages = await aestheticScoreService.scoreImages(images as any);
-  const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+      // Score images
+      const scoredImages = await aestheticScoreService.scoreImages(images as any);
+      const highestScore = aestheticScoreService.getHighestScore(scoredImages);
 
-  // Deep clean function to ensure Firestore compatibility
-  // Only processes arrays and objects - primitives pass through as-is
-  const deepCleanForFirestore = (obj: any): any => {
-    if (obj === null) return null; // Firestore allows null
-    if (obj === undefined) return undefined; // Will be filtered out by removeUndefinedValues
-    if (typeof obj === 'string' || typeof obj === 'number' || typeof obj === 'boolean') return obj;
-    if (obj instanceof Date) return obj.toISOString();
-    if (Array.isArray(obj)) {
-      const cleaned = obj.map(item => deepCleanForFirestore(item)).filter(item => item !== undefined);
-      return cleaned.length > 0 ? cleaned : []; // Return empty array instead of undefined
-    }
-    if (typeof obj === 'object' && obj.constructor === Object) {
-      // Only process plain objects, not class instances
-      const cleaned: any = {};
-      for (const [key, value] of Object.entries(obj)) {
-        const cleanedValue = deepCleanForFirestore(value);
-        if (cleanedValue !== undefined) {
-          cleaned[key] = cleanedValue;
+      // Deep clean function to ensure Firestore compatibility
+      // Only processes arrays and objects - primitives pass through as-is
+      const deepCleanForFirestore = (obj: any): any => {
+        if (obj === null) return null; // Firestore allows null
+        if (obj === undefined) return undefined; // Will be filtered out by removeUndefinedValues
+        if (typeof obj === 'string' || typeof obj === 'number' || typeof obj === 'boolean') return obj;
+        if (obj instanceof Date) return obj.toISOString();
+        if (Array.isArray(obj)) {
+          const cleaned = obj.map(item => deepCleanForFirestore(item)).filter(item => item !== undefined);
+          return cleaned.length > 0 ? cleaned : []; // Return empty array instead of undefined
         }
-      }
-      return Object.keys(cleaned).length > 0 ? cleaned : undefined;
-    }
-    // For any other type (class instances, functions, etc.), return undefined
-    return undefined;
-  };
-
-  // Clean images array to remove the aesthetic object with nested structures
-  // Extract aestheticScore from aesthetic object but don't include the aesthetic object itself
-  // This matches the pattern used in bflService.expand and outpaintImage
-  const cleanedImages = scoredImages.map((img: any) => {
-    // Handle originalUrl - don't store base64 data URLs (they're too long and can cause Firestore errors)
-    // Use the Zata URL as originalUrl if the original is a data URL
-    let originalUrl = img.originalUrl || img.url;
-    if (typeof originalUrl === 'string' && originalUrl.startsWith('data:')) {
-      // Don't store base64 data URLs - use the Zata URL instead
-      originalUrl = img.url;
-    }
-    
-    // Create a new object with only the properties we want (avoid spreading which might include nested objects)
-    const cleaned: any = {
-      id: img.id,
-      url: img.url,
-      originalUrl: originalUrl,
-    };
-    
-    // Only add primitive properties
-    if (typeof img.storagePath === 'string') cleaned.storagePath = img.storagePath;
-    if (typeof img.avifUrl === 'string') cleaned.avifUrl = img.avifUrl;
-    if (typeof img.thumbnailUrl === 'string') cleaned.thumbnailUrl = img.thumbnailUrl;
-    if (typeof img.blurDataUrl === 'string') cleaned.blurDataUrl = img.blurDataUrl;
-    if (typeof img.optimized === 'boolean') cleaned.optimized = img.optimized;
-    if (typeof img.optimizedAt === 'string') cleaned.optimizedAt = img.optimizedAt;
-    
-    // Extract aestheticScore from aesthetic object if present, otherwise use direct value
-    const aestheticScore = typeof img.aesthetic?.score === 'number' 
-      ? img.aesthetic.score 
-      : (typeof img.aestheticScore === 'number' ? img.aestheticScore : undefined);
-    if (aestheticScore !== undefined) {
-      cleaned.aestheticScore = aestheticScore;
-    }
-    
-    if (typeof img.width === 'number') cleaned.width = img.width;
-    if (typeof img.height === 'number') cleaned.height = img.height;
-    if (typeof img.size === 'number') cleaned.size = img.size;
-    
-    return cleaned;
-  });
-
-  // Log cleaned images for debugging
-  console.log('[falService.briaExpandImage] Cleaned images:', {
-    count: cleanedImages.length,
-    firstImage: cleanedImages[0] ? {
-      id: cleanedImages[0].id,
-      url: cleanedImages[0].url?.substring(0, 50) + '...',
-      keys: Object.keys(cleanedImages[0]),
-      hasAestheticScore: typeof cleanedImages[0].aestheticScore === 'number',
-    } : null,
-  });
-
-  // Deep inspect the cleaned images to ensure no nested structures
-  const inspectForNestedStructures = (obj: any, path = ''): string[] => {
-    const issues: string[] = [];
-    if (obj === null || obj === undefined) return issues;
-    if (typeof obj === 'object' && !Array.isArray(obj) && obj.constructor === Object) {
-      for (const [key, value] of Object.entries(obj)) {
-        const currentPath = path ? `${path}.${key}` : key;
-        if (value === null || value === undefined) continue;
-        if (typeof value === 'object' && !Array.isArray(value) && value.constructor === Object) {
-          issues.push(`Nested object found at ${currentPath}`);
-          issues.push(...inspectForNestedStructures(value, currentPath));
-        } else if (Array.isArray(value)) {
-          value.forEach((item, index) => {
-            if (typeof item === 'object' && item !== null) {
-              issues.push(`Array item at ${currentPath}[${index}] is an object`);
-              issues.push(...inspectForNestedStructures(item, `${currentPath}[${index}]`));
+        if (typeof obj === 'object' && obj.constructor === Object) {
+          // Only process plain objects, not class instances
+          const cleaned: any = {};
+          for (const [key, value] of Object.entries(obj)) {
+            const cleanedValue = deepCleanForFirestore(value);
+            if (cleanedValue !== undefined) {
+              cleaned[key] = cleanedValue;
             }
-          });
+          }
+          return Object.keys(cleaned).length > 0 ? cleaned : undefined;
         }
+        // For any other type (class instances, functions, etc.), return undefined
+        return undefined;
+      };
+
+      // Clean images array to remove the aesthetic object with nested structures
+      // Extract aestheticScore from aesthetic object but don't include the aesthetic object itself
+      // This matches the pattern used in bflService.expand and outpaintImage
+      const cleanedImages = scoredImages.map((img: any) => {
+        // Handle originalUrl - don't store base64 data URLs (they're too long and can cause Firestore errors)
+        // Use the Zata URL as originalUrl if the original is a data URL
+        let originalUrl = img.originalUrl || img.url;
+        if (typeof originalUrl === 'string' && originalUrl.startsWith('data:')) {
+          // Don't store base64 data URLs - use the Zata URL instead
+          originalUrl = img.url;
+        }
+
+        // Create a new object with only the properties we want (avoid spreading which might include nested objects)
+        const cleaned: any = {
+          id: img.id,
+          url: img.url,
+          originalUrl: originalUrl,
+        };
+
+        // Only add primitive properties
+        if (typeof img.storagePath === 'string') cleaned.storagePath = img.storagePath;
+        if (typeof img.avifUrl === 'string') cleaned.avifUrl = img.avifUrl;
+        if (typeof img.thumbnailUrl === 'string') cleaned.thumbnailUrl = img.thumbnailUrl;
+        if (typeof img.blurDataUrl === 'string') cleaned.blurDataUrl = img.blurDataUrl;
+        if (typeof img.optimized === 'boolean') cleaned.optimized = img.optimized;
+        if (typeof img.optimizedAt === 'string') cleaned.optimizedAt = img.optimizedAt;
+
+        // Extract aestheticScore from aesthetic object if present, otherwise use direct value
+        const aestheticScore = typeof img.aesthetic?.score === 'number'
+          ? img.aesthetic.score
+          : (typeof img.aestheticScore === 'number' ? img.aestheticScore : undefined);
+        if (aestheticScore !== undefined) {
+          cleaned.aestheticScore = aestheticScore;
+        }
+
+        if (typeof img.width === 'number') cleaned.width = img.width;
+        if (typeof img.height === 'number') cleaned.height = img.height;
+        if (typeof img.size === 'number') cleaned.size = img.size;
+
+        return cleaned;
+      });
+
+      // Log cleaned images for debugging
+      console.log('[falService.briaExpandImage] Cleaned images:', {
+        count: cleanedImages.length,
+        firstImage: cleanedImages[0] ? {
+          id: cleanedImages[0].id,
+          url: cleanedImages[0].url?.substring(0, 50) + '...',
+          keys: Object.keys(cleanedImages[0]),
+          hasAestheticScore: typeof cleanedImages[0].aestheticScore === 'number',
+        } : null,
+      });
+
+      // Deep inspect the cleaned images to ensure no nested structures
+      const inspectForNestedStructures = (obj: any, path = ''): string[] => {
+        const issues: string[] = [];
+        if (obj === null || obj === undefined) return issues;
+        if (typeof obj === 'object' && !Array.isArray(obj) && obj.constructor === Object) {
+          for (const [key, value] of Object.entries(obj)) {
+            const currentPath = path ? `${path}.${key}` : key;
+            if (value === null || value === undefined) continue;
+            if (typeof value === 'object' && !Array.isArray(value) && value.constructor === Object) {
+              issues.push(`Nested object found at ${currentPath}`);
+              issues.push(...inspectForNestedStructures(value, currentPath));
+            } else if (Array.isArray(value)) {
+              value.forEach((item, index) => {
+                if (typeof item === 'object' && item !== null) {
+                  issues.push(`Array item at ${currentPath}[${index}] is an object`);
+                  issues.push(...inspectForNestedStructures(item, `${currentPath}[${index}]`));
+                }
+              });
+            }
+          }
+        }
+        return issues;
+      };
+
+      const nestedIssues = cleanedImages.flatMap((img, index) =>
+        inspectForNestedStructures(img, `images[${index}]`)
+      );
+
+      if (nestedIssues.length > 0) {
+        console.error('[falService.briaExpandImage] NESTED STRUCTURES DETECTED:', nestedIssues);
+        console.error('[falService.briaExpandImage] Full cleaned images:', JSON.stringify(cleanedImages, null, 2));
+      } else {
+        console.log('[falService.briaExpandImage] ✅ No nested structures detected in cleaned images');
       }
-    }
-    return issues;
-  };
 
-  const nestedIssues = cleanedImages.flatMap((img, index) => 
-    inspectForNestedStructures(img, `images[${index}]`)
-  );
-  
-  if (nestedIssues.length > 0) {
-    console.error('[falService.briaExpandImage] NESTED STRUCTURES DETECTED:', nestedIssues);
-    console.error('[falService.briaExpandImage] Full cleaned images:', JSON.stringify(cleanedImages, null, 2));
-  } else {
-    console.log('[falService.briaExpandImage] ✅ No nested structures detected in cleaned images');
-  }
+      // Create update payload and log it
+      const updatePayload = {
+        status: 'completed' as const,
+        images: cleanedImages,
+        aestheticScore: highestScore,
+      };
 
-  // Create update payload and log it
-  const updatePayload = {
-    status: 'completed' as const,
-    images: cleanedImages,
-    aestheticScore: highestScore,
-  };
-  
-  console.log('[falService.briaExpandImage] Update payload to Firestore:', {
-    status: updatePayload.status,
-    imagesCount: updatePayload.images.length,
-    aestheticScore: updatePayload.aestheticScore,
-    imagesStructure: updatePayload.images.map((img, i) => ({
-      index: i,
-      keys: Object.keys(img),
-      types: Object.entries(img).map(([k, v]) => [k, typeof v, Array.isArray(v) ? 'array' : '']),
-    })),
-  });
+      console.log('[falService.briaExpandImage] Update payload to Firestore:', {
+        status: updatePayload.status,
+        imagesCount: updatePayload.images.length,
+        aestheticScore: updatePayload.aestheticScore,
+        imagesStructure: updatePayload.images.map((img, i) => ({
+          index: i,
+          keys: Object.keys(img),
+          types: Object.entries(img).map(([k, v]) => [k, typeof v, Array.isArray(v) ? 'array' : '']),
+        })),
+      });
 
-  // Save using the same pattern as outpaintImage - pass cleaned images directly
-  try {
-    await generationHistoryRepository.update(uid, historyId, updatePayload as any);
-    console.log('[falService.briaExpandImage] ✅ Successfully saved to Firestore');
-  } catch (firestoreError: any) {
-    console.error('[falService.briaExpandImage] ❌ Firestore error:', {
-      message: firestoreError.message,
-      code: firestoreError.code,
-      stack: firestoreError.stack,
-      payload: JSON.stringify(updatePayload, null, 2),
-    });
-    throw firestoreError;
-  }
-      
+      // Save using the same pattern as outpaintImage - pass cleaned images directly
+      try {
+        await generationHistoryRepository.update(uid, historyId, updatePayload as any);
+        console.log('[falService.briaExpandImage] ✅ Successfully saved to Firestore');
+      } catch (firestoreError: any) {
+        console.error('[falService.briaExpandImage] ❌ Firestore error:', {
+          message: firestoreError.message,
+          code: firestoreError.code,
+          stack: firestoreError.stack,
+          payload: JSON.stringify(updatePayload, null, 2),
+        });
+        throw firestoreError;
+      }
+
       // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
       markGenerationCompleted(uid, historyId, {
         status: "completed",
         images: cleanedImages as any,
       }).catch(err => console.error('[FAL] Image optimization failed:', err));
-      
+
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
 
-  return { images: cleanedImages as any, historyId, model, status: 'completed' };
+      return { images: cleanedImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
         fallbackMessage: 'Failed to expand image with Bria API',
@@ -1774,10 +1782,10 @@ export const falService = {
           const username = creator?.username || uid;
           // Download from Zata using our backend (bypasses TLS) and re-upload
           // This creates a new Zata URL, but FAL may still not be able to access it
-          const reuploaded = await uploadFromUrlToZata({ 
-            sourceUrl: resolvedUrl, 
-            keyPrefix: `users/${username}/input/${historyId}`, 
-            fileName: `outpaint-fal-${Date.now()}` 
+          const reuploaded = await uploadFromUrlToZata({
+            sourceUrl: resolvedUrl,
+            keyPrefix: `users/${username}/input/${historyId}`,
+            fileName: `outpaint-fal-${Date.now()}`
           });
           resolvedUrl = reuploaded.publicUrl;
           console.log('[falService.outpaintImage] Re-uploaded image for FAL access:', resolvedUrl);
@@ -1875,17 +1883,17 @@ export const falService = {
         aestheticScore: highestScore,
         frameSize: body?.aspect_ratio,
       } as any);
-      
+
       // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
       markGenerationCompleted(uid, historyId, {
         status: "completed",
         images: scoredImages as any,
       }).catch(err => console.error('[FAL] Image optimization failed:', err));
-      
+
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
 
-  return { images: scoredImages as any, historyId, model, status: 'completed' };
+      return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
         fallbackMessage: 'Failed to outpaint image with FAL API',
@@ -1925,7 +1933,7 @@ export const falService = {
         try {
           const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${(creator?.username || uid)}/input/${historyId}`, fileName: 'topaz-source' });
           resolvedUrl = stored.publicUrl;
-        } catch {}
+        } catch { }
       }
       if (!resolvedUrl) throw new ApiError('Unable to resolve image_url for Topaz upscale', 400);
 
@@ -1945,26 +1953,26 @@ export const falService = {
       if (!imgUrl) throw new ApiError('No image URL returned from FAL API', 502);
       const username = creator?.username || uid;
       const { key, publicUrl } = await uploadFromUrlToZata({ sourceUrl: imgUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'upscaled' });
-  const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any ];
-  // Score images
-  const scoredImages = await aestheticScoreService.scoreImages(images as any);
-  const highestScore = aestheticScoreService.getHighestScore(scoredImages);
-  await generationHistoryRepository.update(uid, historyId, { 
-    status: 'completed', 
-    images: scoredImages, 
-    aestheticScore: highestScore,
-    updatedAt: new Date().toISOString(), // Set completion time for proper sorting
-  } as any);
-      
+      const images: FalGeneratedImage[] = [{ id: result.requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any];
+      // Score images
+      const scoredImages = await aestheticScoreService.scoreImages(images as any);
+      const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: scoredImages,
+        aestheticScore: highestScore,
+        updatedAt: new Date().toISOString(), // Set completion time for proper sorting
+      } as any);
+
       // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
       markGenerationCompleted(uid, historyId, {
         status: "completed",
         images: scoredImages as any,
       }).catch(err => console.error('[FAL] Image optimization failed:', err));
-      
+
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
-  return { images: scoredImages as any, historyId, model, status: 'completed' };
+      return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
         fallbackMessage: 'Failed to upscale image with FAL API',
@@ -1980,7 +1988,7 @@ export const falService = {
       throw falError;
     }
   },
-  async seedvrUpscale(uid: string, body: any): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }>{
+  async seedvrUpscale(uid: string, body: any): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!body?.video_url) throw new ApiError('video_url is required', 400);
     fal.config({ credentials: falKey });
@@ -2007,21 +2015,21 @@ export const falService = {
       if (body.output_quality) input.output_quality = body.output_quality;
       if (body.output_write_mode) input.output_write_mode = body.output_write_mode;
       if (body.seed != null) input.seed = body.seed;
-      
+
       console.log('[seedvrUpscale] Calling FAL API with input:', { ...input, video_url: input.video_url?.substring(0, 100) + '...' });
-      
+
       let result: any;
       try {
         result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
       } catch (falErr: any) {
         const errorDetails = falErr?.response?.data || falErr?.message || falErr;
         console.error('[seedvrUpscale] FAL API error:', JSON.stringify(errorDetails, null, 2));
-        const errorMessage = typeof errorDetails === 'string' 
-          ? errorDetails 
+        const errorMessage = typeof errorDetails === 'string'
+          ? errorDetails
           : errorDetails?.error || errorDetails?.message || errorDetails?.detail || 'FAL API request failed';
         throw new ApiError(`FAL API error: ${errorMessage}`, 502);
       }
-      
+
       const videoUrl: string | undefined = (result as any)?.data?.video?.url || (result as any)?.data?.video_url || (result as any)?.data?.output?.video?.url;
       if (!videoUrl) {
         console.error('[seedvrUpscale] No video URL in response:', JSON.stringify(result, null, 2));
@@ -2035,14 +2043,14 @@ export const falService = {
       } catch {
         stored = { publicUrl: videoUrl, key: '' };
       }
-      const videos: VideoMedia[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: videoUrl } as any ];
-  // Score video
-  const scoredVideos = await aestheticScoreService.scoreVideos(videos as any);
-  const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
-  await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
+      const videos: VideoMedia[] = [{ id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: videoUrl } as any];
+      // Score video
+      const scoredVideos = await aestheticScoreService.scoreVideos(videos as any);
+      const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
-  return { videos: scoredVideos as any, historyId, model, status: 'completed' };
+      return { videos: scoredVideos as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
         fallbackMessage: 'Failed to upscale video with FAL API',
@@ -2058,7 +2066,7 @@ export const falService = {
       throw falError;
     }
   },
-  async image2svg(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }>{
+  async image2svg(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!(body?.image_url) && !(body?.image)) throw new ApiError('image_url or image is required', 400);
     fal.config({ credentials: falKey });
@@ -2089,20 +2097,22 @@ export const falService = {
       }
       if (!inputUrl) throw new ApiError('Unable to resolve image_url for image2svg', 400);
 
-      const result = await fal.subscribe(model as any, ({ input: {
-        image_url: inputUrl,
-        colormode: body.colormode ?? 'color',
-        hierarchical: body.hierarchical ?? 'stacked',
-        mode: body.mode ?? 'spline',
-        filter_speckle: body.filter_speckle ?? 4,
-        color_precision: body.color_precision ?? 6,
-        layer_difference: body.layer_difference ?? 16,
-        corner_threshold: body.corner_threshold ?? 60,
-        length_threshold: body.length_threshold ?? 4,
-        max_iterations: body.max_iterations ?? 10,
-        splice_threshold: body.splice_threshold ?? 45,
-        path_precision: body.path_precision ?? 3,
-      }, logs: true } as unknown) as any);
+      const result = await fal.subscribe(model as any, ({
+        input: {
+          image_url: inputUrl,
+          colormode: body.colormode ?? 'color',
+          hierarchical: body.hierarchical ?? 'stacked',
+          mode: body.mode ?? 'spline',
+          filter_speckle: body.filter_speckle ?? 4,
+          color_precision: body.color_precision ?? 6,
+          layer_difference: body.layer_difference ?? 16,
+          corner_threshold: body.corner_threshold ?? 60,
+          length_threshold: body.length_threshold ?? 4,
+          max_iterations: body.max_iterations ?? 10,
+          splice_threshold: body.splice_threshold ?? 45,
+          path_precision: body.path_precision ?? 3,
+        }, logs: true
+      } as unknown) as any);
 
       const files: any[] = Array.isArray((result as any)?.data?.images) ? (result as any).data.images : [];
       const svgUrl = files[0]?.url as string | undefined;
@@ -2115,8 +2125,8 @@ export const falService = {
       } catch {
         stored = { publicUrl: svgUrl, key: '' };
       }
-      const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, originalUrl: svgUrl } as any ];
-      
+      const images: FalGeneratedImage[] = [{ id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, originalUrl: svgUrl } as any];
+
       // Save input image to history (similar to upscale)
       let inputImages: any[] = [];
       try {
@@ -2136,7 +2146,7 @@ export const falService = {
       } catch (err) {
         console.error('[image2svg] Failed to save input image:', err);
       }
-      
+
       // Preserve inputImages if they were already saved (don't overwrite them)
       const existing = await generationHistoryRepository.get(uid, historyId);
       const updateData: any = {
@@ -2151,15 +2161,15 @@ export const falService = {
       if (existing && Array.isArray((existing as any).inputImages) && (existing as any).inputImages.length > 0 && inputImages.length === 0) {
         updateData.inputImages = (existing as any).inputImages;
       }
-      
+
       await generationHistoryRepository.update(uid, historyId, updateData);
-      
+
       // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
       markGenerationCompleted(uid, historyId, {
         status: "completed",
         images: images as any,
       }).catch(err => console.error('[FAL] Image optimization failed:', err));
-      
+
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
       return { images, historyId, model, status: 'completed' };
@@ -2178,7 +2188,7 @@ export const falService = {
       throw falError;
     }
   },
-  async recraftVectorize(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }>{
+  async recraftVectorize(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!(body?.image_url) && !(body?.image)) throw new ApiError('image_url or image is required', 400);
     fal.config({ credentials: falKey });
@@ -2203,7 +2213,7 @@ export const falService = {
         if (/^data:/i.test(imageStr)) {
           try {
             const username = creator?.username || uid;
-            const stored = await uploadDataUriToZata({ dataUri: imageStr, keyPrefix: `users/${username}/input/${historyId}` , fileName: 'vectorize-source' });
+            const stored = await uploadDataUriToZata({ dataUri: imageStr, keyPrefix: `users/${username}/input/${historyId}`, fileName: 'vectorize-source' });
             inputUrl = stored.publicUrl;
           } catch {
             inputUrl = undefined;
@@ -2222,8 +2232,8 @@ export const falService = {
       let stored: any;
       try { stored = await uploadFromUrlToZata({ sourceUrl: svgUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'vectorized' }); }
       catch { stored = { publicUrl: svgUrl, key: '' }; }
-      const images: FalGeneratedImage[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, originalUrl: svgUrl } as any ];
-      
+      const images: FalGeneratedImage[] = [{ id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, originalUrl: svgUrl } as any];
+
       // Save input image to history (similar to upscale)
       let inputImages: any[] = [];
       try {
@@ -2243,7 +2253,7 @@ export const falService = {
       } catch (err) {
         console.error('[recraftVectorize] Failed to save input image:', err);
       }
-      
+
       // Preserve inputImages if they were already saved (don't overwrite them)
       const existing = await generationHistoryRepository.get(uid, historyId);
       const updateData: any = {
@@ -2258,15 +2268,15 @@ export const falService = {
       if (existing && Array.isArray((existing as any).inputImages) && (existing as any).inputImages.length > 0 && inputImages.length === 0) {
         updateData.inputImages = (existing as any).inputImages;
       }
-      
+
       await generationHistoryRepository.update(uid, historyId, updateData);
-      
+
       // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
       markGenerationCompleted(uid, historyId, {
         status: "completed",
         images: images as any,
       }).catch(err => console.error('[FAL] Image optimization failed:', err));
-      
+
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
       return { images, historyId, model, status: 'completed' };
@@ -2313,7 +2323,7 @@ export const falService = {
           const username = creator?.username || uid;
           const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${username}/input/${historyId}`, fileName: 'genfill-source' });
           imageUrl = stored.publicUrl;
-        } catch {}
+        } catch { }
       }
       if (!imageUrl) throw new ApiError('Unable to resolve image_url for Bria GenFill', 400);
 
@@ -2324,7 +2334,7 @@ export const falService = {
           const username = creator?.username || uid;
           const stored = await uploadDataUriToZata({ dataUri: body.mask, keyPrefix: `users/${username}/input/${historyId}`, fileName: 'genfill-mask' });
           maskUrl = stored.publicUrl;
-        } catch {}
+        } catch { }
       }
       if (!maskUrl) throw new ApiError('Unable to resolve mask_url for Bria GenFill', 400);
 
@@ -2343,7 +2353,7 @@ export const falService = {
       }
       if (body?.sync_mode === true) input.sync_mode = true;
 
-      console.log('[falService.briaGenfill] Calling FAL API:', { model, input: { ...input, image_url: (input.image_url || '').slice(0,100) + '...', mask_url: (input.mask_url || '').slice(0,100) + '...' } });
+      console.log('[falService.briaGenfill] Calling FAL API:', { model, input: { ...input, image_url: (input.image_url || '').slice(0, 100) + '...', mask_url: (input.mask_url || '').slice(0, 100) + '...' } });
       let result: any;
       try {
         result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
@@ -2374,26 +2384,26 @@ export const falService = {
         }
       }));
 
-  // Score images
-  const scoredImages = await aestheticScoreService.scoreImages(storedImages as any);
-  const highestScore = aestheticScoreService.getHighestScore(scoredImages);
-  await generationHistoryRepository.update(uid, historyId, { 
-    status: 'completed', 
-    images: scoredImages, 
-    aestheticScore: highestScore,
-    updatedAt: new Date().toISOString(), // Set completion time for proper sorting
-  } as any);
-      
+      // Score images
+      const scoredImages = await aestheticScoreService.scoreImages(storedImages as any);
+      const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: scoredImages,
+        aestheticScore: highestScore,
+        updatedAt: new Date().toISOString(), // Set completion time for proper sorting
+      } as any);
+
       // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
       markGenerationCompleted(uid, historyId, {
         status: "completed",
         images: scoredImages as any,
       }).catch(err => console.error('[FAL] Image optimization failed:', err));
-      
+
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
 
-  return { images: scoredImages as any, historyId, model, status: 'completed' };
+      return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
         fallbackMessage: 'Failed to generate with Bria GenFill API',
@@ -2409,7 +2419,7 @@ export const falService = {
       throw falError;
     }
   },
-  async birefnetVideo(uid: string, body: any): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }>{
+  async birefnetVideo(uid: string, body: any): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!body?.video_url) throw new ApiError('video_url is required', 400);
     fal.config({ credentials: falKey });
@@ -2455,13 +2465,13 @@ export const falService = {
       } catch {
         stored = { publicUrl: videoUrl, key: '' };
       }
-      const videos: VideoMedia[] = [ { id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: videoUrl } as any ];
-  // Score video
-  const scoredVideos = await aestheticScoreService.scoreVideos(videos as any);
-  const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
-  await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
+      const videos: VideoMedia[] = [{ id: result.requestId || `fal-${Date.now()}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: videoUrl } as any];
+      // Score video
+      const scoredVideos = await aestheticScoreService.scoreVideos(videos as any);
+      const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
+      await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
       await syncToMirror(uid, historyId);
-  return { videos: scoredVideos as any, historyId, model, status: 'completed' };
+      return { videos: scoredVideos as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
         fallbackMessage: 'Failed to remove background from video with FAL API',
@@ -2511,12 +2521,12 @@ async function persistInputImagesFromUrls(uid: string, historyId: string, urls: 
           ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
           : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
         inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
-      } catch {}
+      } catch { }
     }
     if (inputPersisted.length > 0) {
       await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
     }
-  } catch {}
+  } catch { }
 }
 
 async function veoTtvSubmit(uid: string, body: any, fast = false): Promise<SubmitReturn> {
@@ -2538,7 +2548,7 @@ async function veoTtvSubmit(uid: string, body: any, fast = false): Promise<Submi
       generate_audio: body.generate_audio ?? true,
     },
   } as any);
-  await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id } as any);
+  await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: body.aspect_ratio ?? '16:9', generate_audio: body.generate_audio ?? true } as any);
   return { requestId: request_id, historyId, model, status: 'submitted' };
 }
 
@@ -2561,14 +2571,14 @@ async function veoI2vSubmit(uid: string, body: any, fast = false): Promise<Submi
       resolution: body.resolution ?? '720p',
     },
   } as any);
-  await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id } as any);
+  await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: body.aspect_ratio ?? 'auto', generate_audio: body.generate_audio ?? true } as any);
   return { requestId: request_id, historyId, model, status: 'submitted' };
 }
 
 async function queueStatus(uid: string, model: string | undefined, requestId: string): Promise<any> {
   const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   fal.config({ credentials: falKey });
-  
+
   // If model is not provided, look it up from generation history
   let resolvedModel = model;
   if (!resolvedModel && requestId) {
@@ -2581,11 +2591,11 @@ async function queueStatus(uid: string, model: string | undefined, requestId: st
       console.warn('[queueStatus] Failed to lookup model from history', e);
     }
   }
-  
+
   if (!resolvedModel) {
     throw new ApiError('Model is required. Either provide it in the request or ensure the requestId exists in generation history.', 400);
   }
-  
+
   const status = await fal.queue.status(resolvedModel, { requestId, logs: true } as any);
   return status;
 }
@@ -2655,12 +2665,12 @@ async function fetchFalQueueResponse(modelPath: string, requestId: string): Prom
 async function queueResult(uid: string, model: string | undefined, requestId: string): Promise<any> {
   const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   fal.config({ credentials: falKey });
-  
+
   // If model is not provided, look it up from generation history
   let resolvedModel = model;
   if (!resolvedModel && requestId) {
     try {
-  const located = await generationHistoryRepository.findByProviderTaskId(uid, 'fal', requestId);
+      const located = await generationHistoryRepository.findByProviderTaskId(uid, 'fal', requestId);
       if (located?.item?.model) {
         resolvedModel = located.item.model;
       }
@@ -2668,11 +2678,11 @@ async function queueResult(uid: string, model: string | undefined, requestId: st
       console.warn('[queueResult] Failed to lookup model from history', e);
     }
   }
-  
+
   if (!resolvedModel) {
     throw new ApiError('Model is required. Either provide it in the request or ensure the requestId exists in generation history.', 400);
   }
-  
+
   let result: any;
   try {
     result = await fal.queue.result(resolvedModel, { requestId } as any);
@@ -2730,24 +2740,24 @@ async function queueResult(uid: string, model: string | undefined, requestId: st
       });
       const videoObj: any = { id: requestId, url: uploaded.publicUrl, storagePath: uploaded.key, originalUrl: providerUrl };
       if (providerVideoId) videoObj.soraVideoId = providerVideoId;
-      
+
       // Generate and attach thumbnail
       try {
         const { generateAndAttachThumbnail } = await import('./videoThumbnailService');
         const videoWithThumbnail = await generateAndAttachThumbnail(videoObj, keyPrefix);
-        videos = [ videoWithThumbnail as any ];
+        videos = [videoWithThumbnail as any];
       } catch (thumbErr) {
         console.warn('[falService.queueResult] Failed to generate thumbnail, continuing without it:', thumbErr);
-      videos = [ videoObj as any ];
+        videos = [videoObj as any];
       }
-      
+
       await generationHistoryRepository.update(uid, located.id, { status: 'completed', videos, ...(providerVideoId ? { soraVideoId: providerVideoId } : {}) } as any);
     } catch (e) {
       // Fallback to provider URL if Zata upload fails
       const videoObj: any = { id: requestId, url: providerUrl, storagePath: '', originalUrl: providerUrl };
       if (providerVideoId) videoObj.soraVideoId = providerVideoId;
-      videos = [ videoObj as any ];
-      await generationHistoryRepository.update(uid, located.id, { status: 'completed', videos: [ videoObj ] as any, ...(providerVideoId ? { soraVideoId: providerVideoId } : {}) } as any);
+      videos = [videoObj as any];
+      await generationHistoryRepository.update(uid, located.id, { status: 'completed', videos: [videoObj] as any, ...(providerVideoId ? { soraVideoId: providerVideoId } : {}) } as any);
     }
     const fresh = await generationHistoryRepository.get(uid, located.id);
     if (fresh) {
@@ -2764,11 +2774,23 @@ async function queueResult(uid: string, model: string | undefined, requestId: st
     let debitedCredits: number | null = null;
     let debitStatus: 'WRITTEN' | 'SKIPPED' | 'ERROR' | null = null;
     try {
-      const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(resolvedModel, (located as any)?.item);
-      const status = await creditsRepository.writeDebitIfAbsent(uid, located.id, cost, 'fal.queue.veo', { ...meta, historyId: located.id, provider: 'fal', pricingVersion });
+      // Fetch fresh history to ensure duration/resolution/generate_audio are available for pricing
+      const freshHistory = await generationHistoryRepository.get(uid, located.id).catch(() => null);
+      const metaSrc = freshHistory || (located as any)?.item;
+      const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(resolvedModel, metaSrc as any);
+      const status = await creditsRepository.writeDebitIfAbsent(
+        uid,
+        located.id,
+        cost,
+        'fal.queue.veo',
+        { ...meta, historyId: located.id, provider: 'fal', pricingVersion }
+      );
       debitedCredits = cost;
       debitStatus = status;
-    } catch { debitStatus = 'ERROR'; }
+    } catch (e: any) {
+      console.error('[fal.queueResult] debit error', { uid, historyId: located.id, model: resolvedModel, err: e?.message || e });
+      debitStatus = 'ERROR';
+    }
     return { videos: enrichedVideos, historyId: located.id, model: resolvedModel, requestId, status: 'completed', debitedCredits, debitStatus } as any;
   }
   // Handle image outputs (T2I/I2I)
@@ -2783,23 +2805,23 @@ async function queueResult(uid: string, model: string | undefined, requestId: st
     const stored = await Promise.all(providerImages.map(async (img, index) => {
       try {
         const up = await uploadFromUrlToZata({ sourceUrl: img.url, keyPrefix, fileName: buildGenerationImageFileName(located?.id, index) });
-        return { id: `${requestId}-${index+1}`, url: up.publicUrl, storagePath: up.key, originalUrl: img.url } as any;
+        return { id: `${requestId}-${index + 1}`, url: up.publicUrl, storagePath: up.key, originalUrl: img.url } as any;
       } catch {
-        return { id: `${requestId}-${index+1}`, url: img.url, originalUrl: img.url } as any;
+        return { id: `${requestId}-${index + 1}`, url: img.url, originalUrl: img.url } as any;
       }
     }));
     await generationHistoryRepository.update(uid, located.id, { status: 'completed', images: stored } as any);
     try {
       const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(resolvedModel, (located as any)?.item);
       await creditsRepository.writeDebitIfAbsent(uid, located.id, cost, 'fal.queue.image', { ...meta, historyId: located.id, provider: 'fal', pricingVersion });
-    } catch {}
-    
+    } catch { }
+
     // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
     markGenerationCompleted(uid, located.id, {
       status: "completed",
       images: stored,
     }).catch(err => console.error('[FAL] Image optimization failed:', err));
-    
+
     // Sync to mirror with retries
     await syncToMirror(uid, located.id);
     return { images: stored, historyId: located.id, model: resolvedModel, requestId, status: 'completed' } as any;
@@ -2830,7 +2852,7 @@ export const falQueueService = {
         generate_audio: body.generate_audio ?? true,
       },
     } as any);
-    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: body.aspect_ratio ?? '16:9' } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   async veo31I2vSubmit(uid: string, body: any, fast = false): Promise<SubmitReturn> {
@@ -2886,7 +2908,7 @@ export const falQueueService = {
         generate_audio: body.generate_audio ?? true,
       },
     } as any);
-    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p' } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   async veo31FirstLastFastSubmit(uid: string, body: any): Promise<SubmitReturn> {
@@ -2925,7 +2947,7 @@ export const falQueueService = {
         resolution: body.resolution ?? '720p',
       },
     } as any);
-    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: body.aspect_ratio ?? 'auto' } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   async veo31FirstLastSubmit(uid: string, body: any): Promise<SubmitReturn> {
@@ -2964,7 +2986,7 @@ export const falQueueService = {
         resolution: body.resolution ?? '720p',
       },
     } as any);
-    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: body.aspect_ratio ?? 'auto' } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   // Sora 2 - Image to Video (standard)
@@ -2977,7 +2999,7 @@ export const falQueueService = {
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
     // Persist input image
     await persistInputImagesFromUrls(uid, historyId, [body.image_url]);
-    
+
     // Normalize duration to ensure it's a number and valid (4, 8, or 12)
     let duration = body.duration ?? 8;
     if (typeof duration !== 'number') {
@@ -2989,19 +3011,19 @@ export const falQueueService = {
       else if (duration < 10) duration = 8;
       else duration = 12;
     }
-    
+
     // Normalize resolution - Standard only supports 'auto' or '720p'
     let resolution = body.resolution ?? 'auto';
     if (resolution !== 'auto' && resolution !== '720p') {
       resolution = 'auto';
     }
-    
+
     // Normalize aspect_ratio
     let aspect_ratio = body.aspect_ratio ?? 'auto';
     if (!['auto', '16:9', '9:16'].includes(aspect_ratio)) {
       aspect_ratio = 'auto';
     }
-    
+
     const input: any = {
       prompt: body.prompt,
       image_url: body.image_url,
@@ -3009,14 +3031,14 @@ export const falQueueService = {
       aspect_ratio,
       duration,
     };
-    
+
     // Only include api_key if provided
     if (body.api_key) {
       input.api_key = body.api_key;
     }
-    
+
     console.log('[sora2I2vSubmit] Submitting to FAL:', { model, input: { ...input, image_url: input.image_url?.substring(0, 100) + '...' } });
-    
+
     const { request_id } = await fal.queue.submit(model, { input } as any);
     await generationHistoryRepository.update(uid, historyId, {
       provider: 'fal',
@@ -3038,7 +3060,7 @@ export const falQueueService = {
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
     // Persist input image
     await persistInputImagesFromUrls(uid, historyId, [body.image_url]);
-    
+
     // Normalize duration to ensure it's a number and valid (4, 8, or 12)
     let duration = body.duration ?? 8;
     if (typeof duration !== 'number') {
@@ -3050,19 +3072,19 @@ export const falQueueService = {
       else if (duration < 10) duration = 8;
       else duration = 12;
     }
-    
+
     // Normalize resolution - Pro supports 'auto', '720p', or '1080p'
     let resolution = body.resolution ?? 'auto';
     if (!['auto', '720p', '1080p'].includes(resolution)) {
       resolution = 'auto';
     }
-    
+
     // Normalize aspect_ratio
     let aspect_ratio = body.aspect_ratio ?? 'auto';
     if (!['auto', '16:9', '9:16'].includes(aspect_ratio)) {
       aspect_ratio = 'auto';
     }
-    
+
     const input: any = {
       prompt: body.prompt,
       image_url: body.image_url,
@@ -3070,14 +3092,14 @@ export const falQueueService = {
       aspect_ratio,
       duration,
     };
-    
+
     // Only include api_key if provided
     if (body.api_key) {
       input.api_key = body.api_key;
     }
-    
+
     console.log('[sora2ProI2vSubmit] Submitting to FAL:', { model, input: { ...input, image_url: input.image_url?.substring(0, 100) + '...' } });
-    
+
     const { request_id } = await fal.queue.submit(model, { input } as any);
     await generationHistoryRepository.update(uid, historyId, {
       provider: 'fal',
@@ -3114,7 +3136,7 @@ export const falQueueService = {
           const source_is_pro = String((src as any)?.model || '').toLowerCase().includes('/pro') || String(source_resolution || '').toLowerCase() === '1080p';
           await generationHistoryRepository.update(uid, historyId, { source_history_id: String(body.source_history_id), source_duration, source_resolution, source_is_pro: String(!!source_is_pro) } as any);
         }
-      } catch {}
+      } catch { }
     }
     const { request_id } = await fal.queue.submit(model, {
       input: {
@@ -3133,7 +3155,7 @@ export const falQueueService = {
     if (!body?.prompt) throw new ApiError('Prompt is required', 400);
     const model = 'fal-ai/sora-2/text-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    
+
     // Normalize duration to ensure it's a number and valid (4, 8, or 12)
     let duration = body.duration ?? 8;
     if (typeof duration !== 'number') {
@@ -3145,33 +3167,33 @@ export const falQueueService = {
       else if (duration < 10) duration = 8;
       else duration = 12;
     }
-    
+
     // Normalize resolution - Standard only supports '720p'
     let resolution = body.resolution ?? '720p';
     if (resolution !== '720p') {
       resolution = '720p';
     }
-    
+
     // Normalize aspect_ratio - Standard supports '16:9' or '9:16'
     let aspect_ratio = body.aspect_ratio ?? '16:9';
     if (!['16:9', '9:16'].includes(aspect_ratio)) {
       aspect_ratio = '16:9';
     }
-    
+
     const input: any = {
       prompt: body.prompt,
       resolution,
       aspect_ratio,
       duration,
     };
-    
+
     // Only include api_key if provided
     if (body.api_key) {
       input.api_key = body.api_key;
     }
-    
+
     console.log('[sora2T2vSubmit] Submitting to FAL:', { model, input });
-    
+
     const { request_id } = await fal.queue.submit(model, { input } as any);
     await generationHistoryRepository.update(uid, historyId, {
       provider: 'fal',
@@ -3190,7 +3212,7 @@ export const falQueueService = {
     if (!body?.prompt) throw new ApiError('Prompt is required', 400);
     const model = 'fal-ai/sora-2/text-to-video/pro';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    
+
     // Normalize duration to ensure it's a number and valid (4, 8, or 12)
     let duration = body.duration ?? 8;
     if (typeof duration !== 'number') {
@@ -3202,33 +3224,33 @@ export const falQueueService = {
       else if (duration < 10) duration = 8;
       else duration = 12;
     }
-    
+
     // Normalize resolution - Pro supports '720p' or '1080p'
     let resolution = body.resolution ?? '1080p';
     if (!['720p', '1080p'].includes(resolution)) {
       resolution = '1080p';
     }
-    
+
     // Normalize aspect_ratio - Pro supports '16:9' or '9:16'
     let aspect_ratio = body.aspect_ratio ?? '16:9';
     if (!['16:9', '9:16'].includes(aspect_ratio)) {
       aspect_ratio = '16:9';
     }
-    
+
     const input: any = {
       prompt: body.prompt,
       resolution,
       aspect_ratio,
       duration,
     };
-    
+
     // Only include api_key if provided
     if (body.api_key) {
       input.api_key = body.api_key;
     }
-    
+
     console.log('[sora2ProT2vSubmit] Submitting to FAL:', { model, input });
-    
+
     const { request_id } = await fal.queue.submit(model, { input } as any);
     await generationHistoryRepository.update(uid, historyId, {
       provider: 'fal',

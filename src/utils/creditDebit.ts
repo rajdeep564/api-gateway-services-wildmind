@@ -80,3 +80,25 @@ export async function postHistoryDebit(
     return 'SKIPPED';
   }
 }
+
+/**
+ * Issue a refund for a failed operation.
+ * Wraps creditsRepository.writeRefund.
+ */
+export async function issueRefund(
+  uid: string,
+  requestId: string,
+  amount: number,
+  reason: string,
+  meta?: Record<string, any>
+): Promise<'SKIPPED' | 'WRITTEN'> {
+  try {
+    if (!amount || amount <= 0) return 'SKIPPED';
+    const outcome = await creditsRepository.writeRefund(uid, requestId, amount, reason, meta);
+    logger.info({ uid, requestId, amount, reason, outcome }, '[CREDITS] issueRefund');
+    return outcome;
+  } catch (e) {
+    logger.error({ uid, err: e }, '[CREDITS] issueRefund error');
+    return 'SKIPPED';
+  }
+}
