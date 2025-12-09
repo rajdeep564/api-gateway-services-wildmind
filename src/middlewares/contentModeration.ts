@@ -224,28 +224,15 @@ function phraseToRegex(phrase: string): RegExp {
 function findViolation(
   texts: string[]
 ): { category: BlockCategory; term: string } | null {
-  // Use word-boundary regex to avoid substring hits (e.g., "specimen" vs "semen")
-  const validNudityTerms = nudityTerms.filter(
-    (t): t is string => typeof t === "string"
-  );
-  const validNudityPhrases = nudityPhrases.filter(
-    (p): p is string => typeof p === "string"
-  );
-  const nudityWordPatterns = validNudityTerms.map(
-    (t) => new RegExp(`\\b${escapeRegex(t)}\\b`, "i")
-  );
-  const nudityPhrasePatterns = validNudityPhrases.map((p) => phraseToRegex(p));
+  const forbiddenTerms = [
+    ...nudityTerms.filter((t): t is string => typeof t === "string"),
+    ...nudityPhrases.filter((p): p is string => typeof p === "string"),
+  ].map((t) => t.toLowerCase());
 
   for (const raw of texts) {
     const text = raw.toLowerCase();
-
-    const wordIndex = nudityWordPatterns.findIndex((re) => re.test(text));
-    if (wordIndex !== -1)
-      return { category: "nudity", term: validNudityTerms[wordIndex] };
-
-    const phraseIndex = nudityPhrasePatterns.findIndex((re) => re.test(text));
-    if (phraseIndex !== -1)
-      return { category: "nudity", term: validNudityPhrases[phraseIndex] };
+    const hit = forbiddenTerms.find((term) => text.includes(term));
+    if (hit) return { category: "nudity", term: hit };
   }
   return null;
 }
