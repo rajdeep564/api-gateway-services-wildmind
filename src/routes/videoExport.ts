@@ -101,6 +101,73 @@ router.post('/upload/:jobId', upload.array('files', 50), async (req: Request, re
 });
 
 /**
+ * POST /api/video-export/upload-text-frames/:jobId
+ * Upload pre-rendered text frame sequences
+ * Converts PNG frames to transparent WebM videos for FFmpeg overlay
+ */
+router.post('/upload-text-frames/:jobId', upload.array('frames', 500), async (req: Request, res: Response) => {
+    try {
+        const { jobId } = req.params;
+        const files = req.files as Express.Multer.File[];
+        const metadata = JSON.parse(req.body.metadata || '{}');
+
+        const job = videoExportService.getJob(jobId);
+        if (!job) {
+            return res.status(404).json({ success: false, error: 'Job not found' });
+        }
+
+        const jobDir = videoExportService.getJobDir(jobId);
+        const textDir = path.join(jobDir, 'text', metadata.textItemId);
+
+        // Ensure directory exists
+        if (!fs.existsSync(textDir)) {
+            fs.mkdirSync(textDir, { recursive: true });
+        }
+
+        // Move frames to organized directory
+        for (const file of files) {
+            const destPath = path.join(textDir, file.originalname);
+            fs.renameSync(file.path, destPath);
+        }
+
+        // Convert frames to video using FFmpeg
+        const outputVideo = path.join(textDir, 'text_overlay.webm');
+
+        await videoExportService.convertFramesToVideo(
+            textDir,
+            outputVideo,
+            metadata.fps,
+            metadata.width,
+            metadata.height
+        );
+
+        // Store text overlay info for final compositing
+        videoExportService.addTextOverlay(jobId, {
+            textItemId: metadata.textItemId,
+            videoPath: outputVideo,
+            startTime: metadata.startTime,
+            duration: metadata.duration,
+            width: metadata.width,
+            height: metadata.height
+        });
+
+        console.log(`[VideoExport] Converted ${files.length} text frames to video: ${outputVideo}`);
+
+        res.json({
+            success: true,
+            message: `Converted ${files.length} frames to video`,
+            videoPath: outputVideo
+        });
+    } catch (error) {
+        console.error('[VideoExport] Error uploading text frames:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to upload text frames'
+        });
+    }
+});
+
+/**
  * POST /api/video-export/process/:jobId
  * Start processing the export
  */

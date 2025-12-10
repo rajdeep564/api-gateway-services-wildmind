@@ -176,9 +176,13 @@ class VideoExportService {
             );
         }
 
+        // Get text items for overlay
+        const textItems = this.getTextItems(timeline);
+        console.log(`[VideoExport] Found ${textItems.length} text items to render`);
+
         // Video filter complex for compositing
-        if (mediaItems.length > 0) {
-            const filterComplex = this.buildFilterComplex(mediaItems, settings, duration);
+        if (mediaItems.length > 0 || textItems.length > 0) {
+            const filterComplex = this.buildFilterComplex(mediaItems, settings, duration, textItems);
             if (filterComplex) {
                 args.push('-filter_complex', filterComplex);
                 args.push('-map', '[out]');
@@ -195,30 +199,61 @@ class VideoExportService {
         }
 
         // Output settings
-        // Encoder selection with hardware acceleration
-        if (settings.useHardwareAccel) {
-            // Try NVIDIA NVENC first
-            args.push('-c:v', 'h264_nvenc');
-            args.push('-preset', 'fast');
-        } else {
-            args.push('-c:v', 'libx264');
-            args.push('-preset', 'medium');
-        }
+        // Encoder selection based on format
+        const isWebM = settings.format === 'webm';
 
-        // Quality settings
-        const crf = settings.quality === 'high' ? 18 : settings.quality === 'medium' ? 23 : 28;
-        args.push('-crf', String(crf));
+        if (isWebM) {
+            // WebM requires VP8, VP9, or AV1
+            if (settings.useHardwareAccel) {
+                // Try VP9 hardware encoding (not widely supported)
+                args.push('-c:v', 'vp9');
+                args.push('-deadline', 'realtime');
+                args.push('-cpu-used', '4');
+            } else {
+                args.push('-c:v', 'libvpx-vp9');
+                args.push('-deadline', 'good');
+                args.push('-cpu-used', '2');
+            }
+            // Quality for VP9 (use -crf or -b:v, not both)
+            const crf = settings.quality === 'high' ? 30 : settings.quality === 'medium' ? 35 : 40;
+            args.push('-crf', String(crf));
+            args.push('-b:v', '0'); // Use -crf mode (constant quality)
+        } else {
+            // MP4 uses H.264
+            if (settings.useHardwareAccel) {
+                // Try NVIDIA NVENC first
+                args.push('-c:v', 'h264_nvenc');
+                args.push('-preset', 'fast');
+            } else {
+                args.push('-c:v', 'libx264');
+                args.push('-preset', 'medium');
+            }
+            // Quality settings for H.264
+            const crf = settings.quality === 'high' ? 18 : settings.quality === 'medium' ? 23 : 28;
+            args.push('-crf', String(crf));
+        }
 
         // Output format settings
         args.push('-pix_fmt', 'yuv420p');
         args.push('-r', String(settings.fps));
         args.push('-t', String(duration));
-        args.push('-movflags', '+faststart');
+
+        // Only add movflags for MP4
+        if (!isWebM) {
+            args.push('-movflags', '+faststart');
+        }
 
         // Audio codec
         if (audioItems.length > 0) {
-            args.push('-c:a', 'aac');
-            args.push('-b:a', '192k');
+            if (isWebM) {
+                // WebM requires Vorbis or Opus
+                args.push('-c:a', 'libopus');
+                args.push('-b:a', '192k');
+            } else {
+                // MP4 uses AAC
+                args.push('-c:a', 'aac');
+                args.push('-b:a', '192k');
+            }
         }
 
         // Output file
@@ -228,12 +263,13 @@ class VideoExportService {
     }
 
     /**
-     * Build video filter complex for compositing multiple layers
+     * Build video filter complex for compositing multiple layers including text
      */
     private buildFilterComplex(
         items: TimelineItemData[],
         settings: ExportSettings,
-        duration: number
+        duration: number,
+        textItems: TimelineItemData[] = []
     ): string {
         const { width, height } = settings.resolution;
         const filters: string[] = [];
@@ -241,12 +277,13 @@ class VideoExportService {
         // Create base canvas
         filters.push(`color=c=black:s=${width}x${height}:d=${duration}[base]`);
 
-        // Overlay each item
+        // Overlay each media item
         let currentOutput = 'base';
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
             const inputIdx = i;
-            const nextOutput = i === items.length - 1 ? 'out' : `v${i}`;
+            const isLastMedia = i === items.length - 1 && textItems.length === 0;
+            const nextOutput = isLastMedia ? 'out' : `v${i}`;
 
             // Scale and position
             let itemFilter = `[${inputIdx}:v]`;
@@ -303,7 +340,80 @@ class VideoExportService {
             currentOutput = nextOutput;
         }
 
+        // Add text overlays using drawtext filter
+        for (let i = 0; i < textItems.length; i++) {
+            const textItem = textItems[i];
+            const isLast = i === textItems.length - 1;
+            const nextOutput = isLast ? 'out' : `t${i}`;
+
+            // Build drawtext filter
+            const textFilter = this.buildDrawtextFilter(textItem, width, height);
+            filters.push(`[${currentOutput}]${textFilter}[${nextOutput}]`);
+
+            currentOutput = nextOutput;
+        }
+
         return filters.join(';');
+    }
+
+    /**
+     * Build FFmpeg drawtext filter for a text item
+     */
+    private buildDrawtextFilter(
+        item: TimelineItemData,
+        canvasWidth: number,
+        canvasHeight: number
+    ): string {
+        // Escape text for FFmpeg (escape colons, backslashes, single quotes)
+        let text = (item.name || '').replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\\'");
+
+        // Apply text transform
+        if (item.textTransform === 'uppercase') {
+            text = text.toUpperCase();
+        } else if (item.textTransform === 'lowercase') {
+            text = text.toLowerCase();
+        }
+
+        // Font settings
+        const fontSize = item.fontSize || 40;
+        const fontFamily = (item.fontFamily || 'Arial').replace(/ /g, '\\ '); // Escape spaces
+        const fontColor = (item.color || '#ffffff').replace('#', '0x');
+
+        // Calculate position (x, y are percentages relative to center)
+        const x = Math.round((canvasWidth / 2) + ((item.x || 0) / 100) * canvasWidth);
+        const y = Math.round((canvasHeight / 2) + ((item.y || 0) / 100) * canvasHeight);
+
+        // Build filter parts
+        const filterParts: string[] = [
+            `drawtext=text='${text}'`,
+            `fontsize=${fontSize}`,
+            `fontcolor=${fontColor}`,
+            `x=${x}-(tw/2)`, // Center horizontally
+            `y=${y}-(th/2)`, // Center vertically
+            `enable='between(t,${item.start},${item.start + item.duration})'`
+        ];
+
+        // Add font if available (use default if not found)
+        // Note: FFmpeg needs a valid font file path on the server
+        // For cross-platform compatibility, we'll use fontfamily
+        filterParts.push(`font='${fontFamily}'`);
+
+        // Apply text effects (shadow)
+        if (item.textEffect?.type === 'shadow') {
+            const shadowColor = (item.textEffect.color || '#000000').replace('#', '0x');
+            filterParts.push(`shadowcolor=${shadowColor}`);
+            filterParts.push(`shadowx=2`);
+            filterParts.push(`shadowy=2`);
+        }
+
+        // Apply border/outline effect
+        if (item.textEffect?.type === 'outline') {
+            const borderColor = (item.textEffect.color || '#000000').replace('#', '0x');
+            filterParts.push(`bordercolor=${borderColor}`);
+            filterParts.push(`borderw=2`);
+        }
+
+        return filterParts.join(':');
     }
 
     /**
@@ -348,23 +458,49 @@ class VideoExportService {
     }
 
     /**
+     * Get text items from timeline
+     */
+    private getTextItems(timeline: TimelineData): TimelineItemData[] {
+        const items: TimelineItemData[] = [];
+        for (const track of timeline.tracks) {
+            for (const item of track.items) {
+                if (item.type === 'text') {
+                    items.push(item);
+                    console.log(`[VideoExport] Found text item: "${item.name}" at ${item.start}s`);
+                }
+            }
+        }
+        // Sort by start time (text renders on top of media)
+        return items.sort((a, b) => a.start - b.start);
+    }
+
+    /**
      * Get audio items from timeline
+     * Includes: explicit audio tracks + video items (unless muteVideo is set)
      */
     private getAudioItems(timeline: TimelineData): TimelineItemData[] {
         const items: TimelineItemData[] = [];
         for (const track of timeline.tracks) {
             if (track.type === 'audio') {
                 items.push(...track.items);
+                console.log(`[VideoExport] Found ${track.items.length} audio track items`);
             }
-            // Also include video items for their audio
+            // Include video items UNLESS they have muteVideo set
+            // muteVideo = true means user clicked "Remove Audio" in editor
             if (track.type === 'video') {
                 for (const item of track.items) {
                     if (item.type === 'video') {
-                        items.push(item);
+                        if (item.muteVideo === true) {
+                            console.log(`[VideoExport] Video muted (skipping audio): ${item.name}`);
+                        } else {
+                            items.push(item);
+                            console.log(`[VideoExport] Video with audio: ${item.name}`);
+                        }
                     }
                 }
             }
         }
+        console.log(`[VideoExport] Total audio sources: ${items.length}`);
         return items;
     }
 
@@ -373,7 +509,11 @@ class VideoExportService {
      */
     private runFFmpeg(args: string[], onProgress?: (progress: number) => void): Promise<void> {
         return new Promise((resolve, reject) => {
-            const ffmpeg = spawn(ffmpegPath!, args);
+            if (!ffmpegPath) {
+                return reject(new Error('FFmpeg binary not found. Please install ffmpeg-static.'));
+            }
+            console.log(`[VideoExport] Starting FFmpeg from: ${ffmpegPath}`);
+            const ffmpeg = spawn(ffmpegPath, args);
             let duration = 0;
 
             ffmpeg.stderr.on('data', (data) => {
@@ -409,6 +549,99 @@ class VideoExportService {
         });
     }
 
+    // Storage for text overlays per job
+    private textOverlays = new Map<string, Array<{
+        textItemId: string;
+        videoPath: string;
+        startTime: number;
+        duration: number;
+        width: number;
+        height: number;
+    }>>();
+
+    /**
+     * Add a text overlay to the job
+     */
+    addTextOverlay(jobId: string, overlay: {
+        textItemId: string;
+        videoPath: string;
+        startTime: number;
+        duration: number;
+        width: number;
+        height: number;
+    }): void {
+        if (!this.textOverlays.has(jobId)) {
+            this.textOverlays.set(jobId, []);
+        }
+        this.textOverlays.get(jobId)!.push(overlay);
+        console.log(`[VideoExport] Added text overlay ${overlay.textItemId} to job ${jobId}`);
+    }
+
+    /**
+     * Get text overlays for a job
+     */
+    getTextOverlays(jobId: string): Array<{
+        textItemId: string;
+        videoPath: string;
+        startTime: number;
+        duration: number;
+        width: number;
+        height: number;
+    }> {
+        return this.textOverlays.get(jobId) || [];
+    }
+
+    /**
+     * Convert PNG frames to transparent WebM video
+     */
+    async convertFramesToVideo(
+        framesDir: string,
+        outputPath: string,
+        fps: number,
+        width: number,
+        height: number
+    ): Promise<void> {
+        return new Promise((resolve, reject) => {
+            if (!ffmpegPath) {
+                return reject(new Error('FFmpeg binary not found'));
+            }
+
+            const args = [
+                '-y',
+                '-framerate', String(fps),
+                '-i', path.join(framesDir, 'frame_%05d.png'),
+                '-c:v', 'libvpx-vp9',
+                '-pix_fmt', 'yuva420p', // Transparent format
+                '-deadline', 'realtime',
+                '-cpu-used', '4',
+                '-b:v', '0',
+                '-crf', '30',
+                '-s', `${width}x${height}`,
+                outputPath
+            ];
+
+            console.log(`[VideoExport] Converting frames to video: ffmpeg ${args.join(' ')}`);
+
+            const ffmpeg = spawn(ffmpegPath, args);
+
+            ffmpeg.stderr.on('data', (data) => {
+                // Just log, don't parse for this helper
+                console.log('[FFmpeg Frame2Video]', data.toString().substring(0, 200));
+            });
+
+            ffmpeg.on('close', (code) => {
+                if (code === 0) {
+                    console.log(`[VideoExport] Frame conversion complete: ${outputPath}`);
+                    resolve();
+                } else {
+                    reject(new Error(`FFmpeg frame conversion exited with code ${code}`));
+                }
+            });
+
+            ffmpeg.on('error', reject);
+        });
+    }
+
     /**
      * Cleanup job files
      */
@@ -418,6 +651,7 @@ class VideoExportService {
             fs.rmSync(jobDir, { recursive: true });
         }
         jobs.delete(jobId);
+        this.textOverlays.delete(jobId);
         console.log(`[VideoExport] Cleaned up job ${jobId}`);
     }
 }

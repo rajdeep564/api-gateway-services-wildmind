@@ -80,12 +80,21 @@ export interface TimelineItemData {
     fontFamily?: string;
     color?: string;
     fontWeight?: string;
+    fontStyle?: string;
+    textAlign?: string;
+    textDecoration?: string;
+    textTransform?: string;
+    listType?: string;
     textEffect?: {
         type: string;
         color?: string;
         intensity?: number;
         offset?: number;
     };
+
+    // Audio flag for video items
+    hasAudio?: boolean; // Set to true if video has audio stream
+    muteVideo?: boolean; // Set to true if user clicked "Remove Audio" in editor
 }
 
 export interface ExportSettings {
