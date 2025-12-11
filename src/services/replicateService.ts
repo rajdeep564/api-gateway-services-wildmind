@@ -1392,12 +1392,67 @@ export async function generateImage(uid: string, body: any) {
         throw new ApiError("P-Image-Edit requires at least one image", 400);
       }
       input.images = images;
-      const allowedAspect = new Set(['match_input_image', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3']);
-      const aspect = allowedAspect.has(String(rest.aspect_ratio)) ? String(rest.aspect_ratio) : 'match_input_image';
+      const allowedAspect = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3']);
+      const aspect = allowedAspect.has(String(rest.aspect_ratio)) ? String(rest.aspect_ratio) : '1:1';
       input.aspect_ratio = aspect;
+
+      // Clamp width/height to <=1024 and divisible by 16; if missing, derive from aspect with max edge 1024
+      const round16 = (v: number) => Math.round(v / 16) * 16;
+      const clamp = (v: number) => Math.max(256, Math.min(1024, round16(v)));
+      const deriveDims = (ratio: string) => {
+        const [wStr, hStr] = ratio.split(':');
+        const w = Number(wStr) || 1;
+        const h = Number(hStr) || 1;
+        const aspectVal = w / h;
+        let width: number;
+        let height: number;
+        if (aspectVal >= 1) {
+          width = 1024;
+          height = round16(1024 / aspectVal);
+        } else {
+          height = 1024;
+          width = round16(1024 * aspectVal);
+        }
+        // ensure ~1MP cap
+        while (width * height > 1048576) {
+          width = clamp(width - 16);
+          height = clamp(Math.round(width / aspectVal));
+        }
+        return { width: clamp(width), height: clamp(height) };
+      };
+
+      if (rest.width != null) input.width = clamp(Number(rest.width));
+      if (rest.height != null) input.height = clamp(Number(rest.height));
+      if (input.width == null || input.height == null) {
+        const dims = deriveDims(aspect);
+        input.width = input.width ?? dims.width;
+        input.height = input.height ?? dims.height;
+      }
+
       if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
       if (typeof rest.turbo === 'boolean') input.turbo = rest.turbo;
       if (typeof rest.disable_safety_checker === 'boolean') input.disable_safety_checker = rest.disable_safety_checker;
+
+      // Persist input images to history for edit flows
+      try {
+        const username = creator?.username || uid;
+        const keyPrefix = `users/${username}/input/${historyId}`;
+        const inputPersisted: any[] = [];
+        let idx = 0;
+        for (const img of images) {
+          if (!img || typeof img !== 'string') continue;
+          try {
+            const stored = /^data:/i.test(img)
+              ? await uploadDataUriToZata({ dataUri: img, keyPrefix, fileName: `p-image-edit-${++idx}` })
+              : await uploadFromUrlToZata({ sourceUrl: img, keyPrefix, fileName: `p-image-edit-${++idx}` });
+            inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: img });
+          } catch { }
+        }
+        if (inputPersisted.length > 0) {
+          await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+        }
+      } catch { }
+
       replicateModelBase = "prunaai/p-image-edit";
     }
     // New Turbo Model mapping (z-image-turbo)
