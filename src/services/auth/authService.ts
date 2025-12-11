@@ -57,7 +57,7 @@ async function createSession(idToken: string): Promise<AppUser> {
     idTokenPrefix: idToken?.substring(0, 30) || 'N/A',
     timestamp: new Date().toISOString()
   });
-  
+
   try {
     console.log('[AUTH][authService.createSession] Verifying ID token with Firebase Admin (checkRevoked=true)...');
     const decoded = await admin.auth().verifyIdToken(idToken, true);
@@ -75,7 +75,7 @@ async function createSession(idToken: string): Promise<AppUser> {
       timeUntilExpiry: decoded?.exp ? (decoded.exp * 1000 - Date.now()) : 'N/A',
       timeUntilExpiryMinutes: decoded?.exp ? Math.floor((decoded.exp * 1000 - Date.now()) / (1000 * 60)) : 'N/A'
     });
-    
+
     console.log('[AUTH][authService.createSession] Upserting user from Firebase...');
     const user = await upsertUserFromFirebase(decoded);
     console.log('[AUTH][authService.createSession] User upserted successfully:', {
@@ -97,12 +97,12 @@ async function createSession(idToken: string): Promise<AppUser> {
       idTokenLength: idToken?.length,
       idTokenPrefix: idToken?.substring(0, 30)
     });
-    
+
     // Check if it's a TOKEN_EXPIRED error
-    if (error?.code === 'auth/id-token-expired' || 
-        error?.errorInfo?.code === 'auth/id-token-expired' ||
-        error?.message?.includes('TOKEN_EXPIRED') ||
-        error?.message?.includes('expired')) {
+    if (error?.code === 'auth/id-token-expired' ||
+      error?.errorInfo?.code === 'auth/id-token-expired' ||
+      error?.message?.includes('TOKEN_EXPIRED') ||
+      error?.message?.includes('expired')) {
       console.error('[AUTH][authService.createSession] TOKEN_EXPIRED detected!', {
         currentTime: new Date().toISOString(),
         currentTimestamp: Date.now(),
@@ -110,26 +110,26 @@ async function createSession(idToken: string): Promise<AppUser> {
       });
       throw new ApiError('ID token has expired. Please refresh and try again.', 401);
     }
-    
+
     throw new ApiError(`Invalid token: ${error?.message || 'Token verification failed'}`, 401);
   }
 }
 
 async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: number }> {
   console.log(`[AUTH] Starting OTP flow for email: ${email}`);
-  
+
   // Check if user already exists in Firebase Auth
   try {
     const existingUser = await admin.auth().getUserByEmail(email);
     console.log(`[AUTH] User already exists in Firebase Auth: ${existingUser.uid}`);
-    
+
     // Check if user exists with Google provider
     const firestoreUser = await authRepository.getUserByEmail(email);
     if (firestoreUser && firestoreUser.user.provider === 'google') {
       console.log(`[AUTH] User already signed up with Google, cannot use email/password`);
       throw new ApiError('You already have an account with Google. Please sign in with Google instead.', 400);
     }
-    
+
     // User exists with email/password provider, ask to sign in instead
     throw new ApiError('Account already exists. Please use sign-in instead.', 400);
   } catch (error: any) {
@@ -140,16 +140,16 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
     }
     console.log(`[AUTH] User not found in Firebase Auth, proceeding with OTP`);
   }
-  
+
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   const ttlSeconds = 60; // OTP valid for 60s
   const expiresInMinutes = Math.ceil(ttlSeconds / 60); // Convert to minutes for email template
-  
+
   console.log(`[AUTH] Generated OTP: ${code} for ${email}, TTL: ${ttlSeconds}s`);
-  
+
   await authRepository.saveOtp(email, code, ttlSeconds);
   console.log(`[AUTH] OTP saved to memory store`);
-  
+
   // Generate formatted email templates
   const emailHTML = generateOTPEmailHTML({
     code,
@@ -161,7 +161,7 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
     email,
     expiresInMinutes
   });
-  
+
   // Fire-and-forget email send to reduce API latency; log result asynchronously
   const emailConfigured = isEmailConfigured();
   const shouldAwaitEmail = (() => {
@@ -208,23 +208,23 @@ async function startEmailOtp(email: string): Promise<{ sent: boolean; ttl: numbe
 
 async function verifyEmailOtpAndCreateUser(email: string, username?: string, password?: string, deviceInfo?: any): Promise<{ user: AppUser; idToken: string }> {
   console.log(`[AUTH] Verifying OTP and creating user for email: ${email}, username: ${username}`);
-  
+
   const uname = username ? username.toLowerCase() : (email.split('@')[0] || 'user');
   console.log(`[AUTH] Processed username: ${uname}`);
-  
+
   if (!/^[a-z0-9_.-]{3,30}$/.test(uname)) {
     console.log(`[AUTH] Invalid username format: ${uname}`);
     throw new ApiError('Invalid username', 400);
   }
 
-  
+
   let firebaseUser;
   let user;
-  
+
   try {
     const existing = await admin.auth().getUserByEmail(email);
     console.log(`[AUTH] Found existing Firebase user: ${existing.uid}`);
-    
+
     if (password) {
       await admin.auth().updateUser(existing.uid, { password, emailVerified: true });
       console.log(`[AUTH] Updated existing user password and email verification`);
@@ -232,7 +232,7 @@ async function verifyEmailOtpAndCreateUser(email: string, username?: string, pas
       await admin.auth().updateUser(existing.uid, { emailVerified: true });
       console.log(`[AUTH] Marked existing user email as verified`);
     }
-    
+
     firebaseUser = existing;
     user = await authRepository.upsertUser(existing.uid, {
       email,
@@ -248,7 +248,7 @@ async function verifyEmailOtpAndCreateUser(email: string, username?: string, pas
     console.log(`[AUTH] Creating new Firebase user for email: ${email}`);
     const created = await admin.auth().createUser({ email, emailVerified: true, ...(password ? { password } : {}) });
     console.log(`[AUTH] Created Firebase user with UID: ${created.uid}`);
-    
+
     firebaseUser = created;
     user = await authRepository.upsertUser(created.uid, {
       email,
@@ -261,12 +261,12 @@ async function verifyEmailOtpAndCreateUser(email: string, username?: string, pas
     });
     console.log(`[AUTH] Created new user in Firestore: ${user.username}`);
   }
-  
+
   // Generate custom token for the user, then convert to ID token
   console.log(`[AUTH] Generating custom token for user: ${firebaseUser.uid}`);
   const customToken = await admin.auth().createCustomToken(firebaseUser.uid);
   console.log(`[AUTH] Custom token generated, now converting to ID token...`);
-  
+
   // Note: Custom token needs to be exchanged for ID token on frontend
   // For now, we'll return the custom token and handle conversion in frontend
   return { user, idToken: customToken };
@@ -312,26 +312,26 @@ async function upsertUserFromFirebase(decoded: any): Promise<AppUser> {
 
 async function setUsernameOnly(username: string, deviceInfo?: any, email?: string): Promise<AppUser> {
   console.log(`[AUTH] Setting username only: ${username} for email: ${email}`);
-  
+
   if (!/^[a-z0-9_.-]{3,30}$/.test(username)) {
     console.log(`[AUTH] Invalid username format: ${username}`);
     throw new ApiError('Invalid username', 400);
   }
-  
+
   if (!email) {
     throw new ApiError('Email is required to set username', 400);
   }
-  
+
   // Find existing user by email and update with username
   console.log(`[AUTH] Finding existing user by email: ${email}`);
   let existingUser = await authRepository.getUserByEmail(email);
-  
+
   if (!existingUser) {
     throw new ApiError('No existing user found for this email', 400);
   }
-  
+
   console.log(`[AUTH] Updating existing user with username: ${username}`);
-  
+
   // Update the existing user with username
   const updatedUser = await authRepository.updateUserByEmail(email, {
     username: username.toLowerCase(),
@@ -339,14 +339,14 @@ async function setUsernameOnly(username: string, deviceInfo?: any, email?: strin
     userAgent: deviceInfo?.userAgent,
     deviceInfo: deviceInfo?.deviceInfo
   });
-  
+
   console.log(`[AUTH] Updated user with username: ${updatedUser.username}`);
   return updatedUser;
 }
 
 async function loginWithEmailPassword(email: string, password: string, deviceInfo?: any): Promise<{ user: AppUser; customToken: string; passwordLoginIdToken?: string }> {
   console.log(`[AUTH] Login attempt for email: ${email}`);
-  
+
   // Step 1: Check if user exists in Firebase Auth
   let firebaseUser;
   try {
@@ -361,20 +361,20 @@ async function loginWithEmailPassword(email: string, password: string, deviceInf
     // Re-throw other Firebase Auth errors
     throw error;
   }
-  
+
   // Step 2: Check if user exists with Google provider
   const firestoreUser = await authRepository.getUserByEmail(email);
   if (firestoreUser && firestoreUser.user.provider === 'google') {
     console.log(`[AUTH] User already signed up with Google, cannot login with email/password`);
     throw new ApiError('You already have an account with Google. Please sign in with Google instead.', 400);
   }
-  
+
   // Step 3: Check email verification
   if (!firebaseUser.emailVerified) {
     console.log(`[AUTH] User email not verified: ${email}`);
     throw new ApiError('Email not verified. Please verify your email first.', 400);
   }
-  
+
   // Step 4: Verify the password by attempting to sign in with Firebase
   // This will fail if the password is wrong or if the user was created without a password
   let passwordLoginIdToken: string | undefined;
@@ -399,14 +399,14 @@ async function loginWithEmailPassword(email: string, password: string, deviceInf
         returnSecureToken: true
       })
     });
-    
+
     const result = await response.json();
-    
+
     if (!response.ok) {
       const errorMessage = String(result?.error?.message || '').toUpperCase();
       const errorCode = String(result?.error?.code || '').toUpperCase();
       console.log(`[AUTH] Password verification failed: ${errorMessage} (code: ${errorCode})`);
-      
+
       // Handle specific Firebase error codes
       if (errorMessage.includes('INVALID_PASSWORD') || errorCode === 'INVALID_PASSWORD') {
         // User exists but password is incorrect
@@ -432,13 +432,13 @@ async function loginWithEmailPassword(email: string, password: string, deviceInf
         throw new ApiError('Authentication service unavailable. Please try again later.', 503);
       }
     }
-    
+
     console.log(`[AUTH] Password verification successful for: ${email}`);
     // Capture ID token from email/password login for optional immediate session cookie creation
     if (typeof result?.idToken === 'string' && result.idToken.length > 0) {
       passwordLoginIdToken = result.idToken;
     }
-    
+
   } catch (error: any) {
     // Re-throw ApiError instances (already handled above)
     if (error instanceof ApiError) {
@@ -454,14 +454,14 @@ async function loginWithEmailPassword(email: string, password: string, deviceInf
     console.error(`[AUTH] Password verification error: ${error.message}`, error);
     throw new ApiError('Invalid password. Please check your password and try again.', 401);
   }
-  
+
   // Step 5: Get user from Firestore
   const user = await authRepository.getUserById(firebaseUser.uid);
   if (!user) {
     console.log(`[AUTH] User not found in Firestore: ${firebaseUser.uid}`);
     throw new ApiError('User profile not found. Please complete registration.', 400);
   }
-  
+
   // Step 6: Update login tracking
   const updatedUser = await authRepository.updateUser(firebaseUser.uid, {
     lastLoginAt: new Date().toISOString(),
@@ -470,12 +470,12 @@ async function loginWithEmailPassword(email: string, password: string, deviceInf
     userAgent: deviceInfo?.userAgent,
     deviceInfo: deviceInfo?.deviceInfo
   });
-  
+
   // Step 7: Generate custom token (frontend can signInWithCustomToken to sync Firebase client state)
   console.log(`[AUTH] Generating custom token for login: ${firebaseUser.uid}`);
   const customToken = await admin.auth().createCustomToken(firebaseUser.uid);
   console.log(`[AUTH] Login successful for: ${email}`);
-  
+
   return { user: updatedUser, customToken, passwordLoginIdToken };
 }
 
@@ -485,7 +485,7 @@ async function loginWithEmailPassword(email: string, password: string, deviceInf
  */
 async function sendPasswordResetEmail(email: string): Promise<{ success: boolean; message: string; reason?: string }> {
   console.log(`[AUTH] Password reset request for email: ${email}`);
-  
+
   // Step 1: Check if user exists in Firebase Auth
   let firebaseUser;
   try {
@@ -503,7 +503,7 @@ async function sendPasswordResetEmail(email: string): Promise<{ success: boolean
     // Re-throw other Firebase Auth errors
     throw error;
   }
-  
+
   // Step 2: Check if user signed up with Google only (no password)
   const firestoreUser = await authRepository.getUserByEmail(email);
   if (firestoreUser && firestoreUser.user.provider === 'google') {
@@ -514,18 +514,18 @@ async function sendPasswordResetEmail(email: string): Promise<{ success: boolean
       reason: 'GOOGLE_ONLY_USER'
     };
   }
-  
+
   // Step 3: Generate password reset link using Firebase Admin SDK
   const frontendUrl = env.productionWwwDomain || env.productionDomain || env.devFrontendUrl || 'http://localhost:3000';
   const resetRedirectUrl = `${frontendUrl}/auth/reset-password`;
-  
+
   console.log(`[AUTH] Using reset redirect URL: ${resetRedirectUrl}`);
-  
+
   const actionCodeSettings = {
     url: resetRedirectUrl,
     handleCodeInApp: false,
   };
-  
+
   let resetLink: string;
   try {
     resetLink = await admin.auth().generatePasswordResetLink(email, actionCodeSettings);
@@ -538,7 +538,7 @@ async function sendPasswordResetEmail(email: string): Promise<{ success: boolean
       reason: 'LINK_GENERATION_FAILED'
     };
   }
-  
+
   // Step 4: Send password reset email via Resend (using same template style as OTP)
   try {
     const emailSubject = 'Reset Your Password - WildMind AI';
@@ -554,14 +554,14 @@ async function sendPasswordResetEmail(email: string): Promise<{ success: boolean
       companyName: 'WildMind AI',
       supportEmail: 'support@wildmindai.com'
     });
-    
+
     await sendEmail(
       email,
       emailSubject,
       emailText,
       emailHTML
     );
-    
+
     console.log(`[AUTH] Password reset email sent successfully to: ${email}`);
     return {
       success: true,
@@ -579,31 +579,31 @@ async function sendPasswordResetEmail(email: string): Promise<{ success: boolean
 
 async function googleSignIn(idToken: string, deviceInfo?: any): Promise<{ user: AppUser; needsUsername: boolean; sessionToken?: string }> {
   console.log(`[AUTH] Google sign-in attempt`);
-  
+
   try {
     // Verify Google ID token with Firebase Admin
     const decoded = await admin.auth().verifyIdToken(idToken, true);
     console.log(`[AUTH] Google token verified for UID: ${decoded.uid}`);
-    
+
     const { uid, email, name: displayName, picture: photoURL, email_verified: emailVerified } = decoded;
-    
+
     if (!email) {
       throw new ApiError('Email is required for Google sign-in', 400);
     }
-    
+
     // Check if user already exists with email/password provider
     const firestoreUser = await authRepository.getUserByEmail(email);
     if (firestoreUser && firestoreUser.user.provider === 'password') {
       console.log(`[AUTH] User already signed up with email/password, cannot use Google`);
       throw new ApiError('You already have an account with email/password. Please sign in with your email and password instead.', 400);
     }
-    
+
     // Check if user already exists in Firestore
     let existingUser = await authRepository.getUserById(uid);
-    
+
     if (existingUser) {
       console.log(`[AUTH] Existing Google user found: ${existingUser.username}`);
-      
+
       // Update login tracking for existing user
       const updatedUser = await authRepository.updateUser(uid, {
         lastLoginAt: new Date().toISOString(),
@@ -613,23 +613,23 @@ async function googleSignIn(idToken: string, deviceInfo?: any): Promise<{ user: 
         deviceInfo: deviceInfo?.deviceInfo,
         photoURL: photoURL || existingUser.photoURL
       });
-      
+
       // Generate session token for existing user
       const sessionToken = await admin.auth().createCustomToken(uid);
-      
-      return { 
-        user: updatedUser, 
-        needsUsername: false, 
-        sessionToken 
+
+      return {
+        user: updatedUser,
+        needsUsername: false,
+        sessionToken
       };
     } else {
       console.log(`[AUTH] New Google user, creating profile: ${email}`);
-      
+
       // For Google users without username, use email prefix as collection but mark username as temporary
       const emailPrefix = email.split('@')[0];
-      
+
       console.log(`[AUTH] Using email prefix as collection: ${emailPrefix}, username will be set later`);
-      
+
       // Create new user in Firestore using email prefix as collection name
       const newUser = await authRepository.upsertUser(uid, {
         email,
@@ -643,18 +643,18 @@ async function googleSignIn(idToken: string, deviceInfo?: any): Promise<{ user: 
         deviceInfo: deviceInfo?.deviceInfo,
         isUsernameTemporary: true // Flag to indicate username needs to be set
       });
-      
+
       console.log(`[AUTH] New Google user created in email collection, needs username: ${email}`);
-      
-      return { 
-        user: newUser, 
+
+      return {
+        user: newUser,
         needsUsername: true // Frontend should show username form
       };
     }
-    
+
   } catch (error: any) {
     console.log(`[AUTH] Google sign-in failed:`, error.message);
-    
+
     if (error.code === 'auth/id-token-expired') {
       throw new ApiError('Google token expired. Please try again.', 401);
     } else if (error.code === 'auth/id-token-revoked') {
@@ -669,36 +669,36 @@ async function googleSignIn(idToken: string, deviceInfo?: any): Promise<{ user: 
 
 async function setGoogleUsername(uid: string, username: string, deviceInfo?: any): Promise<{ user: AppUser; sessionToken: string }> {
   console.log(`[AUTH] Setting username for Google user: ${uid}, username: ${username}`);
-  
+
   if (!/^[a-z0-9_.-]{3,30}$/.test(username)) {
     console.log(`[AUTH] Invalid username format: ${username}`);
     throw new ApiError('Invalid username format', 400);
   }
-  
+
   // Get current user
   const currentUser = await authRepository.getUserById(uid);
   if (!currentUser) {
     throw new ApiError('User not found', 404);
   }
-  
+
   const newUsername = username.toLowerCase();
   console.log(`[AUTH] Setting username in existing email collection: ${newUsername}`);
   console.log(`[AUTH] Current user data before update:`, currentUser);
-  
+
   // Simply update the username field in the existing email-based collection
   const updatedUser = await authRepository.updateUser(uid, {
     username: newUsername,
     isUsernameTemporary: false, // Remove temporary flag
     updatedAt: new Date().toISOString()
   });
-  
+
   console.log(`[AUTH] Updated user data after username set:`, updatedUser);
-  
+
   // Generate session token
   const sessionToken = await admin.auth().createCustomToken(uid);
-  
+
   console.log(`[AUTH] Google user username set successfully in email collection: ${newUsername}`);
-  
+
   return { user: updatedUser, sessionToken };
 }
 

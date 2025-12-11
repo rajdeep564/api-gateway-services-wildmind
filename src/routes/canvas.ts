@@ -46,7 +46,8 @@ import {
     computeCanvasVectorizeCost,
     computeCanvasEraseCost,
     computeCanvasReplaceCost,
-    computeCanvasScriptCost
+    computeCanvasScriptCost,
+    computeCanvasNextSceneCost
 } from '../utils/pricing/canvasPricing';
 
 // Generation (Canvas-specific)
@@ -64,6 +65,8 @@ router.post('/vectorize', requireAuth, makeCreditCost('canvas', 'vectorize', com
 router.post('/erase', requireAuth, makeCreditCost('canvas', 'erase', computeCanvasEraseCost), generateController.eraseForCanvas);
 // @ts-ignore
 router.post('/replace', requireAuth, makeCreditCost('canvas', 'replace', computeCanvasReplaceCost), generateController.replaceForCanvas);
+// @ts-ignore
+router.post('/next-scene', requireAuth, makeCreditCost('canvas', 'next-scene', computeCanvasNextSceneCost), generateController.generateNextSceneForCanvas);
 router.post('/create-stitched-reference', requireAuth, generateController.createStitchedReferenceImage);
 
 // Query (Canvas prompt enhancement)

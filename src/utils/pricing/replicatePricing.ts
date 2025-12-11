@@ -148,5 +148,28 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
     cost = Math.ceil(base);
   }
 
+
+  return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: display } };
+}
+
+export async function computeReplicateMultiangleCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { model } = req.body || {};
+  let display = 'replicate/qwen/qwen-edit-multiangle';
+
+  const base = findCredits(display);
+  // Default to 40 credits if not found
+  const cost = base !== null ? Math.ceil(base) : 40;
+
+  return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: display } };
+}
+
+export async function computeReplicateNextSceneCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  // Model name used in service: qwen-edit-apps/qwen-image-edit-plus-lora-next-scene
+  const display = 'replicate/qwen/next-scene';
+
+  const base = findCredits(display);
+  // Default to 40 credits if not found (assuming similar complexity to multiangle)
+  const cost = base !== null ? Math.ceil(base) : 40;
+
   return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: display } };
 }

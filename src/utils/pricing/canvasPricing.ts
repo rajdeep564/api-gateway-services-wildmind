@@ -4,7 +4,7 @@ import { creditDistributionData, PRICING_VERSION } from '../../data/creditDistri
 import { mapModelToBackend } from '../../services/canvas/generateService';
 import { computeFalImageCost, computeFalVeoTtvSubmitCost, computeFalVeoI2vSubmitCost, computeFalVeo31TtvSubmitCost, computeFalVeo31I2vSubmitCost, computeFalSora2I2vSubmitCost, computeFalSora2ProI2vSubmitCost, computeFalSora2T2vSubmitCost, computeFalSora2ProT2vSubmitCost, computeFalSora2RemixSubmitCost, computeFalLtxV2ProI2vSubmitCost, computeFalLtxV2FastI2vSubmitCost, computeFalLtxV2ProT2vSubmitCost, computeFalLtxV2FastT2vSubmitCost, computeFalImage2SvgCost, computeFalRecraftVectorizeCost, computeFalBriaGenfillCost, computeFalSeedVrUpscaleCost, computeFalBirefnetVideoCost, computeFalTopazUpscaleImageCost, computeFalElevenTtsCost, computeFalElevenDialogueCost, computeFalChatterboxMultilingualCost, computeFalMayaTtsCost, computeFalOutpaintCost } from './falPricing';
 import { computeBflCost, computeBflFillCost, computeBflExpandCost, computeBflCannyCost, computeBflDepthCost, computeBflExpandWithFillCost } from './bflPricing';
-import { computeReplicateImageGenCost, computeReplicateUpscaleCost, computeReplicateBgRemoveCost } from './replicatePricing';
+import { computeReplicateImageGenCost, computeReplicateUpscaleCost, computeReplicateBgRemoveCost, computeReplicateNextSceneCost } from './replicatePricing';
 import { computeRunwayImageCost, computeRunwayVideoCost } from './runwayPricing';
 import { computeMinimaxVideoCost } from './minimaxPricing';
 
@@ -159,4 +159,8 @@ export async function computeCanvasScriptCost(req: Request): Promise<{ cost: num
         pricingVersion: PRICING_VERSION,
         meta: { model: modelName }
     };
+}
+
+export async function computeCanvasNextSceneCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+    return computeReplicateNextSceneCost(req);
 }
