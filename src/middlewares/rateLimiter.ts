@@ -59,10 +59,9 @@ export const generationLimiter = rateLimit({
     status: 'error',
     message: 'Generation rate limit exceeded, please slow down'
   },
-  keyGenerator: (req) => {
-    // Use user ID if authenticated, otherwise IP
-    return (req as any).user?.uid || req.ip || 'unknown';
-  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Note: Using default keyGenerator which properly handles IPv6
   ...(isRedisEnabled() && {
     store: new RedisStore({
       sendCommand: (...args: string[]) => getRedisClient()!.sendCommand(args),
@@ -79,9 +78,9 @@ export const apiLimiter = rateLimit({
     status: 'error',
     message: 'API rate limit exceeded'
   },
-  keyGenerator: (req) => {
-    return (req as any).user?.uid || req.ip || 'unknown';
-  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Note: Using default keyGenerator which properly handles IPv6
   ...(isRedisEnabled() && {
     store: new RedisStore({
       sendCommand: (...args: string[]) => getRedisClient()!.sendCommand(args),
@@ -99,9 +98,9 @@ export const pollingLimiter = rateLimit({
     status: 'error',
     message: 'Polling rate limit exceeded'
   },
-  keyGenerator: (req) => {
-    return (req as any).user?.uid || req.ip || 'unknown';
-  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Note: Using default keyGenerator which properly handles IPv6
   ...(isRedisEnabled() && {
     store: new RedisStore({
       sendCommand: (...args: string[]) => getRedisClient()!.sendCommand(args),
