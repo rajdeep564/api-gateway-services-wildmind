@@ -15,6 +15,8 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
   const isNanoBananaPro = m.includes('google/nano-banana-pro') || m.includes('nano-banana-pro');
   // Z Image Turbo model (prunaai/z-image-turbo)
   const isNewTurboModel = m.includes('z-image-turbo') || m.includes('new-turbo-model') || m.includes('placeholder-model-name');
+  const isPImageEdit = m.includes('p-image-edit');
+  const isPImage = m.includes('p-image') && !isPImageEdit; // avoid double-validating p-image-edit
 
   // Seedream 4.5 branch removed: model is now handled by FAL backend.
 
@@ -139,6 +141,83 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
           return next(new ApiError('image_input must contain URL strings', 400));
         }
       }
+    }
+  }
+  // P-Image (prunaai/p-image) validations
+  if (isPImage) {
+    const allowedAspect = new Set([
+      '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', 'custom'
+    ]);
+
+    if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio))) {
+      return next(new ApiError('invalid aspect_ratio for P-Image', 400));
+    }
+
+    const validateDim = (value: any, label: string) => {
+      if (value == null) return;
+      if (typeof value !== 'number' || !Number.isInteger(value)) {
+        throw new ApiError(`${label} must be an integer`, 400);
+      }
+      if (value < 256 || value > 1440) {
+        throw new ApiError(`${label} must be between 256 and 1440`, 400);
+      }
+      if (value % 16 !== 0) {
+        throw new ApiError(`${label} must be divisible by 16`, 400);
+      }
+    };
+
+    try {
+      validateDim(width, 'width');
+      validateDim(height, 'height');
+    } catch (err) {
+      return next(err as any);
+    }
+
+    // If custom aspect ratio is selected, require width/height
+    if (String(aspect_ratio || '').toLowerCase() === 'custom') {
+      if (width == null || height == null) {
+        return next(new ApiError('width and height are required when aspect_ratio is custom', 400));
+      }
+    }
+
+    if (req.body.seed != null && (!Number.isInteger(req.body.seed))) {
+      return next(new ApiError('seed must be an integer', 400));
+    }
+    if (req.body.prompt_upsampling != null && typeof req.body.prompt_upsampling !== 'boolean') {
+      return next(new ApiError('prompt_upsampling must be boolean', 400));
+    }
+    if (req.body.disable_safety_checker != null && typeof req.body.disable_safety_checker !== 'boolean') {
+      return next(new ApiError('disable_safety_checker must be boolean', 400));
+    }
+  }
+  // P-Image-Edit (prunaai/p-image-edit) validations
+  if (isPImageEdit) {
+    if (!prompt || typeof prompt !== 'string') return next(new ApiError('prompt is required', 400));
+
+    if (!Array.isArray(req.body.images) || req.body.images.length === 0) {
+      return next(new ApiError('images array with at least one URL is required for P-Image-Edit', 400));
+    }
+    for (const img of req.body.images) {
+      if (typeof img !== 'string') {
+        return next(new ApiError('images must contain URI strings', 400));
+      }
+    }
+
+    const allowedAspect = new Set([
+      'match_input_image', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'
+    ]);
+    if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio))) {
+      return next(new ApiError('invalid aspect_ratio for P-Image-Edit', 400));
+    }
+
+    if (req.body.seed != null && (!Number.isInteger(req.body.seed))) {
+      return next(new ApiError('seed must be an integer', 400));
+    }
+    if (req.body.turbo != null && typeof req.body.turbo !== 'boolean') {
+      return next(new ApiError('turbo must be boolean', 400));
+    }
+    if (req.body.disable_safety_checker != null && typeof req.body.disable_safety_checker !== 'boolean') {
+      return next(new ApiError('disable_safety_checker must be boolean', 400));
     }
   }
   // New Turbo Model validations (placeholder - update model name)

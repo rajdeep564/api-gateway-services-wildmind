@@ -128,8 +128,9 @@ async function musicGenerate(req: Request, res: Response, next: NextFunction) {
     const ctx = (req as any).context || {};
     const result = await minimaxService.musicGenerateAndStore(req.uid, req.body);
     // musicGenerateAndStore updates history; we'll perform debit here if historyId present
-    try { await postSuccessDebit(req.uid, result, ctx, 'minimax', 'music'); } catch {}
-    res.json(formatApiResponse('success', 'Music generated', { ...result, debitedCredits: ctx.creditCost }));
+    let debitOutcome: any = null;
+    try { debitOutcome = await postSuccessDebit(req.uid, result, ctx, 'minimax', 'music'); } catch {}
+    res.json(formatApiResponse('success', 'Music generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
   } catch (err) {
     next(err);
   }

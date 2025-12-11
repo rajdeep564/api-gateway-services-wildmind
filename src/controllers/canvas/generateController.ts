@@ -565,9 +565,13 @@ export async function eraseForCanvas(req: Request, res: Response) {
       ...result,
       historyId: result.generationId
     };
-    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'erase');
+    const debitStatus = await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'erase');
 
-    return res.json(formatApiResponse('success', 'Image erase completed', result));
+    return res.json(formatApiResponse('success', 'Image erase completed', {
+      ...result,
+      debitedCredits: ctx.creditCost,
+      debitStatus,
+    }));
   } catch (error: any) {
     console.error('[eraseForCanvas] Error:', error);
     console.error('[eraseForCanvas] Error stack:', error.stack);
@@ -650,9 +654,13 @@ export async function replaceForCanvas(req: Request, res: Response) {
       ...result,
       historyId: result.generationId
     };
-    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'replace');
+    const debitStatus = await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'replace');
 
-    return res.json(formatApiResponse('success', 'Image replace completed', result));
+    return res.json(formatApiResponse('success', 'Image replace completed', {
+      ...result,
+      debitedCredits: ctx.creditCost,
+      debitStatus,
+    }));
   } catch (error: any) {
     console.error('[replaceForCanvas] Error:', error);
     console.error('[replaceForCanvas] Error stack:', error.stack);

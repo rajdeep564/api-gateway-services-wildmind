@@ -12,7 +12,8 @@ export async function computeReplicateBgRemoveCost(req: Request): Promise<{ cost
   const { model } = req.body || {};
   const normalized = String(model || '').toLowerCase();
 
-  let display = 'replicate/ lucataco/remove-bg'; // Default fallback?
+  // Map to creditDistribution modelName entries (no replicate/ prefix)
+  let display = 'Lucataco/remove-bg'; // Default fallback
 
   if (normalized.includes('bria/eraser')) {
     // Handling Bria specifically if not in sheet or if name differs
@@ -28,11 +29,11 @@ export async function computeReplicateBgRemoveCost(req: Request): Promise<{ cost
     // For now, let's keep it safe.
     return { cost: 100, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: normalized, note: 'Hardcoded Bria Eraser cost' } };
   }
-  else if (normalized.includes('851-labs/background-remover')) display = 'replicate/851-labs/background-remover';
-  else display = 'replicate/ lucataco/remove-bg';
+  else if (normalized.includes('851-labs/background-remover')) display = '851-labs/background-remover';
+  else display = 'Lucataco/remove-bg';
 
   const base = findCredits(display);
-  // Default to 31 if not found (matching previous COST_REMOVE_BG)
+  // Default to 31 if not found (legacy fallback)
   const cost = base !== null ? Math.ceil(base) : 31;
 
   return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: display } };
@@ -112,6 +113,12 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   }
   else if (normalized.includes('phoenix 1.0') || normalized.includes('phoenix-1.0')) {
     display = 'Phoenix 1.0';
+  }
+  else if (normalized.includes('p-image') || normalized.includes('prunaai/p-image')) {
+    display = 'P-Image';
+  }
+  else if (normalized.includes('p-image-edit') || normalized.includes('prunaai/p-image-edit')) {
+    display = 'P-Image-Edit';
   }
   // Google Nano Banana Pro
   else if (normalized.includes('google/nano-banana-pro') || normalized.includes('nano-banana-pro')) {
