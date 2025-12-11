@@ -173,17 +173,30 @@ export function calculateAnimationStyle(item: TimelineItemData, currentTime: num
         case 'expansion': return { scaleX: p, opacity: p };
         case 'shard-roll': return { rotate: 360 - 360 * p, scale: p, opacity: p };
 
+        // FLIP ANIMATIONS: CSS uses rotateX/rotateY with perspective for 3D effect
+        // In 2D Canvas, we simulate this by scaling the axis being rotated
+        // rotateX(90deg) looks like scaleY(0), rotateX(0) looks like scaleY(1)
         case 'flip-down-1':
+            // Flip from top (rotateX: 90deg -> 0): simulate with scaleY
+            return { scaleY: p, opacity: p };
         case 'flip-down-2':
-            return { scale: 0.3 + 0.7 * p, translateY: -20 + 20 * p, opacity: p };
+            // Flip from top with scale: rotateX + scale(0.8 -> 1)
+            return { scaleY: p, scale: 0.8 + 0.2 * p, opacity: p };
         case 'flip-up-1':
+            // Flip from bottom (rotateX: -90deg -> 0): simulate with scaleY
+            return { scaleY: p, opacity: p };
         case 'flip-up-2':
-            return { scale: 0.3 + 0.7 * p, translateY: 20 - 20 * p, opacity: p };
+            // Flip from bottom with scale
+            return { scaleY: p, scale: 0.8 + 0.2 * p, opacity: p };
 
+        // FLY-IN-ROTATE: translateX + rotate
         case 'fly-in-rotate': return { translateX: -100 + 100 * p, rotate: -90 + 90 * p, opacity: p };
+
+        // FLY-IN-FLIP: CSS uses translateX + rotateY(90deg)
+        // rotateY(90deg) looks like scaleX(0), rotateY(0) looks like scaleX(1)
         case 'fly-in-flip': {
-            const flipScale = Math.abs(Math.cos((1 - p) * Math.PI / 2));
-            return { translateX: -100 + 100 * p, scaleX: flipScale, opacity: p };
+            // Element flies in from left while rotating on Y axis
+            return { translateX: -100 + 100 * p, scaleX: p, opacity: p };
         }
         case 'fly-to-zoom': return { scale: p, translateX: -100 + 100 * p, opacity: p };
 

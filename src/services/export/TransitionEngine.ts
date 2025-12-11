@@ -4,14 +4,32 @@
 // ============================================
 
 export interface TransitionStyle {
+    // Transform properties
     opacity?: number;
     scale?: number;
     rotate?: number;
     translateX?: number;
     translateY?: number;
     blur?: number;
+
+    // Basic clip (for backward compatibility)
     clipX?: number;
     clipWidth?: number;
+    clipY?: number;
+    clipHeight?: number;
+
+    // Shape-based clipping (canvas clip path)
+    clipShape?: 'none' | 'circle' | 'rect' | 'inset' | 'polygon' | 'arc' | 'blinds' | 'checker';
+    clipRadius?: number;           // For circle (0-1 percentage of diagonal)
+    clipInsetTop?: number;         // For inset rect (0-1)
+    clipInsetRight?: number;
+    clipInsetBottom?: number;
+    clipInsetLeft?: number;
+    clipPoints?: [number, number][]; // For polygon [[x,y]] where x,y are 0-1
+    clipArcStart?: number;         // For arc (degrees, 0 = right, -90 = top)
+    clipArcEnd?: number;           // For arc (degrees)
+    clipStripes?: number;          // For blinds pattern (number of stripes)
+    clipCheckerSize?: number;      // For checker pattern (size as fraction)
 }
 
 /**
@@ -79,25 +97,87 @@ export function calculateTransitionStyle(
                 : { translateX: xMult * -100 * p, translateY: yMult * -100 * p, blur: Math.sin(p * Math.PI) * 5 };
 
         // === IRIS SHAPES ===
-        case 'iris-box':
         case 'iris-round':
-        case 'circle': {
+        case 'circle':
+        case 'shape-circle': {
             const easeCircle = easeOutCubic(p);
             return role === 'main'
-                ? { scale: easeCircle, opacity: easeCircle }
+                ? { clipShape: 'circle', clipRadius: easeCircle, opacity: 1 }
+                : { opacity: outP };
+        }
+        case 'iris-box': {
+            const easeBox = easeOutCubic(p);
+            const inset = 0.5 - 0.5 * easeBox; // 0.5 -> 0 as progress goes 0 -> 1
+            return role === 'main'
+                ? { clipShape: 'inset', clipInsetTop: inset, clipInsetRight: inset, clipInsetBottom: inset, clipInsetLeft: inset, opacity: 1 }
+                : { opacity: outP };
+        }
+        case 'iris-diamond': {
+            const easeDiamond = easeOutCubic(p);
+            const d = easeDiamond * 0.5; // 0 -> 0.5
+            return role === 'main'
+                ? { clipShape: 'polygon', clipPoints: [[0.5, 0.5 - d], [0.5 + d, 0.5], [0.5, 0.5 + d], [0.5 - d, 0.5]], opacity: 1 }
+                : { opacity: outP };
+        }
+        case 'iris-cross': {
+            const easeCross = easeOutCubic(p);
+            const w = 0.1 + 0.4 * easeCross; // Width of cross arms (0.1 -> 0.5)
+            return role === 'main'
+                ? {
+                    clipShape: 'polygon',
+                    clipPoints: [
+                        [0.5 - w, 0], [0.5 + w, 0], [0.5 + w, 0.5 - w],
+                        [1, 0.5 - w], [1, 0.5 + w], [0.5 + w, 0.5 + w],
+                        [0.5 + w, 1], [0.5 - w, 1], [0.5 - w, 0.5 + w],
+                        [0, 0.5 + w], [0, 0.5 - w], [0.5 - w, 0.5 - w]
+                    ],
+                    opacity: 1
+                }
                 : { opacity: outP };
         }
 
         // === WIPES ===
         case 'wipe': {
             const easeWipe = easeOutCubic(p);
-            return role === 'main'
-                ? { clipX: direction === 'right' ? 0 : direction === 'left' ? 1 - easeWipe : 0, clipWidth: easeWipe }
-                : {};
+            if (direction === 'left') {
+                return role === 'main' ? { clipShape: 'inset', clipInsetTop: 0, clipInsetRight: 1 - easeWipe, clipInsetBottom: 0, clipInsetLeft: 0 } : {};
+            } else if (direction === 'right') {
+                return role === 'main' ? { clipShape: 'inset', clipInsetTop: 0, clipInsetRight: 0, clipInsetBottom: 0, clipInsetLeft: 1 - easeWipe } : {};
+            } else if (direction === 'up') {
+                return role === 'main' ? { clipShape: 'inset', clipInsetTop: 1 - easeWipe, clipInsetRight: 0, clipInsetBottom: 0, clipInsetLeft: 0 } : {};
+            } else { // down
+                return role === 'main' ? { clipShape: 'inset', clipInsetTop: 0, clipInsetRight: 0, clipInsetBottom: 1 - easeWipe, clipInsetLeft: 0 } : {};
+            }
+        }
+        case 'simple-wipe': {
+            const easeWipe = easeOutCubic(p);
+            if (direction === 'left') {
+                return role === 'main' ? { clipShape: 'inset', clipInsetTop: 0, clipInsetRight: 1 - easeWipe, clipInsetBottom: 0, clipInsetLeft: 0 } : {};
+            } else if (direction === 'right') {
+                return role === 'main' ? { clipShape: 'inset', clipInsetTop: 0, clipInsetRight: 0, clipInsetBottom: 0, clipInsetLeft: 1 - easeWipe } : {};
+            } else if (direction === 'up') {
+                return role === 'main' ? { clipShape: 'inset', clipInsetTop: 1 - easeWipe, clipInsetRight: 0, clipInsetBottom: 0, clipInsetLeft: 0 } : {};
+            } else { // down
+                return role === 'main' ? { clipShape: 'inset', clipInsetTop: 0, clipInsetRight: 0, clipInsetBottom: 1 - easeWipe, clipInsetLeft: 0 } : {};
+            }
         }
         case 'barn-doors': {
             const easeBarn = easeOutCubic(p);
-            return role === 'main' ? { scale: 0.5 + 0.5 * easeBarn, opacity: easeBarn } : { opacity: outP };
+            const inset = 0.5 - 0.5 * easeBarn; // Opens from center
+            if (direction === 'left' || direction === 'right') {
+                return role === 'main' ? { clipShape: 'inset', clipInsetTop: 0, clipInsetRight: inset, clipInsetBottom: 0, clipInsetLeft: inset } : { opacity: outP };
+            } else {
+                return role === 'main' ? { clipShape: 'inset', clipInsetTop: inset, clipInsetRight: 0, clipInsetBottom: inset, clipInsetLeft: 0 } : { opacity: outP };
+            }
+        }
+        case 'split-screen': {
+            const easeSplit = easeOutCubic(p);
+            const inset = 0.5 - 0.5 * easeSplit;
+            if (direction === 'left' || direction === 'right') {
+                return role === 'main' ? { clipShape: 'inset', clipInsetTop: 0, clipInsetRight: inset, clipInsetBottom: 0, clipInsetLeft: inset } : { opacity: outP };
+            } else {
+                return role === 'main' ? { clipShape: 'inset', clipInsetTop: inset, clipInsetRight: 0, clipInsetBottom: inset, clipInsetLeft: 0 } : { opacity: outP };
+            }
         }
 
         // === ZOOMS ===
@@ -207,48 +287,48 @@ export function calculateTransitionStyle(
         case 'ink-splash': {
             const easeP = easeOutCubic(p);
             return role === 'main'
-                ? { scale: easeP, opacity: easeP }
+                ? { clipShape: 'circle', clipRadius: easeP, opacity: 1 }
                 : { opacity: outP };
         }
 
-        // Simple wipe - basic directional wipe
-        case 'simple-wipe': {
-            const easeWipe = easeOutCubic(p);
-            if (direction === 'right') {
-                return role === 'main' ? { clipX: 0, clipWidth: easeWipe } : {};
-            } else if (direction === 'left') {
-                return role === 'main' ? { clipX: 1 - easeWipe, clipWidth: easeWipe } : {};
-            }
-            return role === 'main' ? { clipX: 0, clipWidth: easeWipe } : {};
-        }
+        // Simple wipe - basic directional wipe (use inset clipping)
+        // Note: Already defined earlier with proper inset clipping
 
-        // Multi-panel - slides in with scale
+        // Multi-panel - vertical strip reveal
         case 'multi-panel': {
+            const easeP = easeOutCubic(p);
             return role === 'main'
-                ? { clipWidth: p, scale: 0.8 + 0.2 * p, opacity: p }
+                ? { clipShape: 'inset', clipInsetTop: 0, clipInsetRight: 1 - easeP, clipInsetBottom: 0, clipInsetLeft: 0 }
                 : { opacity: outP };
         }
 
-        // Split screen - opens from center
-        case 'split-screen': {
-            const easeP = easeOutCubic(p);
-            return role === 'main'
-                ? { scale: easeP, opacity: easeP }
-                : { opacity: outP };
-        }
+        // Split screen - opens from center (already defined earlier)
+        // Note: Removed duplicate
 
-        // Shape transitions
-        case 'shape-circle': {
+        // Shape transitions with proper clipping
+        case 'shape-heart': {
             const easeP = easeOutCubic(p);
+            const s = easeP * 0.5; // scale factor
             return role === 'main'
-                ? { scale: easeP, opacity: easeP }
+                ? {
+                    clipShape: 'polygon',
+                    clipPoints: [
+                        [0.5, 0.5 + s * 0.9],    // bottom point
+                        [0.5 - s * 0.9, 0.5 - s * 0.1],
+                        [0.5 - s * 0.5, 0.5 - s * 0.6],
+                        [0.5, 0.5 - s * 0.3],    // top center dip
+                        [0.5 + s * 0.5, 0.5 - s * 0.6],
+                        [0.5 + s * 0.9, 0.5 - s * 0.1],
+                    ],
+                    opacity: 1
+                }
                 : { opacity: outP };
         }
-        case 'shape-heart':
         case 'shape-triangle': {
             const easeP = easeOutCubic(p);
+            const s = easeP * 0.5; // scale factor
             return role === 'main'
-                ? { scale: 0.5 + 0.5 * easeP, opacity: easeP }
+                ? { clipShape: 'polygon', clipPoints: [[0.5, 0.5 - s], [0.5 + s, 0.5 + s], [0.5 - s, 0.5 + s]], opacity: 1 }
                 : { opacity: outP };
         }
 
@@ -331,16 +411,51 @@ export function calculateTransitionStyle(
                 : { opacity: outP };
         }
 
-        // Random blocks (simplified to fade)
+        // Random blocks (simplified to fade - too complex for canvas)
         case 'random-blocks':
-        case 'checker-wipe':
-        case 'venetian-blinds':
-        case 'zig-zag':
-        case 'band-wipe':
-        case 'wedge-wipe':
-        case 'clock-wipe':
-        case 'radial-wipe':
             return role === 'main' ? { opacity: p } : { opacity: outP };
+
+        // Pattern-based transitions with canvas clipping
+        case 'checker-wipe': {
+            const easeP = easeOutCubic(p);
+            return role === 'main'
+                ? { clipShape: 'checker', clipCheckerSize: 0.1, clipRadius: easeP, opacity: 1 }
+                : { opacity: outP };
+        }
+        case 'venetian-blinds': {
+            const easeP = easeOutCubic(p);
+            return role === 'main'
+                ? { clipShape: 'blinds', clipStripes: 12, clipRadius: easeP, opacity: 1 }
+                : { opacity: outP };
+        }
+        case 'zig-zag': {
+            const easeP = easeOutCubic(p);
+            return role === 'main'
+                ? { clipShape: 'blinds', clipStripes: 8, clipRadius: easeP, opacity: 1 }
+                : { opacity: outP };
+        }
+        case 'band-wipe': {
+            const easeP = easeOutCubic(p);
+            return role === 'main'
+                ? { clipShape: 'blinds', clipStripes: 5, clipRadius: easeP, opacity: 1 }
+                : { opacity: outP };
+        }
+
+        // Radial/Arc transitions
+        case 'wedge-wipe': {
+            const easeP = easeOutCubic(p);
+            const angle = easeP * 180;
+            return role === 'main'
+                ? { clipShape: 'arc', clipArcStart: -angle, clipArcEnd: angle, opacity: 1 }
+                : { opacity: outP };
+        }
+        case 'clock-wipe':
+        case 'radial-wipe': {
+            const easeP = easeOutCubic(p);
+            return role === 'main'
+                ? { clipShape: 'arc', clipArcStart: -90, clipArcEnd: -90 + 360 * easeP, opacity: 1 }
+                : { opacity: outP };
+        }
 
         // DEFAULT
         default:

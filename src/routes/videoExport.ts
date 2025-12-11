@@ -25,8 +25,14 @@ const storage = multer.diskStorage({
         cb(null, jobDir);
     },
     filename: (req, file, cb) => {
-        // Use original filename with unique prefix
-        const uniqueName = `${Date.now()}-${file.originalname}`;
+        // Sanitize filename - remove Windows-invalid characters: \ / : * ? " < > |
+        const sanitizedName = file.originalname
+            .replace(/[\\/:*?"<>|]/g, '_')  // Replace invalid chars with underscore
+            .replace(/\s+/g, '_')            // Replace spaces with underscore
+            .replace(/_+/g, '_')             // Collapse multiple underscores
+            .substring(0, 100);              // Limit length to prevent path too long errors
+
+        const uniqueName = `${Date.now()}-${sanitizedName}`;
         cb(null, uniqueName);
     }
 });
@@ -188,8 +194,17 @@ router.post('/process/:jobId', async (req: Request, res: Response) => {
         // Map uploaded files to timeline items
         for (const track of timeline.tracks) {
             for (const item of track.items) {
+                // Sanitize item name the same way as when uploaded
+                const sanitizedItemName = item.name
+                    .replace(/[\\/:*?"<>|]/g, '_')
+                    .replace(/\s+/g, '_')
+                    .replace(/_+/g, '_')
+                    .substring(0, 100);
+
                 // Find matching uploaded file
-                const matchingFile = files.find(f => f.includes(item.id) || f.includes(encodeURIComponent(item.name)));
+                const matchingFile = files.find(f =>
+                    f.includes(item.id) || f.includes(sanitizedItemName)
+                );
                 if (matchingFile) {
                     item.localPath = path.join(jobDir, matchingFile);
                 }

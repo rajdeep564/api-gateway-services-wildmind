@@ -12,6 +12,7 @@ import ffmpegPath from 'ffmpeg-static';
 import type { TimelineData, TimelineItemData, TrackData, ExportSettings } from '../../types/videoExport';
 import { calculateTransitionStyle, TransitionStyle } from './TransitionEngine';
 import { calculateAnimationStyle, AnimationStyle } from './AnimationEngine';
+import { applyItemFilters, Adjustments, DEFAULT_ADJUSTMENTS } from './ImageFilters';
 
 // Internal type for rendering items with transition info
 interface RenderItem {
@@ -312,9 +313,10 @@ export class FrameRenderer {
         if (transitionStyle.translateX) tx += (transitionStyle.translateX / 100) * this.width;
         if (transitionStyle.translateY) ty += (transitionStyle.translateY / 100) * this.height;
 
-        // Animation translate
-        if (animStyle.translateX) tx += animStyle.translateX;
-        if (animStyle.translateY) ty += animStyle.translateY;
+        // Animation translate - convert from percentages to pixels
+        // animStyle.translateX/Y are percentage values (e.g., -100 to +100)
+        if (animStyle.translateX) tx += (animStyle.translateX / 100) * this.width;
+        if (animStyle.translateY) ty += (animStyle.translateY / 100) * this.height;
 
         this.ctx.translate(tx, ty);
 
@@ -342,14 +344,8 @@ export class FrameRenderer {
         const transitionOpacity = transitionStyle.opacity ?? 1;
         this.ctx.globalAlpha = baseOpacity * animOpacity * transitionOpacity;
 
-        // Clip for wipe transitions
-        if (transitionStyle.clipX !== undefined || transitionStyle.clipWidth !== undefined) {
-            this.ctx.beginPath();
-            const clipX = (transitionStyle.clipX ?? 0) * width;
-            const clipW = (transitionStyle.clipWidth ?? 1) * width;
-            this.ctx.rect(-width / 2 + clipX, -height / 2, clipW, height);
-            this.ctx.clip();
-        }
+        // Apply clip path for transition effects
+        this.applyClipPath(transitionStyle, width, height);
 
         try {
             // Draw the image
@@ -380,12 +376,163 @@ export class FrameRenderer {
             }
 
             this.ctx.restore();
+
+            // DEBUG: Log ALL media items to see what data we receive
+            console.log(`[FrameRenderer] Item "${item.name}" filter="${item.filter}" adjustments=`, item.adjustments);
+
+            // Apply filters and adjustments AFTER restore (in screen coordinates)
+            // This processes the pixels that were just drawn
+            const hasFilter = item.filter && item.filter !== 'none';
+            const hasAdjustments = item.adjustments && Object.values(item.adjustments).some(v => v !== 0 && v !== undefined);
+
+            if (hasFilter || hasAdjustments) {
+                console.log(`[FrameRenderer] APPLYING filters/adjustments for "${item.name}"`);
+
+                // Calculate the screen bounds of the drawn item
+                const screenX = x;
+                const screenY = y;
+                const screenWidth = width;
+                const screenHeight = height;
+
+                applyItemFilters(
+                    this.ctx,
+                    this.width,
+                    this.height,
+                    screenX,
+                    screenY,
+                    screenWidth,
+                    screenHeight,
+                    item.filter || 'none',
+                    item.adjustments as Adjustments | undefined
+                );
+            }
+
             return true;
         } catch (e) {
             console.error('[FrameRenderer] Error drawing media:', e);
             this.ctx.restore();
             return false;
         }
+    }
+
+    /**
+     * Apply clip path for transition effects
+     * Handles various clip shapes: circle, inset, polygon, arc, blinds, checker
+     */
+    private applyClipPath(style: TransitionStyle, width: number, height: number): void {
+        // Handle legacy clipX/clipWidth for backward compatibility
+        if (style.clipX !== undefined || style.clipWidth !== undefined) {
+            this.ctx.beginPath();
+            const clipX = (style.clipX ?? 0) * width;
+            const clipW = (style.clipWidth ?? 1) * width;
+            this.ctx.rect(-width / 2 + clipX, -height / 2, clipW, height);
+            this.ctx.clip();
+            return;
+        }
+
+        // Handle new shape-based clipping
+        if (!style.clipShape || style.clipShape === 'none') return;
+
+        const halfW = width / 2;
+        const halfH = height / 2;
+
+        this.ctx.beginPath();
+
+        switch (style.clipShape) {
+            case 'circle': {
+                // Circle reveal from center
+                const radius = (style.clipRadius ?? 0) * Math.sqrt(width * width + height * height) / 2;
+                this.ctx.arc(0, 0, Math.max(1, radius), 0, Math.PI * 2);
+                break;
+            }
+            case 'rect': {
+                // Simple rectangle (for backward compatibility)
+                this.ctx.rect(-halfW, -halfH, width, height);
+                break;
+            }
+            case 'inset': {
+                // Inset rectangle from edges
+                const insetT = (style.clipInsetTop ?? 0) * height;
+                const insetR = (style.clipInsetRight ?? 0) * width;
+                const insetB = (style.clipInsetBottom ?? 0) * height;
+                const insetL = (style.clipInsetLeft ?? 0) * width;
+                this.ctx.rect(
+                    -halfW + insetL,
+                    -halfH + insetT,
+                    width - insetL - insetR,
+                    height - insetT - insetB
+                );
+                break;
+            }
+            case 'polygon': {
+                // Custom polygon with normalized points (0-1)
+                const points = style.clipPoints;
+                if (points && points.length >= 3) {
+                    this.ctx.moveTo(
+                        (points[0][0] - 0.5) * width,
+                        (points[0][1] - 0.5) * height
+                    );
+                    for (let i = 1; i < points.length; i++) {
+                        this.ctx.lineTo(
+                            (points[i][0] - 0.5) * width,
+                            (points[i][1] - 0.5) * height
+                        );
+                    }
+                    this.ctx.closePath();
+                }
+                break;
+            }
+            case 'arc': {
+                // Pie/wedge shape from center (for clock-wipe, radial-wipe)
+                const startAngle = ((style.clipArcStart ?? 0) * Math.PI) / 180;
+                const endAngle = ((style.clipArcEnd ?? 360) * Math.PI) / 180;
+                const radius = Math.sqrt(width * width + height * height);
+                this.ctx.moveTo(0, 0);
+                this.ctx.arc(0, 0, radius, startAngle, endAngle);
+                this.ctx.closePath();
+                break;
+            }
+            case 'blinds': {
+                // Venetian blinds / stripes pattern
+                const stripes = style.clipStripes ?? 10;
+                const progress = style.clipRadius ?? 0; // Use clipRadius as progress
+                const stripeHeight = height / stripes;
+                for (let i = 0; i < stripes; i++) {
+                    const y = -halfH + i * stripeHeight;
+                    const visibleHeight = stripeHeight * progress;
+                    this.ctx.rect(-halfW, y, width, visibleHeight);
+                }
+                break;
+            }
+            case 'checker': {
+                // Checkerboard pattern
+                const size = (style.clipCheckerSize ?? 0.1) * Math.min(width, height);
+                const progress = style.clipRadius ?? 0; // Use clipRadius as progress
+                const cols = Math.ceil(width / size);
+                const rows = Math.ceil(height / size);
+                const threshold = progress * (cols + rows); // Diagonal reveal
+
+                for (let row = 0; row < rows; row++) {
+                    for (let col = 0; col < cols; col++) {
+                        // Checkerboard pattern - only draw alternating squares
+                        if ((row + col) % 2 === 0) {
+                            const diagonalIndex = row + col;
+                            if (diagonalIndex < threshold) {
+                                this.ctx.rect(
+                                    -halfW + col * size,
+                                    -halfH + row * size,
+                                    size,
+                                    size
+                                );
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
+        this.ctx.clip();
     }
 
     // Video frame cache - keyed by "videoPath:timestamp"
@@ -594,41 +741,212 @@ export class FrameRenderer {
     }
 
     /**
-     * Render a solid color background
+     * Render a solid color or gradient background
      */
     private renderColorItem(item: TimelineItemData): void {
         this.ctx.save();
-        this.ctx.fillStyle = item.src || '#000000';
         this.ctx.globalAlpha = (item.opacity ?? 100) / 100;
+
+        const colorValue = item.src || '#000000';
+
+        // Check if it's a gradient
+        if (colorValue.includes('linear-gradient')) {
+            // Parse CSS linear-gradient: linear-gradient(to right, #ff7e5f, #feb47b)
+            const gradientMatch = colorValue.match(/linear-gradient\(\s*(to\s+\w+|[\d.]+deg)?\s*,?\s*(.+)\)/i);
+
+            if (gradientMatch) {
+                const direction = gradientMatch[1] || 'to right';
+                const colorStops = gradientMatch[2];
+
+                // Determine gradient direction
+                let x0 = 0, y0 = 0, x1 = this.width, y1 = 0;
+
+                if (direction.includes('right')) {
+                    x0 = 0; y0 = 0; x1 = this.width; y1 = 0;
+                } else if (direction.includes('left')) {
+                    x0 = this.width; y0 = 0; x1 = 0; y1 = 0;
+                } else if (direction.includes('bottom')) {
+                    x0 = 0; y0 = 0; x1 = 0; y1 = this.height;
+                } else if (direction.includes('top')) {
+                    x0 = 0; y0 = this.height; x1 = 0; y1 = 0;
+                } else if (direction.includes('deg')) {
+                    // Handle degree-based directions
+                    const angle = parseFloat(direction) * Math.PI / 180;
+                    const cx = this.width / 2;
+                    const cy = this.height / 2;
+                    const len = Math.max(this.width, this.height);
+                    x0 = cx - Math.sin(angle) * len / 2;
+                    y0 = cy - Math.cos(angle) * len / 2;
+                    x1 = cx + Math.sin(angle) * len / 2;
+                    y1 = cy + Math.cos(angle) * len / 2;
+                }
+
+                const gradient = this.ctx.createLinearGradient(x0, y0, x1, y1);
+
+                // Parse color stops: "#ff7e5f, #feb47b" or "#ff7e5f 0%, #feb47b 100%"
+                const colors = colorStops.split(',').map(s => s.trim());
+                colors.forEach((colorStr, index) => {
+                    // Check if color has a percentage position
+                    const posMatch = colorStr.match(/(.+?)\s+([\d.]+%)/);
+                    if (posMatch) {
+                        const color = posMatch[1].trim();
+                        const pos = parseFloat(posMatch[2]) / 100;
+                        gradient.addColorStop(pos, color);
+                    } else {
+                        // Distribute evenly
+                        const pos = colors.length > 1 ? index / (colors.length - 1) : 0;
+                        gradient.addColorStop(pos, colorStr);
+                    }
+                });
+
+                this.ctx.fillStyle = gradient;
+            } else {
+                // Fallback if parsing fails
+                this.ctx.fillStyle = '#000000';
+            }
+        } else if (colorValue.includes('radial-gradient')) {
+            // Parse radial gradient: radial-gradient(circle, #ff7e5f, #feb47b)
+            const gradientMatch = colorValue.match(/radial-gradient\(\s*(circle|ellipse)?\s*,?\s*(.+)\)/i);
+
+            if (gradientMatch) {
+                const colorStops = gradientMatch[2];
+                const cx = this.width / 2;
+                const cy = this.height / 2;
+                const radius = Math.max(this.width, this.height) / 2;
+
+                const gradient = this.ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+
+                const colors = colorStops.split(',').map(s => s.trim());
+                colors.forEach((colorStr, index) => {
+                    const posMatch = colorStr.match(/(.+?)\s+([\d.]+%)/);
+                    if (posMatch) {
+                        const color = posMatch[1].trim();
+                        const pos = parseFloat(posMatch[2]) / 100;
+                        gradient.addColorStop(pos, color);
+                    } else {
+                        const pos = colors.length > 1 ? index / (colors.length - 1) : 0;
+                        gradient.addColorStop(pos, colorStr);
+                    }
+                });
+
+                this.ctx.fillStyle = gradient;
+            } else {
+                this.ctx.fillStyle = '#000000';
+            }
+        } else {
+            // Solid color
+            this.ctx.fillStyle = colorValue;
+        }
+
         this.ctx.fillRect(0, 0, this.width, this.height);
         this.ctx.restore();
     }
 
     /**
-     * Render text item with effects
+     * Render text item with all effects (matches client-side getTextEffectStyle)
+     * Supports: shadow, outline, neon, glitch, splice, echo, hollow, lift, background
+     * Also supports: textAlign, verticalAlign, textTransform, multi-line text, listType
      */
     private renderTextItem(item: TimelineItemData, currentTime: number): void {
-        const text = item.name || '';
+        let text = item.name || '';
         if (!text) return;
+
+        // Apply text transform
+        if (item.textTransform === 'uppercase') text = text.toUpperCase();
+        else if (item.textTransform === 'lowercase') text = text.toLowerCase();
 
         // Calculate animation
         const animStyle = calculateAnimationStyle(item, currentTime);
 
         this.ctx.save();
 
-        // Position
-        const xPct = item.x ?? 0;
-        const yPct = item.y ?? 0;
-        const x = (this.width / 2) + (xPct / 100) * this.width;
-        const y = (this.height / 2) + (yPct / 100) * this.height;
+        // Font setup
+        const fontSize = item.fontSize || 40;
+        const fontFamily = item.fontFamily || 'Arial';
+        const fontWeight = item.fontWeight || 'normal';
+        const fontStyle = item.fontStyle || 'normal';
+        const lineHeight = fontSize * 1.4;
+        this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
 
-        this.ctx.translate(x, y);
+        // Calculate item bounds (matching client-side logic)
+        const itemWidth = item.width ? (item.width / 100) * this.width : this.width * 0.5;
+        const itemHeight = item.height ? (item.height / 100) * this.height : this.height * 0.5;
 
-        // Animation transforms
-        if (animStyle.scale) this.ctx.scale(animStyle.scale, animStyle.scale);
-        if (animStyle.rotate) this.ctx.rotate((animStyle.rotate * Math.PI) / 180);
-        if (animStyle.translateX || animStyle.translateY) {
-            this.ctx.translate(animStyle.translateX || 0, animStyle.translateY || 0);
+        // Match client-side getItemPositionAndTransform logic exactly:
+        // Client uses CSS with left/right/top/bottom and translate
+        // For text items:
+        //   textAlign 'left': left = 50 + x%, translateX = 0%
+        //   textAlign 'right': right = 50 - x%, translateX = 0%
+        //   textAlign 'center': left = 50 + x%, translateX = -50%
+        //   verticalAlign 'top': top = 50 + y%, translateY = 0%
+        //   verticalAlign 'bottom': bottom = 50 - y%, translateY = 0%
+        //   verticalAlign 'middle': top = 50 + y%, translateY = -50%
+
+        const textAlign = item.textAlign || 'center';
+        const verticalAlign = item.verticalAlign || 'middle';
+
+        // Calculate X position based on text alignment
+        let textX: number;
+        let xOffset = 0; // For translation offset
+        if (textAlign === 'left') {
+            // Position from left edge: 50% + x% of canvas, no translate offset
+            textX = (this.width / 2) + ((item.x ?? 0) / 100) * this.width;
+            this.ctx.textAlign = 'left';
+        } else if (textAlign === 'right') {
+            // Position from right edge: 50% - x% from right = canvas - (50% - x%)
+            textX = this.width - ((50 - (item.x ?? 0)) / 100) * this.width;
+            this.ctx.textAlign = 'right';
+        } else {
+            // Center: 50% + x%, then translate -50% of item width
+            textX = (this.width / 2) + ((item.x ?? 0) / 100) * this.width;
+            this.ctx.textAlign = 'center';
+        }
+
+        this.ctx.textBaseline = 'top';
+
+        // Split text into lines
+        const lines = text.split('\n');
+        const totalTextHeight = lines.length * lineHeight;
+
+        // Calculate Y position based on vertical alignment
+        let textY: number;
+        if (verticalAlign === 'top') {
+            // Position from top: 50% + y%
+            textY = (this.height / 2) + ((item.y ?? 0) / 100) * this.height;
+        } else if (verticalAlign === 'bottom') {
+            // Position from bottom: 50% - y% from bottom, align to bottom of text
+            textY = this.height - ((50 - (item.y ?? 0)) / 100) * this.height - totalTextHeight;
+        } else {
+            // Middle: center vertically
+            textY = (this.height / 2) + ((item.y ?? 0) / 100) * this.height - totalTextHeight / 2;
+        }
+
+        // Apply transforms at the text position
+        this.ctx.translate(textX, textY + totalTextHeight / 2);
+
+        // Item rotation
+        if (item.rotation) {
+            this.ctx.rotate((item.rotation * Math.PI) / 180);
+        }
+
+        // Animation transforms - convert percentage-based values to pixels
+        const animTranslateX = (animStyle.translateX ?? 0) / 100 * this.width;
+        const animTranslateY = (animStyle.translateY ?? 0) / 100 * this.height;
+
+        if (animTranslateX !== 0 || animTranslateY !== 0) {
+            this.ctx.translate(animTranslateX, animTranslateY);
+        }
+
+        // Handle scale with independent scaleX/scaleY support
+        const scaleX = (animStyle.scale ?? 1) * (animStyle.scaleX ?? 1);
+        const scaleY = (animStyle.scale ?? 1) * (animStyle.scaleY ?? 1);
+        if (scaleX !== 1 || scaleY !== 1) {
+            this.ctx.scale(scaleX, scaleY);
+        }
+
+        // Animation rotation
+        if (animStyle.rotate) {
+            this.ctx.rotate((animStyle.rotate * Math.PI) / 180);
         }
 
         // Opacity
@@ -636,33 +954,172 @@ export class FrameRenderer {
         const animOpacity = animStyle.opacity ?? 1;
         this.ctx.globalAlpha = baseOpacity * animOpacity;
 
-        // Font setup
-        const fontSize = item.fontSize || 40;
-        const fontFamily = item.fontFamily || 'Arial';
-        const fontWeight = item.fontWeight || 'normal';
-        const fontStyle = item.fontStyle || 'normal';
-        this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
-        this.ctx.textAlign = 'center';
-        this.ctx.textBaseline = 'middle';
+        const itemColor = item.color || '#ffffff';
+        const effect = item.textEffect;
 
-        // Text effect
-        if (item.textEffect) {
-            const effect = item.textEffect;
-            if (effect.type === 'shadow') {
-                this.ctx.shadowColor = effect.color || 'rgba(0,0,0,0.5)';
-                this.ctx.shadowBlur = effect.intensity || 4;
-                this.ctx.shadowOffsetX = effect.offset || 2;
-                this.ctx.shadowOffsetY = effect.offset || 2;
-            } else if (effect.type === 'outline') {
-                this.ctx.strokeStyle = effect.color || '#000000';
-                this.ctx.lineWidth = effect.intensity || 2;
-                this.ctx.strokeText(text, 0, 0);
+        // Calculate effect parameters (matches client-side getTextEffectStyle)
+        const scale = fontSize / 40; // Scale effects relative to font size
+        const effColor = effect?.color || '#000000';
+        const intensity = effect?.intensity ?? 50;
+        const offset = effect?.offset ?? 50;
+        const dist = (offset / 100) * 20 * scale; // 0 to 20px * scale
+        const blur = (intensity / 100) * 20 * scale; // 0 to 20px * scale
+
+        // Calculate Y positions for each line (centered around origin)
+        const lineY = (lineIndex: number) => (lineIndex - (lines.length - 1) / 2) * lineHeight;
+
+        // Helper to draw a line with effects
+        const drawLine = (lineText: string, yPos: number) => {
+            if (!effect || effect.type === 'none') {
+                // No effect - simple text
+                this.ctx.fillStyle = itemColor;
+                this.ctx.fillText(lineText, 0, yPos);
+            } else {
+                switch (effect.type) {
+                    case 'shadow':
+                        this.ctx.shadowColor = effColor;
+                        this.ctx.shadowBlur = blur;
+                        this.ctx.shadowOffsetX = dist;
+                        this.ctx.shadowOffsetY = dist;
+                        this.ctx.fillStyle = itemColor;
+                        this.ctx.fillText(lineText, 0, yPos);
+                        break;
+
+                    case 'lift':
+                        this.ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                        this.ctx.shadowBlur = blur + 10 * scale;
+                        this.ctx.shadowOffsetX = 0;
+                        this.ctx.shadowOffsetY = dist * 0.5 + 4 * scale;
+                        this.ctx.fillStyle = itemColor;
+                        this.ctx.fillText(lineText, 0, yPos);
+                        break;
+
+                    case 'hollow':
+                        this.ctx.strokeStyle = itemColor;
+                        this.ctx.lineWidth = ((intensity / 100) * 3 + 1) * scale;
+                        this.ctx.strokeText(lineText, 0, yPos);
+                        break;
+
+                    case 'splice':
+                        this.ctx.fillStyle = effColor;
+                        this.ctx.fillText(lineText, dist + 2 * scale, yPos + dist + 2 * scale);
+                        this.ctx.strokeStyle = itemColor;
+                        this.ctx.lineWidth = ((intensity / 100) * 3 + 1) * scale;
+                        this.ctx.strokeText(lineText, 0, yPos);
+                        break;
+
+                    case 'outline':
+                        this.ctx.strokeStyle = effColor;
+                        this.ctx.lineWidth = ((intensity / 100) * 3 + 1) * scale;
+                        this.ctx.strokeText(lineText, 0, yPos);
+                        this.ctx.fillStyle = itemColor;
+                        this.ctx.fillText(lineText, 0, yPos);
+                        break;
+
+                    case 'echo':
+                        this.ctx.globalAlpha = baseOpacity * animOpacity * 0.2;
+                        this.ctx.fillStyle = effColor;
+                        this.ctx.fillText(lineText, dist * 3, yPos + dist * 3);
+                        this.ctx.globalAlpha = baseOpacity * animOpacity * 0.4;
+                        this.ctx.fillText(lineText, dist * 2, yPos + dist * 2);
+                        this.ctx.globalAlpha = baseOpacity * animOpacity * 0.8;
+                        this.ctx.fillText(lineText, dist, yPos + dist);
+                        this.ctx.globalAlpha = baseOpacity * animOpacity;
+                        this.ctx.fillStyle = itemColor;
+                        this.ctx.fillText(lineText, 0, yPos);
+                        break;
+
+                    case 'glitch':
+                        const gOff = ((offset / 100) * 5 + 2) * scale;
+                        this.ctx.fillStyle = '#00ffff';
+                        this.ctx.fillText(lineText, -gOff, yPos - gOff);
+                        this.ctx.fillStyle = '#ff00ff';
+                        this.ctx.fillText(lineText, gOff, yPos + gOff);
+                        this.ctx.fillStyle = itemColor;
+                        this.ctx.fillText(lineText, 0, yPos);
+                        break;
+
+                    case 'neon':
+                        const neonInt = intensity * 0.1 * scale;
+                        this.ctx.shadowColor = effColor;
+                        this.ctx.shadowBlur = neonInt * 4;
+                        this.ctx.fillStyle = itemColor || '#ffffff';
+                        this.ctx.fillText(lineText, 0, yPos);
+                        this.ctx.shadowBlur = neonInt * 2;
+                        this.ctx.fillText(lineText, 0, yPos);
+                        this.ctx.shadowBlur = neonInt;
+                        this.ctx.fillText(lineText, 0, yPos);
+                        break;
+
+                    case 'background':
+                        const metrics = this.ctx.measureText(lineText);
+                        const textWidth = metrics.width;
+                        const textHeight = fontSize * 1.2;
+                        const padX = 8 * scale;
+                        const padY = 4 * scale;
+                        // Calculate background X position based on text alignment
+                        let bgX = -textWidth / 2 - padX;
+                        if (this.ctx.textAlign === 'left') bgX = -padX;
+                        else if (this.ctx.textAlign === 'right') bgX = -textWidth - padX;
+                        this.ctx.fillStyle = effColor;
+                        this.ctx.fillRect(bgX, yPos - textHeight / 2 - padY, textWidth + padX * 2, textHeight + padY * 2);
+                        this.ctx.fillStyle = itemColor;
+                        this.ctx.fillText(lineText, 0, yPos);
+                        break;
+
+                    default:
+                        this.ctx.fillStyle = itemColor;
+                        this.ctx.fillText(lineText, 0, yPos);
+                }
             }
+        };
+
+        // Draw each line with list formatting
+        for (let i = 0; i < lines.length; i++) {
+            let lineText = lines[i];
+            // Apply list formatting
+            if (item.listType === 'bullet') lineText = '• ' + lineText;
+            else if (item.listType === 'number') lineText = `${i + 1}. ` + lineText;
+
+            drawLine(lineText, lineY(i));
+
+            // Clear shadow for next line
+            this.ctx.shadowBlur = 0;
+            this.ctx.shadowOffsetX = 0;
+            this.ctx.shadowOffsetY = 0;
         }
 
-        // Draw text
-        this.ctx.fillStyle = item.color || '#ffffff';
-        this.ctx.fillText(text, 0, 0);
+        // Draw text decoration (underline/strikethrough) if needed
+        if (item.textDecoration && item.textDecoration !== 'none') {
+            this.ctx.strokeStyle = itemColor;
+            this.ctx.lineWidth = Math.max(1, fontSize / 20);
+            for (let i = 0; i < lines.length; i++) {
+                let lineText = lines[i];
+                if (item.listType === 'bullet') lineText = '• ' + lineText;
+                else if (item.listType === 'number') lineText = `${i + 1}. ` + lineText;
+
+                const metrics = this.ctx.measureText(lineText);
+                const textWidth = metrics.width;
+                const yPos = lineY(i);
+
+                // Calculate line X based on text alignment
+                let lineStartX = -textWidth / 2;
+                if (this.ctx.textAlign === 'left') lineStartX = 0;
+                else if (this.ctx.textAlign === 'right') lineStartX = -textWidth;
+
+                this.ctx.beginPath();
+                if (item.textDecoration === 'underline') {
+                    const underlineY = yPos + fontSize * 0.1;
+                    this.ctx.moveTo(lineStartX, underlineY);
+                    this.ctx.lineTo(lineStartX + textWidth, underlineY);
+                } else if (item.textDecoration === 'line-through') {
+                    const strikeY = yPos - fontSize * 0.2;
+                    this.ctx.moveTo(lineStartX, strikeY);
+                    this.ctx.lineTo(lineStartX + textWidth, strikeY);
+                }
+                this.ctx.stroke();
+            }
+        }
 
         this.ctx.restore();
     }

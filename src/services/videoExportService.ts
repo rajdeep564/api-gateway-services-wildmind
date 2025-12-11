@@ -133,8 +133,11 @@ class VideoExportService {
                 }
             }
 
-            if (hasMediaItems && (hasTransitions || hasAnimations)) {
-                console.log('📸 Using FRAME-BY-FRAME rendering for transitions/animations');
+            // ALWAYS use frame-by-frame rendering for full feature support
+            // FrameRenderer supports: filters, adjustments, flip, background color, transitions, animations
+            // FFmpeg filter complex only supports basic compositing
+            if (hasMediaItems) {
+                console.log('📸 Using FRAME-BY-FRAME rendering for full feature support');
 
                 try {
                     // Import FrameRenderer dynamically to avoid circular dependencies
@@ -194,8 +197,8 @@ class VideoExportService {
                     });
                 }
             } else {
-                // Fall back to FFmpeg filter complex for simple exports
-                console.log('🎞️  Using FFmpeg filter complex (no transitions/animations)');
+                // No media items - just render background or text
+                console.log('🎞️  Using FFmpeg for text-only export');
                 const ffmpegArgs = this.buildFFmpegCommand(timeline, settings, jobDir, outputPath);
                 console.log(`[VideoExport] FFmpeg args:`, ffmpegArgs.join(' '));
 
@@ -338,20 +341,47 @@ class VideoExportService {
         console.log(`[VideoExport] Found ${textItems.length} text items to render`);
 
         // Video filter complex for compositing
+        let videoFilterComplex = '';
         if (mediaItems.length > 0 || textItems.length > 0) {
-            const filterComplex = this.buildFilterComplex(mediaItems, settings, duration, textItems);
-            if (filterComplex) {
-                args.push('-filter_complex', filterComplex);
-                args.push('-map', '[out]');
+            videoFilterComplex = this.buildFilterComplex(mediaItems, settings, duration, textItems);
+        }
+
+        // Audio mixing filter (only for dedicated audio items, not video audio)
+        // For video audio, we need to track the input index properly
+        let audioFilterComplex = '';
+        let hasAudioOutput = false;
+
+        // Only add audio filter for dedicated audio track items
+        const dedicatedAudioItems = audioItems.filter(item => item.type === 'audio');
+        if (dedicatedAudioItems.length > 0) {
+            audioFilterComplex = this.buildAudioFilter(dedicatedAudioItems, mediaItems.length);
+            hasAudioOutput = true;
+        }
+
+        // Combine filters into a single -filter_complex
+        if (videoFilterComplex || audioFilterComplex) {
+            const combinedFilter = [videoFilterComplex, audioFilterComplex].filter(Boolean).join(';');
+            if (combinedFilter) {
+                args.push('-filter_complex', combinedFilter);
+                if (videoFilterComplex) {
+                    args.push('-map', '[out]');
+                }
+                if (hasAudioOutput) {
+                    args.push('-map', '[aout]');
+                }
             }
         }
 
-        // Audio mixing
-        if (audioItems.length > 0) {
-            const audioFilter = this.buildAudioFilter(audioItems, mediaItems.length);
-            if (audioFilter) {
-                args.push('-filter_complex', audioFilter);
-                args.push('-map', '[aout]');
+        // If video has audio but no dedicated audio track, map audio directly from video input
+        const videoWithAudio = audioItems.filter(item => item.type === 'video' && item.hasAudio === true);
+        if (videoWithAudio.length > 0 && !hasAudioOutput) {
+            // Find the index of the first video with audio
+            const videoIndex = mediaItems.findIndex(item =>
+                item.id === videoWithAudio[0].id && item.hasAudio === true
+            );
+            if (videoIndex >= 0) {
+                args.push('-map', `${videoIndex}:a?`); // Use ? to make audio optional
+                hasAudioOutput = true;
             }
         }
 
@@ -400,8 +430,8 @@ class VideoExportService {
             args.push('-movflags', '+faststart');
         }
 
-        // Audio codec
-        if (audioItems.length > 0) {
+        // Audio codec - only if we have audio output
+        if (hasAudioOutput) {
             if (isWebM) {
                 // WebM requires Vorbis or Opus
                 args.push('-c:a', 'libopus');
@@ -633,7 +663,7 @@ class VideoExportService {
 
     /**
      * Get audio items from timeline
-     * Includes: explicit audio tracks + video items (unless muteVideo is set)
+     * Includes: explicit audio tracks + video items with audio (hasAudio=true and not muteVideo)
      */
     private getAudioItems(timeline: TimelineData): TimelineItemData[] {
         const items: TimelineItemData[] = [];
@@ -642,13 +672,16 @@ class VideoExportService {
                 items.push(...track.items);
                 console.log(`[VideoExport] Found ${track.items.length} audio track items`);
             }
-            // Include video items UNLESS they have muteVideo set
+            // Include video items ONLY if they have audio AND not muted
+            // hasAudio = true means the video file has an audio stream
             // muteVideo = true means user clicked "Remove Audio" in editor
             if (track.type === 'video') {
                 for (const item of track.items) {
                     if (item.type === 'video') {
                         if (item.muteVideo === true) {
                             console.log(`[VideoExport] Video muted (skipping audio): ${item.name}`);
+                        } else if (item.hasAudio !== true) {
+                            console.log(`[VideoExport] Video has no audio stream: ${item.name}`);
                         } else {
                             items.push(item);
                             console.log(`[VideoExport] Video with audio: ${item.name}`);

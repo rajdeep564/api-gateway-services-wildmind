@@ -102,14 +102,35 @@ export interface TimelineItemData {
     fontWeight?: string;
     fontStyle?: string;
     textAlign?: string;
+    verticalAlign?: string;  // top, middle, bottom
     textDecoration?: string;
     textTransform?: string;
+    letterSpacing?: number;
     listType?: string;
     textEffect?: {
         type: string;
         color?: string;
         intensity?: number;
         offset?: number;
+    };
+
+    // Image/Video adjustments (detailed)
+    filterIntensity?: number;  // 0-100
+    adjustments?: {
+        temperature?: number;
+        tint?: number;
+        brightness?: number;
+        contrast?: number;
+        highlights?: number;
+        shadows?: number;
+        whites?: number;
+        blacks?: number;
+        saturation?: number;
+        vibrance?: number;
+        hue?: number;
+        sharpness?: number;
+        clarity?: number;
+        vignette?: number;
     };
 
     // Audio flag for video items
