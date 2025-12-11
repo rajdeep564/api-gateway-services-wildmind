@@ -233,10 +233,11 @@ export async function removeBackground(
     // Use input image directly (URL or data URI); only upload outputs to Zata
     input.image = body.image;
     if (modelBase.startsWith("851-labs/background-remover")) {
-      if (body.format) input.format = body.format;
+      // Ensure transparent PNG by default
+      input.format = body.format || "png";
+      input.background_type = body.background_type || "rgba";
       if (typeof body.reverse === "boolean") input.reverse = body.reverse;
       if (typeof body.threshold === "number") input.threshold = body.threshold;
-      if (body.background_type) input.background_type = body.background_type;
     }
   }
 
@@ -284,6 +285,7 @@ export async function removeBackground(
     const uploaded = await uploadFromUrlToZata({
       sourceUrl: outputUrl,
       keyPrefix: `users/${username}/image/${historyId}`,
+      // Preserve PNG for background-removed outputs; avoid double extensions
       fileName: "image-1",
     });
     storedUrl = uploaded.publicUrl;
