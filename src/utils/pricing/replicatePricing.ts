@@ -114,6 +114,12 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   else if (normalized.includes('phoenix 1.0') || normalized.includes('phoenix-1.0')) {
     display = 'Phoenix 1.0';
   }
+  else if (normalized.includes('p-image') || normalized.includes('prunaai/p-image')) {
+    display = 'P-Image';
+  }
+  else if (normalized.includes('p-image-edit') || normalized.includes('prunaai/p-image-edit')) {
+    display = 'P-Image-Edit';
+  }
   // Google Nano Banana Pro
   else if (normalized.includes('google/nano-banana-pro') || normalized.includes('nano-banana-pro')) {
     const resolution = String((req.body as any)?.resolution || '2K').toUpperCase();

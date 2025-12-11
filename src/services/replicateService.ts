@@ -1332,6 +1332,74 @@ export async function generateImage(uid: string, body: any) {
         }
       }
     }
+    // P-Image mapping (prunaai/p-image)
+    if (modelBase === "prunaai/p-image" || modelBase === "p-image") {
+      const allowedAspect = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', 'custom']);
+      const aspect = allowedAspect.has(String(rest.aspect_ratio)) ? String(rest.aspect_ratio) : '16:9';
+      input.aspect_ratio = aspect;
+
+      const roundTo16 = (v: number) => Math.round(v / 16) * 16;
+      const clampDim = (v: number) => {
+        const rounded = roundTo16(v);
+        return Math.max(256, Math.min(1440, rounded));
+      };
+
+      // Default width/height to max 1440 while respecting aspect ratio
+      const setDefaultDims = (ratio: string) => {
+        const [wStr, hStr] = ratio.split(':');
+        const w = Number(wStr) || 1;
+        const h = Number(hStr) || 1;
+        const aspectVal = w / h;
+        let width: number;
+        let height: number;
+        if (aspectVal >= 1) {
+          width = 1440;
+          height = roundTo16(1440 / aspectVal);
+        } else {
+          height = 1440;
+          width = roundTo16(1440 * aspectVal);
+        }
+        input.width = clampDim(width);
+        input.height = clampDim(height);
+      };
+
+      if (rest.width != null) input.width = clampDim(Number(rest.width));
+      if (rest.height != null) input.height = clampDim(Number(rest.height));
+
+      // If custom aspect ratio selected but width/height not provided, default to max 1440 each
+      if (aspect === 'custom') {
+        if (input.width == null) input.width = 1440;
+        if (input.height == null) input.height = 1440;
+        input.width = clampDim(input.width);
+        input.height = clampDim(input.height);
+      } else {
+        // Non-custom: if width/height not provided, derive from aspect with max 1440 edge
+        if (input.width == null || input.height == null) {
+          setDefaultDims(aspect);
+        }
+      }
+
+      if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
+      if (typeof rest.prompt_upsampling === 'boolean') input.prompt_upsampling = rest.prompt_upsampling;
+      if (typeof rest.disable_safety_checker === 'boolean') input.disable_safety_checker = rest.disable_safety_checker;
+
+      replicateModelBase = "prunaai/p-image";
+    }
+    // P-Image-Edit mapping (prunaai/p-image-edit) - image-to-image only
+    if (modelBase === "prunaai/p-image-edit" || modelBase === "p-image-edit") {
+      const images = Array.isArray(rest.images) ? rest.images.filter((i: any) => typeof i === 'string') : [];
+      if (images.length === 0) {
+        throw new ApiError("P-Image-Edit requires at least one image", 400);
+      }
+      input.images = images;
+      const allowedAspect = new Set(['match_input_image', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3']);
+      const aspect = allowedAspect.has(String(rest.aspect_ratio)) ? String(rest.aspect_ratio) : 'match_input_image';
+      input.aspect_ratio = aspect;
+      if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
+      if (typeof rest.turbo === 'boolean') input.turbo = rest.turbo;
+      if (typeof rest.disable_safety_checker === 'boolean') input.disable_safety_checker = rest.disable_safety_checker;
+      replicateModelBase = "prunaai/p-image-edit";
+    }
     // New Turbo Model mapping (z-image-turbo)
     // Using actual Replicate model identifier: prunaai/z-image-turbo with version hash
     if (modelBase === "z-image-turbo" || modelBase === "new-turbo-model" || modelBase === "placeholder-model-name") {

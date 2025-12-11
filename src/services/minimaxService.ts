@@ -573,8 +573,8 @@ async function musicGenerateAndStore(
   if (!body.prompt || body.prompt.length < 10 || body.prompt.length > 1000) {
     throw new ApiError('prompt is required and must be 10-1000 characters', 400);
   }
-  if (!body.lyrics || body.lyrics.length < 10 || body.lyrics.length > 1000) {
-    throw new ApiError('lyrics is required and must be 10-1000 characters', 400);
+  if (!body.lyrics || body.lyrics.length < 10 || body.lyrics.length > 5000) {
+    throw new ApiError('lyrics is required and must be 10-5000 characters', 400);
   }
   
   const creator = await authRepository.getUserById(uid);
