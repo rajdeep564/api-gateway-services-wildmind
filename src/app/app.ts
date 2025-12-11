@@ -5,6 +5,9 @@ import routes from '../routes';
 import { errorHandler } from '../utils/errorHandler';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { gzipCompression, httpParamPollution, requestId, securityHeaders, originCheck } from '../middlewares/security';
+import { globalLimiter, authLimiter, generationLimiter, apiLimiter, pollingLimiter } from '../middlewares/rateLimiter';
+import { ipFirewall } from '../middlewares/ipFirewall';
+import { sanitizeInput, detectInjectionAttacks } from '../middlewares/validation';
 import { httpLogger } from '../middlewares/logger';
 import { adminDb, admin } from '../config/firebaseAdmin';
 import { env } from '../config/env';
@@ -138,15 +141,67 @@ app.use((req, res, next) => {
   }
   return next();
 });
+
+// ============================================================================
+// SECURITY LAYER - Applied in this order for defense-in-depth
+// ============================================================================
+
+// 1. IP Firewall - Block malicious IPs immediately
+app.use(ipFirewall);
+
+// 2. Global Rate Limiter - Prevent DDoS/brute force
+app.use(globalLimiter);
+
+// 3. Injection Attack Detection - Detect SQL/XSS attempts
+app.use(detectInjectionAttacks);
+
+// 4. Input Sanitization - Clean all inputs
+app.use(sanitizeInput);
+
+// Body parsers (after security checks)
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
+
+// Additional security middlewares
 app.use(httpParamPollution);
 app.use(gzipCompression);
 app.use(httpLogger);
 if (isProd) {
   app.use(originCheck);
 }
+
+// ============================================================================
+// ROUTE-SPECIFIC RATE LIMITING
+// ============================================================================
+
+// Polling/Status endpoints - Very high limit (500 req/min) 
+// Applied FIRST so they don't hit the general API limit
+app.use('/api/runway/status', pollingLimiter);
+app.use('/api/replicate/queue/status', pollingLimiter);
+app.use('/api/replicate/status', pollingLimiter);
+app.use('/api/fal/queue/status', pollingLimiter);
+app.use('/api/fal/status', pollingLimiter);
+app.use('/api/minimax/video/status', pollingLimiter);
+app.use('/api/generation/status', pollingLimiter);
+
+// Auth endpoints - Strict rate limiting (5 attempts per 15 min)
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/signup', authLimiter);
+app.use('/api/auth/google', authLimiter);
+
+// Generation endpoints - Moderate rate limiting (30 per min)
+app.use('/api/replicate/generate', generationLimiter);
+app.use('/api/fal/submit', generationLimiter);
+app.use('/api/local/upscale-generation', generationLimiter);
+app.use('/api/gemini/enhance', generationLimiter);
+
+// Standard API endpoints - Standard rate limiting (100 per min)
+app.use('/api', apiLimiter);
+
+console.log('[Security] ✅ All security middlewares applied');
+
+
 
 // Health endpoint
 app.get('/health', (_req, res) => {
