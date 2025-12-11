@@ -115,7 +115,7 @@ export async function computeFalOutpaintCost(req: Request): Promise<{ cost: numb
 }
 
 function resolveVeoDisplay(isFast: boolean, kind: 't2v' | 'i2v', duration?: string): string {
-  const dur = (duration || '8s').toLowerCase();
+  const dur = String(duration || '8s').toLowerCase();
   if (isFast) {
     if (kind === 't2v') {
       if (dur.startsWith('4')) return 'veo3 fast t2v 4s';
@@ -134,7 +134,7 @@ function resolveVeoDisplay(isFast: boolean, kind: 't2v' | 'i2v', duration?: stri
 }
 
 function resolveVeo31Display(isFast: boolean, kind: 't2v' | 'i2v', duration?: string): string {
-  const dur = (duration || '8s').toLowerCase();
+  const dur = String(duration || '8s').toLowerCase();
   if (isFast) {
     if (kind === 't2v') {
       if (dur.startsWith('4')) return 'Veo 3.1 Fast T2V 4s';

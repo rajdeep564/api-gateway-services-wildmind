@@ -3622,8 +3622,37 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planD: 19776,
       free: 412,
     },
-  }
-
+  },
+  {
+    srNo: 174,
+    modelName: "P-Image",
+    priceToPay: 0.005,
+    overCharge: 0.0075,
+    userCost: 0.0125,
+    creditsPerGeneration: 25,
+    plans: {
+      planA: 494.4,
+      planB: 988.8,
+      planC: 2472,
+      planD: 7910.4,
+      free: 80,
+    },
+  },
+  {
+    srNo: 175,
+    modelName: "P-Image-Edit",
+    priceToPay: 0.01,
+    overCharge: 0.0025,
+    userCost: 0.0125,
+    creditsPerGeneration: 25,
+    plans: {
+      planA: 494.4,
+      planB: 988.8,
+      planC: 2472,
+      planD: 7910.4,
+      free: 80,
+    },
+  },
 
 
 

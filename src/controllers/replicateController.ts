@@ -31,6 +31,27 @@ async function upscale(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+
+export async function multiangle(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const data = await replicateService.multiangle(uid, req.body || {});
+    (res as any).locals = { ...(res as any).locals, success: true };
+    const ctx = (req as any).context || {};
+    try { await postSuccessDebit(uid, data, ctx, 'replicate', 'multiangle'); } catch { }
+    res.json({ responseStatus: 'success', message: 'OK', data });
+  } catch (e: any) {
+    console.error('[ReplicateController] Multiangle error:', e);
+    // Explicitly sending JSON error to prevent HTML fallback (e.g. from default error handler)
+    res.status(500).json({
+      responseStatus: 'error',
+      message: e.message || 'Internal Server Error',
+      error: e.toString()
+    });
+    return;
+  }
+}
+
 async function generateImage(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
@@ -76,7 +97,7 @@ async function wanT2V(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-export const replicateController = { removeBackground, upscale, generateImage, wanI2V, wanT2V } as any;
+export const replicateController = { removeBackground, upscale, generateImage, wanI2V, wanT2V, multiangle } as any;
 // Queue-style handlers for Replicate WAN 2.5
 export async function wanT2vSubmit(req: Request, res: Response, next: NextFunction) {
   try {

@@ -896,6 +896,529 @@ export async function upscale(uid: string, body: any) {
   } as any;
 }
 
+export async function multiangle(uid: string, body: any) {
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const key = env.replicateApiKey as string;
+  if (!key) {
+    // eslint-disable-next-line no-console
+    console.error("[replicateService.multiangle] Missing REPLICATE_API_TOKEN");
+    throw new ApiError("Replicate API key not configured", 500);
+  }
+  if (!body?.image) throw new ApiError("image is required", 400);
+
+  const replicate = new Replicate({ auth: key });
+
+  const modelBase = "qwen/qwen-edit-multiangle";
+
+  const creator = await authRepository.getUserById(uid);
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: "[Multiangle]",
+    model: modelBase,
+    generationType: "text-to-image",
+    visibility: body.isPublic === true ? "public" : "private",
+    isPublic: body.isPublic === true,
+    createdBy: creator
+      ? { uid, username: creator.username, email: (creator as any)?.email }
+      : { uid },
+  } as any);
+
+  const legacyId = await replicateRepository.createGenerationRecord(
+    { prompt: "[Multiangle]", model: modelBase, isPublic: body.isPublic === true },
+    creator
+      ? { uid, username: creator.username, email: (creator as any)?.email }
+      : { uid }
+  );
+
+  // Track the original input image URL for saving to database
+  const originalInputImage = body.image;
+  let inputImageStoragePath: string | undefined;
+  let inputImageUrl: string | undefined;
+
+  // Input Image Upload Logic (Duplicated from upscale for robust handling)
+  if (typeof body.image === "string" && body.image.startsWith("data:")) {
+    try {
+      const username = creator?.username || uid;
+      const dataUriSize = body.image.length;
+      const maxDataUriSize = 10 * 1024 * 1024; // 10MB
+      if (dataUriSize > maxDataUriSize) {
+        throw new ApiError(
+          `Image data URI is too large (${Math.round(dataUriSize / 1024 / 1024)}MB). Maximum size is 10MB.`,
+          400
+        );
+      }
+      const stored = await uploadDataUriToZata({
+        dataUri: body.image,
+        keyPrefix: `users/${username}/input/${historyId}`,
+        fileName: "source",
+      });
+      if (!stored?.publicUrl) throw new Error("Failed to upload image to storage");
+      body.image = stored.publicUrl;
+      inputImageUrl = stored.publicUrl;
+      inputImageStoragePath = (stored as any).key;
+    } catch (e: any) {
+      console.error("[replicateService.multiangle] Failed to upload data URI", e);
+      throw new ApiError("Failed to upload input image.", 500, e);
+    }
+  } else if (typeof body.image === "string" && body.image.trim().length > 0) {
+    try {
+      const username = creator?.username || uid;
+      const ZATA_PREFIX = env.zataPrefix;
+      if (ZATA_PREFIX && body.image.startsWith(ZATA_PREFIX)) {
+        inputImageStoragePath = body.image.substring(ZATA_PREFIX.length);
+        inputImageUrl = body.image;
+      } else {
+        const stored = await uploadFromUrlToZata({
+          sourceUrl: body.image,
+          keyPrefix: `users/${username}/input/${historyId}`,
+          fileName: "source",
+        });
+        inputImageUrl = stored.publicUrl;
+        inputImageStoragePath = (stored as any).key;
+        body.image = stored.publicUrl;
+      }
+    } catch (e: any) {
+      console.warn("[replicateService.multiangle] Failed to upload input URL to Zata, using original URL", e?.message || e);
+      inputImageUrl = body.image;
+    }
+  }
+
+  // Save input image to database
+  if (inputImageUrl) {
+    try {
+      const inputPersisted: any[] = [{
+        id: "in-1",
+        url: inputImageUrl,
+        originalUrl: originalInputImage,
+      }];
+      if (inputImageStoragePath) {
+        inputPersisted[0].storagePath = inputImageStoragePath;
+      }
+      await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+    } catch (e) {
+      console.warn("[replicateService.multiangle] Failed to save inputImages:", e);
+    }
+  }
+
+  let outputUrls: string[] = [];
+  try {
+    const input: any = {
+      image: body.image,
+      prompt: body.prompt || "", // User specified prompt from UI
+      rotate_degrees: typeof body.rotate_degrees === 'number' ? Math.max(-90, Math.min(90, body.rotate_degrees)) : 0,
+      move_forward: typeof body.move_forward === 'number' ? Math.max(0, Math.min(50, body.move_forward)) : 0, // User sample showed 2.5, keep range reasonable
+      vertical_tilt: typeof body.vertical_tilt === 'number' ? body.vertical_tilt : 0,
+      use_wide_angle: body.wide_angle === true, // Mapped from wide_angle to use_wide_angle
+      aspect_ratio: ["match_input_image", "1:1", "16:9", "9:16", "4:3", "3:4"].includes(body.aspect_ratio) ? body.aspect_ratio : "match_input_image",
+      lora_weights: "dx8152/Qwen-Edit-2509-Multiple-angles", // REQUIRED
+      lora_scale: 3, // User specified default
+      true_guidance_scale: 8, // User specified default
+      output_format: "jpg", // Default to jpg as requested
+      output_quality: 95,
+      go_fast: false,
+    };
+
+    // Dynamically resolve latest version for robustness
+    let version = body.version;
+    if (!version) {
+      try {
+        console.log("[replicateService.multiangle] Fetching latest version for", modelBase);
+        const [owner, name] = modelBase.split('/');
+        const modelData = await replicate.models.get(owner, name);
+        version = modelData.latest_version?.id;
+        console.log("[replicateService.multiangle] Resolved latest version:", version);
+      } catch (verErr: any) {
+        console.warn("[replicateService.multiangle] Failed to fetch latest version, falling back to base model string:", verErr.message);
+      }
+    }
+
+    const modelSpec = version ? `${modelBase}:${version}` : modelBase;
+    console.log("[replicateService.multiangle] run", { modelSpec, input });
+
+    // 5 min timeout
+    const REPLICATE_TIMEOUT = 5 * 60 * 1000;
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("Replicate API call timed out")), REPLICATE_TIMEOUT);
+    });
+
+    const output: any = await Promise.race([
+      replicate.run(modelSpec as any, { input }),
+      timeoutPromise,
+    ]);
+
+    console.log("[replicateService.multiangle] output", typeof output);
+
+    const urlsResolved = await resolveOutputUrls(output);
+    if (urlsResolved && urlsResolved.length) {
+      outputUrls = urlsResolved;
+    } else {
+      const one = extractFirstUrl(output);
+      if (one) outputUrls = [one];
+    }
+
+    if (!outputUrls.length) {
+      console.error("[replicateService.multiangle] No output URL. Raw output:", JSON.stringify(output, null, 2));
+      throw new Error("No output URL returned by Replicate");
+    }
+
+  } catch (e: any) {
+    console.error("[replicateService.multiangle] error details:", JSON.stringify(e, Object.getOwnPropertyNames(e), 2));
+    const errorMessage = e?.message || "Replicate generation failed";
+    try {
+      await replicateRepository.updateGenerationRecord(legacyId, { status: "failed", error: errorMessage });
+    } catch { }
+    await generationHistoryRepository.update(uid, historyId, { status: "failed", error: errorMessage } as any);
+    throw new ApiError(errorMessage, 502, e);
+  }
+
+  // Upload outputs
+  const uploadedImages: Array<{ id: string; url: string; storagePath?: string; originalUrl: string; }> = [];
+  try {
+    const username = creator?.username || uid;
+    let idx = 1;
+    for (const out of outputUrls) {
+      try {
+        const dl = await downloadToDataUri(out);
+        if (dl) {
+          const uploaded = await uploadDataUriToZata({
+            dataUri: dl.dataUri,
+            keyPrefix: `users/${username}/image/${historyId}`,
+            fileName: `${buildReplicateImageFileName(historyId, idx - 1)}.${dl.ext}`,
+          });
+          uploadedImages.push({
+            id: `replicate-${Date.now()}-${idx}`,
+            url: uploaded.publicUrl,
+            storagePath: uploaded.key,
+            originalUrl: out,
+          });
+        } else {
+          // Fallback upload from URL directly
+          const uploaded = await uploadFromUrlToZata({
+            sourceUrl: out,
+            keyPrefix: `users/${username}/image/${historyId}`,
+            fileName: buildReplicateImageFileName(historyId, idx - 1),
+          });
+          uploadedImages.push({
+            id: `replicate-${Date.now()}-${idx}`,
+            url: uploaded.publicUrl,
+            storagePath: uploaded.key,
+            originalUrl: out,
+          });
+        }
+      } catch {
+        uploadedImages.push({ id: `replicate-${Date.now()}-${idx}`, url: out, originalUrl: out });
+      }
+      idx++;
+    }
+  } catch {
+    uploadedImages.push(...outputUrls.map((out, i) => ({ id: `replicate-${Date.now()}-${i + 1}`, url: out, originalUrl: out })));
+  }
+
+  const scoredImages = await aestheticScoreService.scoreImages(uploadedImages);
+  const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
+  const updateData: any = {
+    status: "completed",
+    images: scoredImages as any,
+    aestheticScore: highestScore,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await generationHistoryRepository.update(uid, historyId, updateData);
+  try { await replicateRepository.updateGenerationRecord(legacyId, { status: "completed", images: scoredImages as any }); } catch { }
+
+  markGenerationCompleted(uid, historyId, {
+    status: "completed",
+    images: scoredImages as any,
+    isPublic: body?.isPublic === true,
+  }).catch(console.error);
+
+  await syncToMirror(uid, historyId);
+
+  return {
+    images: scoredImages,
+    aestheticScore: highestScore,
+    historyId,
+    model: modelBase,
+    status: "completed",
+  } as any;
+}
+
+const GOOGLE_NANO_BANANA_MODEL = "google/nano-banana-pro"; // Per user request
+const MULTISCENE_BASE_PROMPT = `Analyze the entire movie scene. Identify ALL key subjects present (whether it's a single person, a group/couple, a vehicle, or a specific object) and their spatial relationship/interaction.
+Generate a cohesive 3x3 grid "Cinematic Contact Sheet" featuring 9 distinct camera shots of exactly these subjects in the same environment.
+You must adapt the standard cinematic shot types to fit the content (e.g., if a group, keep the group together; if an object, frame the whole object):
+
+**Row 1 (Establishing Context):**
+1. **Extreme Long Shot (ELS):** The subject(s) are seen small within the vast environment.
+2. **Long Shot (LS):** The complete subject(s) or group is visible from top to bottom (head to toe / wheels to roof).
+3. **Medium Long Shot (American/3-4):** Framed from knees up (for people) or a 3/4 view (for objects).
+
+**Row 2 (The Core Coverage):**
+4. **Medium Shot (MS):** Framed from the waist up (or the central core of the object). Focus on interaction/action.
+5. **Medium Close-Up (MCU):** Framed from chest up. Intimate framing of the main subject(s).
+6. **Close-Up (CU):** Tight framing on the face(s) or the "front" of the object.
+
+**Row 3 (Details & Angles):**
+7. **Extreme Close-Up (ECU):** Macro detail focusing intensely on a key feature (eyes, hands, logo, texture).
+8. **Low Angle Shot (Worm's Eye):** Looking up at the subject(s) from the ground (imposing/heroic).
+9. **High Angle Shot (Bird's Eye):** Looking down on the subject(s) from above.
+
+Ensure strict consistency: The same people/objects, same clothes, and same lighting across all 9 panels. The depth of field should shift realistically (bokeh in close-ups).
+
+A professional 3x3 cinematic storyboard grid containing 9 panels.
+The grid showcases the specific subjects/scene from the input image in a comprehensive range of focal lengths.
+**Top Row:** Wide environmental shot, Full view, 3/4 cut.
+**Middle Row:** Waist-up view, Chest-up view, Face/Front close-up.
+**Bottom Row:** Macro detail, Low Angle, High Angle.
+All frames feature photorealistic textures, consistent cinematic color grading, and correct framing for the specific number of subjects or objects analyzed.`;
+
+export async function nextScene(uid: string, body: any) {
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const key = env.replicateApiKey as string;
+  if (!key) {
+    // eslint-disable-next-line no-console
+    console.error("[replicateService.nextScene] Missing REPLICATE_API_TOKEN");
+    throw new ApiError("Replicate API key not configured", 500);
+  }
+  if (!body?.image) throw new ApiError("image is required", 400);
+
+  const replicate = new Replicate({ auth: key });
+
+  const isMultiScene = body.mode === "nextscene";
+  const modelBase = isMultiScene ? GOOGLE_NANO_BANANA_MODEL : "qwen-edit-apps/qwen-image-edit-plus-lora-next-scene";
+
+  const creator = await authRepository.getUserById(uid);
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt || "[Next Scene]",
+    model: modelBase,
+    generationType: "image-to-image",
+    visibility: body.isPublic === true ? "public" : "private",
+    isPublic: body.isPublic === true,
+    createdBy: creator
+      ? { uid, username: creator.username, email: (creator as any)?.email }
+      : { uid },
+  } as any);
+
+  const legacyId = await replicateRepository.createGenerationRecord(
+    { prompt: body.prompt || "[Next Scene]", model: modelBase, isPublic: body.isPublic === true },
+    creator
+      ? { uid, username: creator.username, email: (creator as any)?.email }
+      : { uid }
+  );
+
+  // Track the original input image URL for saving to database
+  const originalInputImage = body.image;
+  let inputImageStoragePath: string | undefined;
+  let inputImageUrl: string | undefined;
+
+  // Input Image Upload Logic (Duplicated from upscale/multiangle for robust handling)
+  if (typeof body.image === "string" && body.image.startsWith("data:")) {
+    try {
+      const username = creator?.username || uid;
+      const dataUriSize = body.image.length;
+      const maxDataUriSize = 10 * 1024 * 1024; // 10MB
+      if (dataUriSize > maxDataUriSize) {
+        throw new ApiError(
+          `Image data URI is too large (${Math.round(dataUriSize / 1024 / 1024)}MB). Maximum size is 10MB.`,
+          400
+        );
+      }
+      const stored = await uploadDataUriToZata({
+        dataUri: body.image,
+        keyPrefix: `users/${username}/input/${historyId}`,
+        fileName: "source",
+      });
+      if (!stored?.publicUrl) throw new Error("Failed to upload image to storage");
+      body.image = stored.publicUrl;
+      inputImageUrl = stored.publicUrl;
+      inputImageStoragePath = (stored as any).key;
+    } catch (e: any) {
+      console.error("[replicateService.nextScene] Failed to upload data URI", e);
+      throw new ApiError("Failed to upload input image.", 500, e);
+    }
+  } else if (typeof body.image === "string" && body.image.trim().length > 0) {
+    try {
+      const username = creator?.username || uid;
+      const ZATA_PREFIX = env.zataPrefix;
+      if (ZATA_PREFIX && body.image.startsWith(ZATA_PREFIX)) {
+        inputImageStoragePath = body.image.substring(ZATA_PREFIX.length);
+        inputImageUrl = body.image;
+      } else {
+        const stored = await uploadFromUrlToZata({
+          sourceUrl: body.image,
+          keyPrefix: `users/${username}/input/${historyId}`,
+          fileName: "source",
+        });
+        inputImageUrl = stored.publicUrl;
+        inputImageStoragePath = (stored as any).key;
+        body.image = stored.publicUrl;
+      }
+    } catch (e: any) {
+      console.warn("[replicateService.nextScene] Failed to upload input URL to Zata, using original URL", e?.message || e);
+      inputImageUrl = body.image;
+    }
+  }
+
+  // Save input image to database
+  if (inputImageUrl) {
+    try {
+      const inputPersisted: any[] = [{
+        id: "in-1",
+        url: inputImageUrl,
+        originalUrl: originalInputImage,
+      }];
+      if (inputImageStoragePath) {
+        inputPersisted[0].storagePath = inputImageStoragePath;
+      }
+      await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+    } catch (e) {
+      console.warn("[replicateService.nextScene] Failed to save inputImages:", e);
+    }
+  }
+
+  let outputUrls: string[] = [];
+  try {
+    let finalPrompt = body.prompt || "Next Scene: The camera pulls back to reveal the entire landscape";
+
+    // For MultiScene, inject the strict base prompt
+    if (isMultiScene) {
+      // If user provided a prompt, append it or merge it. 
+      // The instruction says "this will be base prompt so make it like that".
+      // We'll treat user prompt as the scene description to be analyzed.
+      finalPrompt = `${MULTISCENE_BASE_PROMPT}\n\nScene Description: ${body.prompt || "A cinematic scene"}`;
+    }
+
+    const input: any = {
+      image: body.image,
+      prompt: finalPrompt,
+      lora_scale: body.lora_scale !== undefined ? Number(body.lora_scale) : 4,
+      aspect_ratio: body.aspect_ratio || "match_input_image",
+      lora_weights: body.lora_weights || "",
+      output_format: "png",
+      output_quality: 95,
+      true_guidance_scale: body.true_guidance_scale !== undefined ? Number(body.true_guidance_scale) : 0,
+      guidance_scale: body.guidance_scale !== undefined ? Number(body.guidance_scale) : 3.5,
+      num_inference_steps: body.num_inference_steps !== undefined ? Number(body.num_inference_steps) : 25,
+    };
+
+    // Dynamically resolve latest version for robustness, though modelBase usually works for Replicate models with slash
+    // qwen-edit-apps/qwen-image-edit-plus-lora-next-scene
+    // If we need a version version we can fetch it, but usually the owner/name works
+    // Let's assume owner/name works or fallback to latest
+    const modelSpec = modelBase;
+    // eslint-disable-next-line no-console
+    console.log("[replicateService.nextScene] run", { modelSpec, input });
+
+    // 5 min timeout
+    const REPLICATE_TIMEOUT = 5 * 60 * 1000;
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("Replicate API call timed out")), REPLICATE_TIMEOUT);
+    });
+
+    const output: any = await Promise.race([
+      replicate.run(modelSpec as any, { input }),
+      timeoutPromise,
+    ]);
+
+    // eslint-disable-next-line no-console
+    console.log("[replicateService.nextScene] output", typeof output);
+
+    const urlsResolved = await resolveOutputUrls(output);
+    if (urlsResolved && urlsResolved.length) {
+      outputUrls = urlsResolved;
+    } else {
+      const one = extractFirstUrl(output);
+      if (one) outputUrls = [one];
+    }
+
+    if (!outputUrls.length) {
+      console.error("[replicateService.nextScene] No output URL. Raw output:", JSON.stringify(output, null, 2));
+      throw new Error("No output URL returned by Replicate");
+    }
+
+  } catch (e: any) {
+    console.error("[replicateService.nextScene] error details:", JSON.stringify(e, Object.getOwnPropertyNames(e), 2));
+    const errorMessage = e?.message || "Replicate generation failed";
+    try {
+      await replicateRepository.updateGenerationRecord(legacyId, { status: "failed", error: errorMessage });
+    } catch { }
+    await generationHistoryRepository.update(uid, historyId, { status: "failed", error: errorMessage } as any);
+    throw new ApiError(errorMessage, 502, e);
+  }
+
+  // Upload outputs
+  const uploadedImages: Array<{ id: string; url: string; storagePath?: string; originalUrl: string; }> = [];
+  try {
+    const username = creator?.username || uid;
+    let idx = 1;
+    for (const out of outputUrls) {
+      try {
+        const dl = await downloadToDataUri(out);
+        if (dl) {
+          const uploaded = await uploadDataUriToZata({
+            dataUri: dl.dataUri,
+            keyPrefix: `users/${username}/image/${historyId}`,
+            fileName: `${buildReplicateImageFileName(historyId, idx - 1)}.${dl.ext}`,
+          });
+          uploadedImages.push({
+            id: `replicate-${Date.now()}-${idx}`,
+            url: uploaded.publicUrl,
+            storagePath: uploaded.key,
+            originalUrl: out,
+          });
+        } else {
+          // Fallback upload from URL directly
+          const uploaded = await uploadFromUrlToZata({
+            sourceUrl: out,
+            keyPrefix: `users/${username}/image/${historyId}`,
+            fileName: buildReplicateImageFileName(historyId, idx - 1),
+          });
+          uploadedImages.push({
+            id: `replicate-${Date.now()}-${idx}`,
+            url: uploaded.publicUrl,
+            storagePath: uploaded.key,
+            originalUrl: out,
+          });
+        }
+      } catch {
+        uploadedImages.push({ id: `replicate-${Date.now()}-${idx}`, url: out, originalUrl: out });
+      }
+      idx++;
+    }
+  } catch {
+    uploadedImages.push(...outputUrls.map((out, i) => ({ id: `replicate-${Date.now()}-${i + 1}`, url: out, originalUrl: out })));
+  }
+
+  const scoredImages = await aestheticScoreService.scoreImages(uploadedImages);
+  const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
+  const updateData: any = {
+    status: "completed",
+    images: scoredImages as any,
+    aestheticScore: highestScore,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await generationHistoryRepository.update(uid, historyId, updateData);
+  try { await replicateRepository.updateGenerationRecord(legacyId, { status: "completed", images: scoredImages as any }); } catch { }
+
+  markGenerationCompleted(uid, historyId, {
+    status: "completed",
+    images: scoredImages as any,
+    isPublic: body?.isPublic === true,
+  }).catch(console.error);
+
+  await syncToMirror(uid, historyId);
+
+  return {
+    images: scoredImages,
+    aestheticScore: highestScore,
+    historyId,
+    model: modelBase,
+    status: "completed",
+  } as any;
+}
+
 export async function generateImage(uid: string, body: any) {
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
@@ -1332,6 +1855,129 @@ export async function generateImage(uid: string, body: any) {
         }
       }
     }
+    // P-Image mapping (prunaai/p-image)
+    if (modelBase === "prunaai/p-image" || modelBase === "p-image") {
+      const allowedAspect = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', 'custom']);
+      const aspect = allowedAspect.has(String(rest.aspect_ratio)) ? String(rest.aspect_ratio) : '16:9';
+      input.aspect_ratio = aspect;
+
+      const roundTo16 = (v: number) => Math.round(v / 16) * 16;
+      const clampDim = (v: number) => {
+        const rounded = roundTo16(v);
+        return Math.max(256, Math.min(1440, rounded));
+      };
+
+      // Default width/height to max 1440 while respecting aspect ratio
+      const setDefaultDims = (ratio: string) => {
+        const [wStr, hStr] = ratio.split(':');
+        const w = Number(wStr) || 1;
+        const h = Number(hStr) || 1;
+        const aspectVal = w / h;
+        let width: number;
+        let height: number;
+        if (aspectVal >= 1) {
+          width = 1440;
+          height = roundTo16(1440 / aspectVal);
+        } else {
+          height = 1440;
+          width = roundTo16(1440 * aspectVal);
+        }
+        input.width = clampDim(width);
+        input.height = clampDim(height);
+      };
+
+      if (rest.width != null) input.width = clampDim(Number(rest.width));
+      if (rest.height != null) input.height = clampDim(Number(rest.height));
+
+      // If custom aspect ratio selected but width/height not provided, default to max 1440 each
+      if (aspect === 'custom') {
+        if (input.width == null) input.width = 1440;
+        if (input.height == null) input.height = 1440;
+        input.width = clampDim(input.width);
+        input.height = clampDim(input.height);
+      } else {
+        // Non-custom: if width/height not provided, derive from aspect with max 1440 edge
+        if (input.width == null || input.height == null) {
+          setDefaultDims(aspect);
+        }
+      }
+
+      if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
+      if (typeof rest.prompt_upsampling === 'boolean') input.prompt_upsampling = rest.prompt_upsampling;
+      if (typeof rest.disable_safety_checker === 'boolean') input.disable_safety_checker = rest.disable_safety_checker;
+
+      replicateModelBase = "prunaai/p-image";
+    }
+    // P-Image-Edit mapping (prunaai/p-image-edit) - image-to-image only
+    if (modelBase === "prunaai/p-image-edit" || modelBase === "p-image-edit") {
+      const images = Array.isArray(rest.images) ? rest.images.filter((i: any) => typeof i === 'string') : [];
+      if (images.length === 0) {
+        throw new ApiError("P-Image-Edit requires at least one image", 400);
+      }
+      input.images = images;
+      const allowedAspect = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3']);
+      const aspect = allowedAspect.has(String(rest.aspect_ratio)) ? String(rest.aspect_ratio) : '1:1';
+      input.aspect_ratio = aspect;
+
+      // Clamp width/height to <=1024 and divisible by 16; if missing, derive from aspect with max edge 1024
+      const round16 = (v: number) => Math.round(v / 16) * 16;
+      const clamp = (v: number) => Math.max(256, Math.min(1024, round16(v)));
+      const deriveDims = (ratio: string) => {
+        const [wStr, hStr] = ratio.split(':');
+        const w = Number(wStr) || 1;
+        const h = Number(hStr) || 1;
+        const aspectVal = w / h;
+        let width: number;
+        let height: number;
+        if (aspectVal >= 1) {
+          width = 1024;
+          height = round16(1024 / aspectVal);
+        } else {
+          height = 1024;
+          width = round16(1024 * aspectVal);
+        }
+        // ensure ~1MP cap
+        while (width * height > 1048576) {
+          width = clamp(width - 16);
+          height = clamp(Math.round(width / aspectVal));
+        }
+        return { width: clamp(width), height: clamp(height) };
+      };
+
+      if (rest.width != null) input.width = clamp(Number(rest.width));
+      if (rest.height != null) input.height = clamp(Number(rest.height));
+      if (input.width == null || input.height == null) {
+        const dims = deriveDims(aspect);
+        input.width = input.width ?? dims.width;
+        input.height = input.height ?? dims.height;
+      }
+
+      if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
+      if (typeof rest.turbo === 'boolean') input.turbo = rest.turbo;
+      if (typeof rest.disable_safety_checker === 'boolean') input.disable_safety_checker = rest.disable_safety_checker;
+
+      // Persist input images to history for edit flows
+      try {
+        const username = creator?.username || uid;
+        const keyPrefix = `users/${username}/input/${historyId}`;
+        const inputPersisted: any[] = [];
+        let idx = 0;
+        for (const img of images) {
+          if (!img || typeof img !== 'string') continue;
+          try {
+            const stored = /^data:/i.test(img)
+              ? await uploadDataUriToZata({ dataUri: img, keyPrefix, fileName: `p-image-edit-${++idx}` })
+              : await uploadFromUrlToZata({ sourceUrl: img, keyPrefix, fileName: `p-image-edit-${++idx}` });
+            inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: img });
+          } catch { }
+        }
+        if (inputPersisted.length > 0) {
+          await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+        }
+      } catch { }
+
+      replicateModelBase = "prunaai/p-image-edit";
+    }
     // New Turbo Model mapping (z-image-turbo)
     // Using actual Replicate model identifier: prunaai/z-image-turbo with version hash
     if (modelBase === "z-image-turbo" || modelBase === "new-turbo-model" || modelBase === "placeholder-model-name") {
@@ -1757,8 +2403,10 @@ export const replicateService = {
   removeBackground,
   upscale,
   generateImage,
+  multiangle,
   wanI2V,
   wanT2V,
+  nextScene,
 };
 // Wan 2.5 Image-to-Video via Replicate
 export async function wanI2V(uid: string, body: any) {

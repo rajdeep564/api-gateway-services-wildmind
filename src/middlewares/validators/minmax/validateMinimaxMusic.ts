@@ -6,7 +6,7 @@ export const validateMinimaxMusic = [
   body('model').optional().isString().equals('music-2.0').withMessage('model must be "music-2.0"'),
   body('generationType').optional().isIn(['text-to-image','logo','sticker-generation','text-to-video','text-to-music','mockup-generation','product-generation','ad-generation','live-chat']).withMessage('invalid generationType'),
   body('prompt').isString().isLength({ min: 10, max: 1000 }).withMessage('prompt is required and must be 10-1000 characters'),
-  body('lyrics').isString().isLength({ min: 10, max: 1000 }).withMessage('lyrics is required and must be 10-1000 characters'),
+  body('lyrics').isString().isLength({ min: 10, max: 5000 }).withMessage('lyrics is required and must be 10-5000 characters'),
   body('stream').optional().isBoolean(),
   body('output_format').optional().isIn(['hex', 'url']),
   body('audio_setting').optional().isObject(),

@@ -2,8 +2,8 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { makeCreditCost } from '../middlewares/creditCostFactory';
 // Removed route-level debit writes; controller handles debit via unified helper
-import { replicateController } from '../controllers/replicateController';
-import { computeReplicateBgRemoveCost, computeReplicateImageGenCost, computeReplicateUpscaleCost } from '../utils/pricing/replicatePricing';
+import { replicateController, multiangle } from '../controllers/replicateController';
+import { computeReplicateBgRemoveCost, computeReplicateImageGenCost, computeReplicateUpscaleCost, computeReplicateMultiangleCost } from '../utils/pricing/replicatePricing';
 import { computeWanVideoCost } from '../utils/pricing/wanPricing';
 import { computeKlingVideoCost, computeKlingLipsyncCost } from '../utils/pricing/klingPricing';
 import { computeSeedanceVideoCost } from '../utils/pricing/seedancePricing';
@@ -25,6 +25,8 @@ import { validateWanAnimateReplace } from '../middlewares/validators/replicate/v
 import { computeWanAnimateAnimationCost } from '../utils/pricing/wanAnimateAnimationPricing';
 import { validateWanAnimateAnimation } from '../middlewares/validators/replicate/validateWanAnimateAnimation';
 
+console.log('[ReplicateRoutes] Reloading routes...'); // Force refresh log
+
 const router = Router();
 
 // Background removal (Replicate)
@@ -43,6 +45,14 @@ router.post(
   validateUpscale,
   makeCreditCost('replicate', 'upscale', computeReplicateUpscaleCost),
   replicateController.upscale as any
+);
+
+// Multiangle (Replicate)
+router.post(
+  '/multiangle',
+  requireAuth,
+  makeCreditCost('replicate', 'multiangle', computeReplicateMultiangleCost),
+  multiangle as any
 );
 
 // ============ Queue-style endpoints for Replicate WAN 2.5 ============
