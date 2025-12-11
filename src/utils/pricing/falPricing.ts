@@ -277,6 +277,16 @@ export async function computeFalLtxV2FastI2vSubmitCost(req: Request): Promise<{ 
   return computeLtxCredits(req, 'Fast');
 }
 
+// Kling o1 First/Last Frame to Video pricing
+export async function computeFalKlingO1SubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { duration } = req.body || {};
+  const dur = typeof duration === 'number' ? String(duration) : String(duration || '5');
+  const display = dur.startsWith('10') ? 'Kling o1 10s' : 'Kling o1 5s';
+  const base = findCredits(display);
+  if (base == null) throw new Error('Unsupported Kling o1 pricing');
+  return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: dur } };
+}
+
 // LTX V2 pricing (Text-to-Video) mirrors I2V
 export async function computeFalLtxV2ProT2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> { return computeLtxCredits(req, 'Pro'); }
 export async function computeFalLtxV2FastT2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> { return computeLtxCredits(req, 'Fast'); }
@@ -406,6 +416,9 @@ export function computeFalVeoCostFromModel(model: string, meta?: any): { cost: n
     const resIn = String(meta?.resolution || '1080p').toLowerCase();
     const res = resIn.includes('2160') ? '2160p' : resIn.includes('1440') ? '1440p' : '1080p';
     display = `LTX V2 Fast T2V/I2V ${dur}s ${res}`;
+  } else if (normalized === 'fal-ai/kling-video/o1/image-to-video') {
+    const dur = String(meta?.duration ?? '5');
+    display = dur.startsWith('10') ? 'Kling o1 10s' : 'Kling o1 5s';
   }
   const base = display ? findCredits(display) : null;
   if (base == null) throw new Error('Unsupported FAL Veo model');

@@ -326,6 +326,37 @@ export const validateFalVeo31ReferenceToVideo = [
   }
 ];
 
+// Kling o1 First/Last Frame to Video
+export const validateFalKlingO1FirstLastSubmit = [
+  body('prompt').isString().notEmpty().withMessage('prompt is required'),
+  body('start_image_url').optional().isString(),
+  body('first_frame_url').optional().isString(),
+  body('end_image_url').optional().isString(),
+  body('last_frame_url').optional().isString(),
+  body('duration').optional().custom((value) => {
+    const num = typeof value === 'number' ? value : parseInt(String(value), 10);
+    return num === 5 || num === 10;
+  }).withMessage('duration must be 5 or 10 seconds'),
+  (req: Request, _res: Response, next: NextFunction) => {
+    // Normalize aliases
+    if (!req.body.start_image_url && typeof req.body.first_frame_url === 'string') {
+      req.body.start_image_url = req.body.first_frame_url;
+    }
+    if (!req.body.end_image_url && typeof req.body.last_frame_url === 'string') {
+      req.body.end_image_url = req.body.last_frame_url;
+    }
+
+    const hasFirst = typeof req.body?.start_image_url === 'string' && req.body.start_image_url.length > 0;
+    if (!hasFirst) {
+      return next(new ApiError('start_image_url is required (alias: first_frame_url)', 400));
+    }
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
 // Sora 2 Image-to-Video (Standard)
 export const validateFalSora2I2v = [
   body('prompt').isString().notEmpty().withMessage('prompt is required'),

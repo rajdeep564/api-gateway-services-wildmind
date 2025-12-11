@@ -234,6 +234,14 @@ export const falController = {
       res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
     } catch (err) { next(err); }
   },
+  async klingO1FirstLastSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.klingO1FirstLastSubmit(uid, req.body || {});
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
   async ltx2ProI2vSubmit(req: Request, res: Response, next: NextFunction) {
     try {
       const uid = req.uid;

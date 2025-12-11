@@ -2575,6 +2575,39 @@ async function veoI2vSubmit(uid: string, body: any, fast = false): Promise<Submi
   return { requestId: request_id, historyId, model, status: 'submitted' };
 }
 
+async function klingO1FirstLastSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+  fal.config({ credentials: falKey });
+  if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+  const first = body.start_image_url || body.first_frame_url;
+  const last = body.end_image_url || body.last_frame_url;
+  if (!first) throw new ApiError('start_image_url is required', 400);
+  const duration = typeof body.duration === 'number' ? String(body.duration) : String(body.duration || '5');
+  const model = 'fal-ai/kling-video/o1/image-to-video';
+
+  const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+  await persistInputImagesFromUrls(uid, historyId, [first, last]);
+
+  const { request_id } = await fal.queue.submit(model, {
+    input: {
+      prompt: body.prompt,
+      start_image_url: first,
+      ...(last ? { end_image_url: last } : {}),
+      duration,
+    },
+  } as any);
+
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: 'fal',
+    providerTaskId: request_id,
+    duration,
+    start_image_url: first,
+    ...(last ? { end_image_url: last } : {}),
+  } as any);
+
+  return { requestId: request_id, historyId, model, status: 'submitted' };
+}
+
 async function queueStatus(uid: string, model: string | undefined, requestId: string): Promise<any> {
   const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   fal.config({ credentials: falKey });
@@ -2832,6 +2865,7 @@ async function queueResult(uid: string, model: string | undefined, requestId: st
 export const falQueueService = {
   veoTtvSubmit,
   veoI2vSubmit,
+  klingO1FirstLastSubmit,
   // Veo 3.1 variants
   async veo31TtvSubmit(uid: string, body: any, fast = false): Promise<SubmitReturn> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);

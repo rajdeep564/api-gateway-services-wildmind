@@ -29,6 +29,7 @@ import {
   computeFalChatterboxMultilingualCost,
   computeFalMayaTtsCost,
   computeFalElevenSfxCost,
+  computeFalKlingO1SubmitCost,
 } from "../utils/pricing/falPricing";
 import {
   validateFalGenerate,
@@ -64,6 +65,7 @@ import {
   validateFalSeedvrUpscale,
   validateFalTopazUpscaleImage,
   validateFalBirefnetVideo,
+  validateFalKlingO1FirstLastSubmit,
 } from "../middlewares/validators/fal/validateFalGenerate";
 
 const router = Router();
@@ -258,6 +260,16 @@ router.post(
     computeFalVeoI2vSubmitCost(req, true)
   ) as any,
   falController.veoI2vFastSubmit as any
+);
+// Kling o1 First/Last Frame to Video
+router.post(
+  "/kling-o1/first-last-frame-to-video/submit",
+  requireAuth as any,
+  validateFalKlingO1FirstLastSubmit as any,
+  makeCreditCost("fal", "kling_o1_first_last_submit", (req) =>
+    computeFalKlingO1SubmitCost(req)
+  ) as any,
+  (falController as any).klingO1FirstLastSubmit
 );
 router.get(
   "/queue/status",

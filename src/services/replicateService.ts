@@ -1860,6 +1860,13 @@ export async function generateImage(uid: string, body: any) {
       const allowedAspect = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', 'custom']);
       const aspect = allowedAspect.has(String(rest.aspect_ratio)) ? String(rest.aspect_ratio) : '16:9';
       input.aspect_ratio = aspect;
+      if (rest.num_images != null) {
+        const n = Number(rest.num_images);
+        if (Number.isFinite(n)) {
+          input.num_images = Math.max(1, Math.min(4, Math.round(n)));
+          (body as any).__num_images = input.num_images;
+        }
+      }
 
       const roundTo16 = (v: number) => Math.round(v / 16) * 16;
       const clampDim = (v: number) => {
@@ -1915,6 +1922,13 @@ export async function generateImage(uid: string, body: any) {
         throw new ApiError("P-Image-Edit requires at least one image", 400);
       }
       input.images = images;
+      if (rest.num_images != null) {
+        const n = Number(rest.num_images);
+        if (Number.isFinite(n)) {
+          input.num_images = Math.max(1, Math.min(4, Math.round(n)));
+          (body as any).__num_images = input.num_images;
+        }
+      }
       const allowedAspect = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3']);
       const aspect = allowedAspect.has(String(rest.aspect_ratio)) ? String(rest.aspect_ratio) : '1:1';
       input.aspect_ratio = aspect;
@@ -2093,18 +2107,20 @@ export async function generateImage(uid: string, body: any) {
         console.debug("[seedream] input dump", JSON.stringify(dump, null, 2));
       } catch { }
     }
-    // Handle num_images for z-image-turbo model
-    // If num_images > 1, make multiple calls and combine results
+    // Handle num_images fan-out for models that need parallel calls
+    // Supported: z-image-turbo and P-Image / P-Image-Edit
     let output: any;
     const numImages = (body as any).__num_images || 1;
+    const isZTurbo = (modelBase === "new-turbo-model" || modelBase === "placeholder-model-name");
+    const isPImage = replicateModelBase === "prunaai/p-image";
+    const isPImageEdit = replicateModelBase === "prunaai/p-image-edit";
 
-    if ((modelBase === "new-turbo-model" || modelBase === "placeholder-model-name") && numImages > 1) {
-      // Make multiple parallel calls for z-image-turbo
+    if ((isZTurbo || isPImage || isPImageEdit) && numImages > 1) {
+      // Make multiple parallel calls
       const outputPromises = Array.from({ length: numImages }, async () => {
         return await replicate.run(modelSpec as any, { input });
       });
       const outputs = await Promise.all(outputPromises);
-      // Resolve URLs from all outputs and combine
       const allResolvedUrls: string[] = [];
       for (const out of outputs) {
         const urls = await resolveOutputUrls(out);
@@ -2112,9 +2128,7 @@ export async function generateImage(uid: string, body: any) {
           allResolvedUrls.push(...urls);
         }
       }
-      // Set outputUrls directly to skip the normal resolveOutputUrls call
       outputUrls = allResolvedUrls;
-      // Set output to empty array to skip normal processing
       output = [];
     } else {
       // Single image generation (default behavior)

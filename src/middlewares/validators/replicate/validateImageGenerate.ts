@@ -189,6 +189,10 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
     if (req.body.disable_safety_checker != null && typeof req.body.disable_safety_checker !== 'boolean') {
       return next(new ApiError('disable_safety_checker must be boolean', 400));
     }
+    if (req.body.num_images != null) {
+      if (!Number.isInteger(req.body.num_images)) return next(new ApiError('num_images must be an integer', 400));
+      if (req.body.num_images < 1 || req.body.num_images > 4) return next(new ApiError('num_images must be between 1 and 4', 400));
+    }
   }
   // P-Image-Edit (prunaai/p-image-edit) validations
   if (isPImageEdit) {
@@ -218,6 +222,10 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
     }
     if (req.body.disable_safety_checker != null && typeof req.body.disable_safety_checker !== 'boolean') {
       return next(new ApiError('disable_safety_checker must be boolean', 400));
+    }
+    if (req.body.num_images != null) {
+      if (!Number.isInteger(req.body.num_images)) return next(new ApiError('num_images must be an integer', 400));
+      if (req.body.num_images < 1 || req.body.num_images > 4) return next(new ApiError('num_images must be between 1 and 4', 400));
     }
   }
   // New Turbo Model validations (placeholder - update model name)
