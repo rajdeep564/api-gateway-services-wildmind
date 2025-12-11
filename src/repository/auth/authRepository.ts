@@ -5,15 +5,15 @@ async function upsertUser(uid: string, userData: Partial<AppUser>): Promise<AppU
   if (!userData.email) {
     throw new Error('Email is required');
   }
-  
+
   // Use 'users' as collection name and UID as document ID
   const ref = adminDb.collection('users').doc(uid);
   const snap = await ref.get();
-  
+
   console.log(`[REPO] Using collection: users/${uid}`);
-  
+
   const nowIso = new Date().toISOString();
-  
+
   if (!snap.exists) {
     // Create new user with comprehensive data
     const newUser: AppUser = {
@@ -47,13 +47,13 @@ async function upsertUser(uid: string, userData: Partial<AppUser>): Promise<AppU
   } else {
     // Update existing user with login tracking
     const existing = snap.data() as AppUser;
-    
+
     // Don't overwrite username if it already exists and is not empty
-    const updatesRaw: Partial<AppUser> = { 
-      lastLoginAt: nowIso, 
+    const updatesRaw: Partial<AppUser> = {
+      lastLoginAt: nowIso,
       loginCount: (existing.loginCount || 0) + 1
     };
-    
+
     // Only include userData fields that don't overwrite existing username
     Object.entries(userData).forEach(([key, value]) => {
       if (key === 'username' && existing.username && existing.username.trim() !== '') {
@@ -64,12 +64,12 @@ async function upsertUser(uid: string, userData: Partial<AppUser>): Promise<AppU
         (updatesRaw as any)[key] = value;
       }
     });
-    
+
     const updates: Partial<AppUser> = Object.entries(updatesRaw).reduce((acc, [k, v]) => {
       if (v !== undefined) (acc as any)[k] = v;
       return acc;
     }, {} as Partial<AppUser>);
-    
+
     await ref.update(updates);
     console.log(`[REPO] Updated existing user document: users/${uid}, login count: ${updates.loginCount}`);
     return { ...existing, ...updates } as AppUser;
@@ -80,13 +80,13 @@ async function getUserById(uid: string): Promise<AppUser | null> {
   // Direct lookup using UID as document ID in users collection
   const ref = adminDb.collection('users').doc(uid);
   const snap = await ref.get();
-  
+
   if (snap.exists) {
     const data = snap.data() as AppUser;
     console.log(`[REPO] Found user by UID: ${uid} in users collection`);
     return data;
   }
-  
+
   console.log(`[REPO] No user found for UID: ${uid}`);
   return null;
 }
@@ -95,12 +95,12 @@ async function getUserByUsername(username: string): Promise<AppUser | null> {
   // Search for user by username field in users collection
   const usersRef = adminDb.collection('users');
   const querySnapshot = await usersRef.where('username', '==', username).get();
-  
+
   if (querySnapshot.empty) {
     console.log(`[REPO] No user found for username: ${username}`);
     return null;
   }
-  
+
   const doc = querySnapshot.docs[0];
   const data = doc.data() as AppUser;
   console.log(`[REPO] Found user by username: ${username} with UID: ${data.uid}`);
@@ -111,12 +111,12 @@ async function getUserByEmail(email: string): Promise<{ uid: string; user: AppUs
   // Search for user by email field in users collection
   const usersRef = adminDb.collection('users');
   const querySnapshot = await usersRef.where('email', '==', email).get();
-  
+
   if (querySnapshot.empty) {
     console.log(`[REPO] No user found for email: ${email}`);
     return null;
   }
-  
+
   const doc = querySnapshot.docs[0];
   const data = doc.data() as AppUser;
   console.log(`[REPO] Found user by email: ${email} with UID: ${data.uid}`);
@@ -127,12 +127,12 @@ async function getEmailByUsername(username: string): Promise<string | null> {
   // Search for user by username field in users collection
   const usersRef = adminDb.collection('users');
   const querySnapshot = await usersRef.where('username', '==', username).get();
-  
+
   if (querySnapshot.empty) {
     console.log(`[REPO] No email found for username: ${username}`);
     return null;
   }
-  
+
   const doc = querySnapshot.docs[0];
   const data = doc.data() as AppUser;
   console.log(`[REPO] Found email for username ${username}: ${data.email}`);
@@ -142,20 +142,20 @@ async function getEmailByUsername(username: string): Promise<string | null> {
 async function updateUser(uid: string, updates: Partial<AppUser>): Promise<AppUser> {
   console.log(`[REPO] Updating user by UID: ${uid}`);
   console.log(`[REPO] Updates to apply:`, updates);
-  
+
   // Direct update using UID as document ID in users collection
   const ref = adminDb.collection('users').doc(uid);
   const filteredUpdates = Object.entries(updates).reduce((acc, [k, v]) => {
     if (v !== undefined) (acc as any)[k] = v;
     return acc;
   }, {} as Partial<AppUser>);
-  
+
   console.log(`[REPO] Filtered updates:`, filteredUpdates);
-  
+
   // Use merge: true to update only the specified fields
   await ref.update(filteredUpdates);
   console.log(`[REPO] Updated user document: users/${uid}`);
-  
+
   // Return updated user
   const updatedSnap = await ref.get();
   const updatedUser = updatedSnap.data() as AppUser;
@@ -166,27 +166,27 @@ async function updateUser(uid: string, updates: Partial<AppUser>): Promise<AppUs
 async function updateUserByEmail(email: string, updates: Partial<AppUser>): Promise<AppUser> {
   console.log(`[REPO] Updating user by email: ${email}`);
   console.log(`[REPO] Updates to apply:`, updates);
-  
+
   // Find user by email first
   const userResult = await getUserByEmail(email);
   if (!userResult) {
     throw new Error('User not found');
   }
-  
+
   console.log(`[REPO] Found user for email update:`, userResult);
-  
+
   // Update using UID as document ID in users collection
   const ref = adminDb.collection('users').doc(userResult.uid);
   const filteredUpdates = Object.entries(updates).reduce((acc, [k, v]) => {
     if (v !== undefined) (acc as any)[k] = v;
     return acc;
   }, {} as Partial<AppUser>);
-  
+
   console.log(`[REPO] Filtered updates for email:`, filteredUpdates);
-  
+
   await ref.update(filteredUpdates);
   console.log(`[REPO] Updated user document: users/${userResult.uid}`);
-  
+
   // Return updated user
   const updatedSnap = await ref.get();
   return updatedSnap.data() as AppUser;
@@ -204,27 +204,27 @@ async function saveOtp(email: string, code: string, ttlSeconds: number): Promise
 
 async function verifyAndConsumeOtp(email: string, code: string): Promise<boolean> {
   console.log(`[OTP] Verifying OTP for ${email}: ${code}`);
-  
+
   const record = otpStore.get(email);
   if (!record) {
     console.log(`[OTP] No OTP record found for ${email}`);
     return false;
   }
-  
+
   console.log(`[OTP] Found OTP record - stored: ${record.code}, provided: ${code}`);
-  
+
   if (record.code !== code) {
     console.log(`[OTP] OTP code mismatch for ${email}`);
     return false;
   }
-  
+
   const now = Date.now();
   if (now > record.expiresAt) {
     console.log(`[OTP] OTP expired for ${email}. Now: ${now}, Expires: ${record.expiresAt}`);
     otpStore.delete(email);
     return false;
   }
-  
+
   console.log(`[OTP] OTP verification successful for ${email}`);
   otpStore.delete(email);
   console.log(`[OTP] OTP consumed and removed from store`);

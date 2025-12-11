@@ -353,6 +353,92 @@ export async function vectorizeForCanvas(req: Request, res: Response) {
   }
 }
 
+export async function generateNextSceneForCanvas(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      console.error('[generateNextSceneForCanvas] Missing userId');
+      return res.status(401).json(
+        formatApiResponse('error', 'Unauthorized', null)
+      );
+    }
+
+    const { image, prompt, meta, lora_scale, lora_weights, true_guidance_scale, guidance_scale, num_inference_steps, aspectRatio, mode, images } = req.body;
+
+    console.log('[generateNextSceneForCanvas] Request received:', {
+      userId,
+      hasImage: !!image,
+      hasMeta: !!meta,
+      projectId: meta?.projectId,
+      hasPrompt: !!prompt,
+    });
+
+    if (!image) {
+      console.error('[generateNextSceneForCanvas] Missing image');
+      return res.status(400).json(
+        formatApiResponse('error', 'Image is required', null)
+      );
+    }
+
+    // Prompt is optional for Next Scene (defaults handled in service)
+    /* 
+    if (!prompt) {
+      console.error('[generateNextSceneForCanvas] Missing prompt');
+      return res.status(400).json(
+        formatApiResponse('error', 'Prompt is required', null)
+      );
+    } 
+    */
+
+    if (!meta || meta.source !== 'canvas' || !meta.projectId) {
+      console.error('[generateNextSceneForCanvas] Invalid meta:', meta);
+      return res.status(400).json(
+        formatApiResponse('error', 'Invalid request: meta.source must be "canvas" and meta.projectId is required', null)
+      );
+    }
+
+    const result = await generateService.generateNextSceneForCanvas(userId, {
+      image: image,
+      prompt: prompt,
+      lora_scale,
+      lora_weights,
+      true_guidance_scale,
+      guidance_scale,
+      num_inference_steps,
+      aspectRatio,
+      projectId: meta.projectId,
+      elementId: meta.elementId,
+      meta,
+      mode,
+      images,
+    });
+    console.log('[generateNextSceneForCanvas] Generation completed:', {
+      hasUrl: !!(result as any).url,
+    });
+
+    // Debit credits
+    const ctx = (req as any).context || {};
+    const debitResult = {
+      ...result,
+      historyId: result.generationId
+    };
+    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'generate'); // Using 'generate' for now, or 'next-scene' if priced differently
+
+    return res.json(formatApiResponse('success', 'Next Scene generation completed', result));
+  } catch (error: any) {
+    console.error('[generateNextSceneForCanvas] Error:', error);
+    console.error('[generateNextSceneForCanvas] Error stack:', error.stack);
+    const statusCode = error.statusCode || error.status || 500;
+    const message = error.message || 'Failed to generate Next Scene';
+
+    if (!res.headersSent) {
+      return res.status(statusCode).json(
+        formatApiResponse('error', message, null)
+      );
+    }
+  }
+} // End generateNextSceneForCanvas
+
 export async function createStitchedReferenceImage(req: Request, res: Response) {
   try {
     const userId = (req as any).uid;

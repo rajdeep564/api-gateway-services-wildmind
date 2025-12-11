@@ -24,15 +24,15 @@ export interface CanvasProject {
 }
 
 // Canvas Operation Types
-export type OpType = 
-  | 'create' 
-  | 'update' 
-  | 'delete' 
-  | 'move' 
-  | 'resize' 
-  | 'select' 
-  | 'deselect' 
-  | 'connect' 
+export type OpType =
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'move'
+  | 'resize'
+  | 'select'
+  | 'deselect'
+  | 'connect'
   | 'disconnect'
   | 'group'
   | 'ungroup'
@@ -164,15 +164,15 @@ export interface CursorAgentInstruction {
   instruction: string;
 }
 
-export type CursorAgentActionType = 
-  | 'move' 
-  | 'pointerDown' 
-  | 'pointerUp' 
-  | 'drag' 
-  | 'selectionRect' 
-  | 'selectionLasso' 
-  | 'selectSet' 
-  | 'connect' 
+export type CursorAgentActionType =
+  | 'move'
+  | 'pointerDown'
+  | 'pointerUp'
+  | 'drag'
+  | 'selectionRect'
+  | 'selectionLasso'
+  | 'selectSet'
+  | 'connect'
   | 'meta';
 
 export interface CursorAgentAction {
@@ -220,6 +220,13 @@ export interface CanvasGenerationRequest {
   previousSceneImageUrl?: string; // Previous scene's generated image URL (for Scene 2+)
   storyboardMetadata?: Record<string, string>; // Metadata for storyboard (character, background, etc.)
   options?: Record<string, any>;
+  lora_scale?: number;
+  lora_weights?: string;
+  true_guidance_scale?: number;
+  guidance_scale?: number;
+  num_inference_steps?: number;
+  mode?: string;
+  images?: string[];
   meta: {
     source: 'canvas';
     projectId: string;

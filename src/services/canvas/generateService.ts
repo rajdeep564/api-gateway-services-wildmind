@@ -5,7 +5,7 @@ import { replicateService } from '../replicateService';
 import { minimaxService } from '../minimaxService';
 import { runwayService } from '../runwayService';
 import { mediaRepository } from '../../repository/canvas/mediaRepository';
-import { uploadFromUrlToZata, uploadBufferToZata } from '../../utils/storage/zataUpload';
+import { uploadFromUrlToZata, uploadBufferToZata, uploadDataUriToZata } from '../../utils/storage/zataUpload';
 import { ApiError } from '../../utils/errorHandler';
 import { authRepository } from '../../repository/auth/authRepository';
 import { generationHistoryRepository } from '../../repository/generationHistoryRepository';
@@ -2098,6 +2098,8 @@ async function eraseForCanvasCropEditComposite(
   }
 }
 
+
+
 /**
  * Erase objects from image using Google Nano Banana edit model
  * Uses mask-based editing where white areas = erase, black areas = keep
@@ -2793,6 +2795,207 @@ try {
 }
 */
 
+export async function _generateNextSceneForCanvas(
+  uid: string,
+  request: {
+    image: string;
+    prompt: string;
+    lora_scale?: number;
+    lora_weights?: string;
+    true_guidance_scale?: number;
+    guidance_scale?: number;
+    num_inference_steps?: number;
+    aspectRatio?: string;
+    mode?: string;
+    images?: string[];
+    projectId: string;
+    elementId?: string;
+    meta?: any;
+    imageCount?: number;
+  }
+): Promise<{ mediaId: string; url: string; storagePath: string; generationId?: string; images?: Array<{ mediaId: string; url: string; storagePath: string }> }> {
+  // Debug logging
+  console.log('[generateNextSceneForCanvas] Request:', {
+    projectId: request.projectId,
+    elementId: request.elementId,
+    prompt: request.prompt,
+    hasImage: !!request.image,
+    aspectRatio: request.aspectRatio,
+  });
+
+  try {
+    const creator = await authRepository.getUserById(uid);
+    const username = creator?.username || uid;
+    const canvasKeyPrefix = `users/${username}/canvas/${request.projectId}`;
+
+    /**
+     * Stitch multiple images horizontally using sharp
+     */
+    async function stitchImages(imageUrls: string[]): Promise<string> {
+      if (!imageUrls || imageUrls.length === 0) return '';
+      if (imageUrls.length === 1) return imageUrls[0];
+
+      try {
+        // Download all images
+        const buffers = await Promise.all(
+          imageUrls.map(async (url) => {
+            if (url.startsWith('data:')) {
+              const b64 = url.split(',')[1];
+              return Buffer.from(b64, 'base64');
+            }
+            const resp = await axios.get(url, { responseType: 'arraybuffer' });
+            return Buffer.from(resp.data);
+          })
+        );
+
+        // Get metadata to determine dimensions
+        const metas = await Promise.all(buffers.map(b => sharp(b).metadata()));
+
+        // Normalize height to the first image's height (or a standard height like 1024)
+        const targetHeight = metas[0]?.height || 1024;
+
+        // Resize all to target height
+        const resizedBuffers = await Promise.all(
+          buffers.map(b => sharp(b).resize({ height: targetHeight }).toBuffer())
+        );
+
+        // Recalculate widths
+        const resizedMetas = await Promise.all(resizedBuffers.map(b => sharp(b).metadata()));
+        const totalWidth = resizedMetas.reduce((acc, m) => acc + (m.width || 0), 0);
+
+        // Create composite
+        const compositeParams = resizedMetas.reduce<{ input: Buffer; left: number; top: number }[]>((acc, m, idx) => {
+          const prevWidth = acc.length > 0 ? (acc[acc.length - 1].left + (resizedMetas[idx - 1]?.width || 0)) : 0;
+          acc.push({
+            input: resizedBuffers[idx],
+            left: prevWidth,
+            top: 0
+          });
+          return acc;
+        }, []);
+
+        const stitchedBuffer = await sharp({
+          create: {
+            width: totalWidth,
+            height: targetHeight,
+            channels: 3,
+            background: { r: 255, g: 255, b: 255 }
+          }
+        })
+          .composite(compositeParams)
+          .jpeg({ quality: 90 })
+          .toBuffer();
+
+        return `data:image/jpeg;base64,${stitchedBuffer.toString('base64')}`;
+      } catch (error) {
+        console.error('[generateService] Stitching failed:', error);
+        throw new Error('Failed to stitch input images');
+      }
+    }
+
+    // ... inside generateNextSceneForCanvas
+    // Handle MultiScene Mode
+    let finalInputImage = request.image;
+
+    if (request.mode === 'nextscene' && request.images && request.images.length > 1) {
+      console.log('[generateNextSceneForCanvas] MultiScene mode: Stitching images', { count: request.images.length });
+      const stitchedDataUri = await stitchImages(request.images);
+
+      // Upload stitched image to Zata so Replicate can access it
+      const stitchedUpload = await uploadDataUriToZata({
+        dataUri: stitchedDataUri,
+        keyPrefix: canvasKeyPrefix,
+        fileName: `multiscene-stitched-${Date.now()}`
+      });
+
+      finalInputImage = stitchedUpload.publicUrl;
+      console.log('[generateNextSceneForCanvas] Stitched image uploaded:', finalInputImage);
+    }
+
+    const replicatePayload = {
+      image: finalInputImage,
+      prompt: request.prompt,
+      lora_scale: request.lora_scale,
+      lora_weights: request.lora_weights,
+      true_guidance_scale: request.true_guidance_scale,
+      guidance_scale: request.guidance_scale,
+      num_inference_steps: request.num_inference_steps,
+      aspect_ratio: request.aspectRatio,
+      isPublic: false, // Default to private
+      storageKeyPrefixOverride: canvasKeyPrefix,
+      mode: request.mode, // Pass mode to service
+    };
+
+    const result = await replicateService.nextScene(uid, replicatePayload);
+
+    // Handle single or multiple images
+    // nextScene returns images array
+    const allImages: Array<{ mediaId: string; url: string; storagePath: string }> = [];
+    let imageUrl: string;
+    let imageStoragePath: string | undefined;
+
+    if (result.images && Array.isArray(result.images) && result.images.length > 0) {
+      for (const img of result.images) {
+        const imgUrl = img.url || img.originalUrl || '';
+        const imgStoragePath = (img as any).storagePath;
+
+        // Ensure we have a Zata-stored URL
+        let finalUrl = imgUrl;
+        let finalKey = imgStoragePath || '';
+        if (!finalKey || !(finalUrl || '').includes('/users/')) {
+          // Should already be handled by service, but double check
+          // In nextScene service, we upload to Zata so it should differ
+          // If for some reason it's not Zata (fallback), try upload
+          // But nextScene logic is robust.
+        }
+
+        // Create media record for each image
+        const media = await mediaRepository.createMedia({
+          url: finalUrl,
+          storagePath: finalKey,
+          origin: 'canvas',
+          projectId: request.projectId,
+          referencedByCount: 0,
+          metadata: {
+            format: 'png',
+            type: 'next-scene',
+            elementId: request.elementId
+          } as any,
+        });
+
+        allImages.push({
+          mediaId: media.id,
+          url: finalUrl,
+          storagePath: finalKey,
+        });
+      }
+
+      imageUrl = allImages[0].url;
+      imageStoragePath = allImages[0].storagePath;
+    } else {
+      throw new ApiError("No images returned from Next Scene generation", 500);
+    }
+
+    return {
+      mediaId: allImages[0].mediaId,
+      url: imageUrl,
+      storagePath: imageStoragePath || '',
+      generationId: result.historyId,
+      images: allImages,
+    };
+
+  } catch (error: any) {
+    console.error('[generateNextSceneForCanvas] Error:', error);
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    throw new ApiError(
+      error.message || 'Next Scene generation failed',
+      error.statusCode || error.status || 500
+    );
+  }
+}
+
 export const generateService = {
   generateForCanvas,
   generateVideoForCanvas,
@@ -2801,4 +3004,5 @@ export const generateService = {
   vectorizeForCanvas,
   eraseForCanvas,
   replaceForCanvas,
+  generateNextSceneForCanvas: _generateNextSceneForCanvas,
 };
