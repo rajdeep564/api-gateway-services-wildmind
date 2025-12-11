@@ -78,7 +78,8 @@ class VideoExportService {
     }
 
     /**
-     * Process export using FFmpeg
+     * Process export using frame-by-frame rendering
+     * This provides full support for transitions, animations, and effects
      */
     async processExport(
         jobId: string,
@@ -90,6 +91,7 @@ class VideoExportService {
         if (!job) throw new Error('Job not found');
 
         const jobDir = this.getJobDir(jobId);
+        const framesDir = path.join(jobDir, 'frames');
         const outputPath = path.join(jobDir, `output.${settings.format}`);
 
         try {
@@ -101,22 +103,107 @@ class VideoExportService {
             });
 
             console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-            console.log(`🎬 STARTING SERVER-SIDE EXPORT: Job ${jobId}`);
+            console.log(`🎬 STARTING SERVER-SIDE EXPORT (FRAME RENDERING): Job ${jobId}`);
             console.log(`📐 Resolution: ${settings.resolution.width}x${settings.resolution.height}`);
             console.log(`⏱️  Duration: ${timeline.duration}s`);
             console.log(`🎞️  FPS: ${settings.fps}`);
             console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-            // Build FFmpeg command
-            const ffmpegArgs = this.buildFFmpegCommand(timeline, settings, jobDir, outputPath);
+            // Check if we have media items - if so, use frame-by-frame rendering
+            const mediaItems = this.getMediaItems(timeline);
+            const hasMediaItems = mediaItems.length > 0;
+            const hasTransitions = this.hasTransitions(timeline);
+            const hasAnimations = this.hasAnimations(timeline);
 
-            console.log(`[VideoExport] FFmpeg args:`, ffmpegArgs.join(' '));
+            // Debug logging
+            console.log(`📊 Media items: ${mediaItems.length}`);
+            console.log(`🔀 Has transitions: ${hasTransitions}`);
+            console.log(`💫 Has animations: ${hasAnimations}`);
 
-            // Execute FFmpeg
-            await this.runFFmpeg(ffmpegArgs, (progress) => {
-                this.updateJob(jobId, { progress });
-                onProgress?.(progress);
-            });
+            // Log transition/animation details
+            for (const track of timeline.tracks) {
+                for (const item of track.items) {
+                    console.log(`   📁 Item "${item.name}" - localPath: ${item.localPath || 'NOT SET'}, src: ${item.src?.substring(0, 60)}...`);
+                    if (item.transition) {
+                        console.log(`   📎 Item "${item.name}" has transition: ${JSON.stringify(item.transition)}`);
+                    }
+                    if (item.animation) {
+                        console.log(`   🎭 Item "${item.name}" has animation: ${JSON.stringify(item.animation)}`);
+                    }
+                }
+            }
+
+            if (hasMediaItems && (hasTransitions || hasAnimations)) {
+                console.log('📸 Using FRAME-BY-FRAME rendering for transitions/animations');
+
+                try {
+                    // Import FrameRenderer dynamically to avoid circular dependencies
+                    const { FrameRenderer, encodeFramesToVideo } = await import('./export/FrameRenderer');
+
+                    // Render all frames
+                    const frameRenderer = new FrameRenderer(
+                        settings.resolution.width,
+                        settings.resolution.height
+                    );
+
+                    await frameRenderer.renderAllFrames(
+                        timeline,
+                        settings,
+                        framesDir,
+                        (renderProgress) => {
+                            // Rendering is 0-80% of total progress
+                            const progress = renderProgress * 0.8;
+                            this.updateJob(jobId, { progress });
+                            onProgress?.(progress);
+                        }
+                    );
+
+                    // Collect audio items
+                    const audioInputs = this.collectAudioInputs(timeline, jobDir);
+
+                    // Encode frames to video
+                    this.updateJob(jobId, { status: 'encoding', progress: 80 });
+                    await encodeFramesToVideo(
+                        framesDir,
+                        outputPath,
+                        settings,
+                        audioInputs,
+                        (encodeProgress) => {
+                            // Encoding is 80-100% of total progress
+                            const progress = 80 + encodeProgress * 0.2;
+                            this.updateJob(jobId, { progress });
+                            onProgress?.(progress);
+                        }
+                    );
+
+                    // Cleanup frames
+                    FrameRenderer.clearCache();
+                    try {
+                        fs.rmSync(framesDir, { recursive: true, force: true });
+                    } catch (e) {
+                        console.warn('[VideoExport] Failed to cleanup frames dir:', e);
+                    }
+                } catch (frameRenderError) {
+                    console.error('[VideoExport] Frame rendering failed, falling back to FFmpeg:', frameRenderError);
+                    // Fall back to FFmpeg filter complex
+                    console.log('🎞️  Fallback: Using FFmpeg filter complex');
+                    const ffmpegArgs = this.buildFFmpegCommand(timeline, settings, jobDir, outputPath);
+                    await this.runFFmpeg(ffmpegArgs, (progress) => {
+                        this.updateJob(jobId, { progress });
+                        onProgress?.(progress);
+                    });
+                }
+            } else {
+                // Fall back to FFmpeg filter complex for simple exports
+                console.log('🎞️  Using FFmpeg filter complex (no transitions/animations)');
+                const ffmpegArgs = this.buildFFmpegCommand(timeline, settings, jobDir, outputPath);
+                console.log(`[VideoExport] FFmpeg args:`, ffmpegArgs.join(' '));
+
+                await this.runFFmpeg(ffmpegArgs, (progress) => {
+                    this.updateJob(jobId, { progress });
+                    onProgress?.(progress);
+                });
+            }
 
             this.updateJob(jobId, {
                 status: 'complete',
@@ -135,6 +222,76 @@ class VideoExportService {
             });
             throw error;
         }
+    }
+
+    /**
+     * Check if timeline has transitions
+     */
+    private hasTransitions(timeline: TimelineData): boolean {
+        for (const track of timeline.tracks) {
+            for (const item of track.items) {
+                if (item.transition && item.transition.type !== 'none') {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Check if timeline has animations
+     */
+    private hasAnimations(timeline: TimelineData): boolean {
+        for (const track of timeline.tracks) {
+            for (const item of track.items) {
+                if (item.animation && item.animation.type) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Collect audio inputs from timeline for mixing
+     */
+    private collectAudioInputs(timeline: TimelineData, jobDir: string): Array<{
+        file: string;
+        startTime: number;
+        offset: number;
+        duration: number;
+    }> {
+        const inputs: Array<{ file: string; startTime: number; offset: number; duration: number }> = [];
+
+        for (const track of timeline.tracks) {
+            if (track.type === 'audio') {
+                for (const item of track.items) {
+                    if (item.localPath && fs.existsSync(item.localPath)) {
+                        inputs.push({
+                            file: item.localPath,
+                            startTime: item.start,
+                            offset: item.offset || 0,
+                            duration: item.duration
+                        });
+                    }
+                }
+            }
+            // Include video audio (unless muted)
+            if (track.type === 'video') {
+                for (const item of track.items) {
+                    if (item.type === 'video' && !item.muteVideo && item.localPath && fs.existsSync(item.localPath)) {
+                        inputs.push({
+                            file: item.localPath,
+                            startTime: item.start,
+                            offset: item.offset || 0,
+                            duration: item.duration
+                        });
+                    }
+                }
+            }
+        }
+
+        return inputs;
     }
 
     /**

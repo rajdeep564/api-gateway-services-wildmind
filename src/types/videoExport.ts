@@ -40,6 +40,8 @@ export interface TimelineItemData {
     start: number;
     duration: number;
     offset: number;
+    trimStart?: number;  // Trim start time within source media
+    trimEnd?: number;    // Trim end time within source media
 
     // Transforms
     x?: number;
@@ -73,7 +75,25 @@ export interface TimelineItemData {
     transition?: {
         type: string;
         duration: number;
+        direction?: 'left' | 'right' | 'up' | 'down';
+        timing?: 'prefix' | 'postfix' | 'overlap';
     };
+
+    // Border
+    border?: {
+        width: number;
+        color: string;
+    };
+
+    // Crop
+    crop?: {
+        x: number;
+        y: number;
+        zoom: number;
+    };
+
+    // Layer ordering
+    layer?: number;
 
     // Text properties
     fontSize?: number;
