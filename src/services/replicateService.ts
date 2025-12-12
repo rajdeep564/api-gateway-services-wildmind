@@ -1912,8 +1912,6 @@ export async function generateImage(uid: string, body: any) {
       if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
       if (typeof rest.prompt_upsampling === 'boolean') input.prompt_upsampling = rest.prompt_upsampling;
       if (typeof rest.disable_safety_checker === 'boolean') input.disable_safety_checker = rest.disable_safety_checker;
-
-      replicateModelBase = "prunaai/p-image";
     }
     // P-Image-Edit mapping (prunaai/p-image-edit) - image-to-image only
     if (modelBase === "prunaai/p-image-edit" || modelBase === "p-image-edit") {
@@ -1989,8 +1987,6 @@ export async function generateImage(uid: string, body: any) {
           await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
         }
       } catch { }
-
-      replicateModelBase = "prunaai/p-image-edit";
     }
     // New Turbo Model mapping (z-image-turbo)
     // Using actual Replicate model identifier: prunaai/z-image-turbo with version hash
