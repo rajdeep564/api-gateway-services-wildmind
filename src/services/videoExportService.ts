@@ -137,64 +137,98 @@ class VideoExportService {
             // FrameRenderer supports: filters, adjustments, flip, background color, transitions, animations
             // FFmpeg filter complex only supports basic compositing
             if (hasMediaItems) {
-                console.log('📸 Using FRAME-BY-FRAME rendering for full feature support');
+                console.log('📸 Using STREAMING FRAME RENDERING (memory-optimized)');
 
                 try {
                     // Import FrameRenderer dynamically to avoid circular dependencies
-                    const { FrameRenderer, encodeFramesToVideo } = await import('./export/FrameRenderer');
+                    const { FrameRenderer } = await import('./export/FrameRenderer');
 
-                    // Render all frames
+                    // Create frame renderer
                     const frameRenderer = new FrameRenderer(
                         settings.resolution.width,
                         settings.resolution.height
                     );
 
-                    await frameRenderer.renderAllFrames(
-                        timeline,
-                        settings,
-                        framesDir,
-                        (renderProgress) => {
-                            // Rendering is 0-80% of total progress
-                            const progress = renderProgress * 0.8;
-                            this.updateJob(jobId, { progress });
-                            onProgress?.(progress);
-                        }
-                    );
-
-                    // Collect audio items
+                    // Collect audio items BEFORE starting render
                     const audioInputs = this.collectAudioInputs(timeline, jobDir);
 
-                    // Encode frames to video
-                    this.updateJob(jobId, { status: 'encoding', progress: 80 });
-                    await encodeFramesToVideo(
-                        framesDir,
-                        outputPath,
+                    // Use streaming method - renders and encodes in one pass
+                    // No temp frame files are created (memory-optimized)
+                    this.updateJob(jobId, { status: 'processing', progress: 0 });
+
+                    await frameRenderer.renderAllFramesStreaming(
+                        timeline,
                         settings,
+                        outputPath,
                         audioInputs,
-                        (encodeProgress) => {
-                            // Encoding is 80-100% of total progress
-                            const progress = 80 + encodeProgress * 0.2;
+                        (progress) => {
+                            // Streaming method reports 0-90% progress
                             this.updateJob(jobId, { progress });
                             onProgress?.(progress);
                         }
                     );
 
-                    // Cleanup frames
+                    // Cleanup caches
                     FrameRenderer.clearCache();
-                    try {
-                        fs.rmSync(framesDir, { recursive: true, force: true });
-                    } catch (e) {
-                        console.warn('[VideoExport] Failed to cleanup frames dir:', e);
-                    }
+
+                    // No frames directory to cleanup - streaming mode doesn't create temp files!
+                    console.log('🧹 No temp frame files to cleanup (streaming mode)');
+
                 } catch (frameRenderError) {
-                    console.error('[VideoExport] Frame rendering failed, falling back to FFmpeg:', frameRenderError);
-                    // Fall back to FFmpeg filter complex
-                    console.log('🎞️  Fallback: Using FFmpeg filter complex');
-                    const ffmpegArgs = this.buildFFmpegCommand(timeline, settings, jobDir, outputPath);
-                    await this.runFFmpeg(ffmpegArgs, (progress) => {
-                        this.updateJob(jobId, { progress });
-                        onProgress?.(progress);
-                    });
+                    console.error('[VideoExport] Streaming render failed, falling back to disk-based:', frameRenderError);
+
+                    // Fall back to disk-based frame rendering (original method)
+                    try {
+                        console.log('🎞️  Fallback: Using disk-based frame rendering');
+                        const { FrameRenderer, encodeFramesToVideo } = await import('./export/FrameRenderer');
+
+                        const frameRenderer = new FrameRenderer(
+                            settings.resolution.width,
+                            settings.resolution.height
+                        );
+
+                        await frameRenderer.renderAllFrames(
+                            timeline,
+                            settings,
+                            framesDir,
+                            (renderProgress) => {
+                                const progress = renderProgress * 0.8;
+                                this.updateJob(jobId, { progress });
+                                onProgress?.(progress);
+                            }
+                        );
+
+                        const audioInputs = this.collectAudioInputs(timeline, jobDir);
+                        this.updateJob(jobId, { status: 'encoding', progress: 80 });
+
+                        await encodeFramesToVideo(
+                            framesDir,
+                            outputPath,
+                            settings,
+                            audioInputs,
+                            (encodeProgress) => {
+                                const progress = 80 + encodeProgress * 0.2;
+                                this.updateJob(jobId, { progress });
+                                onProgress?.(progress);
+                            }
+                        );
+
+                        FrameRenderer.clearCache();
+                        try {
+                            fs.rmSync(framesDir, { recursive: true, force: true });
+                        } catch (e) {
+                            console.warn('[VideoExport] Failed to cleanup frames dir:', e);
+                        }
+                    } catch (fallbackError) {
+                        console.error('[VideoExport] Fallback also failed:', fallbackError);
+                        // Last resort: FFmpeg filter complex
+                        console.log('🎞️  Last resort: Using FFmpeg filter complex');
+                        const ffmpegArgs = this.buildFFmpegCommand(timeline, settings, jobDir, outputPath);
+                        await this.runFFmpeg(ffmpegArgs, (progress) => {
+                            this.updateJob(jobId, { progress });
+                            onProgress?.(progress);
+                        });
+                    }
                 }
             } else {
                 // No media items - just render background or text
@@ -387,37 +421,74 @@ class VideoExportService {
 
         // Output settings
         // Encoder selection based on format
-        const isWebM = settings.format === 'webm';
+        const format = settings.format;
 
-        if (isWebM) {
-            // WebM requires VP8, VP9, or AV1
-            if (settings.useHardwareAccel) {
-                // Try VP9 hardware encoding (not widely supported)
-                args.push('-c:v', 'vp9');
-                args.push('-deadline', 'realtime');
-                args.push('-cpu-used', '4');
-            } else {
-                args.push('-c:v', 'libvpx-vp9');
-                args.push('-deadline', 'good');
-                args.push('-cpu-used', '2');
-            }
-            // Quality for VP9 (use -crf or -b:v, not both)
-            const crf = settings.quality === 'high' ? 30 : settings.quality === 'medium' ? 35 : 40;
-            args.push('-crf', String(crf));
-            args.push('-b:v', '0'); // Use -crf mode (constant quality)
-        } else {
-            // MP4 uses H.264
-            if (settings.useHardwareAccel) {
-                // Try NVIDIA NVENC first
-                args.push('-c:v', 'h264_nvenc');
-                args.push('-preset', 'fast');
-            } else {
-                args.push('-c:v', 'libx264');
-                args.push('-preset', 'medium');
-            }
-            // Quality settings for H.264
-            const crf = settings.quality === 'high' ? 18 : settings.quality === 'medium' ? 23 : 28;
-            args.push('-crf', String(crf));
+        // Quality CRF values
+        const crfHigh = 18;
+        const crfMedium = 23;
+        const crfLow = 28;
+        const crf = settings.quality === 'high' ? crfHigh : settings.quality === 'medium' ? crfMedium : crfLow;
+
+        // Format-specific video encoding
+        switch (format) {
+            case 'webm':
+                // WebM - VP9 codec
+                if (settings.useHardwareAccel) {
+                    args.push('-c:v', 'vp9');
+                    args.push('-deadline', 'realtime');
+                    args.push('-cpu-used', '4');
+                } else {
+                    args.push('-c:v', 'libvpx-vp9');
+                    args.push('-deadline', 'good');
+                    args.push('-cpu-used', '2');
+                }
+                args.push('-crf', String(crf + 10)); // VP9 uses higher CRF
+                args.push('-b:v', '0');
+                break;
+
+            case 'mov':
+                // MOV - H.264 with QuickTime compatibility
+                if (settings.useHardwareAccel) {
+                    args.push('-c:v', 'h264_nvenc');
+                    args.push('-preset', 'fast');
+                } else {
+                    args.push('-c:v', 'libx264');
+                    args.push('-preset', 'medium');
+                }
+                args.push('-crf', String(crf));
+                args.push('-tag:v', 'avc1'); // QuickTime compatibility
+                break;
+
+            case 'mkv':
+                // MKV - H.264 high quality
+                if (settings.useHardwareAccel) {
+                    args.push('-c:v', 'h264_nvenc');
+                    args.push('-preset', 'fast');
+                } else {
+                    args.push('-c:v', 'libx264');
+                    args.push('-preset', 'medium');
+                }
+                args.push('-crf', String(crf));
+                break;
+
+            case 'avi':
+                // AVI - MPEG-4 for legacy compatibility
+                const aviQuality = settings.quality === 'high' ? 2 : settings.quality === 'medium' ? 4 : 6;
+                args.push('-c:v', 'mpeg4');
+                args.push('-q:v', String(aviQuality));
+                break;
+
+            default: // mp4
+                // MP4 - H.264 best compatibility
+                if (settings.useHardwareAccel) {
+                    args.push('-c:v', 'h264_nvenc');
+                    args.push('-preset', 'fast');
+                } else {
+                    args.push('-c:v', 'libx264');
+                    args.push('-preset', 'medium');
+                }
+                args.push('-crf', String(crf));
+                break;
         }
 
         // Output format settings
@@ -425,21 +496,26 @@ class VideoExportService {
         args.push('-r', String(settings.fps));
         args.push('-t', String(duration));
 
-        // Only add movflags for MP4
-        if (!isWebM) {
+        // Container-specific flags
+        if (format === 'mp4' || format === 'mov') {
             args.push('-movflags', '+faststart');
         }
 
-        // Audio codec - only if we have audio output
+        // Audio codec - format-specific
         if (hasAudioOutput) {
-            if (isWebM) {
-                // WebM requires Vorbis or Opus
-                args.push('-c:a', 'libopus');
-                args.push('-b:a', '192k');
-            } else {
-                // MP4 uses AAC
-                args.push('-c:a', 'aac');
-                args.push('-b:a', '192k');
+            switch (format) {
+                case 'webm':
+                    args.push('-c:a', 'libopus');
+                    args.push('-b:a', '192k');
+                    break;
+                case 'avi':
+                    args.push('-c:a', 'libmp3lame');
+                    args.push('-b:a', '192k');
+                    break;
+                default: // mp4, mov, mkv
+                    args.push('-c:a', 'aac');
+                    args.push('-b:a', '192k');
+                    break;
             }
         }
 

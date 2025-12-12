@@ -145,7 +145,7 @@ export interface ExportSettings {
     };
     fps: number;
     quality: 'low' | 'medium' | 'high';
-    format: 'mp4' | 'webm';
+    format: 'mp4' | 'webm' | 'mov' | 'mkv' | 'avi';
     useHardwareAccel: boolean;
 }
 

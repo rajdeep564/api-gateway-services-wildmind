@@ -106,6 +106,260 @@ export class FrameRenderer {
     }
 
     /**
+     * Render all frames and stream directly to FFmpeg (no disk storage)
+     * This is the memory-optimized method that prevents crashes on long videos
+     */
+    async renderAllFramesStreaming(
+        timeline: TimelineData,
+        settings: ExportSettings,
+        outputPath: string,
+        audioInputs: Array<{ file: string; startTime: number; offset: number; duration: number }> = [],
+        onProgress?: (progress: number) => void
+    ): Promise<void> {
+        const fps = settings.fps;
+        const totalFrames = Math.ceil(timeline.duration * fps);
+
+        console.log(`[FrameRenderer] 🚀 Streaming ${totalFrames} frames at ${fps}fps to FFmpeg...`);
+        console.log(`[FrameRenderer] 💾 Memory-optimized mode: NO disk storage`);
+
+        // Create temp directory for video frame extraction (still needed for source video frames)
+        const tempDir = path.dirname(outputPath);
+        const tempFrameDir = path.join(tempDir, 'temp_vframes');
+        this.setTempFrameDir(tempFrameDir);
+
+        return new Promise((resolve, reject) => {
+            if (!ffmpegPath) {
+                return reject(new Error('FFmpeg binary not found'));
+            }
+
+            // Build FFmpeg arguments for piped input
+            const args: string[] = [
+                '-y',
+                '-f', 'rawvideo',
+                '-pix_fmt', 'rgba',
+                '-s', `${this.width}x${this.height}`,
+                '-r', String(fps),
+                '-i', 'pipe:0', // Read raw frames from stdin
+            ];
+
+            // Add audio inputs
+            for (const audio of audioInputs) {
+                args.push('-i', audio.file);
+            }
+
+            // Audio filter for mixing
+            if (audioInputs.length > 0) {
+                const filterParts: string[] = [];
+                for (let i = 0; i < audioInputs.length; i++) {
+                    const audio = audioInputs[i];
+                    const streamIdx = i + 1;
+                    const delayMs = Math.round(audio.startTime * 1000);
+                    filterParts.push(
+                        `[${streamIdx}:a]atrim=start=${audio.offset}:duration=${audio.duration},asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs}[a${i}]`
+                    );
+                }
+                const mixInputs = audioInputs.map((_, i) => `[a${i}]`).join('');
+                filterParts.push(`${mixInputs}amix=inputs=${audioInputs.length}:duration=longest:dropout_transition=0[aout]`);
+
+                // Use correct audio codec for format
+                const ext = path.extname(outputPath).toLowerCase();
+                let audioCodec: string;
+                switch (ext) {
+                    case '.webm':
+                        audioCodec = 'libopus';
+                        break;
+                    case '.avi':
+                        audioCodec = 'libmp3lame';
+                        break;
+                    default:
+                        audioCodec = 'aac';
+                        break;
+                }
+
+                args.push(
+                    '-filter_complex', filterParts.join(';'),
+                    '-map', '0:v',
+                    '-map', '[aout]',
+                    '-c:a', audioCodec,
+                    '-b:a', '192k'
+                );
+            }
+
+            // Video encoding settings
+            const formatExt = path.extname(outputPath).toLowerCase();
+            const crfHigh = 18;
+            const crfMedium = 23;
+            const crfLow = 28;
+            const crf = settings.quality === 'high' ? crfHigh : settings.quality === 'medium' ? crfMedium : crfLow;
+
+            switch (formatExt) {
+                case '.webm':
+                    args.push(
+                        '-c:v', 'libvpx-vp9',
+                        '-crf', String(crf + 10),
+                        '-b:v', '0',
+                        '-deadline', 'good',
+                        '-cpu-used', '2',
+                        '-pix_fmt', 'yuv420p'
+                    );
+                    break;
+                case '.mov':
+                    args.push(
+                        '-c:v', 'libx264',
+                        '-preset', 'medium',
+                        '-crf', String(crf),
+                        '-pix_fmt', 'yuv420p',
+                        '-tag:v', 'avc1'
+                    );
+                    break;
+                case '.mkv':
+                    args.push(
+                        '-c:v', 'libx264',
+                        '-preset', 'medium',
+                        '-crf', String(crf),
+                        '-pix_fmt', 'yuv420p'
+                    );
+                    break;
+                case '.avi':
+                    const aviQuality = settings.quality === 'high' ? 2 : settings.quality === 'medium' ? 4 : 6;
+                    args.push(
+                        '-c:v', 'mpeg4',
+                        '-q:v', String(aviQuality),
+                        '-pix_fmt', 'yuv420p'
+                    );
+                    break;
+                default: // .mp4
+                    args.push(
+                        '-c:v', 'libx264',
+                        '-preset', 'medium',
+                        '-crf', String(crf),
+                        '-pix_fmt', 'yuv420p',
+                        '-movflags', '+faststart'
+                    );
+                    break;
+            }
+
+            args.push(outputPath);
+
+            console.log(`[FrameRenderer] Starting FFmpeg: ${args.slice(0, 10).join(' ')}...`);
+
+            const ffmpeg = spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+
+            let ffmpegError = '';
+            ffmpeg.stderr.on('data', (data) => {
+                ffmpegError += data.toString();
+            });
+
+            ffmpeg.on('error', (err) => {
+                console.error('[FrameRenderer] FFmpeg process error:', err);
+                reject(err);
+            });
+
+            ffmpeg.on('close', (code) => {
+                // Cleanup temp directory
+                try {
+                    if (fs.existsSync(tempFrameDir)) {
+                        fs.rmSync(tempFrameDir, { recursive: true, force: true });
+                    }
+                } catch (e) {
+                    console.warn('[FrameRenderer] Failed to cleanup temp frames dir:', e);
+                }
+
+                // Clear caches
+                this.clearVideoFrameCache();
+                imageCache.clear();
+
+                if (code === 0) {
+                    console.log(`[FrameRenderer] ✅ Streaming export complete: ${outputPath}`);
+                    resolve();
+                } else {
+                    console.error(`[FrameRenderer] FFmpeg exited with code ${code}`);
+                    console.error(`[FrameRenderer] FFmpeg stderr: ${ffmpegError.slice(-500)}`);
+                    reject(new Error(`FFmpeg exited with code ${code}`));
+                }
+            });
+
+            // Render and stream frames
+            const renderFrames = async () => {
+                try {
+                    for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
+                        const currentTime = frameIndex / fps;
+
+                        // Clear canvas
+                        this.ctx.fillStyle = '#000000';
+                        this.ctx.fillRect(0, 0, this.width, this.height);
+
+                        // Render frame (all features: transitions, animations, effects)
+                        await this.renderFrame(timeline.tracks, currentTime);
+
+                        // Get raw RGBA pixel data
+                        const imageData = this.ctx.getImageData(0, 0, this.width, this.height);
+                        const buffer = Buffer.from(imageData.data.buffer);
+
+                        // Write to FFmpeg stdin
+                        const canWrite = ffmpeg.stdin.write(buffer);
+
+                        // Handle backpressure
+                        if (!canWrite) {
+                            await new Promise<void>(resolve => ffmpeg.stdin.once('drain', resolve));
+                        }
+
+                        // Report progress (rendering is 0-80%, encoding handled by FFmpeg)
+                        if (onProgress) {
+                            onProgress((frameIndex + 1) / totalFrames * 80);
+                        }
+
+                        // Log and clear cache every 30 frames
+                        if (frameIndex % 30 === 0) {
+                            console.log(`[FrameRenderer] 📊 Frame ${frameIndex}/${totalFrames} (${((frameIndex / totalFrames) * 100).toFixed(1)}%)`);
+
+                            // Clear video frame cache to prevent memory buildup
+                            // Keep only frames within 1 second of current time
+                            this.clearVideoFrameCacheOlderThan(currentTime - 1);
+                        }
+                    }
+
+                    // Signal end of input
+                    ffmpeg.stdin.end();
+                    console.log(`[FrameRenderer] 📨 All frames sent to FFmpeg, waiting for encoding...`);
+
+                    if (onProgress) {
+                        onProgress(90);
+                    }
+                } catch (err) {
+                    console.error('[FrameRenderer] Error during frame rendering:', err);
+                    ffmpeg.stdin.end();
+                    reject(err);
+                }
+            };
+
+            renderFrames();
+        });
+    }
+
+    /**
+     * Clear video frame cache entries older than the given time
+     * This prevents memory buildup during long exports
+     */
+    clearVideoFrameCacheOlderThan(minTime: number): void {
+        const keysToDelete: string[] = [];
+        for (const key of this.videoFrameCache.keys()) {
+            // Key format: "videoPath:timestamp"
+            const parts = key.split(':');
+            const timestamp = parseFloat(parts[parts.length - 1]);
+            if (timestamp < minTime) {
+                keysToDelete.push(key);
+            }
+        }
+        for (const key of keysToDelete) {
+            this.videoFrameCache.delete(key);
+        }
+        if (keysToDelete.length > 0) {
+            console.log(`[FrameRenderer] 🧹 Cleared ${keysToDelete.length} old video frame cache entries`);
+        }
+    }
+
+    /**
      * Render a single frame with all active timeline items
      * Handles transitions between overlapping clips
      */
@@ -1173,8 +1427,19 @@ export async function encodeFramesToVideo(
             filterParts.push(`${mixInputs}amix=inputs=${audioInputs.length}:duration=longest:dropout_transition=0[aout]`);
 
             // Use correct audio codec for format
-            const isWebmFormat = outputPath.toLowerCase().endsWith('.webm');
-            const audioCodec = isWebmFormat ? 'libopus' : 'aac';
+            const ext = path.extname(outputPath).toLowerCase();
+            let audioCodec: string;
+            switch (ext) {
+                case '.webm':
+                    audioCodec = 'libopus'; // VP9 container uses Opus
+                    break;
+                case '.avi':
+                    audioCodec = 'libmp3lame'; // AVI uses MP3 for compatibility
+                    break;
+                default: // .mp4, .mov, .mkv
+                    audioCodec = 'aac'; // AAC for modern containers
+                    break;
+            }
 
             args.push(
                 '-filter_complex', filterParts.join(';'),
@@ -1186,28 +1451,72 @@ export async function encodeFramesToVideo(
         }
 
         // Video encoding settings - use correct codec for format
-        const isWebm = outputPath.toLowerCase().endsWith('.webm');
+        const formatExt = path.extname(outputPath).toLowerCase();
 
-        if (isWebm) {
-            // WebM format - use VP9 codec
-            args.push(
-                '-c:v', 'libvpx-vp9',
-                '-crf', settings.quality === 'high' ? '18' : settings.quality === 'medium' ? '28' : '35',
-                '-b:v', '0',
-                '-pix_fmt', 'yuv420p',
-                outputPath
-            );
-        } else {
-            // MP4/other formats - use H.264 codec
-            args.push(
-                '-c:v', 'libx264',
-                '-preset', 'medium',
-                '-crf', settings.quality === 'high' ? '18' : settings.quality === 'medium' ? '23' : '28',
-                '-pix_fmt', 'yuv420p',
-                '-movflags', '+faststart',
-                outputPath
-            );
+        // Quality CRF values (lower = better quality)
+        const crfHigh = 18;
+        const crfMedium = 23;
+        const crfLow = 28;
+        const crf = settings.quality === 'high' ? crfHigh : settings.quality === 'medium' ? crfMedium : crfLow;
+
+        // Format-specific encoding
+        switch (formatExt) {
+            case '.webm':
+                // WebM - VP9 codec, best for web
+                args.push(
+                    '-c:v', 'libvpx-vp9',
+                    '-crf', String(crf + 10), // VP9 uses higher CRF values
+                    '-b:v', '0', // Use CRF mode
+                    '-deadline', 'good',
+                    '-cpu-used', '2',
+                    '-pix_fmt', 'yuv420p'
+                );
+                break;
+
+            case '.mov':
+                // MOV - H.264 codec, Apple/Final Cut compatible
+                args.push(
+                    '-c:v', 'libx264',
+                    '-preset', 'medium',
+                    '-crf', String(crf),
+                    '-pix_fmt', 'yuv420p',
+                    '-tag:v', 'avc1' // QuickTime compatibility tag
+                );
+                break;
+
+            case '.mkv':
+                // MKV - H.264 codec, high quality container
+                args.push(
+                    '-c:v', 'libx264',
+                    '-preset', 'medium',
+                    '-crf', String(crf),
+                    '-pix_fmt', 'yuv420p'
+                );
+                break;
+
+            case '.avi':
+                // AVI - MPEG-4 codec, legacy compatibility
+                const aviQuality = settings.quality === 'high' ? 2 : settings.quality === 'medium' ? 4 : 6;
+                args.push(
+                    '-c:v', 'mpeg4',
+                    '-q:v', String(aviQuality),
+                    '-pix_fmt', 'yuv420p'
+                );
+                break;
+
+            default: // .mp4
+                // MP4 - H.264 codec, best compatibility
+                args.push(
+                    '-c:v', 'libx264',
+                    '-preset', 'medium',
+                    '-crf', String(crf),
+                    '-pix_fmt', 'yuv420p',
+                    '-movflags', '+faststart' // Enable streaming
+                );
+                break;
         }
+
+        args.push(outputPath);
 
         console.log(`[FrameRenderer] Encoding video: ffmpeg ${args.join(' ')}`);
 
