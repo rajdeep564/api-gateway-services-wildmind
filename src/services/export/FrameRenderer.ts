@@ -852,10 +852,12 @@ export class FrameRenderer {
         const videoPath = item.localPath || item.src;
         if (!videoPath) return null;
 
-        // Calculate the time within the video (accounting for item start and trim)
+        // Calculate the time within the video (accounting for item start and offset/trim)
+        // The item.offset is set when splitting clips and represents the start time within the source
+        // Use offset first (standard client property), fall back to trimStart for backwards compatibility
         const itemTime = currentTime - item.start;
-        const trimStart = item.trimStart || 0;
-        const videoTime = trimStart + itemTime;
+        const sourceOffset = item.offset ?? item.trimStart ?? 0;
+        const videoTime = sourceOffset + itemTime;
 
         // Round to nearest frame for caching (assuming 30fps granularity)
         const frameKey = `${videoPath}:${videoTime.toFixed(2)}`;
