@@ -14,6 +14,10 @@ export interface AnimationStyle {
     translateX?: number;
     translateY?: number;
     blur?: number;
+    brightness?: number;
+    contrast?: number;
+    saturate?: number;
+    hueRotate?: number;
 }
 
 /**
@@ -139,17 +143,18 @@ export function calculateAnimationStyle(item: TimelineItemData, currentTime: num
 
         case 'motion-blur': return { scale: 1.1 - 0.1 * p, opacity: p, blur: 20 * (1 - p) };
         case 'blur-in': return { opacity: p, blur: 10 * (1 - p) };
-        case 'flash-drop': return { translateY: -50 + 50 * p, opacity: p, blur: 10 * (1 - p) };
-        case 'flash-open': return { scale: 0.5 + 0.5 * p, opacity: p };
-        case 'black-hole': return { scale: p, rotate: 180 - 180 * p, opacity: p };
-        case 'screen-flicker':
-            if (progress < 0.2) return { opacity: progress * 2.5 };
-            if (progress < 0.4) return { opacity: 0.2 + 0.3 * Math.random() };
-            if (progress < 0.6) return { opacity: 0.5 + 0.5 * ((progress - 0.4) / 0.2) };
-            if (progress < 0.8) return { opacity: 0.8 + 0.2 * Math.random() };
-            return { opacity: 1 };
+        case 'flash-drop': return { translateY: -50 + 50 * p, opacity: p, blur: 10 * (1 - p), brightness: 3 - 2 * p };
+        case 'flash-open': return { scale: 0.5 + 0.5 * p, opacity: p, brightness: 5 - 4 * p };
+        case 'black-hole': return { scale: p, rotate: 180 - 180 * p, opacity: p, contrast: 2 - p };
 
-        case 'pixelated-motion': return { opacity: p, blur: 10 * (1 - p) };
+        case 'screen-flicker':
+            if (progress < 0.2) return { opacity: progress * 2.5, brightness: 0.5 + 1.5 * (progress / 0.2) };
+            if (progress < 0.4) return { opacity: 0.2 + 0.3 * Math.random(), brightness: 2 };
+            if (progress < 0.6) return { opacity: 0.5 + 0.5 * ((progress - 0.4) / 0.2), brightness: 2 - 0.5 * ((progress - 0.4) / 0.2) };
+            if (progress < 0.8) return { opacity: 0.8 + 0.2 * Math.random(), brightness: 1.5 };
+            return { opacity: 1, brightness: 1 };
+
+        case 'pixelated-motion': return { opacity: p, blur: 10 * (1 - p), contrast: 2 - p };
 
         case 'pulse-open':
             if (progress < 0.5) {
@@ -163,44 +168,66 @@ export function calculateAnimationStyle(item: TimelineItemData, currentTime: num
         case 'old-tv':
             if (progress < 0.5) {
                 const t = progress / 0.5;
-                return { scaleY: 0.01, scaleX: t, opacity: t };
+                return { scaleY: 0.01, scaleX: t, opacity: t, brightness: 5 - 3 * t };
             } else {
                 const t = (progress - 0.5) / 0.5;
-                return { scaleY: lerp(0.01, 1, t), scaleX: 1, opacity: 1 };
+                return { scaleY: lerp(0.01, 1, t), scaleX: 1, opacity: 1, brightness: 2 - t };
             }
 
         case 'round-open': return { scale: p, opacity: p };
         case 'expansion': return { scaleX: p, opacity: p };
         case 'shard-roll': return { rotate: 360 - 360 * p, scale: p, opacity: p };
 
-        // FLIP ANIMATIONS: CSS uses rotateX/rotateY with perspective for 3D effect
-        // In 2D Canvas, we simulate this by scaling the axis being rotated
-        // rotateX(90deg) looks like scaleY(0), rotateX(0) looks like scaleY(1)
-        case 'flip-down-1':
-            // Flip from top (rotateX: 90deg -> 0): simulate with scaleY
-            return { scaleY: p, opacity: p };
-        case 'flip-down-2':
-            // Flip from top with scale: rotateX + scale(0.8 -> 1)
-            return { scaleY: p, scale: 0.8 + 0.2 * p, opacity: p };
-        case 'flip-up-1':
-            // Flip from bottom (rotateX: -90deg -> 0): simulate with scaleY
-            return { scaleY: p, opacity: p };
-        case 'flip-up-2':
-            // Flip from bottom with scale
-            return { scaleY: p, scale: 0.8 + 0.2 * p, opacity: p };
-
-        // FLY-IN-ROTATE: translateX + rotate
-        case 'fly-in-rotate': return { translateX: -100 + 100 * p, rotate: -90 + 90 * p, opacity: p };
-
-        // FLY-IN-FLIP: CSS uses translateX + rotateY(90deg)
-        // rotateY(90deg) looks like scaleX(0), rotateY(0) looks like scaleX(1)
-        case 'fly-in-flip': {
-            // Element flies in from left while rotating on Y axis
-            return { translateX: -100 + 100 * p, scaleX: p, opacity: p };
+        // FLIP ANIMATIONS: Simulate 3D rotateX/rotateY with scaleY/scaleX
+        // Use minimum scale of 0.01 to prevent blank screen
+        case 'flip-down-1': {
+            const minScale = 0.01;
+            return { scaleY: minScale + (1 - minScale) * p, opacity: p };
         }
-        case 'fly-to-zoom': return { scale: p, translateX: -100 + 100 * p, opacity: p };
+        case 'flip-down-2': {
+            const minScale = 0.01;
+            return { scaleY: minScale + (1 - minScale) * p, scale: 0.8 + 0.2 * p, opacity: p };
+        }
+        case 'flip-up-1': {
+            const minScale = 0.01;
+            return { scaleY: minScale + (1 - minScale) * p, opacity: p };
+        }
+        case 'flip-up-2': {
+            const minScale = 0.01;
+            return { scaleY: minScale + (1 - minScale) * p, scale: 0.8 + 0.2 * p, opacity: p };
+        }
+
+        case 'fly-in-rotate': return { translateX: -100 + 100 * p, rotate: -90 + 90 * p, opacity: p };
+        case 'fly-in-flip': {
+            const minScale = 0.01;
+            return { translateX: -100 + 100 * p, scaleX: minScale + (1 - minScale) * p, opacity: p };
+        }
+        case 'fly-to-zoom': {
+            const minScale = 0.01;
+            return { scale: minScale + (1 - minScale) * p, translateX: -100 + 100 * p, opacity: p };
+        }
 
         case 'grow-shrink':
+            if (progress < 0.6) {
+                const t = progress / 0.6;
+                return { scale: 0.8 + 0.4 * t, opacity: t };
+            } else {
+                const t = (progress - 0.6) / 0.4;
+                return { scale: 1.2 - 0.2 * t, opacity: 1 };
+            }
+
+        case 'stretch-in-left': return { scaleX: 2 - p, translateX: -50 + 50 * p, opacity: p, blur: 5 * (1 - p) };
+        case 'stretch-in-right': return { scaleX: 2 - p, translateX: 50 - 50 * p, opacity: p, blur: 5 * (1 - p) };
+        case 'stretch-in-up': return { scaleY: 2 - p, translateY: 50 - 50 * p, opacity: p, blur: 5 * (1 - p) };
+        case 'stretch-in-down': return { scaleY: 2 - p, translateY: -50 + 50 * p, opacity: p, blur: 5 * (1 - p) };
+        case 'stretch-to-full': return { scale: 0.5 + 0.5 * p, opacity: p };
+
+        case 'tiny-zoom': return { scale: 0.1 + 0.9 * p, opacity: p };
+        case 'zoom-in-center': {
+            const minScale = 0.01;
+            return { scale: minScale + (1 - minScale) * p, opacity: p };
+        }
+        case 'zoom-in-1': {
             if (progress < 0.6) {
                 const t = progress / 0.6;
                 return { scale: 0.5 + 0.6 * t, opacity: Math.min(1, t * 1.5) };
@@ -208,79 +235,54 @@ export function calculateAnimationStyle(item: TimelineItemData, currentTime: num
                 const t = (progress - 0.6) / 0.4;
                 return { scale: 1.1 - 0.1 * t, opacity: 1 };
             }
+        }
+        case 'zoom-in-2': return { scale: 0.2 + 0.8 * p, opacity: p };
+        case 'zoom-in-left': {
+            const minScale = 0.01;
+            return { scale: minScale + (1 - minScale) * p, translateX: -50 + 50 * p, opacity: p };
+        }
+        case 'zoom-in-right': {
+            const minScale = 0.01;
+            return { scale: minScale + (1 - minScale) * p, translateX: 50 - 50 * p, opacity: p };
+        }
+        case 'zoom-in-top': {
+            const minScale = 0.01;
+            return { scale: minScale + (1 - minScale) * p, translateY: -50 + 50 * p, opacity: p };
+        }
+        case 'zoom-in-bottom': {
+            const minScale = 0.01;
+            return { scale: minScale + (1 - minScale) * p, translateY: 50 - 50 * p, opacity: p };
+        }
+        case 'zoom-out-1': return { scale: 1.5 - 0.5 * p, opacity: p };
+        case 'zoom-out-2': return { scale: 2 - p, opacity: p };
+        case 'zoom-out-3': return { scale: 3 - 2 * p, opacity: p, blur: 5 * (1 - p) };
 
-        case 'stretch-in-left':
-            return { scaleX: 2 - p, translateX: -50 + 50 * p, opacity: p, blur: 5 * (1 - p) };
-        case 'stretch-in-right':
-            return { scaleX: 2 - p, translateX: 50 - 50 * p, opacity: p, blur: 5 * (1 - p) };
-        case 'stretch-in-up':
-            return { scaleY: 2 - p, translateY: 50 - 50 * p, opacity: p, blur: 5 * (1 - p) };
-        case 'stretch-in-down':
-            return { scaleY: 2 - p, translateY: -50 + 50 * p, opacity: p, blur: 5 * (1 - p) };
-        case 'stretch-to-full':
-            return { scale: 0.5 + 0.5 * p, opacity: p };
+        case 'wham':
+            if (progress < 0.7) {
+                const t = progress / 0.7;
+                return { scale: 0.3 + 0.8 * t, opacity: t };
+            } else {
+                const t = (progress - 0.7) / 0.3;
+                return { scale: 1.1 - 0.1 * t, opacity: 1 };
+            }
 
         case 'to-left-1': return { translateX: 100 - 100 * p, opacity: p };
         case 'to-left-2': return { translateX: 50 - 50 * p, opacity: p };
         case 'to-right-1': return { translateX: -100 + 100 * p, opacity: p };
         case 'to-right-2': return { translateX: -50 + 50 * p, opacity: p };
 
-        case 'up-down-1':
-        case 'shake-up-down':
-            if (progress < 0.2) return { translateY: -20 + 40 * (progress / 0.2), opacity: Math.min(1, progress * 5) };
-            if (progress < 0.4) return { translateY: 20 - 30 * ((progress - 0.2) / 0.2), opacity: 1 };
-            if (progress < 0.6) return { translateY: -10 + 20 * ((progress - 0.4) / 0.2), opacity: 1 };
-            if (progress < 0.8) return { translateY: 10 - 15 * ((progress - 0.6) / 0.2), opacity: 1 };
-            return { translateY: -5 + 5 * ((progress - 0.8) / 0.2), opacity: 1 };
-
-        case 'up-down-2':
-            return { translateY: 20 - 20 * p, opacity: p };
-
-        case 'pan-enter-left':
-            return { translateX: -100 + 100 * p, opacity: p };
-        case 'pan-enter-right':
-            return { translateX: 100 - 100 * p, opacity: p };
-
-        case 'tiny-zoom':
-            return { scale: 0.1 + 0.9 * p, opacity: p };
-        case 'zoom-in-center':
-            return { scale: p, opacity: p };
-        case 'zoom-in-left':
-        case 'zoom-in-right':
-        case 'zoom-in-top':
-        case 'zoom-in-bottom':
-            return { scale: p, opacity: p };
-        case 'zoom-in-1':
-            if (progress < 0.6) {
-                const t = progress / 0.6;
-                return { scale: 0.5 + 0.6 * t, opacity: t };
-            } else {
-                const t = (progress - 0.6) / 0.4;
-                return { scale: 1.1 - 0.1 * t, opacity: 1 };
-            }
-        case 'zoom-in-2':
-            return { scale: 0.2 + 0.8 * p, opacity: p };
-        case 'zoom-out-1':
-            return { scale: 1.5 - 0.5 * p, opacity: p };
-        case 'zoom-out-2':
-            return { scale: 2 - p, opacity: p };
-        case 'zoom-out-3':
-            return { scale: 3 - 2 * p, opacity: p, blur: 5 * (1 - p) };
-        case 'wham':
-            return { scale: 2 - p, rotate: 10 - 10 * p, opacity: p, blur: 10 * (1 - p) };
-
         case 'blurry-eject':
             if (progress < 0.6) {
                 const t = progress / 0.6;
-                return { scale: 0.5 + 0.55 * t, opacity: t, blur: 5 * (1 - t) };
+                return { scale: 0.5 + 0.55 * t, blur: 5 * (1 - t), opacity: t };
             } else {
                 const t = (progress - 0.6) / 0.4;
                 return { scale: 1.05 - 0.05 * t, opacity: 1, blur: 0 };
             }
 
-        // Additional animations from the ANIMATIONS list
         case 'rgb-drop':
-            return { translateY: -50 + 50 * p, opacity: p, scale: 0.8 + 0.2 * p };
+            return { translateY: -50 + 50 * p, opacity: p, brightness: 1 + (1 - p), saturate: 1.5 };
+
         case 'tear-paper':
             return { translateX: -20 + 20 * p, rotate: -5 + 5 * p, opacity: p };
 

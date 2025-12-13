@@ -25,14 +25,43 @@ const storage = multer.diskStorage({
         cb(null, jobDir);
     },
     filename: (req, file, cb) => {
-        // Sanitize filename - remove Windows-invalid characters: \ / : * ? " < > |
-        const sanitizedName = file.originalname
-            .replace(/[\\/:*?"<>|]/g, '_')  // Replace invalid chars with underscore
-            .replace(/\s+/g, '_')            // Replace spaces with underscore
-            .replace(/_+/g, '_')             // Collapse multiple underscores
-            .substring(0, 100);              // Limit length to prevent path too long errors
+        // Extract extension first
+        let ext = path.extname(file.originalname) || '';
 
-        const uniqueName = `${Date.now()}-${sanitizedName}`;
+        // If no valid extension, determine from MIME type
+        if (!ext || ext === '.' || ext.length < 2) {
+            const mimeToExt: Record<string, string> = {
+                'video/mp4': '.mp4',
+                'video/webm': '.webm',
+                'video/quicktime': '.mov',
+                'video/x-msvideo': '.avi',
+                'video/x-matroska': '.mkv',
+                'image/jpeg': '.jpg',
+                'image/png': '.png',
+                'image/gif': '.gif',
+                'image/webp': '.webp',
+                'audio/mpeg': '.mp3',
+                'audio/wav': '.wav',
+                'audio/ogg': '.ogg',
+                'audio/aac': '.aac',
+            };
+            ext = mimeToExt[file.mimetype] || (file.mimetype?.startsWith('video/') ? '.mp4' :
+                file.mimetype?.startsWith('image/') ? '.jpg' :
+                    file.mimetype?.startsWith('audio/') ? '.mp3' : '.bin');
+            console.log(`[Upload] No extension detected for ${file.originalname}, using ${ext} based on MIME: ${file.mimetype}`);
+        }
+
+        const nameWithoutExt = path.basename(file.originalname, path.extname(file.originalname));
+
+        // Sanitize filename - remove Windows-invalid characters: \ / : * ? " < > |
+        const sanitizedName = nameWithoutExt
+            .replace(/[\\/:*?"<>|]/g, '_')  // Replace invalid chars with underscore
+            .replace(/\s+/g, '_')           // Replace spaces with underscore
+            .replace(/_+/g, '_')            // Collapse multiple underscores
+            .replace(/\.+$/, '')            // Remove trailing dots
+            .substring(0, 80);              // Limit base name to 80 chars (leaving room for timestamp + ext)
+
+        const uniqueName = `${Date.now()}-${sanitizedName}${ext}`;
         cb(null, uniqueName);
     }
 });
@@ -289,12 +318,68 @@ router.get('/download/:jobId', async (req: Request, res: Response) => {
         res.setHeader('Content-Type', job.settings?.format === 'webm' ? 'video/webm' : 'video/mp4');
 
         const stream = fs.createReadStream(job.outputUrl);
+
+        // Cleanup after download completes
+        stream.on('end', () => {
+            console.log(`[VideoExport] 🧹 Download complete, cleaning up job: ${jobId}`);
+            videoExportService.cleanupJob(jobId).catch(e => {
+                console.warn(`[VideoExport] Failed to cleanup after download:`, e);
+            });
+        });
+
+        // Cleanup on stream error
+        stream.on('error', (err) => {
+            console.error(`[VideoExport] Stream error for job ${jobId}:`, err);
+            videoExportService.cleanupJob(jobId).catch(e => {
+                console.warn(`[VideoExport] Failed to cleanup after stream error:`, e);
+            });
+        });
+
+        // Cleanup if client disconnects/closes connection
+        res.on('close', () => {
+            if (!res.writableEnded) {
+                console.log(`[VideoExport] 🧹 Client disconnected, cleaning up job: ${jobId}`);
+                stream.destroy(); // Stop reading the file
+                videoExportService.cleanupJob(jobId).catch(e => {
+                    console.warn(`[VideoExport] Failed to cleanup after client disconnect:`, e);
+                });
+            }
+        });
+
         stream.pipe(res);
     } catch (error) {
         console.error('[VideoExport] Error downloading:', error);
         res.status(500).json({
             success: false,
             error: 'Failed to download'
+        });
+    }
+});
+
+/**
+ * POST /api/video-export/cancel/:jobId
+ * Cancel an in-progress export job and cleanup
+ */
+router.post('/cancel/:jobId', async (req: Request, res: Response) => {
+    try {
+        const { jobId } = req.params;
+
+        const cancelled = videoExportService.cancelJob(jobId);
+        if (!cancelled) {
+            return res.status(404).json({ success: false, error: 'Job not found' });
+        }
+
+        console.log(`[VideoExport] 🛑 Job ${jobId} cancelled by client`);
+
+        res.json({
+            success: true,
+            message: 'Job cancelled and cleaned up'
+        });
+    } catch (error) {
+        console.error('[VideoExport] Error cancelling job:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to cancel job'
         });
     }
 });
@@ -307,6 +392,8 @@ router.delete('/:jobId', async (req: Request, res: Response) => {
     try {
         const { jobId } = req.params;
 
+        // Cancel to stop any processing, then cleanup
+        videoExportService.cancelJob(jobId);
         await videoExportService.cleanupJob(jobId);
 
         res.json({

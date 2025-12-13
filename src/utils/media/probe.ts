@@ -50,3 +50,30 @@ export async function probeVideoMeta(url: string): Promise<VideoMeta> {
     });
   });
 }
+
+/**
+ * Check if a video file has an audio stream
+ * Returns true if audio stream exists, false otherwise
+ */
+export async function probeHasAudioStream(filePath: string): Promise<boolean> {
+  const args = [
+    '-v', 'error',
+    '-select_streams', 'a:0',
+    '-show_entries', 'stream=codec_type',
+    '-of', 'json',
+    filePath,
+  ];
+  return new Promise((resolve) => {
+    const bin = (ffprobe as any)?.path || (ffprobe as any);
+    execFile(String(bin), args, { timeout: 5000 }, (err, stdout) => {
+      if (err || !stdout) return resolve(false);
+      try {
+        const data = JSON.parse(stdout.toString());
+        const hasAudio = Array.isArray(data.streams) && data.streams.length > 0;
+        return resolve(hasAudio);
+      } catch {
+        return resolve(false);
+      }
+    });
+  });
+}

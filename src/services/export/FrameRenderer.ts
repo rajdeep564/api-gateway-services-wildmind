@@ -37,6 +37,7 @@ export class FrameRenderer {
         this.height = height;
         this.canvas = createCanvas(width, height);
         this.ctx = this.canvas.getContext('2d');
+        console.log(`[FrameRenderer] 📐 Created canvas: ${width}x${height} (aspect: ${(width / height).toFixed(3)})`);
     }
 
     /**
@@ -82,9 +83,26 @@ export class FrameRenderer {
                 onProgress((frameIndex + 1) / totalFrames * 100);
             }
 
-            // Log every 30 frames
+            // Log and cleanup every 30 frames
             if (frameIndex % 30 === 0) {
                 console.log(`[FrameRenderer] Frame ${frameIndex}/${totalFrames} (${((frameIndex / totalFrames) * 100).toFixed(1)}%)`);
+
+                // Rolling cleanup: delete frames older than 30 frames to prevent disk filling
+                // This keeps disk usage low during long exports
+                if (frameIndex >= 30) {
+                    for (let oldFrame = frameIndex - 60; oldFrame < frameIndex - 30; oldFrame++) {
+                        if (oldFrame >= 0) {
+                            const oldFramePath = path.join(outputDir, `frame_${String(oldFrame).padStart(5, '0')}.jpg`);
+                            try {
+                                if (fs.existsSync(oldFramePath)) {
+                                    fs.unlinkSync(oldFramePath);
+                                }
+                            } catch (e) {
+                                // Ignore cleanup errors for individual frames
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -118,9 +136,20 @@ export class FrameRenderer {
     ): Promise<void> {
         const fps = settings.fps;
         const totalFrames = Math.ceil(timeline.duration * fps);
+        const resolution = `${this.width}x${this.height}`;
+        const isHighRes = this.width >= 3840 || this.height >= 2160;
+        const frameSizeMB = (this.width * this.height * 4) / (1024 * 1024); // RGBA bytes
+
+        // Memory management settings - more aggressive for 4K
+        const cacheCleanupInterval = isHighRes ? 5 : 15; // Clear cache more often for 4K
+        const maxCacheSize = isHighRes ? 10 : 50; // Limit cache entries for high-res
+        const progressLogInterval = isHighRes ? 10 : 30; // Log less often for high-res
 
         console.log(`[FrameRenderer] 🚀 Streaming ${totalFrames} frames at ${fps}fps to FFmpeg...`);
-        console.log(`[FrameRenderer] 💾 Memory-optimized mode: NO disk storage`);
+        console.log(`[FrameRenderer] 📐 Resolution: ${resolution} (${isHighRes ? '4K/HIGH-RES' : 'Standard'})`);
+        console.log(`[FrameRenderer] 💾 Frame size: ${frameSizeMB.toFixed(1)}MB, Memory mode: ${isHighRes ? 'AGGRESSIVE' : 'NORMAL'}`);
+        console.log(`[FrameRenderer] ⏱️  Duration: ${timeline.duration}s, Total frames: ${totalFrames}`);
+        console.log(`[FrameRenderer] 🔧 Cache cleanup interval: every ${cacheCleanupInterval} frames`);
 
         // Create temp directory for video frame extraction (still needed for source video frames)
         const tempDir = path.dirname(outputPath);
@@ -185,12 +214,20 @@ export class FrameRenderer {
                 );
             }
 
-            // Video encoding settings
+            // Video encoding settings - optimize for 4K
             const formatExt = path.extname(outputPath).toLowerCase();
             const crfHigh = 18;
             const crfMedium = 23;
             const crfLow = 28;
             const crf = settings.quality === 'high' ? crfHigh : settings.quality === 'medium' ? crfMedium : crfLow;
+
+            // Use faster preset for 4K to prevent timeout/crashes
+            const preset = isHighRes ? 'fast' : 'medium';
+
+            // Add thread optimization for 4K
+            if (isHighRes) {
+                args.push('-threads', '0'); // Use all available cores
+            }
 
             switch (formatExt) {
                 case '.webm':
@@ -198,15 +235,16 @@ export class FrameRenderer {
                         '-c:v', 'libvpx-vp9',
                         '-crf', String(crf + 10),
                         '-b:v', '0',
-                        '-deadline', 'good',
-                        '-cpu-used', '2',
+                        '-deadline', isHighRes ? 'realtime' : 'good', // Faster for 4K
+                        '-cpu-used', isHighRes ? '4' : '2', // Faster encoding for 4K
+                        '-row-mt', '1', // Enable row-based multi-threading
                         '-pix_fmt', 'yuv420p'
                     );
                     break;
                 case '.mov':
                     args.push(
                         '-c:v', 'libx264',
-                        '-preset', 'medium',
+                        '-preset', preset,
                         '-crf', String(crf),
                         '-pix_fmt', 'yuv420p',
                         '-tag:v', 'avc1'
@@ -215,7 +253,7 @@ export class FrameRenderer {
                 case '.mkv':
                     args.push(
                         '-c:v', 'libx264',
-                        '-preset', 'medium',
+                        '-preset', preset,
                         '-crf', String(crf),
                         '-pix_fmt', 'yuv420p'
                     );
@@ -231,7 +269,7 @@ export class FrameRenderer {
                 default: // .mp4
                     args.push(
                         '-c:v', 'libx264',
-                        '-preset', 'medium',
+                        '-preset', preset,
                         '-crf', String(crf),
                         '-pix_fmt', 'yuv420p',
                         '-movflags', '+faststart'
@@ -241,17 +279,34 @@ export class FrameRenderer {
 
             args.push(outputPath);
 
-            console.log(`[FrameRenderer] Starting FFmpeg: ${args.slice(0, 10).join(' ')}...`);
+            console.log(`[FrameRenderer] 📝 Full FFmpeg command:`);
+            console.log(`[FrameRenderer] ffmpeg ${args.join(' ')}`);
 
             const ffmpeg = spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
 
             let ffmpegError = '';
+            let ffmpegStarted = false;
+
             ffmpeg.stderr.on('data', (data) => {
-                ffmpegError += data.toString();
+                const output = data.toString();
+                ffmpegError += output;
+                // Log FFmpeg output in real-time to catch early failures
+                if (!ffmpegStarted) {
+                    console.log(`[FrameRenderer] FFmpeg stderr: ${output.substring(0, 500)}`);
+                }
             });
+
+            // Check if FFmpeg starts successfully after a brief delay
+            setTimeout(() => {
+                if (!ffmpeg.killed && ffmpeg.stdin.writable) {
+                    ffmpegStarted = true;
+                    console.log(`[FrameRenderer] ✅ FFmpeg started successfully`);
+                }
+            }, 500);
 
             ffmpeg.on('error', (err) => {
                 console.error('[FrameRenderer] FFmpeg process error:', err);
+                console.error('[FrameRenderer] FFmpeg stderr so far:', ffmpegError.slice(-1000));
                 reject(err);
             });
 
@@ -282,6 +337,8 @@ export class FrameRenderer {
             // Render and stream frames
             const renderFrames = async () => {
                 try {
+                    let lastProgressTime = Date.now();
+
                     for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
                         const currentTime = frameIndex / fps;
 
@@ -299,7 +356,7 @@ export class FrameRenderer {
                         // Write to FFmpeg stdin
                         const canWrite = ffmpeg.stdin.write(buffer);
 
-                        // Handle backpressure
+                        // Handle backpressure - critical for 4K to avoid memory buildup
                         if (!canWrite) {
                             await new Promise<void>(resolve => ffmpeg.stdin.once('drain', resolve));
                         }
@@ -309,19 +366,50 @@ export class FrameRenderer {
                             onProgress((frameIndex + 1) / totalFrames * 80);
                         }
 
-                        // Log and clear cache every 30 frames
-                        if (frameIndex % 30 === 0) {
-                            console.log(`[FrameRenderer] 📊 Frame ${frameIndex}/${totalFrames} (${((frameIndex / totalFrames) * 100).toFixed(1)}%)`);
+                        // Memory management - more aggressive for high-res
+                        if (frameIndex % cacheCleanupInterval === 0) {
+                            // Clear video frame cache - keep only recent frames
+                            this.clearVideoFrameCacheOlderThan(currentTime - 0.5);
 
-                            // Clear video frame cache to prevent memory buildup
-                            // Keep only frames within 1 second of current time
-                            this.clearVideoFrameCacheOlderThan(currentTime - 1);
+                            // Limit video frame cache size
+                            if (this.videoFrameCache.size > maxCacheSize) {
+                                const entries = Array.from(this.videoFrameCache.keys());
+                                const toDelete = entries.slice(0, entries.length - maxCacheSize);
+                                for (const key of toDelete) {
+                                    this.videoFrameCache.delete(key);
+                                }
+                            }
+
+                            // Clear image cache periodically for 4K (every 50 frames)
+                            if (isHighRes && frameIndex > 0 && frameIndex % 50 === 0) {
+                                // Keep only essential images, clear the rest
+                                if (imageCache.size > 5) {
+                                    const entries = Array.from(imageCache.keys());
+                                    const toDelete = entries.slice(0, entries.length - 5);
+                                    for (const key of toDelete) {
+                                        imageCache.delete(key);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Progress logging with timing
+                        if (frameIndex % progressLogInterval === 0 && frameIndex > 0) {
+                            const now = Date.now();
+                            const elapsed = (now - lastProgressTime) / 1000;
+                            const framesPerSec = progressLogInterval / elapsed;
+                            const percent = ((frameIndex / totalFrames) * 100).toFixed(1);
+                            const remaining = ((totalFrames - frameIndex) / framesPerSec).toFixed(0);
+                            const cacheInfo = `VC:${this.videoFrameCache.size} IC:${imageCache.size}`;
+
+                            console.log(`[FrameRenderer] 📊 ${percent}% | Frame ${frameIndex}/${totalFrames} | ${framesPerSec.toFixed(1)} fps | ~${remaining}s left | Cache: ${cacheInfo}`);
+                            lastProgressTime = now;
                         }
                     }
 
                     // Signal end of input
                     ffmpeg.stdin.end();
-                    console.log(`[FrameRenderer] 📨 All frames sent to FFmpeg, waiting for encoding...`);
+                    console.log(`[FrameRenderer] 📨 All ${totalFrames} frames sent to FFmpeg, waiting for encoding...`);
 
                     if (onProgress) {
                         onProgress(90);
@@ -375,6 +463,13 @@ export class FrameRenderer {
 
         let renderedCount = 0;
 
+        // === CLIP ALL CONTENT TO CANVAS BOUNDS ===
+        // This matches the preview behavior where CSS overflow:hidden clips content to container
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.rect(0, 0, this.width, this.height);
+        this.ctx.clip();
+
         for (const renderItem of renderItems) {
             const { item, role, transition, transitionProgress } = renderItem;
 
@@ -391,6 +486,9 @@ export class FrameRenderer {
                 renderedCount++;
             }
         }
+
+        // Restore context to remove clip
+        this.ctx.restore();
 
         return renderedCount;
     }
@@ -531,6 +629,13 @@ export class FrameRenderer {
                 role,
                 transition.direction || 'left'
             );
+            // DEBUG: Log transition calculation
+            console.log(`[FrameRenderer] 🔀 TRANSITION on "${item.name}": type=${transition.type}, progress=${transitionProgress.toFixed(2)}, role=${role}, style=`, transitionStyle);
+        }
+
+        // DEBUG: Log animation data
+        if (item.animation) {
+            console.log(`[FrameRenderer] 💫 ANIMATION on "${item.name}": type=${item.animation.type}, timing=${item.animation.timing}, duration=${item.animation.duration}`);
         }
 
         return this.renderMediaItemWithStyle(item, currentTime, transitionStyle);
@@ -556,8 +661,55 @@ export class FrameRenderer {
 
         this.ctx.save();
 
-        // Build filter string
-        // Note: node-canvas has limited filter support - we'll handle what we can
+        // Build and apply filter string from transition style and item adjustments
+        const filters: string[] = [];
+
+        // Transition filter effects
+        if (transitionStyle.brightness !== undefined && transitionStyle.brightness !== 1) {
+            filters.push(`brightness(${transitionStyle.brightness})`);
+        }
+        if (transitionStyle.contrast !== undefined && transitionStyle.contrast !== 1) {
+            filters.push(`contrast(${transitionStyle.contrast})`);
+        }
+        if (transitionStyle.saturate !== undefined && transitionStyle.saturate !== 1) {
+            filters.push(`saturate(${transitionStyle.saturate})`);
+        }
+        if (transitionStyle.sepia !== undefined && transitionStyle.sepia !== 0) {
+            filters.push(`sepia(${transitionStyle.sepia})`);
+        }
+        if (transitionStyle.blur) {
+            filters.push(`blur(${transitionStyle.blur}px)`);
+        }
+        if (transitionStyle.hueRotate !== undefined && transitionStyle.hueRotate !== 0) {
+            filters.push(`hue-rotate(${transitionStyle.hueRotate}deg)`);
+        }
+
+        // Animation filter effects
+        if (animStyle.blur) {
+            filters.push(`blur(${animStyle.blur}px)`);
+        }
+        if (animStyle.brightness !== undefined) {
+            filters.push(`brightness(${animStyle.brightness})`);
+        }
+        if (animStyle.contrast !== undefined) {
+            filters.push(`contrast(${animStyle.contrast})`);
+        }
+        if (animStyle.saturate !== undefined) {
+            filters.push(`saturate(${animStyle.saturate})`);
+        }
+        if (animStyle.hueRotate !== undefined) {
+            filters.push(`hue-rotate(${animStyle.hueRotate}deg)`);
+        }
+
+        // Apply combined filter string
+        if (filters.length > 0) {
+            try {
+                (this.ctx as any).filter = filters.join(' ');
+            } catch {
+                // node-canvas may have limited filter support - continue without filters
+            }
+        }
+
 
         // Base transform
         let tx = x + width / 2;
@@ -621,6 +773,16 @@ export class FrameRenderer {
                 srcX, srcY, visibleWidth, visibleHeight,
                 -width / 2, -height / 2, width, height
             );
+
+            // Apply background color overlay (tint)
+            if ((item as any).backgroundColor) {
+                this.ctx.save();
+                this.ctx.globalCompositeOperation = 'multiply';
+                this.ctx.globalAlpha = 0.5;
+                this.ctx.fillStyle = (item as any).backgroundColor;
+                this.ctx.fillRect(-width / 2, -height / 2, width, height);
+                this.ctx.restore();
+            }
 
             // Draw border if defined
             if (item.border && item.border.width > 0 && !item.isBackground) {
@@ -907,16 +1069,22 @@ export class FrameRenderer {
                 return reject(new Error('FFmpeg binary not found'));
             }
 
+            // Optimized frame extraction:
+            // - Use faster seeking with -noaccurate_seek for approximate seeking
+            // - Limit output size for very high-res videos to reduce memory
+            // - Use lower quality for temp frames (they're just for canvas rendering)
             const args = [
                 '-ss', String(Math.max(0, timestamp)),
+                '-noaccurate_seek', // Faster seeking (acceptable for video frames)
                 '-i', videoPath,
                 '-vframes', '1',
-                '-q:v', '2',
+                '-q:v', '5', // Lower quality for temp frames (faster)
                 '-y',
                 outputPath
             ];
 
-            const ffmpeg = spawn(ffmpegPath, args);
+            // Kill FFmpeg faster if it hangs
+            const ffmpeg = spawn(ffmpegPath, args, { timeout: 10000 }); // 10 second timeout
             let stderr = '';
 
             ffmpeg.stderr.on('data', (data) => {
@@ -952,6 +1120,10 @@ export class FrameRenderer {
 
         let width: number;
         let height: number;
+
+        // Debug: Log item properties
+        console.log(`[FrameRenderer] 📌 calculateBounds for "${item.name}": isBackground=${item.isBackground}, fit=${item.fit}`);
+        console.log(`[FrameRenderer]    Canvas: ${canvasWidth}x${canvasHeight}, Media: ${img.width}x${img.height}`);
 
         if (item.isBackground) {
             // Get media aspect ratio

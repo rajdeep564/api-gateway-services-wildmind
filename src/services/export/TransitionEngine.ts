@@ -12,6 +12,13 @@ export interface TransitionStyle {
     translateY?: number;
     blur?: number;
 
+    // Filter effects (for parity with client-side)
+    brightness?: number;
+    contrast?: number;
+    saturate?: number;
+    sepia?: number;
+    hueRotate?: number; // degrees
+
     // Basic clip (for backward compatibility)
     clipX?: number;
     clipWidth?: number;
@@ -59,25 +66,48 @@ export function calculateTransitionStyle(
         case 'dissolve': {
             const dissolveEase = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
             return role === 'main'
-                ? { opacity: dissolveEase }
-                : { opacity: 1 - dissolveEase };
+                ? { opacity: Math.max(0.01, dissolveEase), brightness: 0.98 + dissolveEase * 0.02 }
+                : { opacity: Math.max(0.01, 1 - dissolveEase), brightness: 1 - (1 - dissolveEase) * 0.02 };
         }
         case 'film-dissolve': {
             const filmP = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
-            return role === 'main' ? { opacity: filmP } : { opacity: 1 - filmP };
+            const grain = Math.sin(p * 100) * 0.015;
+            return role === 'main'
+                ? { opacity: Math.max(0.01, filmP), contrast: 1.05 + grain, saturate: 0.95 + filmP * 0.05, sepia: (1 - filmP) * 0.08 }
+                : { opacity: Math.max(0.01, 1 - filmP), contrast: 1.05 + grain, saturate: 1 - (1 - filmP) * 0.05, sepia: filmP * 0.08 };
         }
         case 'additive-dissolve':
             return role === 'main' ? { opacity: p } : { opacity: outP };
         case 'dip-to-black':
             if (role === 'outgoing') {
-                return p < 0.5 ? { opacity: 1 - p * 2 } : { opacity: 0.05 };
+                if (p < 0.5) {
+                    const fadeOut = p * 2;
+                    const easeOut = Math.pow(fadeOut, 2);
+                    return { opacity: Math.max(0.05, 1 - easeOut), brightness: 1 - fadeOut * 0.6 };
+                }
+                return { opacity: 0.05 };
             }
-            return p > 0.5 ? { opacity: (p - 0.5) * 2 } : { opacity: 0.05 };
+            if (p > 0.5) {
+                const fadeIn = (p - 0.5) * 2;
+                const easeIn = 1 - Math.pow(1 - fadeIn, 2);
+                return { opacity: Math.max(0.05, easeIn), brightness: 0.4 + fadeIn * 0.6 };
+            }
+            return { opacity: 0.05 };
         case 'dip-to-white':
             if (role === 'outgoing') {
-                return p < 0.5 ? { opacity: 1 - p * 2 } : { opacity: 0.05 };
+                if (p < 0.5) {
+                    const fadeOut = p * 2;
+                    const easeOut = Math.pow(fadeOut, 1.5);
+                    return { opacity: 1 - easeOut, brightness: 1 + fadeOut * 1.5, saturate: 1 - fadeOut * 0.7, contrast: 1 - fadeOut * 0.2 };
+                }
+                return { opacity: 0.05, brightness: 2.5, saturate: 0.3 };
             }
-            return p > 0.5 ? { opacity: (p - 0.5) * 2 } : { opacity: 0.05 };
+            if (p > 0.5) {
+                const fadeIn = (p - 0.5) * 2;
+                const easeIn = 1 - Math.pow(1 - fadeIn, 1.5);
+                return { opacity: Math.max(0.05, easeIn), brightness: 2.5 - fadeIn * 1.5, saturate: 0.3 + fadeIn * 0.7, contrast: 0.8 + fadeIn * 0.2 };
+            }
+            return { opacity: 0.05, brightness: 2.5, saturate: 0.3 };
         case 'fade-dissolve':
             if (role === 'outgoing') return { opacity: p < 0.5 ? 1 - p * 2 : 0.05 };
             return { opacity: p > 0.5 ? (p - 0.5) * 2 : 0.05 };
@@ -210,8 +240,13 @@ export function calculateTransitionStyle(
 
         // === GLITCH ===
         case 'glitch': {
-            const glitchOffset = Math.sin(p * 50) * 5 * (1 - p);
-            return role === 'main' ? { translateX: glitchOffset, opacity: p } : { translateX: -glitchOffset, opacity: outP };
+            // Match Canvas.tsx: hue-rotate, contrast, random offset, hard cut
+            const glitchIntensity = Math.sin(p * Math.PI);
+            const glitchOffset = Math.sin(p * 50) * 10 * glitchIntensity;
+            if (role === 'outgoing') {
+                return p > 0.5 ? { opacity: 0 } : { translateX: -glitchOffset, translateY: glitchOffset, hueRotate: p * 90, contrast: 1.5, opacity: 1 };
+            }
+            return p > 0.5 ? { translateX: glitchOffset, translateY: -glitchOffset, hueRotate: p * 90, contrast: 1.5, opacity: 1 } : { opacity: 0 };
         }
 
         // === STACK ===
@@ -240,8 +275,15 @@ export function calculateTransitionStyle(
         }
 
         // === DIGITAL EFFECTS ===
-        case 'rgb-split':
-            return { scale: 1 + Math.sin(p * Math.PI) * 0.1, opacity: role === 'main' ? p : outP };
+        case 'rgb-split': {
+            // Match Canvas.tsx: hue-rotate cycling through 360deg, scale pulsing
+            const scaleAmount = 1 + Math.sin(p * Math.PI) * 0.1;
+            return {
+                hueRotate: p * 360,
+                scale: scaleAmount,
+                opacity: role === 'main' ? p : outP
+            };
+        }
         case 'pixelate':
         case 'chromatic-aberration':
             return role === 'main' ? { opacity: p } : { opacity: outP };

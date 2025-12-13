@@ -28,6 +28,73 @@ class VideoExportService {
         if (!fs.existsSync(TEMP_DIR)) {
             fs.mkdirSync(TEMP_DIR, { recursive: true });
         }
+
+        // Startup cleanup: Remove any stale export folders from previous crashes
+        this.cleanupStaleExports();
+    }
+
+    // Track cancelled job IDs to stop processing
+    private cancelledJobs = new Set<string>();
+
+    /**
+     * Cleanup stale export folders from previous crashes/incomplete exports
+     * Called on startup to ensure clean state
+     * Cleans ALL folders since server restart means any previous exports are orphaned
+     */
+    private cleanupStaleExports(): void {
+        try {
+            if (!fs.existsSync(TEMP_DIR)) return;
+
+            const entries = fs.readdirSync(TEMP_DIR, { withFileTypes: true });
+            let cleanedCount = 0;
+
+            for (const entry of entries) {
+                if (entry.isDirectory()) {
+                    const dirPath = path.join(TEMP_DIR, entry.name);
+                    try {
+                        // Clean ALL folders on startup - they're from previous sessions
+                        fs.rmSync(dirPath, { recursive: true, force: true });
+                        cleanedCount++;
+                        console.log(`[VideoExport] 🧹 Cleaned export folder: ${entry.name}`);
+                    } catch (e) {
+                        console.warn(`[VideoExport] Failed to cleanup folder ${entry.name}:`, e);
+                    }
+                }
+            }
+
+            if (cleanedCount > 0) {
+                console.log(`[VideoExport] 🧹 Startup cleanup: removed ${cleanedCount} export folders`);
+            }
+        } catch (e) {
+            console.warn('[VideoExport] Startup cleanup failed:', e);
+        }
+    }
+
+    /**
+     * Cancel an export job
+     * Marks the job as cancelled so processing will stop
+     */
+    cancelJob(jobId: string): boolean {
+        const job = jobs.get(jobId);
+        if (!job) return false;
+
+        this.cancelledJobs.add(jobId);
+        this.updateJob(jobId, { status: 'cancelled' as any });
+        console.log(`[VideoExport] ❌ Job ${jobId} marked for cancellation`);
+
+        // Cleanup immediately
+        this.cleanupJob(jobId).catch(e => {
+            console.warn(`[VideoExport] Failed to cleanup cancelled job:`, e);
+        });
+
+        return true;
+    }
+
+    /**
+     * Check if a job is cancelled
+     */
+    isJobCancelled(jobId: string): boolean {
+        return this.cancelledJobs.has(jobId);
     }
 
     /**
@@ -149,8 +216,8 @@ class VideoExportService {
                         settings.resolution.height
                     );
 
-                    // Collect audio items BEFORE starting render
-                    const audioInputs = this.collectAudioInputs(timeline, jobDir);
+                    // Collect audio items BEFORE starting render (async - probes video files for audio)
+                    const audioInputs = await this.collectAudioInputs(timeline, jobDir);
 
                     // Use streaming method - renders and encodes in one pass
                     // No temp frame files are created (memory-optimized)
@@ -198,7 +265,7 @@ class VideoExportService {
                             }
                         );
 
-                        const audioInputs = this.collectAudioInputs(timeline, jobDir);
+                        const audioInputs = await this.collectAudioInputs(timeline, jobDir);
                         this.updateJob(jobId, { status: 'encoding', progress: 80 });
 
                         await encodeFramesToVideo(
@@ -257,6 +324,18 @@ class VideoExportService {
                 status: 'error',
                 error: error instanceof Error ? error.message : 'Unknown error'
             });
+
+            // Cleanup job directory on error to prevent temp files from accumulating
+            try {
+                const jobDir = this.getJobDir(jobId);
+                if (fs.existsSync(jobDir)) {
+                    fs.rmSync(jobDir, { recursive: true, force: true });
+                    console.log(`[VideoExport] 🧹 Cleaned up job directory after error: ${jobId}`);
+                }
+            } catch (cleanupError) {
+                console.warn(`[VideoExport] Failed to cleanup job directory after error:`, cleanupError);
+            }
+
             throw error;
         }
     }
@@ -292,12 +371,15 @@ class VideoExportService {
     /**
      * Collect audio inputs from timeline for mixing
      */
-    private collectAudioInputs(timeline: TimelineData, jobDir: string): Array<{
+    private async collectAudioInputs(timeline: TimelineData, jobDir: string): Promise<Array<{
         file: string;
         startTime: number;
         offset: number;
         duration: number;
-    }> {
+    }>> {
+        // Import probeHasAudioStream for detecting audio streams in video files
+        const { probeHasAudioStream } = await import('../utils/media/probe');
+
         const inputs: Array<{ file: string; startTime: number; offset: number; duration: number }> = [];
 
         for (const track of timeline.tracks) {
@@ -310,24 +392,35 @@ class VideoExportService {
                             offset: item.offset || 0,
                             duration: item.duration
                         });
+                        console.log(`[VideoExport] Added audio track: ${item.name}`);
                     }
                 }
             }
-            // Include video audio (unless muted)
+            // Include video audio (only if has audio stream AND not muted)
             if (track.type === 'video') {
                 for (const item of track.items) {
                     if (item.type === 'video' && !item.muteVideo && item.localPath && fs.existsSync(item.localPath)) {
-                        inputs.push({
-                            file: item.localPath,
-                            startTime: item.start,
-                            offset: item.offset || 0,
-                            duration: item.duration
-                        });
+                        // Probe the video file to detect if it has an audio stream
+                        const hasAudioStream = await probeHasAudioStream(item.localPath);
+                        if (hasAudioStream) {
+                            inputs.push({
+                                file: item.localPath,
+                                startTime: item.start,
+                                offset: item.offset || 0,
+                                duration: item.duration
+                            });
+                            console.log(`[VideoExport] Video with audio stream (probed): ${item.name}`);
+                        } else {
+                            console.log(`[VideoExport] Video has no audio stream (probed): ${item.name}`);
+                        }
+                    } else if (item.type === 'video' && item.muteVideo) {
+                        console.log(`[VideoExport] Video muted (skipping audio): ${item.name}`);
                     }
                 }
             }
         }
 
+        console.log(`[VideoExport] Total audio sources: ${inputs.length}`);
         return inputs;
     }
 
