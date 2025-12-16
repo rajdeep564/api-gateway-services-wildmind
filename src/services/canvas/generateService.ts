@@ -14,6 +14,71 @@ import { probeImageMeta } from '../../utils/media/imageProbe';
 import sharp from 'sharp';
 import axios from 'axios';
 import { createStoryboard, downloadImageAsBuffer, StoryboardFrame } from '../../utils/createStoryboard';
+import { Agent as HttpsAgent } from 'https';
+
+// Zata sometimes has TLS issues; proxy route already works around it.
+// For server-side downloads (to inline images for Replicate), we use a permissive agent.
+const insecureHttpsAgent = new HttpsAgent({ rejectUnauthorized: false, keepAlive: true });
+
+function guessContentTypeFromUrl(url: string): string {
+  const lower = (url || '').toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  return 'image/jpeg';
+}
+
+/**
+ * Replicate runs remotely and cannot fetch localhost URLs.
+ * If the input image URL is a localhost/proxy URL, download it server-side and inline as a data URI.
+ */
+async function inlineImageForReplicateIfNeeded(imageUrl: string): Promise<{ image: string; wasInlined: boolean }> {
+  if (!imageUrl || typeof imageUrl !== 'string') return { image: imageUrl as any, wasInlined: false };
+
+  // Already a data URI? Leave as-is.
+  if (imageUrl.startsWith('data:')) return { image: imageUrl, wasInlined: false };
+
+  const isLocalhost =
+    /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\//i.test(imageUrl);
+  const isProxyResource =
+    /\/api\/proxy\/resource\//i.test(imageUrl) || /\/proxy\/resource\//i.test(imageUrl);
+  const isZataEndpoint = Boolean(env?.zataEndpoint) && imageUrl.startsWith(String(env.zataEndpoint));
+
+  // Only inline when Replicate wouldn't be able to fetch it reliably.
+  if (!isLocalhost && !isProxyResource && !isZataEndpoint) {
+    return { image: imageUrl, wasInlined: false };
+  }
+
+  try {
+    const resp = await axios.get(imageUrl, {
+      responseType: 'arraybuffer',
+      timeout: 30000,
+      // Only matters for https URLs; safe to include for all.
+      httpsAgent: insecureHttpsAgent as any,
+      maxContentLength: 25 * 1024 * 1024, // 25MB safety cap
+      maxBodyLength: 25 * 1024 * 1024,
+      validateStatus: () => true,
+    });
+
+    if (resp.status < 200 || resp.status >= 300) {
+      throw new Error(`Failed to download image. Status ${resp.status}`);
+    }
+
+    const contentTypeHeader = (resp.headers?.['content-type'] as string | undefined) || '';
+    const contentType = contentTypeHeader.split(';')[0] || guessContentTypeFromUrl(imageUrl);
+    const base64 = Buffer.from(resp.data).toString('base64');
+    const dataUri = `data:${contentType};base64,${base64}`;
+    return { image: dataUri, wasInlined: true };
+  } catch (e: any) {
+    // If we can't inline it, fall back to original URL so caller gets Replicate's error.
+    console.warn('[inlineImageForReplicateIfNeeded] Failed to inline image, falling back to URL:', {
+      imageUrl: imageUrl.substring(0, 120),
+      error: e?.message || String(e),
+    });
+    return { image: imageUrl, wasInlined: false };
+  }
+}
 
 /**
  * Convert width/height to a valid aspect ratio string
@@ -1337,10 +1402,11 @@ export async function removeBgForCanvas(
 
     // Map backgroundType from UI to Replicate format
     // UI options: 'green', 'rgba (transparent)', 'white', 'blue', 'overlay', 'map'
-    // Replicate expects: 'green', 'transparent', 'white', 'blue', 'overlay', 'map'
-    let backgroundType = request.backgroundType || 'transparent';
+    // Replicate expects: 'green', 'rgba', 'white', 'blue', 'overlay', 'map'
+    // Note: 851-labs/background-remover uses 'rgba' for transparent backgrounds, not 'transparent'
+    let backgroundType = request.backgroundType || 'rgba';
     if (backgroundType === 'rgba (transparent)') {
-      backgroundType = 'transparent';
+      backgroundType = 'rgba';
     }
 
     // Map scaleValue (0.0-1.0) to threshold if needed
@@ -1348,8 +1414,19 @@ export async function removeBgForCanvas(
     const threshold = request.scaleValue !== undefined ? request.scaleValue : undefined;
 
     // Call Replicate remove background service
+    const inlined = await inlineImageForReplicateIfNeeded(request.image);
+    console.log('[removeBgForCanvas] Calling Replicate with params:', {
+      model: replicateModel,
+      format: 'png',
+      background_type: backgroundType,
+      threshold: threshold,
+      hasImage: !!request.image,
+      imageLength: request.image?.length || 0,
+      imageInlined: inlined.wasInlined,
+    });
+    
     const result = await replicateService.removeBackground(uid, {
-      image: request.image,
+      image: inlined.image,
       model: replicateModel,
       format: 'png',
       background_type: backgroundType,

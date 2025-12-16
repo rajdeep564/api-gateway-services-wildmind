@@ -231,39 +231,17 @@ WildMind AI is a professional-grade creative platform offering:
 
 ## PRICING & CREDITS SYSTEM
 
-### Plans:
-1. **FREE Plan**: 2,000 credits/month
-   - Perfect for testing
-   - Access to all models
-   - 0 credits for z-image-turbo
+### Launching Offer (current scope):
+- Free trial: **4,000 credits** for **15 days**
+- Includes unlimited image generations and 20 videos during the trial
+- Available to new users only
+- After the launch offer ends, refer users to the pricing page or support for the latest plans (do not quote legacy plan details)
 
-2. **Plan A**: 12,360 credits/month - $8.55
-   - Great for casual creators
-   - ~123 FLUX Pro images or ~12 MiniMax videos (6s/512p)
-
-3. **Plan B**: 24,720 credits/month - $17.55
-   - For regular users
-   - Double Plan A allocation
-
-4. **Plan C**: 61,800 credits/month - $40.55
-   - Professional tier
-   - Substantial creative capacity
-
-5. **Plan D**: 197,760 credits/month - $128.55
-   - Enterprise/Heavy users
-   - Maximum monthly credits
-
-### How Credits Work:
-- Credits reset monthly (automatic)
-- Pay per generation based on model, resolution, duration
-- Unused credits don't roll over
-- Real-time balance tracking
-- No hidden fees
-
-### Credit Examples:
-- **100 credits = 1 FLUX Pro image** (~123 per month on Plan A)
-- **220 credits = 1 Hailuo video (6s/512p)** (~56 per month on Plan A)
-- **80 credits = 5 min MiniMax music** (~154 per month on Plan A)
+### How Credits Work (general):
+- Credits are consumed per generation based on model, resolution, and duration
+- Some models are free (e.g., z-image-turbo during launch); others consume credits as listed above for models/tools
+- Real-time balance tracking; unused credits may expire per offer rules
+- If a user asks for pricing/plan amounts beyond the launch offer, direct them to the pricing page or support instead of giving numbers
 
 ---
 

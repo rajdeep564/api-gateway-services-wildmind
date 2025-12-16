@@ -225,11 +225,13 @@ export async function removeBgForCanvas(req: Request, res: Response) {
       );
     }
 
-    const { image, model, meta } = req.body;
+    const { image, model, backgroundType, scaleValue, meta } = req.body;
 
     console.log('[removeBgForCanvas] Request received:', {
       userId,
       model,
+      backgroundType,
+      scaleValue,
       hasImage: !!image,
       hasMeta: !!meta,
       projectId: meta?.projectId,
@@ -251,7 +253,9 @@ export async function removeBgForCanvas(req: Request, res: Response) {
 
     const result = await generateService.removeBgForCanvas(userId, {
       image,
-      model: model || 'bria/remove-bg',
+      model: model || '851-labs/background-remover',
+      backgroundType,
+      scaleValue,
       projectId: meta.projectId,
       elementId: meta.elementId,
     });
