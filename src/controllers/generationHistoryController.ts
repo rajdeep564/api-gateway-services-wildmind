@@ -61,11 +61,25 @@ async function listMine(req: Request, res: Response, next: NextFunction) {
 			res.setHeader('Vary', 'Authorization, Cookie');
 		} catch {}
 		const uid = (req as any).uid;
-		const { limit = 20, cursor, nextCursor, status, generationType, sortBy, sortOrder, mode, dateStart, dateEnd, search, debug } = req.query as any;
+		const { limit = 20, cursor, nextCursor, status, generationType, sortBy, sortOrder, sort, mode, dateStart, dateEnd, search, debug } = req.query as any;
 		const normalizedMode = normalizeMode(mode);
 		
 		// Allow explicit generationType override, otherwise rely on mode down the chain
 		const generationTypeFilter: string | string[] | undefined = generationType;
+		
+		// Handle new 'sort' parameter: 'oldest' or 'recent'
+		// Map 'oldest' to sortBy='createdAt', sortOrder='asc'
+		// Map 'recent' to sortBy='createdAt', sortOrder='desc'
+		let finalSortBy = sortBy;
+		let finalSortOrder = sortOrder;
+		
+		if (sort === 'oldest') {
+			finalSortBy = 'createdAt';
+			finalSortOrder = 'asc';
+		} else if (sort === 'recent') {
+			finalSortBy = 'createdAt';
+			finalSortOrder = 'desc';
+		}
 		
 		// Prefer optimized pagination: omit legacy sort fields unless explicitly provided.
 		// Frontend now passes nextCursor (millis) for createdAt DESC pagination.
@@ -77,8 +91,8 @@ async function listMine(req: Request, res: Response, next: NextFunction) {
 			status, 
 			generationType: generationTypeFilter as any,
 			// Pass sortBy/sortOrder only if they were explicitly included to avoid disabling optimized path
-			sortBy: sortBy || undefined,
-			sortOrder: sortOrder || undefined,
+			sortBy: finalSortBy || undefined,
+			sortOrder: finalSortOrder || undefined,
 			dateStart: dateStart || undefined,
 			dateEnd: dateEnd || undefined,
 			search: search || undefined,
