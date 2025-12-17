@@ -44,6 +44,14 @@ export async function computeFalImageCost(req: Request): Promise<{ cost: number;
     if (m.includes('ultra')) display = 'Imagen 4 Ultra';
     else if (m.includes('fast')) display = 'Imagen 4 Fast';
     else display = 'Imagen 4';
+  } else if (m.includes('google/nano-banana-pro') || m.includes('nano-banana-pro')) {
+    // Google Nano Banana Pro: resolution-based pricing (same as Replicate)
+    const nanoRes = String(res || '2K').toUpperCase();
+    if (nanoRes === '4K') {
+      display = 'Nano banana Pro 4K';
+    } else {
+      display = 'Nano banana Pro 2K'; // Default to 2K (320 credits) or 1K (320 credits)
+    }
   } else {
     // Map Gemini image to our Google rows (choose I2I when uploadedImages provided)
     display = hasUploadedImages

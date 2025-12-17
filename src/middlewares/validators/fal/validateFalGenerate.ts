@@ -15,6 +15,9 @@ export const ALLOWED_FAL_MODELS = [
   'imagen-4-fast',
   // Flux 2 Pro
   'flux-2-pro',
+  // Google Nano Banana Pro
+  'google/nano-banana-pro',
+  'nano-banana-pro',
   // ElevenLabs / text-to-dialogue variants // all will call same model 
   'eleven-v3',
   'elevenlabs-text-to-dialogue',
@@ -802,6 +805,42 @@ export const validateFalBirefnetVideo = [
     }
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
+// Google Nano Banana Pro validator
+export const validateFalNanoBananaPro = [
+  body('prompt').optional().isString().withMessage('prompt must be a string'),
+  body('num_images').optional().isInt({ min: 1 }).withMessage('num_images must be an integer >= 1'),
+  body('aspect_ratio').optional().isIn(['auto', '21:9', '16:9', '3:2', '4:3', '5:4', '1:1', '4:5', '3:4', '2:3', '9:16']).withMessage('aspect_ratio must be one of the allowed values'),
+  body('output_format').optional().isIn(['jpeg', 'png', 'webp']).withMessage('output_format must be jpeg, png, or webp'),
+  body('sync_mode').optional().isBoolean().withMessage('sync_mode must be boolean'),
+  body('image_urls').optional().isArray().withMessage('image_urls must be an array'),
+  body('image_urls.*').optional().isString().withMessage('image_urls must contain strings'),
+  body('resolution').optional().isIn(['1K', '2K', '4K']).withMessage('resolution must be 1K, 2K, or 4K'),
+  body('limit_generations').optional().isBoolean().withMessage('limit_generations must be boolean'),
+  body('enable_web_search').optional().isBoolean().withMessage('enable_web_search must be boolean'),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    
+    // For text-to-image (no image_urls), prompt is required
+    // For image-to-image (with image_urls), prompt is optional
+    const hasImageUrls = Array.isArray(req.body?.image_urls) && req.body.image_urls.length > 0;
+    if (!hasImageUrls && (!req.body?.prompt || typeof req.body.prompt !== 'string' || req.body.prompt.trim().length === 0)) {
+      return next(new ApiError('prompt is required for text-to-image generation', 400));
+    }
+    
+    // Validate image_urls array elements
+    if (hasImageUrls) {
+      for (const url of req.body.image_urls) {
+        if (typeof url !== 'string' || url.trim().length === 0) {
+          return next(new ApiError('image_urls must contain non-empty URL strings', 400));
+        }
+      }
+    }
+    
     next();
   }
 ];
