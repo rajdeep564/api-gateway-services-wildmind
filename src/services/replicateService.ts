@@ -1143,7 +1143,6 @@ export async function multiangle(uid: string, body: any) {
   } as any;
 }
 
-const GOOGLE_NANO_BANANA_MODEL = "google/nano-banana-pro"; // Per user request
 const MULTISCENE_BASE_PROMPT = `Analyze the entire movie scene. Identify ALL key subjects present (whether it's a single person, a group/couple, a vehicle, or a specific object) and their spatial relationship/interaction.
 Generate a cohesive 3x3 grid "Cinematic Contact Sheet" featuring 9 distinct camera shots of exactly these subjects in the same environment.
 You must adapt the standard cinematic shot types to fit the content (e.g., if a group, keep the group together; if an object, frame the whole object):
@@ -1185,7 +1184,7 @@ export async function nextScene(uid: string, body: any) {
   const replicate = new Replicate({ auth: key });
 
   const isMultiScene = body.mode === "nextscene";
-  const modelBase = isMultiScene ? GOOGLE_NANO_BANANA_MODEL : "qwen-edit-apps/qwen-image-edit-plus-lora-next-scene";
+  const modelBase = "qwen-edit-apps/qwen-image-edit-plus-lora-next-scene"; // MultiScene mode removed (was using nano-banana-pro)
 
   const creator = await authRepository.getUserById(uid);
   const { historyId } = await generationHistoryRepository.create(uid, {
@@ -1771,89 +1770,6 @@ export async function generateImage(uid: string, body: any) {
         console.warn('[replicateService.generateImage] Failed to save inputImages for Ideogram:', e);
       }
       // No additional clamping required; validator enforces enumerations and limits
-    }
-    // Google Nano Banana Pro mapping
-    if (modelBase === "google/nano-banana-pro" || modelBase === "google-nano-banana-pro") {
-      console.log('[replicateService] Google Nano Banana Pro request:', {
-        modelBase,
-        width: rest.width,
-        height: rest.height
-      });
-
-      // Map to correct Replicate model ID
-      replicateModelBase = "google/nano-banana-pro";
-
-      // Map width/height if provided (standard Replicate params)
-      if (rest.width) input.width = Number(rest.width);
-      if (rest.height) input.height = Number(rest.height);
-
-      // Also support resolution string if provided, or construct it from width/height
-      if (rest.resolution) {
-        input.resolution = String(rest.resolution);
-      } else if (rest.width && rest.height) {
-        // Some models might prefer "1024x1024" format
-        // input.resolution = `${rest.width}x${rest.height}`; 
-        // Keeping it commented out unless we confirm the model needs it, 
-        // but mapping width/height explicitly is usually safer for Replicate models.
-      }
-
-      if (rest.aspect_ratio) input.aspect_ratio = String(rest.aspect_ratio);
-      if (rest.output_format) input.output_format = String(rest.output_format);
-      if (rest.safety_filter_level) input.safety_filter_level = String(rest.safety_filter_level);
-      // Handle image_input array (up to 14 images)
-      if (Array.isArray(rest.image_input) && rest.image_input.length > 0) {
-        const username = creator?.username || uid;
-        const keyPrefix = `users/${username}/input/${historyId}`;
-        const inputPersisted: any[] = [];
-        const resolved: string[] = [];
-        for (let i = 0; i < Math.min(rest.image_input.length, 14); i++) {
-          const img = rest.image_input[i];
-          if (typeof img !== 'string') continue;
-          try {
-            if (img.startsWith('data:')) {
-              const uploaded = await uploadDataUriToZata({
-                dataUri: img,
-                keyPrefix,
-                fileName: `nano-banana-pro-ref-${i + 1}`,
-              });
-              resolved.push(uploaded.publicUrl);
-              inputPersisted.push({
-                id: `in-${i + 1}`,
-                url: uploaded.publicUrl,
-                storagePath: (uploaded as any).key,
-                originalUrl: img,
-              });
-            } else {
-              resolved.push(img);
-              inputPersisted.push({
-                id: `in-${i + 1}`,
-                url: img,
-                originalUrl: img,
-              });
-            }
-          } catch (e) {
-            // Fallback to original URL if upload fails
-            if (typeof img === 'string') {
-              resolved.push(img);
-              inputPersisted.push({
-                id: `in-${i + 1}`,
-                url: img,
-                originalUrl: img,
-              });
-            }
-          }
-        }
-        if (resolved.length > 0) input.image_input = resolved;
-        // Save input images to database
-        if (inputPersisted.length > 0) {
-          try {
-            await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-            console.log('[replicateService.generateImage] Saved inputImages for Nano Banana Pro', { historyId, count: inputPersisted.length });
-          } catch (e) {
-            console.warn('[replicateService.generateImage] Failed to save inputImages for Nano Banana Pro:', e);
-          }
-        }
-      }
     }
     // P-Image mapping (prunaai/p-image)
     if (modelBase === "prunaai/p-image" || modelBase === "p-image") {

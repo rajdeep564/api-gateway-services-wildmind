@@ -66,6 +66,7 @@ import {
   validateFalTopazUpscaleImage,
   validateFalBirefnetVideo,
   validateFalKlingO1FirstLastSubmit,
+  validateFalNanoBananaPro,
 } from "../middlewares/validators/fal/validateFalGenerate";
 
 const router = Router();

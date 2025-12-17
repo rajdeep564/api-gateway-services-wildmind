@@ -140,11 +140,17 @@ async function generate(
   const inputFolder = generationType === 'text-to-character' ? 'character' : 'input';
   let publicImageUrls: string[] = [];
   const isFlux2Pro = modelLower.includes('flux-2-pro');
+  const isNanoBananaPro = modelLower.includes('google/nano-banana-pro') || modelLower.includes('nano-banana-pro');
+  
+  // For nano-banana-pro, also check image_urls from payload
+  const payloadImageUrls = isNanoBananaPro && Array.isArray((payload as any).image_urls) ? (payload as any).image_urls : [];
+  
   try {
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/${inputFolder}/${historyId}`;
     const inputPersisted: any[] = [];
     let idx = 0;
+    // Process uploadedImages first
     for (const src of (uploadedImages || [])) {
       if (!src || typeof src !== 'string') continue;
       try {
@@ -190,6 +196,20 @@ async function generate(
         publicImageUrls.push(stored.publicUrl);
       } catch { }
     }
+    
+    // For nano-banana-pro, also persist image_urls from payload if provided
+    if (isNanoBananaPro && payloadImageUrls.length > 0) {
+      for (const url of payloadImageUrls) {
+        if (!url || typeof url !== 'string') continue;
+        // Check if already persisted (avoid duplicates)
+        const alreadyPersisted = inputPersisted.some(img => img.url === url || img.originalUrl === url);
+        if (!alreadyPersisted) {
+          inputPersisted.push({ id: `in-${++idx}`, url, originalUrl: url });
+          publicImageUrls.push(url);
+        }
+      }
+    }
+    
     if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
   } catch { }
   // Create public generations record for FAL (like BFL)
@@ -197,7 +217,17 @@ async function generate(
 
   // Map our model key to FAL endpoints
   let modelEndpoint: string;
-  if (modelLower.includes('flux-2-pro')) {
+  if (modelLower.includes('google/nano-banana-pro') || modelLower.includes('nano-banana-pro')) {
+    // Google Nano Banana Pro: 
+    // Text-to-image (no images) -> fal-ai/nano-banana-pro (base endpoint)
+    // Image-to-image (with images) -> fal-ai/nano-banana-pro/edit (edit endpoint requires image_urls)
+    // Check both image_urls (from payload) and uploadedImages (converted from frontend)
+    const payloadImageUrls = Array.isArray((payload as any).image_urls) ? (payload as any).image_urls : [];
+    const hasImages = (Array.isArray(uploadedImages) && uploadedImages.length > 0) || payloadImageUrls.length > 0;
+    modelEndpoint = hasImages
+      ? 'fal-ai/nano-banana-pro/edit'
+      : 'fal-ai/nano-banana-pro';
+  } else if (modelLower.includes('flux-2-pro')) {
     // Flux 2 Pro: use /edit endpoint when images are uploaded, otherwise use text-to-image endpoint
     const hasImages = Array.isArray(uploadedImages) && uploadedImages.length > 0;
     modelEndpoint = hasImages
@@ -855,6 +885,67 @@ async function generate(
             input.image_size = map[String(resolvedAspect)] || 'square';
           }
         }
+      } else if (modelEndpoint.includes('nano-banana-pro')) {
+        // Google Nano Banana Pro specific schema mapping
+        // prompt is required for T2I, optional for I2I
+        if (finalPrompt) input.prompt = finalPrompt;
+        
+        // num_images (default 1)
+        const numImg = (payload as any).num_images || (payload as any).n || 1;
+        input.num_images = Math.max(1, Math.min(10, Number(numImg)));
+        
+        // aspect_ratio (default "auto")
+        if ((payload as any).aspect_ratio) {
+          input.aspect_ratio = String((payload as any).aspect_ratio);
+        } else if (resolvedAspect) {
+          input.aspect_ratio = String(resolvedAspect);
+        } else {
+          input.aspect_ratio = 'auto';
+        }
+        
+        // output_format (default "png")
+        if ((payload as any).output_format) {
+          input.output_format = String((payload as any).output_format);
+        } else {
+          input.output_format = output_format || 'png';
+        }
+        
+        // sync_mode (boolean, optional)
+        if ((payload as any).sync_mode !== undefined) {
+          input.sync_mode = Boolean((payload as any).sync_mode);
+        }
+        
+        // resolution (default "1K")
+        if ((payload as any).resolution) {
+          input.resolution = String((payload as any).resolution);
+        } else {
+          input.resolution = '1K';
+        }
+        
+        // limit_generations (boolean, optional)
+        if ((payload as any).limit_generations !== undefined) {
+          input.limit_generations = Boolean((payload as any).limit_generations);
+        }
+        
+        // enable_web_search (boolean, optional)
+        if ((payload as any).enable_web_search !== undefined) {
+          input.enable_web_search = Boolean((payload as any).enable_web_search);
+        }
+        
+        // image_urls (for I2I mode) - only include if using /edit endpoint (I2I)
+        // Note: T2I uses base endpoint (no image_urls), I2I uses /edit endpoint (with image_urls)
+        const isI2IMode = modelEndpoint === 'fal-ai/nano-banana-pro/edit'; // /edit endpoint = I2I
+        if (isI2IMode) {
+          // Check payload.image_urls first (direct from frontend), then fallback to publicImageUrls/uploadedImages
+          const payloadImageUrls = Array.isArray((payload as any).image_urls) ? (payload as any).image_urls : [];
+          const refs = payloadImageUrls.length > 0 ? payloadImageUrls : (publicImageUrls.length > 0 ? publicImageUrls : uploadedImages);
+          if (Array.isArray(refs) && refs.length > 0) {
+            input.image_urls = refs;
+          } else {
+            throw new ApiError('Image-to-image mode requires at least one input image in image_urls', 400);
+          }
+        }
+        // For T2I (base endpoint), don't include image_urls
       } else if (resolvedAspect) {
         input.aspect_ratio = resolvedAspect;
       }
@@ -864,7 +955,7 @@ async function generate(
         if ((payload as any).seed != null) input.seed = (payload as any).seed;
         if ((payload as any).negative_prompt) input.negative_prompt = (payload as any).negative_prompt;
       }
-      if (modelEndpoint.endsWith("/edit")) {
+      if (modelEndpoint.endsWith("/edit") && !modelEndpoint.includes('nano-banana-pro')) {
         // Use public URLs for edit endpoint; allow up to 10 reference images for Nano Banana I2I
         const refs = publicImageUrls.length > 0 ? publicImageUrls : uploadedImages;
         // Images are already ordered by frontend to match @references in prompt

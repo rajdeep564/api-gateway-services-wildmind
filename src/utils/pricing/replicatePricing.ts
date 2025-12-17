@@ -120,15 +120,6 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   else if (normalized.includes('p-image-edit') || normalized.includes('prunaai/p-image-edit')) {
     display = 'P-Image-Edit';
   }
-  // Google Nano Banana Pro
-  else if (normalized.includes('google/nano-banana-pro') || normalized.includes('nano-banana-pro')) {
-    const resolution = String((req.body as any)?.resolution || '2K').toUpperCase();
-    if (resolution === '4K') {
-      display = 'Nano banana Pro 4K';
-    } else {
-      display = 'Nano banana Pro 2K'; // Default to 2K (320 credits) or 1K (320 credits)
-    }
-  }
 
   // Lookup cost
   let cost = 0;
