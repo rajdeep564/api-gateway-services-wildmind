@@ -650,8 +650,10 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
   // In development, only use domain if it matches the current host
   const host = reqHost;
   const origin = req.headers.origin || '';
+  const referer = req.headers.referer || req.headers.referrer || '';
   const dom = (cookieDomain || '').toLowerCase();
   let shouldSetDomain = false;
+  let finalCookieDomain = cookieDomain; // Default to .wildmindai.com
   
   // Check if we're in a production-like environment:
   // 1. NODE_ENV === 'production', OR
@@ -663,17 +665,39 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     (origin && prodDomainHost && (origin.includes(prodDomainHost) || (studioDomainHost && origin.includes(studioDomainHost)))) ||
     (host && prodDomainHost && (host.includes(prodDomainHost) || (studioDomainHost && host.includes(studioDomainHost))));
   
-  // Always set domain cookie if COOKIE_DOMAIN is configured (for cross-subdomain sharing)
-  // This works in both production and when NODE_ENV isn't set (Render.com production)
-  if (cookieDomain) {
-    if (isProductionLike) {
-      // Production: always use domain for cross-subdomain cookie sharing
+  // Determine cookie domain based on how user accessed the site:
+  // - If coming from www.wildmindai.com (via referer/origin), use www.wildmindai.com
+  // - If direct access to studio.wildmindai.com, use .wildmindai.com
+  if (isProductionLike && cookieDomain) {
+    const isFromWww = 
+      (origin && origin.includes('www.wildmindai.com')) ||
+      (referer && referer.includes('www.wildmindai.com')) ||
+      (host && host.includes('www.wildmindai.com'));
+    
+    const isStudioDirect = 
+      (origin && origin.includes('studio.wildmindai.com')) ||
+      (host && host.includes('studio.wildmindai.com'));
+    
+    if (isFromWww) {
+      // User came from www.wildmindai.com - use www.wildmindai.com as domain
+      finalCookieDomain = 'www.wildmindai.com';
       shouldSetDomain = true;
+      console.log('[AUTH][setSessionCookie] User accessed from www.wildmindai.com - using www.wildmindai.com cookie domain');
+    } else if (isStudioDirect) {
+      // Direct access to studio.wildmindai.com - use .wildmindai.com as domain
+      finalCookieDomain = cookieDomain; // .wildmindai.com
+      shouldSetDomain = true;
+      console.log('[AUTH][setSessionCookie] Direct access to studio.wildmindai.com - using .wildmindai.com cookie domain');
     } else {
-      // Development: only use domain if it matches the host (localhost won't match .wildmindai.com)
-      const domainMatches = !!(dom && (host === dom.replace(/^\./, '') || host.endsWith(dom)));
-      shouldSetDomain = domainMatches;
+      // Default: use .wildmindai.com for cross-subdomain sharing
+      finalCookieDomain = cookieDomain;
+      shouldSetDomain = true;
     }
+  } else if (cookieDomain) {
+    // Development: only use domain if it matches the host (localhost won't match .wildmindai.com)
+    const domainMatches = !!(dom && (host === dom.replace(/^\./, '') || host.endsWith(dom)));
+    shouldSetDomain = domainMatches;
+    finalCookieDomain = cookieDomain;
   } else {
     // CRITICAL WARNING: COOKIE_DOMAIN is not set - cookies will NOT share across subdomains!
     if (isProductionLike) {
@@ -687,12 +711,14 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
   // CRITICAL: Log domain setting decision for debugging cross-subdomain issues
   console.log('[AUTH][setSessionCookie] Domain setting decision:', {
     cookieDomain: cookieDomain || '(NOT SET - COOKIES WILL NOT SHARE ACROSS SUBDOMAINS!)',
+    finalCookieDomain: finalCookieDomain || '(NOT SET)',
     isProd,
     isProductionLike,
     host,
     origin,
+    referer,
     shouldSetDomain,
-    willSetDomain: shouldSetDomain ? cookieDomain : '(NOT SETTING - COOKIES WON\'T SHARE!)',
+    willSetDomain: shouldSetDomain ? finalCookieDomain : '(NOT SETTING - COOKIES WON\'T SHARE!)',
     warning: !cookieDomain ? '⚠️⚠️⚠️ COOKIE_DOMAIN env var is NOT SET! Set it to ".wildmindai.com" in Render.com ⚠️⚠️⚠️' : 
              !shouldSetDomain ? '⚠️ Domain will NOT be set - cookies won\'t share across subdomains' :
              '✅ Domain will be set - cookies will share across subdomains'
@@ -723,16 +749,18 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     // This is a FIXED value, NOT derived from ID token expiration
     maxAge: maxAgeInSeconds,
     path: "/",
-    ...(shouldSetDomain ? { domain: cookieDomain } : {}),
+    ...(shouldSetDomain ? { domain: finalCookieDomain } : {}),
   };
 
   // Debug logging for cookie setting - use both console.log and logger for visibility
   const logData = {
     isProd,
     cookieDomain: cookieDomain || '(not set)',
+    finalCookieDomain: finalCookieDomain || '(not set)',
     shouldSetDomain,
     host,
     origin,
+    referer,
     cookieOptions: {
       domain: cookieOptions.domain || '(not set)',
       sameSite: cookieOptions.sameSite,

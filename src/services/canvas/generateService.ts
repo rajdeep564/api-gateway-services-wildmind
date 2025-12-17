@@ -135,6 +135,11 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
     return { service: 'replicate', backendModel: 'z-image-turbo' };
   }
 
+  // P-Image - Replicate model (prunaai/p-image)
+  if (modelLower.includes('p-image') && !modelLower.includes('p-image-edit')) {
+    return { service: 'replicate', backendModel: 'prunaai/p-image' };
+  }
+
   // BFL Flux models - check in order of specificity
   if (modelLower.includes('flux-pro-1.1-ultra') || modelLower.includes('pro 1.1 ultra')) {
     return { service: 'bfl', backendModel: 'flux-pro-1.1-ultra' };
@@ -337,16 +342,16 @@ export async function generateForCanvas(
 
       generationId = result.historyId;
     } else if (service === 'replicate') {
-      // Use Replicate service for Seedream 4K, Z Image Turbo, etc.
+      // Use Replicate service for Seedream 4K, Z Image Turbo, P-Image, etc.
       // Most models use owner/name format, but z-image-turbo/new-turbo-model is handled specially
-      if (!backendModel.includes('/') && backendModel !== 'z-image-turbo' && backendModel !== 'new-turbo-model' && backendModel !== 'google-nano-banana-pro') {
+      if (!backendModel.includes('/') && backendModel !== 'z-image-turbo' && backendModel !== 'new-turbo-model' && backendModel !== 'google-nano-banana-pro' && backendModel !== 'p-image') {
         console.error('[generateForCanvas] Invalid Replicate model format:', backendModel);
         throw new ApiError(`Invalid model format for Replicate: ${backendModel}. Expected format: owner/name`, 400);
       }
 
       const replicatePayload: any = {
         prompt: request.prompt,
-        model: backendModel, // Use mapped backend model name: 'bytedance/seedream-4'
+        model: backendModel, // Use mapped backend model name: 'bytedance/seedream-4', 'z-image-turbo', 'prunaai/p-image'
         aspect_ratio: aspectRatio,
         storageKeyPrefixOverride: canvasKeyPrefix,
         ...(request.width && request.height && {
@@ -354,6 +359,13 @@ export async function generateForCanvas(
           height: request.height,
         }),
       };
+
+      // Add num_images for models that support multiple images (z-image-turbo, p-image)
+      const isZTurbo = backendModel === 'z-image-turbo' || backendModel === 'new-turbo-model';
+      const isPImage = backendModel === 'prunaai/p-image' || backendModel === 'p-image';
+      if ((isZTurbo || isPImage) && clampedImageCount > 1) {
+        (replicatePayload as any).__num_images = clampedImageCount;
+      }
 
       // Handle reference images based on scene number
       // Scene 1: Only reference images (1 input)
