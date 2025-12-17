@@ -512,7 +512,17 @@ export async function list(uid: string, params: {
         const snap = await fetchOnce(cursorMs);
         if (snap.empty) { ended = true; break; }
         lastRawDoc = snap.docs[snap.docs.length - 1];
-        cursorMs = getCreatedAtMillisFromDoc(lastRawDoc) || cursorMs;
+        const newCursorMs = getCreatedAtMillisFromDoc(lastRawDoc);
+        
+        // Ensure cursor advances forward (not backward)
+        if (newCursorMs && cursorMs !== undefined) {
+          if (newCursorMs <= cursorMs) {
+            // Cursor didn't advance or went backward - we've hit the end
+            ended = true;
+            break;
+          }
+        }
+        cursorMs = newCursorMs || cursorMs;
 
         let batch: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
         const { items: filteredItems, removedByMode } = applyInMemoryFilters(batch);
@@ -523,9 +533,12 @@ export async function list(uid: string, params: {
         if (snap.docs.length < fetchLimit) { ended = true; break; }
       }
 
-      const hasMore = all.length > params.limit || !ended;
+      // If we scanned but found no items, there are no more matching items
+      // Set hasMore to false to prevent infinite pagination
+      const hasMore = all.length > 0 && (all.length > params.limit || !ended);
       const pageItems = all.slice(0, params.limit);
-      const nextCursor = hasMore && lastRawDoc ? getCreatedAtMillisFromDoc(lastRawDoc) : null;
+      // Only set nextCursor if we have items and there's more to fetch
+      const nextCursor = hasMore && lastRawDoc && all.length > 0 ? getCreatedAtMillisFromDoc(lastRawDoc) : null;
 
       return {
         items: pageItems,
