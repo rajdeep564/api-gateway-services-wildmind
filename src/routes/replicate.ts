@@ -18,6 +18,8 @@ import { validateKlingI2V } from '../middlewares/validators/replicate/validateKl
 import { validateKlingLipsync } from '../middlewares/validators/replicate/validateKlingLipsync';
 import { validateSeedanceT2V } from '../middlewares/validators/replicate/validateSeedanceT2V';
 import { validateSeedanceI2V } from '../middlewares/validators/replicate/validateSeedanceI2V';
+import { validateSeedanceProFastT2V } from '../middlewares/validators/replicate/validateSeedanceProFastT2V';
+import { validateSeedanceProFastI2V } from '../middlewares/validators/replicate/validateSeedanceProFastI2V';
 import { validatePixverseT2V } from '../middlewares/validators/replicate/validatePixverseT2V';
 import { validatePixverseI2V } from '../middlewares/validators/replicate/validatePixverseI2V';
 import { computeWanAnimateReplaceCost } from '../utils/pricing/wanAnimatePricing';
@@ -185,6 +187,23 @@ router.post(
   validateSeedanceI2V,
   makeCreditCost('replicate', 'seedance-i2v', computeSeedanceVideoCost),
   (replicateController as any).seedanceI2vSubmit
+);
+
+// ============ Queue-style endpoints for Replicate Seedance Pro Fast ============
+router.post(
+  '/seedance-pro-fast-t2v/submit',
+  requireAuth,
+  validateSeedanceProFastT2V,
+  makeCreditCost('replicate', 'seedance-pro-fast-t2v', computeSeedanceVideoCost),
+  (replicateController as any).seedanceProFastT2vSubmit
+);
+
+router.post(
+  '/seedance-pro-fast-i2v/submit',
+  requireAuth,
+  validateSeedanceProFastI2V,
+  makeCreditCost('replicate', 'seedance-pro-fast-i2v', computeSeedanceVideoCost),
+  (replicateController as any).seedanceProFastI2vSubmit
 );
 
 // ============ Queue-style endpoints for Replicate PixVerse v5 ============

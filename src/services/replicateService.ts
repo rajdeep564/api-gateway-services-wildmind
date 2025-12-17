@@ -4036,15 +4036,22 @@ export async function seedanceT2vSubmit(
     resolution: res as any,
   } as any);
 
-  // Persist reference_images (if provided) as inputImages so preview shows uploads
+  // Persist image (first frame), last_frame_image, and reference_images (if provided) as inputImages so preview shows uploads
   try {
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
-    const refs = Array.isArray(body.reference_images) ? body.reference_images.slice(0, 4) : [];
+    const urls: string[] = [];
+    // First frame image
+    if (typeof body.image === 'string' && body.image.length > 5) urls.push(String(body.image));
+    // Last frame image
+    if (typeof body.last_frame_image === 'string' && body.last_frame_image.length > 5) urls.push(String(body.last_frame_image));
+    // Reference images
+    if (Array.isArray(body.reference_images)) {
+      for (const r of body.reference_images.slice(0, 4)) if (typeof r === 'string' && r.length > 5) urls.push(r);
+    }
     const inputPersisted: any[] = [];
     let idx = 0;
-    for (const src of refs) {
-      if (!src || typeof src !== 'string') continue;
+    for (const src of urls) {
       try {
         const stored = /^data:/i.test(src)
           ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
@@ -4066,6 +4073,14 @@ export async function seedanceT2vSubmit(
     input.seed = Number(body.seed);
   if (typeof body.camera_fixed === "boolean")
     input.camera_fixed = body.camera_fixed;
+  // First frame image (for image-to-video generation with seedance T2V)
+  if (typeof body.image === 'string' && body.image.length > 5) {
+    input.image = String(body.image);
+  }
+  // Last frame image (only works if first frame image is provided)
+  if (typeof body.last_frame_image === 'string' && body.last_frame_image.length > 5) {
+    input.last_frame_image = String(body.last_frame_image);
+  }
   // Reference images (1-4 images) for guiding video generation
   // Note: Cannot be used with 1080p resolution or first/last frame images
   if (
@@ -4074,9 +4089,15 @@ export async function seedanceT2vSubmit(
     body.reference_images.length <= 4
   ) {
     // Validate that reference images are not used with incompatible settings
+    const hasFirstFrame = body.image && String(body.image).length > 5;
+    const hasLastFrame = body.last_frame_image && String(body.last_frame_image).length > 5;
     if (res === "1080p") {
       console.warn(
         "[seedanceT2vSubmit] reference_images cannot be used with 1080p resolution, ignoring"
+      );
+    } else if (hasFirstFrame || hasLastFrame) {
+      console.warn(
+        "[seedanceT2vSubmit] reference_images cannot be used with first/last frame images, ignoring"
       );
     } else {
       input.reference_images = body.reference_images.slice(0, 4); // Limit to 4 images
@@ -4293,12 +4314,15 @@ export async function seedanceI2vSubmit(
     body.reference_images.length <= 4
   ) {
     // Validate that reference images are not used with incompatible settings
+    const hasFirstFrame = body.image && String(body.image).length > 5;
+    const hasLastFrame = body.last_frame_image && String(body.last_frame_image).length > 5;
     if (
       res === "1080p" ||
-      (body.last_frame_image && String(body.last_frame_image).length > 5)
+      hasFirstFrame ||
+      hasLastFrame
     ) {
       console.warn(
-        "[seedanceI2vSubmit] reference_images cannot be used with 1080p resolution or last_frame_image, ignoring"
+        "[seedanceI2vSubmit] reference_images cannot be used with 1080p resolution or first/last frame images, ignoring"
       );
     } else {
       input.reference_images = body.reference_images.slice(0, 4); // Limit to 4 images
@@ -4433,6 +4457,403 @@ export async function seedanceI2vSubmit(
 }
 
 Object.assign(replicateService, { seedanceT2vSubmit, seedanceI2vSubmit });
+
+// ============ Queue-style API for Replicate Seedance Pro Fast ============
+
+export async function seedanceProFastT2vSubmit(
+  uid: string,
+  body: any
+): Promise<SubmitReturn> {
+  if (!body?.prompt) throw new ApiError("prompt is required", 400);
+  const replicate = ensureReplicate();
+  const modelBase = "bytedance/seedance-1-pro-fast";
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator
+    ? { uid, username: creator.username, email: (creator as any)?.email }
+    : ({ uid } as any);
+  const durationSec = ((): number => {
+    const d = Number(body?.duration ?? 5);
+    return Math.max(2, Math.min(12, Math.round(d)));
+  })();
+  const res = ((): string => {
+    const r = String(body?.resolution ?? "1080p").toLowerCase();
+    const m = r.match(/(480|720|1080)/);
+    return m ? `${m[1]}p` : "1080p";
+  })();
+  const aspect = ((): string => {
+    const a = String(body?.aspect_ratio ?? "16:9");
+    return ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "9:21"].includes(a)
+      ? a
+      : "16:9";
+  })();
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt,
+    model: modelBase,
+    generationType: "text-to-video",
+    visibility: body.isPublic ? "public" : "private",
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    duration: durationSec as any,
+    resolution: res as any,
+  } as any);
+
+  // Note: Pro Fast does NOT support first_frame_image or last_frame_image
+  // Only persist reference images if provided (and not incompatible with settings)
+  try {
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    const urls: string[] = [];
+    // Reference images (if provided and compatible)
+    if (Array.isArray(body.reference_images)) {
+      for (const r of body.reference_images.slice(0, 4)) if (typeof r === 'string' && r.length > 5) urls.push(r);
+    }
+    const inputPersisted: any[] = [];
+    let idx = 0;
+    for (const src of urls) {
+      try {
+        const stored = /^data:/i.test(src)
+          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
+          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+      } catch { }
+    }
+    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+  } catch { }
+
+  const input: any = {
+    prompt: body.prompt,
+    duration: durationSec,
+    resolution: res,
+    aspect_ratio: aspect,
+    fps: 24,
+  };
+  if (body.seed != null && Number.isInteger(Number(body.seed)))
+    input.seed = Number(body.seed);
+  if (typeof body.camera_fixed === "boolean")
+    input.camera_fixed = body.camera_fixed;
+  // Note: Pro Fast does NOT support first_frame_image or last_frame_image
+  // Reference images (1-4 images) - only include if not 1080p
+  if (
+    Array.isArray(body.reference_images) &&
+    body.reference_images.length > 0 &&
+    body.reference_images.length <= 4
+  ) {
+    if (res === "1080p") {
+      console.warn(
+        "[seedanceProFastT2vSubmit] reference_images cannot be used with 1080p resolution, ignoring"
+      );
+    } else {
+      input.reference_images = body.reference_images.slice(0, 4); // Limit to 4 images
+    }
+  }
+
+  let predictionId = "";
+  try {
+    let version: string | null = null;
+    try {
+      version = await getLatestModelVersion(replicate, modelBase);
+      console.log("[seedanceProFastT2vSubmit] Model version lookup", {
+        modelBase,
+        version: version || "not found",
+      });
+    } catch (versionError: any) {
+      console.warn(
+        "[seedanceProFastT2vSubmit] Version lookup failed, will try direct model",
+        { modelBase, error: versionError?.message }
+      );
+    }
+
+    console.log("[seedanceProFastT2vSubmit] Creating prediction", {
+      modelBase,
+      version: version || "latest",
+      input,
+    });
+    const pred = await replicate.predictions.create(
+      version ? { version, input } : { model: modelBase, input }
+    );
+    predictionId = (pred as any)?.id || "";
+    if (!predictionId) throw new Error("Missing prediction id");
+    console.log("[seedanceProFastT2vSubmit] Prediction created", { predictionId });
+  } catch (e: any) {
+    console.error("[seedanceProFastT2vSubmit] Error creating prediction", {
+      modelBase,
+      error: e?.message || e,
+      stack: e?.stack,
+      response: e?.response,
+      status: e?.status,
+      data: e?.data,
+      statusCode: e?.statusCode,
+    });
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: e?.message || "Replicate submit failed",
+    } as any);
+
+    let errorMessage = e?.message || "Replicate API error";
+    const statusCode = e?.statusCode || e?.response?.status || e?.status;
+
+    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
+      if (errorMessage.includes('500: Internal server error') || errorMessage.includes('Error code 500')) {
+        errorMessage = "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else if (errorMessage.includes('502') || errorMessage.includes('Bad Gateway')) {
+        errorMessage = "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else {
+        errorMessage = "Replicate service returned an error. Please try again in a few minutes.";
+      }
+    } else {
+      if (e?.response?.data) {
+        if (typeof e.response.data === 'string') {
+          if (e.response.data.includes('<!DOCTYPE html>')) {
+            errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+          } else {
+            errorMessage = e.response.data;
+          }
+        } else if (e.response.data.detail) {
+          errorMessage = e.response.data.detail;
+        } else if (e.response.data.message) {
+          errorMessage = e.response.data.message;
+        }
+      }
+    }
+
+    if (
+      statusCode === 404 ||
+      (errorMessage && errorMessage.includes("404"))
+    ) {
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${errorMessage || "Model not found"
+        }`;
+      throw new ApiError(notFoundMessage, 404, e);
+    }
+
+    if (statusCode === 500) {
+      throw new ApiError(
+        errorMessage || "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
+        502,
+        e
+      );
+    }
+
+    if (statusCode === 502) {
+      throw new ApiError(
+        errorMessage || "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
+        502,
+        e
+      );
+    }
+
+    throw new ApiError(
+      `Failed to submit Seedance Pro Fast T2V job: ${errorMessage}`,
+      502,
+      e
+    );
+  }
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: "replicate",
+    providerTaskId: predictionId,
+  } as any);
+  return {
+    requestId: predictionId,
+    historyId,
+    model: modelBase,
+    status: "submitted",
+  };
+}
+
+export async function seedanceProFastI2vSubmit(
+  uid: string,
+  body: any
+): Promise<SubmitReturn> {
+  if (!body?.prompt) throw new ApiError("prompt is required", 400);
+  if (!body?.image) throw new ApiError("image is required", 400);
+  const replicate = ensureReplicate();
+  const modelBase = "bytedance/seedance-1-pro-fast";
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator
+    ? { uid, username: creator.username, email: (creator as any)?.email }
+    : ({ uid } as any);
+  const durationSec = ((): number => {
+    const d = Number(body?.duration ?? 5);
+    return Math.max(2, Math.min(12, Math.round(d)));
+  })();
+  const res = ((): string => {
+    const r = String(body?.resolution ?? "1080p").toLowerCase();
+    const m = r.match(/(480|720|1080)/);
+    return m ? `${m[1]}p` : "1080p";
+  })();
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt,
+    model: modelBase,
+    generationType: "image-to-video",
+    visibility: body.isPublic ? "public" : "private",
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    duration: durationSec as any,
+    resolution: res as any,
+  } as any);
+
+  // Persist input image (for I2V) and reference_images to history
+  // Note: Pro Fast does NOT support last_frame_image
+  try {
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    const urls: string[] = [];
+    if (typeof body.image === 'string') urls.push(String(body.image));
+    if (Array.isArray(body.reference_images)) {
+      for (const r of body.reference_images.slice(0, 4)) if (typeof r === 'string') urls.push(r);
+    }
+    const inputPersisted: any[] = [];
+    let idx = 0;
+    for (const src of urls) {
+      try {
+        const stored = /^data:/i.test(src)
+          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
+          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+      } catch { }
+    }
+    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+  } catch { }
+
+  const input: any = {
+    prompt: body.prompt,
+    image: String(body.image),
+    duration: durationSec,
+    resolution: res,
+    fps: 24,
+  };
+  if (body.seed != null && Number.isInteger(Number(body.seed)))
+    input.seed = Number(body.seed);
+  if (typeof body.camera_fixed === "boolean")
+    input.camera_fixed = body.camera_fixed;
+  // Note: Pro Fast does NOT support last_frame_image
+  // Reference images (1-4 images) - only include if not 1080p
+  if (
+    Array.isArray(body.reference_images) &&
+    body.reference_images.length > 0 &&
+    body.reference_images.length <= 4
+  ) {
+    if (res === "1080p") {
+      console.warn(
+        "[seedanceProFastI2vSubmit] reference_images cannot be used with 1080p resolution, ignoring"
+      );
+    } else {
+      input.reference_images = body.reference_images.slice(0, 4); // Limit to 4 images
+    }
+  }
+
+  let predictionId = "";
+  try {
+    let version: string | null = null;
+    try {
+      version = await getLatestModelVersion(replicate, modelBase);
+      console.log("[seedanceProFastI2vSubmit] Model version lookup", {
+        modelBase,
+        version: version || "not found",
+      });
+    } catch (versionError: any) {
+      console.warn(
+        "[seedanceProFastI2vSubmit] Version lookup failed, will try direct model",
+        { modelBase, error: versionError?.message }
+      );
+    }
+
+    console.log("[seedanceProFastI2vSubmit] Creating prediction", {
+      modelBase,
+      version: version || "latest",
+      input,
+    });
+    const pred = await replicate.predictions.create(
+      version ? { version, input } : { model: modelBase, input }
+    );
+    predictionId = (pred as any)?.id || "";
+    if (!predictionId) throw new Error("Missing prediction id");
+    console.log("[seedanceProFastI2vSubmit] Prediction created", { predictionId });
+  } catch (e: any) {
+    console.error("[seedanceProFastI2vSubmit] Error creating prediction", {
+      modelBase,
+      error: e?.message || e,
+      stack: e?.stack,
+      response: e?.response,
+      status: e?.status,
+      data: e?.data,
+      statusCode: e?.statusCode,
+    });
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: e?.message || "Replicate submit failed",
+    } as any);
+
+    let errorMessage = e?.message || "Replicate API error";
+    const statusCode = e?.statusCode || e?.response?.status || e?.status;
+
+    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
+      if (errorMessage.includes('500: Internal server error') || errorMessage.includes('Error code 500')) {
+        errorMessage = "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else if (errorMessage.includes('502') || errorMessage.includes('Bad Gateway')) {
+        errorMessage = "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else {
+        errorMessage = "Replicate service returned an error. Please try again in a few minutes.";
+      }
+    } else {
+      if (e?.response?.data) {
+        if (typeof e.response.data === 'string') {
+          if (e.response.data.includes('<!DOCTYPE html>')) {
+            errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+          } else {
+            errorMessage = e.response.data;
+          }
+        } else if (e.response.data.detail) {
+          errorMessage = e.response.data.detail;
+        } else if (e.response.data.message) {
+          errorMessage = e.response.data.message;
+        }
+      }
+    }
+
+    if (
+      statusCode === 404 ||
+      (errorMessage && errorMessage.includes("404"))
+    ) {
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${errorMessage || "Model not found"
+        }`;
+      throw new ApiError(notFoundMessage, 404, e);
+    }
+
+    if (statusCode === 500) {
+      throw new ApiError(
+        errorMessage || "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
+        502,
+        e
+      );
+    }
+
+    if (statusCode === 502) {
+      throw new ApiError(
+        errorMessage || "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
+        502,
+        e
+      );
+    }
+
+    throw new ApiError(
+      `Failed to submit Seedance Pro Fast I2V job: ${errorMessage}`,
+      502,
+      e
+    );
+  }
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: "replicate",
+    providerTaskId: predictionId,
+  } as any);
+  return {
+    requestId: predictionId,
+    historyId,
+    model: modelBase,
+    status: "submitted",
+  };
+}
+
+Object.assign(replicateService, { seedanceProFastT2vSubmit, seedanceProFastI2vSubmit });
 
 // ============ Queue-style API for Replicate PixVerse v5 ============
 

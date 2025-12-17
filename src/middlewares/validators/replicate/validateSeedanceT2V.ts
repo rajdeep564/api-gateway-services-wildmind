@@ -6,7 +6,8 @@ import { ApiError } from '../../../utils/errorHandler';
 // Required: prompt (string)
 // Optional: duration (integer 2-12, default 5), resolution (480p/720p/1080p, default 1080p), 
 //           aspect_ratio (16:9/4:3/1:1/3:4/9:16/21:9/9:21, default 16:9),
-//           seed (integer), fps (24 only), camera_fixed (boolean, default false)
+//           seed (integer), fps (24 only), camera_fixed (boolean, default false),
+//           image (string URI, first frame), last_frame_image (string URI, requires image)
 const allowedResolutions = ['480p', '720p', '1080p'];
 const allowedAspectRatios = ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', '9:21'];
 
@@ -19,6 +20,8 @@ export const validateSeedanceT2V = [
   body('seed').optional().isInt(),
   body('fps').optional().custom(v => v == null || Number(v) === 24).withMessage('fps must be 24'),
   body('camera_fixed').optional().isBoolean(),
+  body('image').optional().isString().isLength({ min: 5 }).withMessage('image (first frame) must be a valid URI'),
+  body('last_frame_image').optional().isString().isLength({ min: 5 }).withMessage('last_frame_image must be a valid URI'),
   body('speed').optional().custom(v => typeof v === 'string' || typeof v === 'boolean'), // For tier detection (lite vs pro)
   body('reference_images').optional().isArray().withMessage('reference_images must be an array'),
   body('reference_images.*').optional().isString().isLength({ min: 5 }).withMessage('Each reference image must be a valid URI'),
@@ -51,13 +54,26 @@ export const validateSeedanceT2V = [
     // Default camera_fixed to false
     if (req.body.camera_fixed === undefined) req.body.camera_fixed = false;
     
-    // Validate reference_images: 1-4 images, cannot be used with 1080p
+    // Validate last_frame_image: only works if image (first frame) is also provided
+    if (req.body.last_frame_image && String(req.body.last_frame_image).length > 5) {
+      if (!req.body.image || String(req.body.image).length < 5) {
+        return next(new ApiError('last_frame_image requires image (first frame) to be provided', 400));
+      }
+    }
+    
+    // Validate reference_images: 1-4 images, cannot be used with 1080p or first/last frame images
     if (Array.isArray(req.body.reference_images) && req.body.reference_images.length > 0) {
       if (req.body.reference_images.length > 4) {
         return next(new ApiError('reference_images can contain at most 4 images', 400));
       }
       if (req.body.resolution === '1080p') {
         return next(new ApiError('reference_images cannot be used with 1080p resolution', 400));
+      }
+      if (req.body.image && String(req.body.image).length > 5) {
+        return next(new ApiError('reference_images cannot be used with image (first frame)', 400));
+      }
+      if (req.body.last_frame_image && String(req.body.last_frame_image).length > 5) {
+        return next(new ApiError('reference_images cannot be used with last_frame_image', 400));
       }
       // Validate each reference image is a valid URI
       for (const refImg of req.body.reference_images) {

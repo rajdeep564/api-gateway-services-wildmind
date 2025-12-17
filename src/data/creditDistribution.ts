@@ -3684,8 +3684,65 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planD: 85.9826087,
       free: 0.8695652174,
     },
-  }
+  },
 
+  {
+    srNo: 177,
+    modelName: "Seedance 1.0 Pro Fast T2V/I2V 5s 480p",
+    priceToPay: 0.075,
+    overCharge: 0.015,
+    userCost: 0.09,
+    creditsPerGeneration: 180,
+    plans: { planA: 68.66666667, planB: 137.3333333, planC: 343.3333333, planD: 1098.666667, free: 11.11111111 },
+  },
+  {
+    srNo: 178,
+    modelName: "Seedance 1.0 Pro Fast T2V/I2V 5s 720p",
+    priceToPay: 0.125,
+    overCharge: 0.015,
+    userCost: 0.14,
+    creditsPerGeneration: 280,
+    plans: { planA: 44.14285714, planB: 88.28571429, planC: 220.7142857, planD: 706.2857143, free: 7.142857143 },
+  },
+  {
+    srNo: 179,
+    modelName: "Seedance 1.0 Pro Fast T2V/I2V 5s 1080p",
+    priceToPay: 0.3,
+    overCharge: 0.015,
+    userCost: 0.315,
+    creditsPerGeneration: 630,
+    plans: { planA: 19.61904762, planB: 39.23809524, planC: 98.0952381, planD: 313.9047619, free: 3.174603175 },
+  },
+
+  {
+    srNo: 180,
+    modelName: "Seedance 1.0 Pro Fast T2V/I2V 10s 720p",
+    priceToPay: 0.25,
+    overCharge: 0.015,
+    userCost: 0.265,
+    creditsPerGeneration: 530,
+    plans: { planA: 23.32075472, planB: 46.64150943, planC: 116.6037736, planD: 373.1320755, free: 3.773584906 },
+  },
+  {
+    srNo: 181,
+    modelName: "Seedance 1.0 Pro Fast T2V/I2V 10s 1080p",
+    priceToPay: 0.6,
+    overCharge: 0.015,
+    userCost: 0.615,
+    creditsPerGeneration: 1230,
+    plans: { planA: 10.04878049, planB: 20.09756098, planC: 50.24390244, planD: 160.7804878, free: 1.62601626 },
+  },
+
+  {
+    srNo: 182,
+    modelName: "Seedance 1.0 Pro Fast T2V/I2V 10s 480p",
+    priceToPay: 0.15,
+    overCharge: 0.015,
+    userCost: 0.165,
+    creditsPerGeneration: 330,
+    plans: { planA: 37.45454545, planB: 74.90909091, planC: 187.2727273, planD: 599.2727273, free: 6.060606061 },
+  },
+ 
 
 
 

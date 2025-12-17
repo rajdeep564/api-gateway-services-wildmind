@@ -245,6 +245,88 @@ export async function seedanceI2vSubmit(req: Request, res: Response, next: NextF
 
 Object.assign(replicateController, { seedanceT2vSubmit, seedanceI2vSubmit });
 
+// Seedance Pro Fast queue handlers
+export async function seedanceProFastT2vSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).seedanceProFastT2vSubmit(uid, req.body || {});
+
+    const ctx = (req as any).context || {};
+    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'seedance-pro-fast-t2v');
+
+    // Synchronous wait for video generation
+    try {
+      const requestId = result.requestId;
+      if (requestId) {
+        const finalPrediction = await waitForPrediction(requestId);
+        // If successful, we might want to update the result with the final output
+        // replicateQueueResult handles the finalization (upload, history update)
+        // So we call it here to ensure everything is processed
+        const finalResult = await (replicateService as any).replicateQueueResult(uid, requestId);
+
+        // Return the final result
+        res.json(formatApiResponse('success', 'Completed', {
+          ...finalResult,
+          debitedCredits: ctx.creditCost,
+          debitStatus: debitOutcome
+        }));
+        return;
+      }
+    } catch (err: any) {
+      // Refund if generation failed
+      await issueRefund(uid, result.requestId, ctx.creditCost, 'replicate.seedance-pro-fast-t2v.failed', { error: err.message });
+      throw err;
+    }
+
+    // Fallback if no requestId (shouldn't happen)
+    res.json(formatApiResponse('success', 'Submitted', {
+      ...result,
+      debitedCredits: ctx.creditCost,
+      debitStatus: debitOutcome
+    }));
+  } catch (e) { next(e); }
+}
+
+export async function seedanceProFastI2vSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).seedanceProFastI2vSubmit(uid, req.body || {});
+
+    const ctx = (req as any).context || {};
+    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'seedance-pro-fast-i2v');
+
+    // Synchronous wait for video generation
+    try {
+      const requestId = result.requestId;
+      if (requestId) {
+        const finalPrediction = await waitForPrediction(requestId);
+        // Finalize result
+        const finalResult = await (replicateService as any).replicateQueueResult(uid, requestId);
+
+        // Return the final result
+        res.json(formatApiResponse('success', 'Completed', {
+          ...finalResult,
+          debitedCredits: ctx.creditCost,
+          debitStatus: debitOutcome
+        }));
+        return;
+      }
+    } catch (err: any) {
+      // Refund if generation failed
+      await issueRefund(uid, result.requestId, ctx.creditCost, 'replicate.seedance-pro-fast-i2v.failed', { error: err.message });
+      throw err;
+    }
+
+    res.json(formatApiResponse('success', 'Submitted', {
+      ...result,
+      debitedCredits: ctx.creditCost,
+      debitStatus: debitOutcome
+    }));
+  } catch (e) { next(e); }
+}
+
+Object.assign(replicateController, { seedanceProFastT2vSubmit, seedanceProFastI2vSubmit });
+
 // PixVerse queue handlers
 export async function pixverseT2vSubmit(req: Request, res: Response, next: NextFunction) {
   try {
