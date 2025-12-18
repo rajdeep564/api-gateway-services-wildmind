@@ -2727,6 +2727,79 @@ async function klingO1FirstLastSubmit(uid: string, body: any): Promise<SubmitRet
   return { requestId: request_id, historyId, model, status: 'submitted' };
 }
 
+async function klingO1ReferenceSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+  fal.config({ credentials: falKey });
+  if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+  if (!body?.image_urls || !Array.isArray(body.image_urls) || body.image_urls.length === 0) {
+    throw new ApiError('image_urls array is required and must contain at least one image', 400);
+  }
+  
+  // Duration must be "5" or "10" as string enum
+  const duration = typeof body.duration === 'number' ? String(body.duration) : String(body.duration || '5');
+  if (duration !== '5' && duration !== '10') {
+    throw new ApiError('duration must be "5" or "10"', 400);
+  }
+  
+  // Aspect ratio validation
+  const aspectRatio = body.aspect_ratio || '16:9';
+  if (!['16:9', '9:16', '1:1'].includes(aspectRatio)) {
+    throw new ApiError('aspect_ratio must be "16:9", "9:16", or "1:1"', 400);
+  }
+  
+  const model = 'fal-ai/kling-video/o1/standard/reference-to-video';
+  const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+  
+  // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
+  const creator = await authRepository.getUserById(uid);
+  const username = creator?.username || uid;
+  const keyPrefix = `users/${username}/input/${historyId}`;
+  const imageUrls: string[] = [];
+  
+  try {
+    // Upload each image if it's a data URI
+    for (let i = 0; i < body.image_urls.length; i++) {
+      let imageUrl = body.image_urls[i];
+      if (typeof imageUrl === 'string' && /^data:/i.test(imageUrl)) {
+        const stored = await uploadDataUriToZata({ dataUri: imageUrl, keyPrefix, fileName: `input-${i + 1}` });
+        imageUrl = stored.publicUrl;
+      }
+      imageUrls.push(imageUrl);
+    }
+  } catch (e: any) {
+    console.error('[falService.klingO1ReferenceSubmit] Failed to upload images to Zata:', e);
+    throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
+  }
+  
+  // Persist images to history
+  await persistInputImagesFromUrls(uid, historyId, imageUrls);
+  
+  // Build request payload
+  const input: any = {
+    prompt: body.prompt,
+    image_urls: imageUrls,
+    duration,
+    aspect_ratio: aspectRatio,
+  };
+  
+  // Add elements if provided (for future support)
+  if (body.elements && Array.isArray(body.elements) && body.elements.length > 0) {
+    input.elements = body.elements;
+  }
+  
+  const { request_id } = await fal.queue.submit(model, { input } as any);
+  
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: 'fal',
+    providerTaskId: request_id,
+    duration,
+    aspect_ratio: aspectRatio,
+    image_urls: imageUrls,
+  } as any);
+  
+  return { requestId: request_id, historyId, model, status: 'submitted' };
+}
+
 async function queueStatus(uid: string, model: string | undefined, requestId: string): Promise<any> {
   const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   fal.config({ credentials: falKey });
@@ -2985,6 +3058,7 @@ export const falQueueService = {
   veoTtvSubmit,
   veoI2vSubmit,
   klingO1FirstLastSubmit,
+  klingO1ReferenceSubmit,
   // Veo 3.1 variants
   async veo31TtvSubmit(uid: string, body: any, fast = false): Promise<SubmitReturn> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);

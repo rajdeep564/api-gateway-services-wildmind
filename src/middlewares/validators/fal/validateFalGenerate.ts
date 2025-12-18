@@ -366,6 +366,33 @@ export const validateFalKlingO1FirstLastSubmit = [
   }
 ];
 
+// Kling o1 Reference to Video (single image or multiple images)
+export const validateFalKlingO1ReferenceSubmit = [
+  body('prompt').isString().notEmpty().withMessage('prompt is required'),
+  body('image_urls').isArray().withMessage('image_urls must be an array'),
+  body('image_urls').custom((value) => {
+    if (!Array.isArray(value) || value.length === 0) {
+      throw new Error('image_urls must contain at least one image URL');
+    }
+    if (value.length > 7) {
+      throw new Error('image_urls must contain at most 7 images');
+    }
+    return true;
+  }).withMessage('image_urls must contain 1-7 image URLs'),
+  body('image_urls.*').isString().withMessage('Each image_urls item must be a string'),
+  body('duration').optional().custom((value) => {
+    const str = typeof value === 'string' ? value : String(value);
+    return str === '5' || str === '10';
+  }).withMessage('duration must be "5" or "10"'),
+  body('aspect_ratio').optional().isIn(['16:9', '9:16', '1:1']).withMessage('aspect_ratio must be "16:9", "9:16", or "1:1"'),
+  body('elements').optional().isArray().withMessage('elements must be an array'),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
 // Sora 2 Image-to-Video (Standard)
 export const validateFalSora2I2v = [
   body('prompt').isString().notEmpty().withMessage('prompt is required'),

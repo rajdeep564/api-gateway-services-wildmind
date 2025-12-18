@@ -66,6 +66,7 @@ import {
   validateFalTopazUpscaleImage,
   validateFalBirefnetVideo,
   validateFalKlingO1FirstLastSubmit,
+  validateFalKlingO1ReferenceSubmit,
   validateFalNanoBananaPro,
 } from "../middlewares/validators/fal/validateFalGenerate";
 
@@ -271,6 +272,16 @@ router.post(
     computeFalKlingO1SubmitCost(req)
   ) as any,
   (falController as any).klingO1FirstLastSubmit
+);
+// Kling o1 Reference to Video (single or multiple images)
+router.post(
+  "/kling-o1/reference-to-video/submit",
+  requireAuth as any,
+  validateFalKlingO1ReferenceSubmit as any,
+  makeCreditCost("fal", "kling_o1_first_last_submit", (req) =>
+    computeFalKlingO1SubmitCost(req)
+  ) as any,
+  (falController as any).klingO1ReferenceSubmit
 );
 router.get(
   "/queue/status",
