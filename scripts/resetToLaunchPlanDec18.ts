@@ -1,14 +1,14 @@
 /**
- * Reset All Users to Launch Plan with December 18, 2025 Trial Start Date
+ * Reset All Users to Launch Plan with December 25, 2025 Trial Start Date
  * 
  * This script:
  * 1. Clears all ledger entries for each user
  * 2. Sets all users to LAUNCH_4000_FIXED plan
  * 3. Sets credit balance to 4000
- * 4. Sets launchTrialStartDate to December 18, 2025 (00:00:00 UTC)
+ * 4. Sets launchTrialStartDate to December 25, 2025 (00:00:00 UTC)
  * 5. Marks launchMigrationDone = true
  * 
- * The trial start date is set to December 18, 2025, so the 15-day trial period
+ * The trial start date is set to December 25, 2025, so the 15-day trial period
  * will align with the cutoff date logic in the system.
  * 
  * Usage:
@@ -27,8 +27,8 @@ import { creditsService } from '../src/services/creditsService';
 
 const LAUNCH_PLAN_CODE = 'LAUNCH_4000_FIXED';
 const LAUNCH_FIXED_CREDITS = 4000;
-// December 18, 2025 at 00:00:00 UTC
-const TRIAL_START_DATE = new Date('2025-12-18T00:00:00.000Z');
+// December 25, 2025 at 00:00:00 UTC
+const TRIAL_START_DATE = new Date('2025-12-25T00:00:00.000Z');
 const TRIAL_START_TIMESTAMP = admin.firestore.Timestamp.fromDate(TRIAL_START_DATE);
 
 interface MigrationStats {
@@ -42,12 +42,12 @@ interface MigrationStats {
 async function resetToLaunchPlanDec18(options: { dryRun?: boolean; limit?: number } = {}): Promise<MigrationStats> {
   const { dryRun = false, limit } = options;
   
-  console.log('\n🚀 ==== Reset All Users to Launch Plan (Dec 18, 2025) ====\n');
+  console.log('\n🚀 ==== Reset All Users to Launch Plan (Dec 25, 2025) ====\n');
   console.log('📋 Strategy:');
   console.log('  - All users → LAUNCH_4000_FIXED plan');
   console.log('  - All users → 4000 credits (fixed, no daily reset)');
   console.log('  - Clear ALL ledger history for each user');
-  console.log('  - Set launchTrialStartDate to December 18, 2025 00:00:00 UTC');
+  console.log('  - Set launchTrialStartDate to December 25, 2025 00:00:00 UTC');
   console.log('  - Mark launchMigrationDone = true');
   console.log(`  - Mode: ${dryRun ? 'DRY RUN (no changes)' : 'LIVE'}`);
   if (limit) {
@@ -121,13 +121,13 @@ async function resetToLaunchPlanDec18(options: { dryRun?: boolean; limit?: numbe
               // Continue even if ledger clear has issues
             }
 
-            // Update user to launch plan with December 18, 2025 trial start date
-            console.log(`  🔄 Setting ${email} to launch plan with Dec 18, 2025 trial start...`);
+            // Update user to launch plan with December 25, 2025 trial start date
+            console.log(`  🔄 Setting ${email} to launch plan with Dec 25, 2025 trial start...`);
             await adminDb.collection('users').doc(uid).update({
               planCode: LAUNCH_PLAN_CODE,
               creditBalance: LAUNCH_FIXED_CREDITS,
               launchMigrationDone: true,
-              launchTrialStartDate: TRIAL_START_TIMESTAMP, // December 18, 2025 00:00:00 UTC
+              launchTrialStartDate: TRIAL_START_TIMESTAMP, // December 25, 2025 00:00:00 UTC
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
 
@@ -172,7 +172,7 @@ async function resetToLaunchPlanDec18(options: { dryRun?: boolean; limit?: numbe
       console.log('✅ Reset complete!');
       console.log(`   All users are now on ${LAUNCH_PLAN_CODE} with 4000 credits`);
       console.log(`   Trial start date set to: ${TRIAL_START_DATE.toISOString()}`);
-      console.log(`   (15-day trial period: Dec 18, 2025 - Jan 2, 2026)\n`);
+      console.log(`   (15-day trial period: Dec 25, 2025 - Jan 9, 2026)\n`);
     }
 
   } catch (error) {
@@ -207,7 +207,7 @@ for (const arg of args) {
     console.log('  - Clear all ledgers for all users');
     console.log('  - Set all users to LAUNCH_4000_FIXED plan');
     console.log('  - Set credit balance to 4000');
-    console.log('  - Set launchTrialStartDate to December 18, 2025 00:00:00 UTC');
+    console.log('  - Set launchTrialStartDate to December 25, 2025 00:00:00 UTC');
     process.exit(0);
   }
 }
