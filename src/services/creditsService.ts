@@ -10,6 +10,7 @@ const LAUNCH_FIXED_CREDITS = 4000;
 
 // Launch plan cutoff date: December 25, 2025 (end of day UTC)
 // Users signing up on or before this date get launch plan, after this date get FREE plan
+// ALL users on launch plan get extended trial until this cutoff date (regardless of 15-day period)
 // Can be overridden via LAUNCH_PLAN_CUTOFF_DATE environment variable (ISO string format)
 const LAUNCH_PLAN_CUTOFF_DATE = process.env.LAUNCH_PLAN_CUTOFF_DATE 
   ? new Date(process.env.LAUNCH_PLAN_CUTOFF_DATE)
@@ -251,8 +252,9 @@ export const creditsService = {
   /**
    * Launch offer: ensure user is on launch plan with 4000 fixed credits (no daily reset).
    * - One-time migration: clear all ledgers and move user to launch plan with 0 -> 4000 credits.
-   * - No daily reset: credits are fixed for the 15-day period.
-   * - Only works until December 25, 2025 cutoff date. After that, users get FREE plan.
+   * - No daily reset: credits are fixed until cutoff date.
+   * - ALL users get extended trial until December 25, 2025 cutoff date (regardless of 15-day period).
+   * - After cutoff date, users get FREE plan.
    */
   async ensureLaunchDailyReset(uid: string): Promise<{ planCode: string; creditBalance: number }> {
     const userRef = adminDb.collection('users').doc(uid);
@@ -290,52 +292,27 @@ export const creditsService = {
       };
     }
     
-    // If we're past the cutoff date, don't assign launch plan to existing users either
-    if (!isWithinPeriod) {
-      const data = snap.data() as any;
-      const currentPlan = data?.planCode || FREE_PLAN_CODE;
-      
-      // If user is on launch plan but we're past cutoff, switch them to FREE
-      if (currentPlan === LAUNCH_PLAN_CODE) {
-        await userRef.set(
-          {
-            planCode: FREE_PLAN_CODE,
-            creditBalance: 2000,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-        return { planCode: FREE_PLAN_CODE, creditBalance: 2000 };
-      }
-      
-      // User is already on FREE or another plan
-      return { 
-        planCode: currentPlan, 
-        creditBalance: Number(data?.creditBalance || 2000) 
-      };
-    }
-
     const data = snap.data() as any;
     const planCode: string = data.planCode || FREE_PLAN_CODE;
     const migrated: boolean = Boolean(data.launchMigrationDone);
     const trialStartDate = data.launchTrialStartDate;
 
-    // Check if trial has expired (15 days OR past cutoff date)
+    // PRIORITY 1: Check if user on launch plan has expired trial
+    // Trial extends until December 25, 2025 (cutoff date) for ALL users
+    // Trial expires ONLY when we're past the cutoff date (not based on 15 days alone)
+    // This must be checked FIRST, before any other logic
     if (planCode === LAUNCH_PLAN_CODE && trialStartDate) {
       const startDate = trialStartDate.toDate ? trialStartDate.toDate() : new Date(trialStartDate);
       const now = new Date();
       const daysSinceStart = Math.floor((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
       
-      // Trial expires if: 15 days have passed OR we're past the cutoff date
+      // Trial expires ONLY when we're past the cutoff date (Dec 25, 2025)
+      // All users get extended trial until cutoff date, regardless of 15-day period
       const isPastCutoff = now > LAUNCH_PLAN_CUTOFF_DATE;
-      const is15DaysPassed = daysSinceStart >= 15;
       
-      if (is15DaysPassed || isPastCutoff) {
-        // Trial expired - switch to FREE plan
-        const reason = isPastCutoff 
-          ? `cutoff date reached (${daysSinceStart} days since start)` 
-          : `15 days expired (${daysSinceStart} days since start)`;
-        console.log(`[LaunchOffer] Trial expired for user ${uid}, switching to FREE plan - ${reason}`);
+      if (isPastCutoff) {
+        // Trial expired - cutoff date reached, switch to FREE plan
+        console.log(`[LaunchOffer] Trial expired for user ${uid} - cutoff date reached (${daysSinceStart} days since start), switching to FREE plan`);
         await userRef.set(
           {
             planCode: FREE_PLAN_CODE,
@@ -352,7 +329,57 @@ export const creditsService = {
           2000,
           FREE_PLAN_CODE,
           'trial.expired_to_free',
-          { previousPlan: LAUNCH_PLAN_CODE, trialDays: daysSinceStart, reason: isPastCutoff ? 'cutoff_date' : '15_days' }
+          { previousPlan: LAUNCH_PLAN_CODE, trialDays: daysSinceStart, reason: 'cutoff_date' }
+        );
+        return { planCode: FREE_PLAN_CODE, creditBalance: 2000 };
+      }
+    }
+
+    // PRIORITY 2: Handle users on launch plan but missing trialStartDate
+    // If past cutoff and missing trialStartDate, switch to FREE (can't determine trial status)
+    if (planCode === LAUNCH_PLAN_CODE && !trialStartDate && !isWithinPeriod) {
+      console.log(`[LaunchOffer] User ${uid} on launch plan but missing trialStartDate and past cutoff - switching to FREE`);
+      await userRef.set(
+        {
+          planCode: FREE_PLAN_CODE,
+          creditBalance: 2000,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      // Create grant ledger entry
+      const requestId = `LAUNCH_MISSING_TRIAL_DATE_TO_FREE_${Date.now()}`;
+      await creditsRepository.writeGrantAndSetPlanIfAbsent(
+        uid,
+        requestId,
+        2000,
+        FREE_PLAN_CODE,
+        'trial.missing_trial_date_past_cutoff',
+        { previousPlan: LAUNCH_PLAN_CODE, reason: 'missing_trial_date_past_cutoff' }
+      );
+      return { planCode: FREE_PLAN_CODE, creditBalance: 2000 };
+    }
+
+    // PRIORITY 3: If we're past the cutoff date, don't assign launch plan to new/existing users
+    // But only if they're not already on launch plan with valid trial
+    if (!isWithinPeriod) {
+      // User is already on FREE or another plan, or was handled above
+      if (planCode !== LAUNCH_PLAN_CODE) {
+        return { 
+          planCode: planCode, 
+          creditBalance: Number(data?.creditBalance || 2000) 
+        };
+      }
+      // If somehow still on launch plan (shouldn't happen after above checks), switch to FREE
+      if (planCode === LAUNCH_PLAN_CODE) {
+        console.log(`[LaunchOffer] User ${uid} on launch plan but past cutoff - switching to FREE`);
+        await userRef.set(
+          {
+            planCode: FREE_PLAN_CODE,
+            creditBalance: 2000,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
         );
         return { planCode: FREE_PLAN_CODE, creditBalance: 2000 };
       }
@@ -396,7 +423,7 @@ export const creditsService = {
       return { planCode: FREE_PLAN_CODE, creditBalance: 2000 };
     }
 
-    // Already migrated – ensure plan is launch and trial start date is set (only if within period)
+    // PRIORITY 4: Already migrated – ensure plan is launch and trial start date is set (only if within period)
     if (planCode !== LAUNCH_PLAN_CODE && isWithinPeriod) {
       const now = admin.firestore.FieldValue.serverTimestamp();
       await userRef.set(
@@ -408,34 +435,44 @@ export const creditsService = {
         { merge: true }
       );
     } else if (planCode === LAUNCH_PLAN_CODE && !trialStartDate && isWithinPeriod) {
-      // User is on launch plan but missing trial start date - set it now (only if within period)
+      // PRIORITY 5: User is on launch plan but missing trial start date - set it now (only if within period)
       // This handles cases where user was created before trial start date logic was added
-      const now = admin.firestore.FieldValue.serverTimestamp();
+      // Use createdAt as trial start date if available, otherwise use current time
+      const createdAt = data.createdAt;
+      const trialStartTimestamp = createdAt && createdAt.toDate 
+        ? createdAt 
+        : admin.firestore.FieldValue.serverTimestamp();
+      
       await userRef.set(
         {
-          launchTrialStartDate: now,
+          launchTrialStartDate: trialStartTimestamp,
           launchMigrationDone: true, // Also mark as migrated
-          updatedAt: now,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
       );
-      console.log(`[LaunchOffer] Set missing launchTrialStartDate for user ${uid}`);
-      console.log(`[LaunchOffer] Set missing launchTrialStartDate for user ${uid}`);
+      console.log(`[LaunchOffer] Set missing launchTrialStartDate for user ${uid} (using ${createdAt ? 'createdAt' : 'current time'})`);
     }
 
-    // Ensure trial start date is set for users on launch plan (final check)
+    // PRIORITY 6: Final check - ensure trial start date is set for users on launch plan (only if within period)
     if (planCode === LAUNCH_PLAN_CODE && isWithinPeriod) {
       const finalData = (await userRef.get()).data() as any;
       if (!finalData?.launchTrialStartDate) {
         // Last resort: set trial start date if still missing
+        // Prefer createdAt if available, otherwise use current time
+        const createdAt = finalData.createdAt;
+        const trialStartTimestamp = createdAt && createdAt.toDate 
+          ? createdAt 
+          : admin.firestore.FieldValue.serverTimestamp();
+        
         await userRef.set(
           {
-            launchTrialStartDate: admin.firestore.FieldValue.serverTimestamp(),
+            launchTrialStartDate: trialStartTimestamp,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true }
         );
-        console.log(`[LaunchOffer] Final check: Set launchTrialStartDate for user ${uid}`);
+        console.log(`[LaunchOffer] Final check: Set launchTrialStartDate for user ${uid} (using ${createdAt ? 'createdAt' : 'current time'})`);
       }
     }
 
