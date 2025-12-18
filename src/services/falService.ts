@@ -2670,20 +2670,48 @@ async function klingO1FirstLastSubmit(uid: string, body: any): Promise<SubmitRet
   const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   fal.config({ credentials: falKey });
   if (!body?.prompt) throw new ApiError('Prompt is required', 400);
-  const first = body.start_image_url || body.first_frame_url;
-  const last = body.end_image_url || body.last_frame_url;
+  let first = body.start_image_url || body.first_frame_url;
+  let last = body.end_image_url || body.last_frame_url;
   if (!first) throw new ApiError('start_image_url is required', 400);
+  if (!last) throw new ApiError('end_image_url is required', 400);
+  // Duration must be "5" or "10" as string enum
   const duration = typeof body.duration === 'number' ? String(body.duration) : String(body.duration || '5');
-  const model = 'fal-ai/kling-video/o1/image-to-video';
+  if (duration !== '5' && duration !== '10') {
+    throw new ApiError('duration must be "5" or "10"', 400);
+  }
+  const model = 'fal-ai/kling-video/o1/standard/image-to-video';
 
   const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+  
+  // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
+  const creator = await authRepository.getUserById(uid);
+  const username = creator?.username || uid;
+  const keyPrefix = `users/${username}/input/${historyId}`;
+  
+  try {
+    // Upload first image if it's a data URI
+    if (typeof first === 'string' && /^data:/i.test(first)) {
+      const stored = await uploadDataUriToZata({ dataUri: first, keyPrefix, fileName: 'input-1' });
+      first = stored.publicUrl;
+    }
+    // Upload last image if it's a data URI
+    if (typeof last === 'string' && /^data:/i.test(last)) {
+      const stored = await uploadDataUriToZata({ dataUri: last, keyPrefix, fileName: 'input-2' });
+      last = stored.publicUrl;
+    }
+  } catch (e: any) {
+    console.error('[falService.klingO1FirstLastSubmit] Failed to upload images to Zata:', e);
+    throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
+  }
+  
+  // Persist images to history
   await persistInputImagesFromUrls(uid, historyId, [first, last]);
 
   const { request_id } = await fal.queue.submit(model, {
     input: {
       prompt: body.prompt,
       start_image_url: first,
-      ...(last ? { end_image_url: last } : {}),
+      end_image_url: last,
       duration,
     },
   } as any);
@@ -2693,7 +2721,7 @@ async function klingO1FirstLastSubmit(uid: string, body: any): Promise<SubmitRet
     providerTaskId: request_id,
     duration,
     start_image_url: first,
-    ...(last ? { end_image_url: last } : {}),
+    end_image_url: last,
   } as any);
 
   return { requestId: request_id, historyId, model, status: 'submitted' };
@@ -3000,12 +3028,28 @@ export const falQueueService = {
       generate_audio: body.generate_audio ?? true,
     } as any);
 
+    // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
+    let imageUrl = body.image_url;
+    const creator = await authRepository.getUserById(uid);
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    
+    try {
+      if (typeof imageUrl === 'string' && /^data:/i.test(imageUrl)) {
+        const stored = await uploadDataUriToZata({ dataUri: imageUrl, keyPrefix, fileName: 'input-1' });
+        imageUrl = stored.publicUrl;
+      }
+    } catch (e: any) {
+      console.error('[falService.veo31I2vSubmit] Failed to upload image to Zata:', e);
+      throw new ApiError('Failed to upload image: ' + (e?.message || String(e)), 500);
+    }
+
     // Persist input image
-    await persistInputImagesFromUrls(uid, historyId, [body.image_url]);
+    await persistInputImagesFromUrls(uid, historyId, [imageUrl]);
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
-        image_url: body.image_url,
+        image_url: imageUrl,
         aspect_ratio: body.aspect_ratio ?? 'auto',
         duration,
         generate_audio: body.generate_audio ?? true,
@@ -3022,12 +3066,31 @@ export const falQueueService = {
     if (!Array.isArray(body?.image_urls) || body.image_urls.length === 0) throw new ApiError('image_urls is required and must contain at least one URL', 400);
     const model = 'fal-ai/veo3.1/reference-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    
+    // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
+    const creator = await authRepository.getUserById(uid);
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    const imageUrls = Array.isArray(body.image_urls) ? body.image_urls : [];
+    
+    try {
+      for (let i = 0; i < imageUrls.length; i++) {
+        if (typeof imageUrls[i] === 'string' && /^data:/i.test(imageUrls[i])) {
+          const stored = await uploadDataUriToZata({ dataUri: imageUrls[i], keyPrefix, fileName: `input-${i + 1}` });
+          imageUrls[i] = stored.publicUrl;
+        }
+      }
+    } catch (e: any) {
+      console.error('[falService.veo31ReferenceToVideoSubmit] Failed to upload images to Zata:', e);
+      throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
+    }
+    
     // Persist reference images
-    await persistInputImagesFromUrls(uid, historyId, Array.isArray(body.image_urls) ? body.image_urls : []);
+    await persistInputImagesFromUrls(uid, historyId, imageUrls);
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
-        image_urls: body.image_urls,
+        image_urls: imageUrls,
         duration: body.duration ?? '8s',
         resolution: body.resolution ?? '720p',
         generate_audio: body.generate_audio ?? true,
@@ -3040,8 +3103,8 @@ export const falQueueService = {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     fal.config({ credentials: falKey });
     if (!body?.prompt) throw new ApiError('Prompt is required', 400);
-    const firstUrl = body.first_frame_url || body.start_image_url;
-    const lastUrl = body.last_frame_url || body.last_frame_image_url;
+    let firstUrl = body.first_frame_url || body.start_image_url;
+    let lastUrl = body.last_frame_url || body.last_frame_image_url;
     if (!firstUrl) throw new ApiError('first_frame_url is required', 400);
 
     // If only first frame provided, downgrade to fast I2V path
@@ -3059,8 +3122,30 @@ export const falQueueService = {
 
     const model = 'fal-ai/veo3.1/fast/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    
+    // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
+    const creator = await authRepository.getUserById(uid);
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    
+    try {
+      // Upload first image if it's a data URI
+      if (typeof firstUrl === 'string' && /^data:/i.test(firstUrl)) {
+        const stored = await uploadDataUriToZata({ dataUri: firstUrl, keyPrefix, fileName: 'input-1' });
+        firstUrl = stored.publicUrl;
+      }
+      // Upload last image if it's a data URI
+      if (typeof lastUrl === 'string' && /^data:/i.test(lastUrl)) {
+        const stored = await uploadDataUriToZata({ dataUri: lastUrl, keyPrefix, fileName: 'input-2' });
+        lastUrl = stored.publicUrl;
+      }
+    } catch (e: any) {
+      console.error('[falService.veo31FirstLastFastSubmit] Failed to upload images to Zata:', e);
+      throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
+    }
+    
     // Persist first and last frame images
-    await persistInputImagesFromUrls(uid, historyId, [body.start_image_url || firstUrl, body.last_frame_image_url || lastUrl]);
+    await persistInputImagesFromUrls(uid, historyId, [firstUrl, lastUrl]);
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
@@ -3079,8 +3164,8 @@ export const falQueueService = {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     fal.config({ credentials: falKey });
     if (!body?.prompt) throw new ApiError('Prompt is required', 400);
-    const firstUrl = body.first_frame_url || body.start_image_url;
-    const lastUrl = body.last_frame_url || body.last_frame_image_url;
+    let firstUrl = body.first_frame_url || body.start_image_url;
+    let lastUrl = body.last_frame_url || body.last_frame_image_url;
     if (!firstUrl) throw new ApiError('first_frame_url is required', 400);
 
     // If only first frame provided, downgrade to standard I2V path
@@ -3098,6 +3183,28 @@ export const falQueueService = {
 
     const model = 'fal-ai/veo3.1/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    
+    // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
+    const creator = await authRepository.getUserById(uid);
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    
+    try {
+      // Upload first image if it's a data URI
+      if (typeof firstUrl === 'string' && /^data:/i.test(firstUrl)) {
+        const stored = await uploadDataUriToZata({ dataUri: firstUrl, keyPrefix, fileName: 'input-1' });
+        firstUrl = stored.publicUrl;
+      }
+      // Upload last image if it's a data URI
+      if (typeof lastUrl === 'string' && /^data:/i.test(lastUrl)) {
+        const stored = await uploadDataUriToZata({ dataUri: lastUrl, keyPrefix, fileName: 'input-2' });
+        lastUrl = stored.publicUrl;
+      }
+    } catch (e: any) {
+      console.error('[falService.veo31FirstLastSubmit] Failed to upload images to Zata:', e);
+      throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
+    }
+    
     // Persist first and last frame images
     await persistInputImagesFromUrls(uid, historyId, [firstUrl, lastUrl]);
     const { request_id } = await fal.queue.submit(model, {

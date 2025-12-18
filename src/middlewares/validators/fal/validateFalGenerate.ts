@@ -329,7 +329,7 @@ export const validateFalVeo31ReferenceToVideo = [
   }
 ];
 
-// Kling o1 First/Last Frame to Video
+// Kling o1 First/Last Frame to Video (standard model - requires both images)
 export const validateFalKlingO1FirstLastSubmit = [
   body('prompt').isString().notEmpty().withMessage('prompt is required'),
   body('start_image_url').optional().isString(),
@@ -337,9 +337,10 @@ export const validateFalKlingO1FirstLastSubmit = [
   body('end_image_url').optional().isString(),
   body('last_frame_url').optional().isString(),
   body('duration').optional().custom((value) => {
-    const num = typeof value === 'number' ? value : parseInt(String(value), 10);
-    return num === 5 || num === 10;
-  }).withMessage('duration must be 5 or 10 seconds'),
+    // Accept both string and number, but validate as "5" or "10"
+    const str = typeof value === 'string' ? value : String(value);
+    return str === '5' || str === '10';
+  }).withMessage('duration must be "5" or "10"'),
   (req: Request, _res: Response, next: NextFunction) => {
     // Normalize aliases
     if (!req.body.start_image_url && typeof req.body.first_frame_url === 'string') {
@@ -350,8 +351,13 @@ export const validateFalKlingO1FirstLastSubmit = [
     }
 
     const hasFirst = typeof req.body?.start_image_url === 'string' && req.body.start_image_url.length > 0;
+    const hasLast = typeof req.body?.end_image_url === 'string' && req.body.end_image_url.length > 0;
+    
     if (!hasFirst) {
       return next(new ApiError('start_image_url is required (alias: first_frame_url)', 400));
+    }
+    if (!hasLast) {
+      return next(new ApiError('end_image_url is required (alias: last_frame_url)', 400));
     }
 
     const errors = validationResult(req);
