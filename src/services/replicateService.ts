@@ -2987,10 +2987,12 @@ export async function replicateQueueStatus(
 export async function waitForPrediction(
   predictionId: string,
   timeoutMs: number = 5 * 60 * 1000,
-  intervalMs: number = 2000
+  intervalMs: number = 5000 // OPTIMIZED: Increased from 2s to 5s to reduce CPU load
 ): Promise<any> {
   const replicate = ensureReplicate();
   const startTime = Date.now();
+  let pollCount = 0;
+  
   while (Date.now() - startTime < timeoutMs) {
     const prediction = await replicate.predictions.get(predictionId);
     const status = prediction.status;
@@ -3001,8 +3003,12 @@ export async function waitForPrediction(
       throw new Error(`Prediction ${status}: ${prediction.error || 'Unknown error'}`);
     }
 
-    // Wait before next poll
-    await new Promise(resolve => setTimeout(resolve, intervalMs));
+    pollCount++;
+    // OPTIMIZED: Exponential backoff to reduce CPU load - start at 5s, increase gradually
+    const backoffInterval = Math.min(intervalMs * (1 + Math.floor(pollCount / 10)), 30000); // Max 30s
+    
+    // Wait before next poll with exponential backoff
+    await new Promise(resolve => setTimeout(resolve, backoffInterval));
   }
   throw new Error(`Prediction timed out after ${timeoutMs}ms`);
 }

@@ -98,10 +98,13 @@ async function pollForResults(
   pollingUrl: string,
   apiKey: string
 ): Promise<string> {
-  const intervalMs = env.bflPollIntervalMs ?? 1000; // default 1s
+  // OPTIMIZED: Increased base interval and use exponential backoff to reduce CPU load
+  const baseIntervalMs = env.bflPollIntervalMs ?? 2000; // Increased from 1s to 2s
   const maxLoops = env.bflPollMaxLoops ?? 180; // default ~3 minutes
   for (let i = 0; i < maxLoops; i++) {
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    // OPTIMIZED: Exponential backoff - start at 2s, gradually increase to max 10s
+    const backoffInterval = Math.min(baseIntervalMs * (1 + Math.floor(i / 20)), 10000);
+    await new Promise((resolve) => setTimeout(resolve, backoffInterval));
     const pollResponse = await axios.get(pollingUrl, {
       headers: { accept: "application/json", "x-key": apiKey },
       validateStatus: () => true,
