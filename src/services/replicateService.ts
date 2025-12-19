@@ -1987,7 +1987,7 @@ export async function generateImage(uid: string, body: any) {
       if (rest.quality && ['low', 'medium', 'high', 'auto'].includes(String(rest.quality))) {
         input.quality = String(rest.quality);
       } else {
-        input.quality = 'auto'; // Default per schema
+        input.quality = 'low'; // Default to low quality
       }
       if (rest.aspect_ratio && ['1:1', '3:2', '2:3'].includes(String(rest.aspect_ratio))) {
         input.aspect_ratio = String(rest.aspect_ratio);
@@ -1999,10 +1999,12 @@ export async function generateImage(uid: string, body: any) {
       } else {
         input.number_of_images = 1; // Default per schema
       }
-      if (rest.output_format && ['png', 'jpeg', 'webp'].includes(String(rest.output_format))) {
-        input.output_format = String(rest.output_format);
+      if (rest.output_format && ['png', 'jpeg', 'webp', 'jpg'].includes(String(rest.output_format))) {
+        // Map 'jpg' to 'jpeg' (API expects 'jpeg')
+        const format = String(rest.output_format);
+        input.output_format = format === 'jpg' ? 'jpeg' : format;
       } else {
-        input.output_format = 'webp'; // Default per schema
+        input.output_format = 'jpeg'; // Default to jpeg (jpg)
       }
       if (rest.background && ['auto', 'transparent', 'opaque'].includes(String(rest.background))) {
         input.background = String(rest.background);
@@ -2019,16 +2021,18 @@ export async function generateImage(uid: string, body: any) {
       } else {
         input.output_compression = 90; // Default per schema
       }
-      // Handle input_images for I2I
-      if (rest.input_images && Array.isArray(rest.input_images) && rest.input_images.length > 0) {
+      // Handle input_images for I2I - map from uploadedImages if present
+      const inputImagesSource = rest.input_images || rest.uploadedImages;
+      if (inputImagesSource && Array.isArray(inputImagesSource) && inputImagesSource.length > 0) {
         const username = creator?.username || uid;
         const keyPrefix = `users/${username}/input/${historyId}`;
         const inputPersisted: any[] = [];
         const resolvedImages: string[] = [];
-        for (let i = 0; i < Math.min(rest.input_images.length, 10); i++) {
-          const img = rest.input_images[i];
+        for (let i = 0; i < Math.min(inputImagesSource.length, 10); i++) {
+          const img = inputImagesSource[i];
           try {
             if (typeof img === "string" && img.startsWith("data:")) {
+              // Handle data URIs
               const uploaded = await uploadDataUriToZata({
                 dataUri: img,
                 keyPrefix,
@@ -2040,8 +2044,76 @@ export async function generateImage(uid: string, body: any) {
                 url: uploaded.publicUrl,
                 storagePath: uploaded.key,
               });
-            } else if (typeof img === "string" && (img.startsWith("http://") || img.startsWith("https://"))) {
-              resolvedImages.push(img);
+            } else if (typeof img === "string") {
+              // Check if it's a proxy URL, Zata URL, or absolute URL
+              const isProxyUrl = /^\/api\/proxy\/resource\//i.test(img) || /^\/proxy\/resource\//i.test(img);
+              const isZataUrl = env.zataPrefix && img.startsWith(env.zataPrefix);
+              const isAbsoluteUrl = img.startsWith("http://") || img.startsWith("https://");
+              
+              if (isProxyUrl) {
+                // Extract storage path from proxy URL and construct Zata URL
+                try {
+                  // Match proxy URL pattern: /api/proxy/resource/... or /proxy/resource/...
+                  // Extract everything after /proxy/resource/ or /api/proxy/resource/
+                  const storagePathMatch = img.match(/\/proxy\/resource\/(.+)$/i);
+                  if (storagePathMatch && storagePathMatch[1]) {
+                    // Decode URL-encoded path (e.g., users%2Fvivek -> users/vivek)
+                    const storagePath = decodeURIComponent(storagePathMatch[1]);
+                    
+                    // Construct Zata URL using zataPrefix
+                    if (env.zataPrefix) {
+                      const zataUrl = env.zataPrefix.replace(/\/$/, '') + '/' + storagePath;
+                      resolvedImages.push(zataUrl);
+                      inputPersisted.push({
+                        id: `in-${i + 1}`,
+                        url: zataUrl,
+                        storagePath: storagePath,
+                      });
+                    } else {
+                      console.warn(`[gpt-image-1.5] zataPrefix not configured, cannot convert proxy URL for image ${i + 1}`);
+                      throw new Error('Zata prefix not configured');
+                    }
+                  } else {
+                    throw new Error('Failed to extract storage path from proxy URL');
+                  }
+                } catch (uploadErr) {
+                  console.error(`[gpt-image-1.5] Failed to process proxy URL ${i + 1}:`, uploadErr);
+                  // If we can't convert, we must fail - proxy URLs can't be used directly with Replicate
+                  throw new ApiError(`Failed to convert proxy URL to accessible URL for image ${i + 1}: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`, 400);
+                }
+              } else if (isZataUrl) {
+                // Already a Zata URL, use directly
+                resolvedImages.push(img);
+                inputPersisted.push({
+                  id: `in-${i + 1}`,
+                  url: img,
+                  storagePath: img.substring(env.zataPrefix!.length),
+                });
+              } else if (isAbsoluteUrl) {
+                // Absolute HTTP/HTTPS URL, use directly (Replicate can fetch these)
+                resolvedImages.push(img);
+                inputPersisted.push({
+                  id: `in-${i + 1}`,
+                  url: img,
+                });
+              } else {
+                // Relative or unknown URL format, try uploadFromUrlToZata
+                try {
+                  const uploaded = await uploadFromUrlToZata({
+                    sourceUrl: img,
+                    keyPrefix,
+                    fileName: `gpt-image-1.5-ref-${i + 1}`,
+                  });
+                  resolvedImages.push(uploaded.publicUrl);
+                  inputPersisted.push({
+                    id: `in-${i + 1}`,
+                    url: uploaded.publicUrl,
+                    storagePath: uploaded.key,
+                  });
+                } catch (uploadErr) {
+                  console.warn(`[gpt-image-1.5] Failed to process URL ${i + 1}:`, uploadErr);
+                }
+              }
             }
           } catch (e) {
             console.warn(`[gpt-image-1.5] Failed to process input image ${i + 1}:`, e);
