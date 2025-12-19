@@ -665,34 +665,20 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     (origin && prodDomainHost && (origin.includes(prodDomainHost) || (studioDomainHost && origin.includes(studioDomainHost)))) ||
     (host && prodDomainHost && (host.includes(prodDomainHost) || (studioDomainHost && host.includes(studioDomainHost))));
   
-  // Determine cookie domain based on how user accessed the site:
-  // - If coming from www.wildmindai.com (via referer/origin), use www.wildmindai.com
-  // - If direct access to studio.wildmindai.com, use .wildmindai.com
+  // CRITICAL FIX: Always use .wildmindai.com (cookieDomain) for cross-subdomain sharing
+  // This ensures cookies work across www.wildmindai.com, studio.wildmindai.com, and api.wildmindai.com
+  // Previous logic incorrectly set domain to www.wildmindai.com which prevented cross-subdomain sharing
   if (isProductionLike && cookieDomain) {
-    const isFromWww = 
-      (origin && origin.includes('www.wildmindai.com')) ||
-      (referer && referer.includes('www.wildmindai.com')) ||
-      (host && host.includes('www.wildmindai.com'));
-    
-    const isStudioDirect = 
-      (origin && origin.includes('studio.wildmindai.com')) ||
-      (host && host.includes('studio.wildmindai.com'));
-    
-    if (isFromWww) {
-      // User came from www.wildmindai.com - use www.wildmindai.com as domain
-      finalCookieDomain = 'www.wildmindai.com';
-      shouldSetDomain = true;
-      console.log('[AUTH][setSessionCookie] User accessed from www.wildmindai.com - using www.wildmindai.com cookie domain');
-    } else if (isStudioDirect) {
-      // Direct access to studio.wildmindai.com - use .wildmindai.com as domain
-      finalCookieDomain = cookieDomain; // .wildmindai.com
-      shouldSetDomain = true;
-      console.log('[AUTH][setSessionCookie] Direct access to studio.wildmindai.com - using .wildmindai.com cookie domain');
-    } else {
-      // Default: use .wildmindai.com for cross-subdomain sharing
-      finalCookieDomain = cookieDomain;
-      shouldSetDomain = true;
-    }
+    // Always use .wildmindai.com for production to enable cross-subdomain cookie sharing
+    finalCookieDomain = cookieDomain; // .wildmindai.com
+    shouldSetDomain = true;
+    console.log('[AUTH][setSessionCookie] Production environment - using .wildmindai.com cookie domain for cross-subdomain sharing', {
+      cookieDomain,
+      origin,
+      referer,
+      host,
+      note: 'Cookie will be accessible on all *.wildmindai.com subdomains'
+    });
   } else if (cookieDomain) {
     // Development: only use domain if it matches the host (localhost won't match .wildmindai.com)
     const domainMatches = !!(dom && (host === dom.replace(/^\./, '') || host.endsWith(dom)));
