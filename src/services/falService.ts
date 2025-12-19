@@ -238,7 +238,14 @@ async function generate(
     if (modelLower.includes('ultra')) modelEndpoint = 'fal-ai/imagen4/preview/ultra';
     else if (modelLower.includes('fast')) modelEndpoint = 'fal-ai/imagen4/preview/fast';
     else modelEndpoint = 'fal-ai/imagen4/preview'; // standard
-  } else if (modelLower.includes('seedream-4.5') || modelLower.includes('seedream_v45') || modelLower.includes('seedreamv45')) {
+  } else if (
+    modelLower.includes('seedream-4.5') || 
+    modelLower.includes('seedream_v45') || 
+    modelLower.includes('seedreamv45') ||
+    (modelLower.includes('seedream') && (modelLower.includes('4.5') || modelLower.includes('v4.5') || modelLower.includes('v45')))
+  ) {
+    // Remove resolution suffix from model name for endpoint detection (e.g., "seedream 4.5 2k" -> "seedream 4.5")
+    const modelForEndpoint = modelLower.replace(/\s+(1k|2k|4k)$/, '');
     // Seedream 4.5 (v4.5) on FAL – use /edit endpoint only when images are provided
     // For text-to-image (no uploaded images), use text-to-image endpoint
     // For image-to-image (with uploaded images), use /edit endpoint
@@ -801,10 +808,12 @@ async function generate(
       } else if (modelEndpoint.includes('seedream')) {
         // Seedream models expect `image_size` instead of `aspect_ratio`
         const explicitSize = (payload as any).image_size;
+        // Check for Seedream 4.5 - handle both 'seedream-4.5' (from backend) and 'seedream 4.5' (from frontend)
         const isSeedream45 =
           modelLower.includes('seedream-4.5') ||
           modelLower.includes('seedream_v45') ||
-          modelLower.includes('seedreamv45');
+          modelLower.includes('seedreamv45') ||
+          (modelLower.includes('seedream') && (modelLower.includes('4.5') || modelLower.includes('v4.5') || modelLower.includes('v45')));
 
         if (isSeedream45) {
           // Seedream 4.5 (v45) – use Fal schema:
@@ -828,13 +837,17 @@ async function generate(
 
             // If resolution is explicitly set to 4K or 2K, use auto modes; otherwise use aspect ratio enum
             const resolution = (payload as any).resolution;
+            console.log('[falService] Seedream 4.5 resolution check:', { resolution, hasResolution: !!resolution, payloadResolution: (payload as any).resolution });
             if (resolution === '4K') {
               input.image_size = 'auto_4K';
+              console.log('[falService] ✅ Seedream 4.5: Using auto_4K for 4K resolution');
             } else if (resolution === '2K' || resolution === '1K') {
               input.image_size = 'auto_2K';
+              console.log('[falService] ✅ Seedream 4.5: Using auto_2K for', resolution, 'resolution');
             } else {
               // Use proper frame size enum based on aspect ratio
               input.image_size = mappedEnum;
+              console.log('[falService] ⚠️ Seedream 4.5: No resolution provided, using aspect ratio enum:', mappedEnum);
             }
           }
 

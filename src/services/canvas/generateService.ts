@@ -108,8 +108,20 @@ function calculateAspectRatio(width?: number, height?: number): string {
 /**
  * Map frontend model names to backend model names
  */
-export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 'replicate' | 'fal' | 'runway'; backendModel: string } {
+export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 'replicate' | 'fal' | 'runway'; backendModel: string; resolution?: string } {
   const modelLower = frontendModel.toLowerCase().trim();
+  
+  // Extract resolution from model name if present (e.g., "Google nano banana pro 2K" -> resolution: "2K")
+  // Check in reverse order (4K, 2K, 1K) to match longer suffixes first
+  let resolution: string | undefined;
+  const resolutions = ['4k', '2k', '1k'];
+  for (const res of resolutions) {
+    // Check if model ends with resolution (with or without space before it)
+    if (modelLower.endsWith(' ' + res) || modelLower.endsWith(res)) {
+      resolution = res.toUpperCase(); // Return as '1K', '2K', '4K'
+      break;
+    }
+  }
 
   // Runway models - check FIRST before other models
   if (modelLower.includes('runway gen4 image turbo') || modelLower.includes('gen4 image turbo') || modelLower === 'runway gen4 image turbo') {
@@ -174,9 +186,11 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
   if ((modelLower.includes('imagen-4') || modelLower.includes('imagen 4')) && !modelLower.includes('ultra') && !modelLower.includes('fast')) {
     return { service: 'fal', backendModel: 'imagen-4' };
   }
-  // Google Nano Banana Pro - Replicate model
-  if (modelLower.includes('google nano banana pro') || modelLower.includes('nano banana pro')) {
-    return { service: 'replicate', backendModel: 'google-nano-banana-pro' };
+  // Google Nano Banana Pro - Fal model
+  // Check if model contains nano banana pro (without resolution suffix for matching)
+  const nanoBananaProBase = modelLower.replace(/\s+(1k|2k|4k)$/, ''); // Remove resolution suffix for matching
+  if (nanoBananaProBase.includes('google nano banana pro') || nanoBananaProBase.includes('nano banana pro')) {
+    return { service: 'fal', backendModel: 'google/nano-banana-pro', resolution };
   }
 
   if (modelLower.includes('nano banana') || modelLower.includes('gemini')) {
@@ -184,6 +198,13 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
   }
   if (modelLower.includes('flux 2 pro') || modelLower.includes('flux-2-pro')) {
     return { service: 'fal', backendModel: 'flux-2-pro' };
+  }
+  // Seedream 4.5 - MUST check before general seedream check
+  // Check for "seedream 4.5", "seedream-4.5", "seedream_v45", etc. (with or without resolution suffix)
+  const seedream45Base = modelLower.replace(/\s+(1k|2k|4k)$/, ''); // Remove resolution suffix for matching
+  if (seedream45Base.includes('seedream-4.5') || seedream45Base.includes('seedream_v45') || seedream45Base.includes('seedreamv45') || 
+      (seedream45Base.includes('seedream') && (seedream45Base.includes('4.5') || seedream45Base.includes('v4.5') || seedream45Base.includes('v45')))) {
+    return { service: 'fal', backendModel: 'seedream-4.5', resolution };
   }
   if (modelLower.includes('seedream')) {
     // This catches "seedream v4" (without 4K) - goes to FAL
@@ -203,13 +224,14 @@ export async function generateForCanvas(
   request: CanvasGenerationRequest
 ): Promise<{ mediaId: string; url: string; storagePath: string; generationId?: string; images?: Array<{ mediaId: string; url: string; storagePath: string }> }> {
   // Map frontend model name to backend model name and service
-  const { service, backendModel } = mapModelToBackend(request.model);
+  const { service, backendModel, resolution: extractedResolution } = mapModelToBackend(request.model);
 
   // Debug logging
   console.log('[generateForCanvas] Model mapping:', {
     frontend: request.model,
     backend: backendModel,
     service,
+    extractedResolution,
   });
 
   const imageCount = request.imageCount || 1;
@@ -344,7 +366,7 @@ export async function generateForCanvas(
     } else if (service === 'replicate') {
       // Use Replicate service for Seedream 4K, Z Image Turbo, P-Image, etc.
       // Most models use owner/name format, but z-image-turbo/new-turbo-model is handled specially
-      if (!backendModel.includes('/') && backendModel !== 'z-image-turbo' && backendModel !== 'new-turbo-model' && backendModel !== 'google-nano-banana-pro' && backendModel !== 'p-image') {
+      if (!backendModel.includes('/') && backendModel !== 'z-image-turbo' && backendModel !== 'new-turbo-model' && backendModel !== 'p-image') {
         console.error('[generateForCanvas] Invalid Replicate model format:', backendModel);
         throw new ApiError(`Invalid model format for Replicate: ${backendModel}. Expected format: owner/name`, 400);
       }
@@ -530,12 +552,27 @@ export async function generateForCanvas(
       // For image-to-image generation, pass sourceImageUrl as uploadedImages array
       const falPayload: any = {
         prompt: request.prompt,
-        model: backendModel, // Use mapped backend model name
+        model: backendModel, // Use mapped backend model name (e.g., 'seedream-4.5')
         aspect_ratio: aspectRatio as any,
         num_images: clampedImageCount, // Pass imageCount to generate multiple images
         storageKeyPrefixOverride: canvasKeyPrefix,
         forceSyncUpload: true,
       };
+
+      // Pass resolution for Google Nano Banana Pro and Seedream 4.5 if provided
+      // Priority: extracted from model name > direct resolution field > options.resolution
+      const resolution = extractedResolution || (request as any).resolution || (request.options && request.options.resolution);
+      const isNanoBananaPro = backendModel.includes('nano-banana-pro') || backendModel.includes('google/nano-banana-pro');
+      const isSeedream45 = backendModel.includes('seedream-4.5');
+      
+      if (resolution && (isNanoBananaPro || isSeedream45)) {
+        falPayload.resolution = resolution;
+        console.log(`[generateForCanvas] ✅ Setting resolution for ${isNanoBananaPro ? 'Google Nano Banana Pro' : 'Seedream 4.5'}:`, resolution);
+      } else if (isNanoBananaPro) {
+        console.log('[generateForCanvas] ⚠️ No resolution provided for Google Nano Banana Pro, Fal service will default to 1K');
+      } else if (isSeedream45) {
+        console.log('[generateForCanvas] ⚠️ No resolution provided for Seedream 4.5, Fal service will use default image_size');
+      }
 
       // Handle reference images based on scene number
       // Scene 1: Only reference images (from namedImages) - 1 input
