@@ -1251,21 +1251,67 @@ export async function debugSession(req: Request, res: Response, _next: NextFunct
         const { admin } = await import('../../config/firebaseAdmin');
         const { env } = await import('../../config/env');
         
+        // CRITICAL FIX: Detect token type before verification to avoid issuer mismatch errors
+        let tokenType: 'idToken' | 'sessionCookie' | 'unknown' = 'unknown';
         try {
-          decoded = await admin.auth().verifySessionCookie(token, env.authStrictRevocation);
-          isSessionCookie = true;
-          verificationStatus = 'verified_session_cookie';
-        } catch (sessionError: any) {
-          try {
+          const parts = token.split('.');
+          if (parts.length === 3) {
+            const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+            const issuer = payload.iss || '';
+            if (issuer.includes('securetoken.google.com')) {
+              tokenType = 'idToken';
+            } else if (issuer.includes('session.firebase.google.com')) {
+              tokenType = 'sessionCookie';
+            }
+          }
+        } catch (decodeError) {
+          // If we can't decode, we'll try both verification methods
+        }
+        
+        try {
+          // If we detected it's an ID token, verify as ID token first
+          if (tokenType === 'idToken') {
             decoded = await admin.auth().verifyIdToken(token, env.authStrictRevocation);
             isSessionCookie = false;
             verificationStatus = 'verified_id_token';
-          } catch (idTokenError: any) {
-            verificationStatus = 'verification_failed';
-            verificationError = {
-              sessionError: sessionError?.message || sessionError?.code,
-              idTokenError: idTokenError?.message || idTokenError?.code,
-            };
+          } else {
+            // Try session cookie first
+            decoded = await admin.auth().verifySessionCookie(token, env.authStrictRevocation);
+            isSessionCookie = true;
+            verificationStatus = 'verified_session_cookie';
+          }
+        } catch (sessionError: any) {
+          // Check if error is about issuer mismatch
+          const isIssuerMismatch = sessionError?.message?.includes('iss') || 
+                                   sessionError?.message?.includes('issuer') ||
+                                   sessionError?.message?.includes('securetoken.google.com');
+          
+          // If it's an issuer mismatch, try ID token verification
+          if (isIssuerMismatch) {
+            try {
+              decoded = await admin.auth().verifyIdToken(token, env.authStrictRevocation);
+              isSessionCookie = false;
+              verificationStatus = 'verified_id_token';
+            } catch (idTokenError: any) {
+              verificationStatus = 'verification_failed';
+              verificationError = {
+                sessionError: sessionError?.message || sessionError?.code,
+                idTokenError: idTokenError?.message || idTokenError?.code,
+              };
+            }
+          } else {
+            // Try ID token verification as fallback
+            try {
+              decoded = await admin.auth().verifyIdToken(token, env.authStrictRevocation);
+              isSessionCookie = false;
+              verificationStatus = 'verified_id_token';
+            } catch (idTokenError: any) {
+              verificationStatus = 'verification_failed';
+              verificationError = {
+                sessionError: sessionError?.message || sessionError?.code,
+                idTokenError: idTokenError?.message || idTokenError?.code,
+              };
+            }
           }
         }
       } catch (verifyErr: any) {

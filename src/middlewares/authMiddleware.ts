@@ -126,73 +126,172 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     let decoded: any;
     let isSessionCookie = false;
     
+    // CRITICAL FIX: Detect token type before verification to avoid issuer mismatch errors
+    // Check if token is an ID token (has securetoken.google.com issuer) or session cookie (has session.firebase.google.com issuer)
+    let tokenType: 'idToken' | 'sessionCookie' | 'unknown' = 'unknown';
     try {
-      // Try session cookie first (preferred method)
-      decoded = await admin.auth().verifySessionCookie(token, env.authStrictRevocation);
-      isSessionCookie = true;
-      if (env.logLevel === 'debug') {
-        console.log('[AUTH] Session cookie verified', { uid: decoded.uid });
-      }
-    } catch (sessionError: any) {
-      // CRITICAL FIX: Check if it's a revocation check failure (non-fatal for session cookies)
-      // If strict revocation is enabled and token was revoked, we should still allow it if it's not expired
-      const isRevocationError = sessionError?.code === 'auth/session-cookie-revoked' || 
-                                 sessionError?.errorInfo?.code === 'auth/session-cookie-revoked' ||
-                                 sessionError?.message?.includes('revoked');
-      
-      // If it's just a revocation check failure (not expired), try without strict revocation
-      if (isRevocationError && env.authStrictRevocation) {
-        try {
-          decoded = await admin.auth().verifySessionCookie(token, false);
-          isSessionCookie = true;
-          if (env.logLevel === 'debug') {
-            console.warn('[AUTH] Session cookie verified without strict revocation (revocation check failed)', { 
-              uid: decoded.uid,
-              error: sessionError?.message 
-            });
-          }
-        } catch (retryError: any) {
-          // Still failed, fall through to ID token verification
+      // Decode JWT without verification to check issuer
+      const parts = token.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+        const issuer = payload.iss || '';
+        if (issuer.includes('securetoken.google.com')) {
+          tokenType = 'idToken';
+        } else if (issuer.includes('session.firebase.google.com')) {
+          tokenType = 'sessionCookie';
         }
       }
+    } catch (decodeError) {
+      // If we can't decode, we'll try both verification methods
+    }
+    
+    try {
+      // If we detected it's an ID token, verify it and optionally create a proper session cookie
+      if (tokenType === 'idToken') {
+        console.warn('[AUTH] ⚠️ Detected ID token in cookie (should be session cookie), verifying as ID token', {
+          tokenPrefix: token.substring(0, 20),
+          note: 'This may indicate an old cookie or a bug in cookie creation. Will verify as ID token and optionally create proper session cookie.'
+        });
+        decoded = await admin.auth().verifyIdToken(token, env.authStrictRevocation);
+        isSessionCookie = false;
+        if (env.logLevel === 'debug') {
+          console.log('[AUTH] ID token verified (from cookie)', { uid: decoded.uid });
+        }
+        
+        // CRITICAL FIX: Automatically create a proper session cookie when ID token is detected
+        // This prevents the issue from recurring and ensures future requests use session cookies
+        try {
+          const SESSION_COOKIE_DURATION_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+          const sessionCookie = await admin.auth().createSessionCookie(token, { 
+            expiresIn: SESSION_COOKIE_DURATION_MS 
+          });
+          
+          // Set the proper session cookie
+          const cookieDomain = env.cookieDomain;
+          const isProd = env.nodeEnv === 'production';
+          const maxAgeInSeconds = Math.floor(SESSION_COOKIE_DURATION_MS / 1000);
+          const expirationDate = new Date(Date.now() + SESSION_COOKIE_DURATION_MS);
+          
+          let setCookieValue = `app_session=${sessionCookie}; Path=/; Max-Age=${maxAgeInSeconds}; Expires=${expirationDate.toUTCString()}`;
+          if (cookieDomain) {
+            setCookieValue += `; Domain=${cookieDomain}`;
+          }
+          setCookieValue += `; SameSite=${isProd ? 'None' : 'Lax'}`;
+          if (isProd) {
+            setCookieValue += `; Secure`;
+          }
+          setCookieValue += `; HttpOnly`;
+          
+          res.setHeader('Set-Cookie', setCookieValue);
+          
+          console.log('[AUTH] ✅ Automatically replaced ID token with proper session cookie', {
+            uid: decoded.uid,
+            note: 'Future requests will use the session cookie instead of ID token'
+          });
+          
+          // Update decoded to reflect session cookie for consistency
+          decoded = await admin.auth().verifySessionCookie(sessionCookie, env.authStrictRevocation);
+          isSessionCookie = true;
+        } catch (createError: any) {
+          // Non-fatal: if we can't create session cookie, continue with ID token verification
+          console.warn('[AUTH] Failed to create session cookie from ID token (non-fatal)', {
+            error: createError?.message,
+            note: 'Request will proceed with ID token verification'
+          });
+        }
+      } else {
+        // Try session cookie first (preferred method)
+        decoded = await admin.auth().verifySessionCookie(token, env.authStrictRevocation);
+        isSessionCookie = true;
+        if (env.logLevel === 'debug') {
+          console.log('[AUTH] Session cookie verified', { uid: decoded.uid });
+        }
+      }
+    } catch (sessionError: any) {
+      // CRITICAL FIX: Check if error is about issuer mismatch (ID token in session cookie)
+      const isIssuerMismatch = sessionError?.message?.includes('iss') || 
+                               sessionError?.message?.includes('issuer') ||
+                               sessionError?.message?.includes('securetoken.google.com') ||
+                               sessionError?.code === 'auth/argument-error';
       
-      // If we still don't have decoded, try ID token verification
-      if (!decoded) {
+      // If it's an issuer mismatch, immediately try ID token verification
+      if (isIssuerMismatch) {
+        console.warn('[AUTH] Session cookie verification failed due to issuer mismatch, trying ID token verification', {
+          error: sessionError?.message,
+          tokenPrefix: token.substring(0, 20),
+          note: 'Cookie may contain ID token instead of session cookie'
+        });
         try {
           decoded = await admin.auth().verifyIdToken(token, env.authStrictRevocation);
           isSessionCookie = false;
           if (env.logLevel === 'debug') {
-            console.log('[AUTH] ID token verified', { uid: decoded.uid });
+            console.log('[AUTH] ID token verified (after issuer mismatch)', { uid: decoded.uid });
           }
         } catch (idTokenError: any) {
-          // Both verification methods failed
-          const errorMessage = sessionError?.message || idTokenError?.message || 'Token verification failed';
-          
-          // CRITICAL FIX: Log detailed error info for debugging random logouts
-          console.error('[AUTH] Token verification failed - potential logout cause', {
-            sessionError: sessionError?.message,
-            sessionErrorCode: sessionError?.code,
-            idTokenError: idTokenError?.message,
-            idTokenErrorCode: idTokenError?.code,
-            tokenLength: token?.length,
-            tokenPrefix: token?.substring(0, 20),
-            hasCookie: !!req.cookies?.[COOKIE_NAME],
-            hasAuthHeader: !!req.headers.authorization,
-            path: req.path,
-            method: req.method,
-            timestamp: new Date().toISOString(),
-            env: {
-              authStrictRevocation: env.authStrictRevocation,
-              nodeEnv: env.nodeEnv
+          // Both failed
+          throw new ApiError(`Unauthorized - Token verification failed: ${idTokenError?.message || sessionError?.message}`, 401);
+        }
+      } else {
+        // CRITICAL FIX: Check if it's a revocation check failure (non-fatal for session cookies)
+        // If strict revocation is enabled and token was revoked, we should still allow it if it's not expired
+        const isRevocationError = sessionError?.code === 'auth/session-cookie-revoked' || 
+                                   sessionError?.errorInfo?.code === 'auth/session-cookie-revoked' ||
+                                   sessionError?.message?.includes('revoked');
+        
+        // If it's just a revocation check failure (not expired), try without strict revocation
+        if (isRevocationError && env.authStrictRevocation) {
+          try {
+            decoded = await admin.auth().verifySessionCookie(token, false);
+            isSessionCookie = true;
+            if (env.logLevel === 'debug') {
+              console.warn('[AUTH] Session cookie verified without strict revocation (revocation check failed)', { 
+                uid: decoded.uid,
+                error: sessionError?.message 
+              });
             }
-          });
-          
-          // CRITICAL: If session error is "revoked", explicitly mention it
-          if (sessionError?.code === 'auth/session-cookie-revoked') {
-            console.error('[AUTH] ⚠️ SESSION REVOKED ⚠️ - The session cookie was explicitly revoked by Firebase.');
+          } catch (retryError: any) {
+            // Still failed, fall through to ID token verification
           }
-          
-          throw new ApiError(`Unauthorized - ${errorMessage}`, 401);
+        }
+        
+        // If we still don't have decoded, try ID token verification
+        if (!decoded) {
+          try {
+            decoded = await admin.auth().verifyIdToken(token, env.authStrictRevocation);
+            isSessionCookie = false;
+            if (env.logLevel === 'debug') {
+              console.log('[AUTH] ID token verified', { uid: decoded.uid });
+            }
+          } catch (idTokenError: any) {
+            // Both verification methods failed
+            const errorMessage = sessionError?.message || idTokenError?.message || 'Token verification failed';
+            
+            // CRITICAL FIX: Log detailed error info for debugging random logouts
+            console.error('[AUTH] Token verification failed - potential logout cause', {
+              sessionError: sessionError?.message,
+              sessionErrorCode: sessionError?.code,
+              idTokenError: idTokenError?.message,
+              idTokenErrorCode: idTokenError?.code,
+              tokenLength: token?.length,
+              tokenPrefix: token?.substring(0, 20),
+              hasCookie: !!req.cookies?.[COOKIE_NAME],
+              hasAuthHeader: !!req.headers.authorization,
+              path: req.path,
+              method: req.method,
+              timestamp: new Date().toISOString(),
+              env: {
+                authStrictRevocation: env.authStrictRevocation,
+                nodeEnv: env.nodeEnv
+              }
+            });
+            
+            // CRITICAL: If session error is "revoked", explicitly mention it
+            if (sessionError?.code === 'auth/session-cookie-revoked') {
+              console.error('[AUTH] ⚠️ SESSION REVOKED ⚠️ - The session cookie was explicitly revoked by Firebase.');
+            }
+            
+            throw new ApiError(`Unauthorized - ${errorMessage}`, 401);
+          }
         }
       }
     }
