@@ -799,8 +799,15 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
   // Add HttpOnly
   setCookieValue += `; HttpOnly`;
   
-  // Set the header manually
-  res.setHeader('Set-Cookie', setCookieValue);
+  // Append the Set-Cookie header manually to preserve any existing cookies
+  const existingSetCookie = res.getHeader('Set-Cookie');
+  if (!existingSetCookie) {
+    res.setHeader('Set-Cookie', setCookieValue);
+  } else if (Array.isArray(existingSetCookie)) {
+    res.setHeader('Set-Cookie', [...existingSetCookie, setCookieValue]);
+  } else {
+    res.setHeader('Set-Cookie', [String(existingSetCookie), setCookieValue]);
+  }
   
   // Log what we set (for verification)
   console.log('[AUTH][setSessionCookie] Set-Cookie header set manually:', {
@@ -1070,26 +1077,31 @@ async function setGoogleUsername(
  */
 async function refreshSession(req: Request, res: Response, next: NextFunction) {
   try {
-    const uid = req.uid as string;
-    if (!uid) {
-      throw new ApiError('Unauthorized - No user ID', 401);
-    }
-
+    // Allow refresh when session cookie is missing by accepting a fresh ID token
     // Get fresh ID token from request body (client must send it)
     const { idToken } = req.body;
     if (!idToken) {
       throw new ApiError('Missing idToken - client must provide fresh Firebase ID token', 400);
     }
 
-    // Verify the ID token to ensure it's valid and matches the current user
+    // Verify the ID token to ensure it's valid and obtain uid
     let decoded: any;
     try {
       decoded = await admin.auth().verifyIdToken(idToken);
-      if (decoded.uid !== uid) {
-        throw new ApiError('ID token does not match current user', 403);
-      }
     } catch (error: any) {
       throw new ApiError(`Invalid ID token: ${error.message}`, 401);
+    }
+
+    // Derive uid: prefer req.uid (session) but fall back to decoded ID token uid
+    const uidFromReq = req.uid as string | undefined;
+    const uid = uidFromReq || decoded?.uid;
+    if (!uid) {
+      throw new ApiError('Unauthorized - No user ID', 401);
+    }
+
+    // If both exist, ensure they match
+    if (uidFromReq && decoded?.uid && uidFromReq !== decoded.uid) {
+      throw new ApiError('ID token does not match current user', 403);
     }
 
     // BUG FIX #6: Clear old cookie before creating new one
@@ -1102,8 +1114,8 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
       try {
         await deleteCachedSession(oldToken);
       } catch {}
-      
-      // Clear old cookie explicitly
+
+      // Clear old cookie explicitly - collect all variants then set header once
       try {
         const expired = 'Thu, 01 Jan 1970 00:00:00 GMT';
         const cookieVariants = [
@@ -1112,14 +1124,24 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
           { domain: undefined, sameSite: 'Lax', secure: false },
           { domain: cookieDomain, sameSite: 'Lax', secure: false },
         ];
-        
-        cookieVariants.forEach(variant => {
+
+        const cookieStrings: string[] = cookieVariants.map(variant => {
           let cookieString = `app_session=; Path=/; Max-Age=0; Expires=${expired}`;
           if (variant.domain) cookieString += `; Domain=${variant.domain}`;
           cookieString += `; SameSite=${variant.sameSite}`;
           if (variant.secure || isProd) cookieString += '; Secure';
-          res.setHeader('Set-Cookie', cookieString);
+          return cookieString;
         });
+
+        // Append to existing Set-Cookie headers rather than overwrite
+        const existing = res.getHeader('Set-Cookie');
+        if (!existing) {
+          res.setHeader('Set-Cookie', cookieStrings);
+        } else if (Array.isArray(existing)) {
+          res.setHeader('Set-Cookie', [...existing, ...cookieStrings]);
+        } else {
+          res.setHeader('Set-Cookie', [String(existing), ...cookieStrings]);
+        }
       } catch {}
     }
     
@@ -1175,6 +1197,7 @@ export const authController = {
   checkUsername,
   refreshSession,
   debugSession,
+  debugSessionRefresh,
 };
 
 // Lightweight endpoint to check if current session token is cached in Redis
@@ -1397,6 +1420,78 @@ export async function debugSession(req: Request, res: Response, _next: NextFunct
       error: error?.message,
       stack: error?.stack,
     }));
+  }
+}
+
+// Temporary debug endpoint: Simulate mid-life refresh decision
+export async function debugSessionRefresh(req: Request, res: Response, _next: NextFunction) {
+  try {
+    const simulateAgeDays = Number(req.query.simulateAgeDays || 0);
+    const token = (req.cookies as any)?.['app_session'];
+    let decoded: any = null;
+    let isSessionCookie = false;
+
+    if (token) {
+      try {
+        const { admin } = await import('../../config/firebaseAdmin');
+        const { env } = await import('../../config/env');
+        try {
+          decoded = await admin.auth().verifySessionCookie(token, env.authStrictRevocation);
+          isSessionCookie = true;
+        } catch {
+          try {
+            decoded = await admin.auth().verifyIdToken(token, env.authStrictRevocation);
+            isSessionCookie = false;
+          } catch {
+            decoded = decodeJwtPayload(token) || {};
+          }
+        }
+      } catch {
+        decoded = decodeJwtPayload(token) || {};
+      }
+    }
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (simulateAgeDays > 0) {
+      decoded = decoded || {};
+      decoded.iat = nowSec - (simulateAgeDays * 24 * 60 * 60);
+      // keep exp reasonably in future for simulation (14 days total)
+      decoded.exp = nowSec + ((14 - simulateAgeDays) * 24 * 60 * 60);
+    }
+
+    const forceRefresh = String(req.query.forceRefresh || '').toLowerCase() === '1' || String(req.query.forceRefresh || '').toLowerCase() === 'true';
+
+    const result: any = {
+      tokenPresent: !!token,
+      isSessionCookie,
+      simulatedAgeDays: simulateAgeDays || null,
+      decodedSample: decoded ? { iat: decoded.iat, exp: decoded.exp } : null,
+      forced: !!forceRefresh
+    };
+
+    if (decoded && decoded.exp && decoded.iat) {
+      const expiresInSec = decoded.exp - nowSec;
+      const ageInSec = nowSec - decoded.iat;
+      const sevenDaysInSec = 7 * 24 * 60 * 60;
+      const refreshNeeded = isSessionCookie && expiresInSec > 0 && ageInSec > sevenDaysInSec;
+      result.refreshNeeded = refreshNeeded || forceRefresh;
+      result.expiresInSec = expiresInSec;
+      result.ageInDays = Math.floor(ageInSec / (24 * 60 * 60));
+
+      if (result.refreshNeeded) {
+        res.setHeader('X-Session-Refresh-Needed', 'true');
+        res.setHeader('X-Session-Expires-In', String(expiresInSec));
+      }
+    } else if (forceRefresh) {
+      // No decoded token but force requested - set headers so frontend will refresh
+      result.refreshNeeded = true;
+      res.setHeader('X-Session-Refresh-Needed', 'true');
+      res.setHeader('X-Session-Expires-In', String(7 * 24 * 60 * 60));
+    }
+
+    return res.json(formatApiResponse('success', 'Session refresh simulation', result));
+  } catch (error: any) {
+    return res.json(formatApiResponse('error', 'Debug simulation error', { error: error?.message }));
   }
 }
 

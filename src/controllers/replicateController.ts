@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { replicateService, waitForPrediction } from '../services/replicateService';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { postSuccessDebit, issueRefund } from '../utils/creditDebit';
-import { backgroundTaskQueue } from '../utils/backgroundTaskQueue';
+// Background task queue removed — using fire-and-forget background tasks instead
 
 async function removeBackground(req: Request, res: Response, next: NextFunction) {
   try {
@@ -190,26 +190,21 @@ export async function seedanceT2vSubmit(req: Request, res: Response, next: NextF
     // Uses a queue system to limit concurrent background operations
     const requestId = result.requestId;
     if (requestId) {
-      // Add delay before starting to spread out load
+      // Fire-and-forget background finalization (queue removed)
       const delay = Math.random() * 2000; // 0-2s random delay
-      backgroundTaskQueue.enqueue(
-        `seedance-t2v-${requestId}`,
-        async () => {
-          // Small delay to spread out concurrent requests
+      setImmediate(() => {
+        (async () => {
           await new Promise(resolve => setTimeout(resolve, delay));
           try {
             const finalPrediction = await waitForPrediction(requestId);
-            // Finalize result (upload, history update) in background
             await (replicateService as any).replicateQueueResult(uid, requestId);
-            console.log('[seedanceT2vSubmit] Background finalization completed for requestId:', requestId);
+            console.log('[seedanceT2vSubmit][background] finalization completed for requestId:', requestId);
           } catch (err: any) {
-            console.error('[seedanceT2vSubmit] Background finalization failed:', err);
-            // Refund if generation failed
-            await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-t2v.failed', { error: err.message });
+            console.error('[seedanceT2vSubmit][background] finalization failed:', err);
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-t2v.failed', { error: err?.message }); } catch(_){}
           }
-        },
-        0 // Normal priority
-      );
+        })().catch((e) => console.error('[seedanceT2vSubmit][background] unexpected error', e));
+      });
     }
   } catch (e) { next(e); }
 }
@@ -238,21 +233,19 @@ export async function seedanceI2vSubmit(req: Request, res: Response, next: NextF
     const requestId = result.requestId;
     if (requestId) {
       const delay = Math.random() * 2000; // 0-2s random delay
-      backgroundTaskQueue.enqueue(
-        `seedance-i2v-${requestId}`,
-        async () => {
+      setImmediate(() => {
+        (async () => {
           await new Promise(resolve => setTimeout(resolve, delay));
           try {
             const finalPrediction = await waitForPrediction(requestId);
             await (replicateService as any).replicateQueueResult(uid, requestId);
-            console.log('[seedanceI2vSubmit] Background finalization completed for requestId:', requestId);
+            console.log('[seedanceI2vSubmit][background] finalization completed for requestId:', requestId);
           } catch (err: any) {
-            console.error('[seedanceI2vSubmit] Background finalization failed:', err);
-            await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-i2v.failed', { error: err.message });
+            console.error('[seedanceI2vSubmit][background] finalization failed:', err);
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-i2v.failed', { error: err?.message }); } catch(_){}
           }
-        },
-        0
-      );
+        })().catch((e) => console.error('[seedanceI2vSubmit][background] unexpected error', e));
+      });
     }
   } catch (e) { next(e); }
 }
@@ -282,21 +275,19 @@ export async function seedanceProFastT2vSubmit(req: Request, res: Response, next
     const requestId = result.requestId;
     if (requestId) {
       const delay = Math.random() * 2000;
-      backgroundTaskQueue.enqueue(
-        `seedance-pro-fast-t2v-${requestId}`,
-        async () => {
+      setImmediate(() => {
+        (async () => {
           await new Promise(resolve => setTimeout(resolve, delay));
           try {
             const finalPrediction = await waitForPrediction(requestId);
             await (replicateService as any).replicateQueueResult(uid, requestId);
-            console.log('[seedanceProFastT2vSubmit] Background finalization completed for requestId:', requestId);
+            console.log('[seedanceProFastT2vSubmit][background] finalization completed for requestId:', requestId);
           } catch (err: any) {
-            console.error('[seedanceProFastT2vSubmit] Background finalization failed:', err);
-            await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-pro-fast-t2v.failed', { error: err.message });
+            console.error('[seedanceProFastT2vSubmit][background] finalization failed:', err);
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-pro-fast-t2v.failed', { error: err?.message }); } catch(_){}
           }
-        },
-        0
-      );
+        })().catch((e) => console.error('[seedanceProFastT2vSubmit][background] unexpected error', e));
+      });
     }
   } catch (e) { next(e); }
 }
@@ -323,21 +314,19 @@ export async function seedanceProFastI2vSubmit(req: Request, res: Response, next
     const requestId = result.requestId;
     if (requestId) {
       const delay = Math.random() * 2000;
-      backgroundTaskQueue.enqueue(
-        `seedance-pro-fast-i2v-${requestId}`,
-        async () => {
+      setImmediate(() => {
+        (async () => {
           await new Promise(resolve => setTimeout(resolve, delay));
           try {
             const finalPrediction = await waitForPrediction(requestId);
             await (replicateService as any).replicateQueueResult(uid, requestId);
-            console.log('[seedanceProFastI2vSubmit] Background finalization completed for requestId:', requestId);
+            console.log('[seedanceProFastI2vSubmit][background] finalization completed for requestId:', requestId);
           } catch (err: any) {
-            console.error('[seedanceProFastI2vSubmit] Background finalization failed:', err);
-            await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-pro-fast-i2v.failed', { error: err.message });
+            console.error('[seedanceProFastI2vSubmit][background] finalization failed:', err);
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-pro-fast-i2v.failed', { error: err?.message }); } catch(_){}
           }
-        },
-        0
-      );
+        })().catch((e) => console.error('[seedanceProFastI2vSubmit][background] unexpected error', e));
+      });
     }
   } catch (e) { next(e); }
 }

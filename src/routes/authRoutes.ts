@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authController, sessionCacheStatus, debugSession } from '../controllers/auth/authController';
+import { authController, sessionCacheStatus, debugSession, debugSessionRefresh } from '../controllers/auth/authController';
 import { redeemCodeController } from '../controllers/redeemCodeController';
 import { publicVisibilityController } from '../controllers/auth/publicVisibilityController';
 import { requireAuth } from '../middlewares/authMiddleware';
@@ -42,6 +42,8 @@ router.get('/can-toggle-public', requireAuth, publicVisibilityController.canTogg
 router.get('/session-cache', requireAuth, sessionCacheStatus);
 // Debug: comprehensive session status check (no auth required for debugging)
 router.get('/debug-session', debugSession);
+// Debug: simulate mid-life session refresh decision (query: ?simulateAgeDays=8)
+router.get('/debug/session-refresh', debugSessionRefresh);
 
 // Debug endpoint to check cookie domain configuration (no auth required for debugging)
 router.get('/debug/cookie-config', (req, res) => {
