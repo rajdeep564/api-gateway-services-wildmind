@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { admin } from '../config/firebaseAdmin';
 import { ApiError } from '../utils/errorHandler';
-import { cacheSession, getCachedSession } from '../utils/sessionStore';
+import { cacheSession, getCachedSession, decodeJwtPayload } from '../utils/sessionStore';
 import { env } from '../config/env';
 
 const COOKIE_NAME = 'app_session';
@@ -130,19 +130,39 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     // Check if token is an ID token (has securetoken.google.com issuer) or session cookie (has session.firebase.google.com issuer)
     let tokenType: 'idToken' | 'sessionCookie' | 'unknown' = 'unknown';
     try {
-      // Decode JWT without verification to check issuer
-      const parts = token.split('.');
-      if (parts.length === 3) {
-        const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+      // Decode JWT without verification to check issuer using proper base64url decoding
+      const payload = decodeJwtPayload(token);
+      if (payload) {
         const issuer = payload.iss || '';
         if (issuer.includes('securetoken.google.com')) {
           tokenType = 'idToken';
+          console.log('[AUTH] Detected ID token by issuer:', { 
+            issuer, 
+            tokenPrefix: token.substring(0, 20) 
+          });
         } else if (issuer.includes('session.firebase.google.com')) {
           tokenType = 'sessionCookie';
+          if (env.logLevel === 'debug') {
+            console.log('[AUTH] Detected session cookie by issuer:', { 
+              issuer, 
+              tokenPrefix: token.substring(0, 20) 
+            });
+          }
+        } else {
+          console.warn('[AUTH] Unknown token issuer:', { 
+            issuer, 
+            tokenPrefix: token.substring(0, 20),
+            note: 'Will try both verification methods'
+          });
         }
       }
-    } catch (decodeError) {
+    } catch (decodeError: any) {
       // If we can't decode, we'll try both verification methods
+      console.warn('[AUTH] Failed to decode token for issuer detection:', {
+        error: decodeError?.message,
+        tokenPrefix: token.substring(0, 20),
+        note: 'Will try both verification methods'
+      });
     }
     
     try {
@@ -192,6 +212,10 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
           // Update decoded to reflect session cookie for consistency
           decoded = await admin.auth().verifySessionCookie(sessionCookie, env.authStrictRevocation);
           isSessionCookie = true;
+          
+          // CRITICAL: Update token variable to use the new session cookie for caching
+          // This ensures we cache the session cookie, not the old ID token
+          token = sessionCookie;
         } catch (createError: any) {
           // Non-fatal: if we can't create session cookie, continue with ID token verification
           console.warn('[AUTH] Failed to create session cookie from ID token (non-fatal)', {
@@ -199,20 +223,31 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
             note: 'Request will proceed with ID token verification'
           });
         }
-      } else {
-        // Try session cookie first (preferred method)
+      } else if (tokenType === 'sessionCookie') {
+        // Try session cookie (we detected it's a session cookie)
         decoded = await admin.auth().verifySessionCookie(token, env.authStrictRevocation);
         isSessionCookie = true;
         if (env.logLevel === 'debug') {
           console.log('[AUTH] Session cookie verified', { uid: decoded.uid });
         }
+      } else {
+        // Unknown token type - try session cookie first (preferred method)
+        // If it fails with issuer mismatch, we'll fall back to ID token
+        decoded = await admin.auth().verifySessionCookie(token, env.authStrictRevocation);
+        isSessionCookie = true;
+        if (env.logLevel === 'debug') {
+          console.log('[AUTH] Session cookie verified (unknown type)', { uid: decoded.uid });
+        }
       }
     } catch (sessionError: any) {
       // CRITICAL FIX: Check if error is about issuer mismatch (ID token in session cookie)
+      // This is the EXACT error message from Firebase when ID token is used with verifySessionCookie
       const isIssuerMismatch = sessionError?.message?.includes('iss') || 
                                sessionError?.message?.includes('issuer') ||
                                sessionError?.message?.includes('securetoken.google.com') ||
-                               sessionError?.code === 'auth/argument-error';
+                               sessionError?.message?.includes('session.firebase.google.com') ||
+                               sessionError?.code === 'auth/argument-error' ||
+                               (sessionError?.message && sessionError.message.includes('Expected') && sessionError.message.includes('but got'));
       
       // If it's an issuer mismatch, immediately try ID token verification
       if (isIssuerMismatch) {

@@ -1254,9 +1254,10 @@ export async function debugSession(req: Request, res: Response, _next: NextFunct
         // CRITICAL FIX: Detect token type before verification to avoid issuer mismatch errors
         let tokenType: 'idToken' | 'sessionCookie' | 'unknown' = 'unknown';
         try {
-          const parts = token.split('.');
-          if (parts.length === 3) {
-            const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+          // Use proper base64url decoding from sessionStore
+          const { decodeJwtPayload } = await import('../../utils/sessionStore');
+          const payload = decodeJwtPayload(token);
+          if (payload) {
             const issuer = payload.iss || '';
             if (issuer.includes('securetoken.google.com')) {
               tokenType = 'idToken';
