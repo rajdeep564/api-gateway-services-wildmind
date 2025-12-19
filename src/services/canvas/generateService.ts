@@ -131,14 +131,21 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
     return { service: 'runway', backendModel: 'gen4_image' };
   }
 
-  // Seedream 4.5 now handled via Fal image pipeline; canvas uses generic model mapping.
-  // Replicate Seedream 4K - MUST check this before general seedream check
-  // Check for "seedream" + "4k" or "4 k" or "v4 4k" patterns
+  // Seedream 4.5 - MUST check BEFORE Seedream 4K check to avoid false matches
+  // Check for "seedream 4.5", "seedream-4.5", "seedream_v45", etc. (with or without resolution suffix)
+  const seedream45Base = modelLower.replace(/\s+(1k|2k|4k)$/, ''); // Remove resolution suffix for matching
+  if (seedream45Base.includes('seedream-4.5') || seedream45Base.includes('seedream_v45') || seedream45Base.includes('seedreamv45') || 
+      (seedream45Base.includes('seedream') && (seedream45Base.includes('4.5') || seedream45Base.includes('v4.5') || seedream45Base.includes('v45')))) {
+    return { service: 'fal', backendModel: 'seedream-4.5', resolution };
+  }
+
+  // Replicate Seedream 4K - MUST check AFTER Seedream 4.5 to avoid false matches
+  // Check for "seedream" + "4k" or "4 k" or "v4 4k" patterns (but NOT "4.5")
   if (modelLower.includes('seedream') && (
     modelLower.includes('4k') ||
     modelLower.includes('4 k') ||
     (modelLower.includes('v4') && modelLower.includes('4k'))
-  )) {
+  ) && !modelLower.includes('4.5') && !modelLower.includes('v4.5') && !modelLower.includes('v45')) {
     return { service: 'replicate', backendModel: 'bytedance/seedream-4' };
   }
 
@@ -199,15 +206,10 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
   if (modelLower.includes('flux 2 pro') || modelLower.includes('flux-2-pro')) {
     return { service: 'fal', backendModel: 'flux-2-pro' };
   }
-  // Seedream 4.5 - MUST check before general seedream check
-  // Check for "seedream 4.5", "seedream-4.5", "seedream_v45", etc. (with or without resolution suffix)
-  const seedream45Base = modelLower.replace(/\s+(1k|2k|4k)$/, ''); // Remove resolution suffix for matching
-  if (seedream45Base.includes('seedream-4.5') || seedream45Base.includes('seedream_v45') || seedream45Base.includes('seedreamv45') || 
-      (seedream45Base.includes('seedream') && (seedream45Base.includes('4.5') || seedream45Base.includes('v4.5') || seedream45Base.includes('v45')))) {
-    return { service: 'fal', backendModel: 'seedream-4.5', resolution };
-  }
-  if (modelLower.includes('seedream')) {
-    // This catches "seedream v4" (without 4K) - goes to FAL
+  
+  // Seedream v4 (without 4K) - goes to FAL
+  // This check comes after Seedream 4.5 and Seedream 4K checks
+  if (modelLower.includes('seedream') && !modelLower.includes('4.5') && !modelLower.includes('v4.5') && !modelLower.includes('v45') && !modelLower.includes('4k')) {
     return { service: 'fal', backendModel: 'seedream-v4' };
   }
 
