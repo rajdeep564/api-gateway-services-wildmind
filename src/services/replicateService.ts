@@ -1828,6 +1828,18 @@ export async function generateImage(uid: string, body: any) {
       if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
       if (typeof rest.prompt_upsampling === 'boolean') input.prompt_upsampling = rest.prompt_upsampling;
       if (typeof rest.disable_safety_checker === 'boolean') input.disable_safety_checker = rest.disable_safety_checker;
+      
+      // Handle image-to-image: P-Image supports image_input parameter for image-to-image generation
+      if (rest.image_input && Array.isArray(rest.image_input) && rest.image_input.length > 0) {
+        // P-Image uses 'image' parameter (single image) for image-to-image, not 'image_input'
+        // Take the first image from image_input array
+        input.image = rest.image_input[0];
+        console.log('[replicateService] P-Image: Using image-to-image mode with source image');
+      } else if (rest.image && typeof rest.image === 'string' && rest.image.length > 0) {
+        // Also support direct 'image' parameter
+        input.image = rest.image;
+        console.log('[replicateService] P-Image: Using image-to-image mode with direct image parameter');
+      }
     }
     // P-Image-Edit mapping (prunaai/p-image-edit) - image-to-image only
     if (modelBase === "prunaai/p-image-edit" || modelBase === "p-image-edit") {
