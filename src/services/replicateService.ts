@@ -1969,6 +1969,88 @@ export async function generateImage(uid: string, body: any) {
         input.image = rest.image;
       }
     }
+    // GPT Image 1.5 mapping
+    if (modelBase === "openai/gpt-image-1.5") {
+      // Map all supported parameters from schema
+      if (rest.quality && ['low', 'medium', 'high', 'auto'].includes(String(rest.quality))) {
+        input.quality = String(rest.quality);
+      } else {
+        input.quality = 'auto'; // Default per schema
+      }
+      if (rest.aspect_ratio && ['1:1', '3:2', '2:3'].includes(String(rest.aspect_ratio))) {
+        input.aspect_ratio = String(rest.aspect_ratio);
+      } else {
+        input.aspect_ratio = '1:1'; // Default per schema
+      }
+      if (rest.number_of_images != null) {
+        input.number_of_images = Math.max(1, Math.min(10, Number(rest.number_of_images)));
+      } else {
+        input.number_of_images = 1; // Default per schema
+      }
+      if (rest.output_format && ['png', 'jpeg', 'webp'].includes(String(rest.output_format))) {
+        input.output_format = String(rest.output_format);
+      } else {
+        input.output_format = 'webp'; // Default per schema
+      }
+      if (rest.background && ['auto', 'transparent', 'opaque'].includes(String(rest.background))) {
+        input.background = String(rest.background);
+      } else {
+        input.background = 'auto'; // Default per schema
+      }
+      if (rest.moderation && ['auto', 'low'].includes(String(rest.moderation))) {
+        input.moderation = String(rest.moderation);
+      } else {
+        input.moderation = 'auto'; // Default per schema
+      }
+      if (rest.output_compression != null) {
+        input.output_compression = Math.max(0, Math.min(100, Number(rest.output_compression)));
+      } else {
+        input.output_compression = 90; // Default per schema
+      }
+      // Handle input_images for I2I
+      if (rest.input_images && Array.isArray(rest.input_images) && rest.input_images.length > 0) {
+        const username = creator?.username || uid;
+        const keyPrefix = `users/${username}/input/${historyId}`;
+        const inputPersisted: any[] = [];
+        const resolvedImages: string[] = [];
+        for (let i = 0; i < Math.min(rest.input_images.length, 10); i++) {
+          const img = rest.input_images[i];
+          try {
+            if (typeof img === "string" && img.startsWith("data:")) {
+              const uploaded = await uploadDataUriToZata({
+                dataUri: img,
+                keyPrefix,
+                fileName: `gpt-image-1.5-ref-${i + 1}`,
+              });
+              resolvedImages.push(uploaded.publicUrl);
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: uploaded.publicUrl,
+                storagePath: uploaded.key,
+              });
+            } else if (typeof img === "string" && (img.startsWith("http://") || img.startsWith("https://"))) {
+              resolvedImages.push(img);
+            }
+          } catch (e) {
+            console.warn(`[gpt-image-1.5] Failed to process input image ${i + 1}:`, e);
+          }
+        }
+        if (resolvedImages.length > 0) {
+          input.input_images = resolvedImages;
+        }
+        if (inputPersisted.length > 0) {
+          await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+        }
+      }
+      replicateModelBase = "openai/gpt-image-1.5";
+      
+      // Handle num_images for multiple image generation
+      const numImages = input.number_of_images || 1;
+      if (numImages > 1) {
+        // Store num_images for later use in the generation logic
+        (body as any).__num_images = numImages;
+      }
+    }
     const modelSpec = composeModelSpec(replicateModelBase, body.version);
     // eslint-disable-next-line no-console
     console.log("[replicateService.generateImage] run", {
@@ -2020,14 +2102,15 @@ export async function generateImage(uid: string, body: any) {
       } catch { }
     }
     // Handle num_images fan-out for models that need parallel calls
-    // Supported: z-image-turbo and P-Image / P-Image-Edit
+    // Supported: z-image-turbo, P-Image / P-Image-Edit, and GPT Image 1.5
     let output: any;
     const numImages = (body as any).__num_images || 1;
     const isZTurbo = (modelBase === "new-turbo-model" || modelBase === "placeholder-model-name");
     const isPImage = replicateModelBase === "prunaai/p-image";
     const isPImageEdit = replicateModelBase === "prunaai/p-image-edit";
+    const isGptImage15 = replicateModelBase === "openai/gpt-image-1.5";
 
-    if ((isZTurbo || isPImage || isPImageEdit) && numImages > 1) {
+    if ((isZTurbo || isPImage || isPImageEdit || isGptImage15) && numImages > 1) {
       // Make multiple parallel calls
       const outputPromises = Array.from({ length: numImages }, async () => {
         return await replicate.run(modelSpec as any, { input });

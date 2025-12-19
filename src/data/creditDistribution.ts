@@ -3742,7 +3742,46 @@ export const creditDistributionData: ModelCreditInfo[] = [
     creditsPerGeneration: 330,
     plans: { planA: 37.45454545, planB: 74.90909091, planC: 187.2727273, planD: 599.2727273, free: 6.060606061 },
   },
+
+  {
+    srNo: 183,
+    modelName: "gpt-image-1.5 auto",
+    priceToPay: 0.136,
+    overCharge: 0.01,
+    userCost: 0.146,
+    creditsPerGeneration: 292,
+    plans: { planA: 42.32876712, planB: 84.65753425, planC: 211.6438356, planD: 677.260274, free: 6.849315068 },
+
+  },
+  {
+    srNo: 184,
+    modelName: "gpt-image-1.5 low",
+    priceToPay: 0.013,
+    overCharge: 0.01,
+    userCost: 0.23,
+    creditsPerGeneration: 46,
+    plans: { planA: 268.6956522, planB: 537.3913043, planC: 1343.478261, planD: 4299.130435, free: 43.47826087 },
+  },
+  {
+    srNo: 185,
+    modelName: "gpt-image-1.5 medium",
+    priceToPay: 0.05,
+    overCharge: 0.01,
+    userCost: 0.06,
+    creditsPerGeneration: 120,
+    plans: { planA: 103, planB: 206, planC: 515, planD: 1648, free: 16.66666667 },
+  },
+  {
+    srNo: 186,
+    modelName: "gpt-image-1.5 high",
+    priceToPay: 0.136,
+    overCharge: 0.01,
+    userCost: 0.146,
+    creditsPerGeneration: 292,
+    plans: { planA: 42.32876712, planB: 84.65753425, planC: 211.6438356, planD: 677.260274, free: 6.849315068 },
+  },
  
+
 
 
 
