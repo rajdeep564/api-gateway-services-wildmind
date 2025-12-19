@@ -594,10 +594,23 @@ export async function generateForCanvas(
       if (sourceImageUrl || previousSceneImageUrl) {
         const referenceImages: string[] = [];
 
+        // Helper function to detect and validate image URLs
+        const validateImageUrl = (url: string): string => {
+          if (url.startsWith('blob:')) {
+            throw new ApiError(
+              'Blob URLs cannot be used for image-to-image generation. Please convert the image to a data URI or upload it to get a public URL. The frontend should convert blob URLs to data URIs before sending.',
+              400
+            );
+          }
+          return url;
+        };
+
         // Scene 1: Only reference images (1 input)
         if (sceneNumber === 1) {
           if (sourceImageUrl) {
             const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
+            // Validate all reference images
+            refImages.forEach(validateImageUrl);
             referenceImages.push(...refImages);
             console.log('[generateForCanvas] ✅ Scene 1: Using reference images only (1 input)', {
               imageCount: referenceImages.length,
@@ -612,6 +625,7 @@ export async function generateForCanvas(
             const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
             // For Scene 2+, use only the FIRST reference image (index 0)
             if (refImages.length > 0) {
+              validateImageUrl(refImages[0]); // Validate before adding
               referenceImages.push(refImages[0]);
               console.log('[generateForCanvas] ✅ Scene 2+: Added reference image (index 0)');
             }
@@ -619,6 +633,7 @@ export async function generateForCanvas(
 
           // Second input: Previous scene's generated image
           if (previousSceneImageUrl) {
+            validateImageUrl(previousSceneImageUrl); // Validate before adding
             referenceImages.push(previousSceneImageUrl);
             console.log('[generateForCanvas] ✅ Scene 2+: Added previous scene image (index 1)');
           }
@@ -632,9 +647,12 @@ export async function generateForCanvas(
         else {
           if (sourceImageUrl) {
             const refImages = sourceImageUrl.split(',').map(url => url.trim()).filter(url => url.length > 0);
+            // Validate all reference images
+            refImages.forEach(validateImageUrl);
             referenceImages.push(...refImages);
           }
           if (previousSceneImageUrl) {
+            validateImageUrl(previousSceneImageUrl);
             referenceImages.push(previousSceneImageUrl);
           }
         }

@@ -164,18 +164,32 @@ async function generate(
             if (match) {
               imageBuffer = Buffer.from(match[2], 'base64');
             } else {
+              console.warn('[falService] Invalid data URI, skipping:', src.substring(0, 50));
               continue; // Skip invalid data URI
             }
           } else {
-            // URL - download first
-            const resp = await axios.get<ArrayBuffer>(src, {
-              responseType: 'arraybuffer',
-              validateStatus: () => true,
-            });
-            if (resp.status < 200 || resp.status >= 300) {
+            // URL - use uploadFromUrlToZata to handle Zata URLs properly, then download for resize
+            // First, upload to get public URL (handles Zata URLs via S3)
+            try {
+              const uploaded = await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `temp-${++idx}` });
+              // Download from public URL for resizing
+              const resp = await axios.get<ArrayBuffer>(uploaded.publicUrl, {
+                responseType: 'arraybuffer',
+                validateStatus: () => true,
+              });
+              if (resp.status < 200 || resp.status >= 300) {
+                console.warn('[falService] Failed to download from public URL for Flux 2 Pro resize, using uploaded URL directly:', uploaded.publicUrl.substring(0, 80));
+                // Use the uploaded public URL directly (without resize) - better than failing
+                stored = uploaded;
+                inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: stored.originalUrl || src });
+                publicImageUrls.push(stored.publicUrl);
+                continue;
+              }
+              imageBuffer = Buffer.from(resp.data as any);
+            } catch (downloadError: any) {
+              console.warn('[falService] Failed to process image for Flux 2 Pro resize, skipping:', downloadError?.message);
               continue; // Skip failed downloads
             }
-            imageBuffer = Buffer.from(resp.data as any);
           }
 
           // Resize to 1MP
@@ -188,13 +202,26 @@ async function generate(
           stored.originalUrl = src;
         } else {
           // For other models, use existing upload logic
+          // uploadFromUrlToZata now handles Zata URLs by downloading via S3
           stored = /^data:/i.test(src)
             ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
             : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
         }
         inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: stored.originalUrl || src });
         publicImageUrls.push(stored.publicUrl);
-      } catch { }
+        console.log('[falService] ✅ Successfully processed uploaded image:', { 
+          original: src.substring(0, 80) + '...', 
+          publicUrl: stored.publicUrl.substring(0, 80) + '...' 
+        });
+      } catch (error: any) {
+        console.error('[falService] ❌ Failed to process uploaded image:', {
+          src: src.substring(0, 100),
+          error: error?.message,
+          stack: error?.stack?.substring(0, 200)
+        });
+        // Don't silently fail - log the error so we can debug
+        // But continue processing other images
+      }
     }
     
     // For nano-banana-pro, also persist image_urls from payload if provided
@@ -253,6 +280,9 @@ async function generate(
     modelEndpoint = hasImages
       ? 'fal-ai/bytedance/seedream/v4.5/edit'
       : 'fal-ai/bytedance/seedream/v4.5/text-to-image';
+    
+    // Store flag for later use in queue mode detection
+    (payload as any)._isSeedream45 = true;
   } else if (modelLower.includes('seedream')) {
     // Seedream v4 text-to-image on FAL
     modelEndpoint = 'fal-ai/bytedance/seedream/v4/text-to-image';
@@ -809,11 +839,15 @@ async function generate(
         // Seedream models expect `image_size` instead of `aspect_ratio`
         const explicitSize = (payload as any).image_size;
         // Check for Seedream 4.5 - handle both 'seedream-4.5' (from backend) and 'seedream 4.5' (from frontend)
-        const isSeedream45 =
+        // Use flag from payload if set, otherwise check model name
+        const isSeedream45 = (payload as any)._isSeedream45 || 
           modelLower.includes('seedream-4.5') ||
           modelLower.includes('seedream_v45') ||
           modelLower.includes('seedreamv45') ||
           (modelLower.includes('seedream') && (modelLower.includes('4.5') || modelLower.includes('v4.5') || modelLower.includes('v45')));
+        
+        // Store for later use in queue mode detection
+        (input as any)._isSeedream45 = isSeedream45;
 
         if (isSeedream45) {
           // Seedream 4.5 (v45) – use Fal schema:
@@ -870,6 +904,8 @@ async function generate(
           // Only include image_urls when using /edit endpoint (which requires at least 1 image)
           // For text-to-image endpoint, don't include image_urls
           const isEditEndpoint = modelEndpoint.includes('/edit');
+          // Store for later use in queue mode detection
+          (input as any)._isEditEndpoint = isEditEndpoint;
           if (isEditEndpoint) {
             const refs = publicImageUrls.length > 0 ? publicImageUrls : uploadedImages;
             if (Array.isArray(refs) && refs.length > 0) {
@@ -998,7 +1034,60 @@ async function generate(
       // Debug log for final body
       try { console.log('[falService.generate] request', { modelEndpoint, input }); } catch { }
 
-      const result = await fal.subscribe(modelEndpoint as any, ({ input, logs: true } as unknown) as any);
+      // For Seedream 4.5 image-to-image, use queue mode to avoid timeout issues
+      // Queue mode returns immediately and we poll for results, preventing 2-minute server timeouts
+      // Retrieve flags from input (set earlier in the code) or check modelEndpoint
+      const isSeedream45 = (input as any)._isSeedream45 === true;
+      const isEditEndpoint = (input as any)._isEditEndpoint === true || modelEndpoint.includes('/edit');
+      const isSeedream45I2I = isSeedream45 && isEditEndpoint && publicImageUrls.length > 0;
+      
+      let result: any;
+      if (isSeedream45I2I) {
+        // Use queue mode for Seedream 4.5 image-to-image to avoid timeout
+        console.log('[falService] Using queue mode for Seedream 4.5 image-to-image to avoid timeout');
+        const { request_id } = await fal.queue.submit(modelEndpoint as any, { input } as any);
+        
+        if (!request_id) {
+          throw new ApiError('No request ID returned from FAL queue', 502);
+        }
+        
+        // Poll for result (max 10 minutes, check every 2 seconds)
+        const maxAttempts = 300; // 10 minutes max (2 second intervals)
+        const pollInterval = 2000; // 2 seconds
+        let attempts = 0;
+        let queueResult: any = null;
+        
+        while (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          attempts++;
+          
+          try {
+            const status: any = await fal.queue.status(modelEndpoint as any, { requestId: request_id, logs: true } as any);
+            
+            if (status?.status === 'COMPLETED') {
+              queueResult = status;
+              break;
+            } else if (status?.status === 'FAILED') {
+              throw new ApiError(`FAL queue generation failed: ${status?.error || 'Unknown error'}`, 502);
+            }
+            // Continue polling if status is 'IN_QUEUE' or 'IN_PROGRESS'
+          } catch (pollError: any) {
+            // If polling fails, continue trying (might be transient)
+            if (attempts % 10 === 0) { // Log every 20 seconds
+              console.warn('[falService] Queue polling error (will retry):', pollError?.message);
+            }
+          }
+        }
+        
+        if (!queueResult) {
+          throw new ApiError('FAL queue generation timed out after 10 minutes', 504);
+        }
+        
+        result = queueResult;
+      } else {
+        // Use synchronous subscribe for other models (faster for short requests)
+        result = await fal.subscribe(modelEndpoint as any, ({ input, logs: true } as unknown) as any);
+      }
 
       let imageUrl = "";
       if (result?.data?.images?.length > 0) {
