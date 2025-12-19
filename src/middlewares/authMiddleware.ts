@@ -172,56 +172,79 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
           tokenPrefix: token.substring(0, 20),
           note: 'This may indicate an old cookie or a bug in cookie creation. Will verify as ID token and optionally create proper session cookie.'
         });
-        decoded = await admin.auth().verifyIdToken(token, env.authStrictRevocation);
-        isSessionCookie = false;
-        if (env.logLevel === 'debug') {
-          console.log('[AUTH] ID token verified (from cookie)', { uid: decoded.uid });
-        }
         
-        // CRITICAL FIX: Automatically create a proper session cookie when ID token is detected
-        // This prevents the issue from recurring and ensures future requests use session cookies
         try {
-          const SESSION_COOKIE_DURATION_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
-          const sessionCookie = await admin.auth().createSessionCookie(token, { 
-            expiresIn: SESSION_COOKIE_DURATION_MS 
-          });
-          
-          // Set the proper session cookie
-          const cookieDomain = env.cookieDomain;
-          const isProd = env.nodeEnv === 'production';
-          const maxAgeInSeconds = Math.floor(SESSION_COOKIE_DURATION_MS / 1000);
-          const expirationDate = new Date(Date.now() + SESSION_COOKIE_DURATION_MS);
-          
-          let setCookieValue = `app_session=${sessionCookie}; Path=/; Max-Age=${maxAgeInSeconds}; Expires=${expirationDate.toUTCString()}`;
-          if (cookieDomain) {
-            setCookieValue += `; Domain=${cookieDomain}`;
+          decoded = await admin.auth().verifyIdToken(token, env.authStrictRevocation);
+          isSessionCookie = false;
+          if (env.logLevel === 'debug') {
+            console.log('[AUTH] ID token verified (from cookie)', { uid: decoded.uid });
           }
-          setCookieValue += `; SameSite=${isProd ? 'None' : 'Lax'}`;
-          if (isProd) {
-            setCookieValue += `; Secure`;
+          
+          // CRITICAL FIX: Automatically create a proper session cookie when ID token is detected and valid
+          // This prevents the issue from recurring and ensures future requests use session cookies
+          // Only create session cookie if ID token is valid (not expired)
+          try {
+            const SESSION_COOKIE_DURATION_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+            const sessionCookie = await admin.auth().createSessionCookie(token, { 
+              expiresIn: SESSION_COOKIE_DURATION_MS 
+            });
+            
+            // Set the proper session cookie
+            const cookieDomain = env.cookieDomain;
+            const isProd = env.nodeEnv === 'production';
+            const maxAgeInSeconds = Math.floor(SESSION_COOKIE_DURATION_MS / 1000);
+            const expirationDate = new Date(Date.now() + SESSION_COOKIE_DURATION_MS);
+            
+            let setCookieValue = `app_session=${sessionCookie}; Path=/; Max-Age=${maxAgeInSeconds}; Expires=${expirationDate.toUTCString()}`;
+            if (cookieDomain) {
+              setCookieValue += `; Domain=${cookieDomain}`;
+            }
+            setCookieValue += `; SameSite=${isProd ? 'None' : 'Lax'}`;
+            if (isProd) {
+              setCookieValue += `; Secure`;
+            }
+            setCookieValue += `; HttpOnly`;
+            
+            res.setHeader('Set-Cookie', setCookieValue);
+            
+            console.log('[AUTH] ✅ Automatically replaced ID token with proper session cookie', {
+              uid: decoded.uid,
+              note: 'Future requests will use the session cookie instead of ID token'
+            });
+            
+            // Update decoded to reflect session cookie for consistency
+            decoded = await admin.auth().verifySessionCookie(sessionCookie, env.authStrictRevocation);
+            isSessionCookie = true;
+            
+            // CRITICAL: Update token variable to use the new session cookie for caching
+            // This ensures we cache the session cookie, not the old ID token
+            token = sessionCookie;
+          } catch (createError: any) {
+            // Non-fatal: if we can't create session cookie, continue with ID token verification
+            console.warn('[AUTH] Failed to create session cookie from ID token (non-fatal)', {
+              error: createError?.message,
+              note: 'Request will proceed with ID token verification'
+            });
           }
-          setCookieValue += `; HttpOnly`;
+        } catch (idTokenVerifyError: any) {
+          // ID token verification failed - check if it's expired
+          const isExpired = idTokenVerifyError?.code === 'auth/id-token-expired' || 
+                           idTokenVerifyError?.errorInfo?.code === 'auth/id-token-expired' ||
+                           idTokenVerifyError?.message?.includes('expired');
           
-          res.setHeader('Set-Cookie', setCookieValue);
-          
-          console.log('[AUTH] ✅ Automatically replaced ID token with proper session cookie', {
-            uid: decoded.uid,
-            note: 'Future requests will use the session cookie instead of ID token'
-          });
-          
-          // Update decoded to reflect session cookie for consistency
-          decoded = await admin.auth().verifySessionCookie(sessionCookie, env.authStrictRevocation);
-          isSessionCookie = true;
-          
-          // CRITICAL: Update token variable to use the new session cookie for caching
-          // This ensures we cache the session cookie, not the old ID token
-          token = sessionCookie;
-        } catch (createError: any) {
-          // Non-fatal: if we can't create session cookie, continue with ID token verification
-          console.warn('[AUTH] Failed to create session cookie from ID token (non-fatal)', {
-            error: createError?.message,
-            note: 'Request will proceed with ID token verification'
-          });
+          if (isExpired) {
+            // ID token is expired - cannot create session cookie from expired token
+            // Return 401 to force frontend to refresh the token
+            console.error('[AUTH] ❌ ID token is expired, cannot create session cookie', {
+              tokenPrefix: token.substring(0, 20),
+              error: idTokenVerifyError?.message,
+              note: 'Frontend must refresh ID token and create new session'
+            });
+            throw new ApiError('Unauthorized - ID token has expired. Please refresh your authentication.', 401);
+          } else {
+            // Other ID token verification errors - rethrow to be handled by outer catch
+            throw idTokenVerifyError;
+          }
         }
       } else if (tokenType === 'sessionCookie') {
         // Try session cookie (we detected it's a session cookie)
@@ -262,7 +285,60 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
           if (env.logLevel === 'debug') {
             console.log('[AUTH] ID token verified (after issuer mismatch)', { uid: decoded.uid });
           }
+          
+          // If ID token is valid, try to create a session cookie for future requests
+          // This only works if token came from cookie, not Authorization header
+          if (!req.headers.authorization && req.cookies?.[COOKIE_NAME]) {
+            try {
+              const SESSION_COOKIE_DURATION_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+              const sessionCookie = await admin.auth().createSessionCookie(token, { 
+                expiresIn: SESSION_COOKIE_DURATION_MS 
+              });
+              
+              const cookieDomain = env.cookieDomain;
+              const isProd = env.nodeEnv === 'production';
+              const maxAgeInSeconds = Math.floor(SESSION_COOKIE_DURATION_MS / 1000);
+              const expirationDate = new Date(Date.now() + SESSION_COOKIE_DURATION_MS);
+              
+              let setCookieValue = `app_session=${sessionCookie}; Path=/; Max-Age=${maxAgeInSeconds}; Expires=${expirationDate.toUTCString()}`;
+              if (cookieDomain) {
+                setCookieValue += `; Domain=${cookieDomain}`;
+              }
+              setCookieValue += `; SameSite=${isProd ? 'None' : 'Lax'}`;
+              if (isProd) {
+                setCookieValue += `; Secure`;
+              }
+              setCookieValue += `; HttpOnly`;
+              
+              res.setHeader('Set-Cookie', setCookieValue);
+              console.log('[AUTH] ✅ Created session cookie from ID token (after issuer mismatch)', {
+                uid: decoded.uid
+              });
+              
+              decoded = await admin.auth().verifySessionCookie(sessionCookie, env.authStrictRevocation);
+              isSessionCookie = true;
+              token = sessionCookie;
+            } catch (createError: any) {
+              // Non-fatal - continue with ID token
+              console.warn('[AUTH] Failed to create session cookie (non-fatal)', {
+                error: createError?.message
+              });
+            }
+          }
         } catch (idTokenError: any) {
+          // Check if ID token is expired
+          const isExpired = idTokenError?.code === 'auth/id-token-expired' || 
+                           idTokenError?.errorInfo?.code === 'auth/id-token-expired' ||
+                           idTokenError?.message?.includes('expired');
+          
+          if (isExpired) {
+            console.error('[AUTH] ❌ ID token is expired (from issuer mismatch fallback)', {
+              tokenPrefix: token.substring(0, 20),
+              note: 'Frontend must refresh ID token'
+            });
+            throw new ApiError('Unauthorized - ID token has expired. Please refresh your authentication.', 401);
+          }
+          
           // Both failed
           throw new ApiError(`Unauthorized - Token verification failed: ${idTokenError?.message || sessionError?.message}`, 401);
         }
