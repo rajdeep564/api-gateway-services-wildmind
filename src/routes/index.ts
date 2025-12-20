@@ -1,3 +1,8 @@
+/**
+ * Routes Layer - Central Export
+ * All route modules should be exported from here for consistent imports
+ */
+
 import { Router } from 'express';
 import bflRoutes from './bfl';
 import falRoutes from './fal';
