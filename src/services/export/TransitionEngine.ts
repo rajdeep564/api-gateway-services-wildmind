@@ -7,10 +7,14 @@ export interface TransitionStyle {
     // Transform properties
     opacity?: number;
     scale?: number;
+    scaleX?: number;  // For horizontal-only scaling (stretch effect)
+    scaleY?: number;  // For vertical-only scaling (flip effect)
     rotate?: number;
     translateX?: number;
     translateY?: number;
     blur?: number;
+    skewX?: number;   // For datamosh/glitch effects
+    skewY?: number;
 
     // Filter effects (for parity with client-side)
     brightness?: number;
@@ -224,14 +228,23 @@ export function calculateTransitionStyle(
             return role === 'outgoing' ? { scale: 1 + p * 0.5, opacity: outP } : { opacity: p };
 
         // === SPINS ===
-        case 'spin':
-            return role === 'outgoing'
-                ? { rotate: p * 360, scale: outP, opacity: outP }
-                : { rotate: (1 - p) * -360, scale: p, opacity: p };
+        case 'spin': {
+            // Match Canvas.tsx: rotation + scale that shrinks at midpoint
+            const rotation = role === 'outgoing' ? -p * 180 : (1 - p) * 180;
+            const scaleSpin = 1 - Math.sin(p * Math.PI) * 0.5;
+            return {
+                rotate: rotation,
+                scale: scaleSpin,
+                opacity: role === 'outgoing' ? outP : p
+            };
+        }
 
         // === FLASH ===
         case 'flash':
-            return role === 'outgoing' ? { opacity: p < 0.5 ? 1 : 0 } : { opacity: p >= 0.5 ? 1 : 0 };
+            // Match Canvas.tsx: bright flash with brightness filter
+            return role === 'main'
+                ? { brightness: 1 + (1 - p) * 5, opacity: p }
+                : { brightness: 1 + p * 5, opacity: outP };
 
         // === BLUR ===
         case 'blur':
@@ -265,13 +278,29 @@ export function calculateTransitionStyle(
             return role === 'main' ? { rotate: (1 - p) * -5, opacity: p } : { opacity: outP };
 
         // === FILM & LIGHT EFFECTS ===
-        case 'film-burn':
-            return { scale: 1 + Math.sin(p * Math.PI) * 0.1, opacity: role === 'main' ? p : outP };
+        case 'film-burn': {
+            // Match Canvas.tsx: brightness + sepia + saturate + contrast
+            const burnIntensity = Math.sin(p * Math.PI);
+            return {
+                scale: 1 + burnIntensity * 0.1,
+                brightness: 1 + burnIntensity * 3,
+                sepia: burnIntensity * 0.5,
+                saturate: 1 + burnIntensity,
+                contrast: 1 - burnIntensity * 0.2,
+                opacity: role === 'main' ? p : outP
+            };
+        }
         case 'light-leak':
-            return role === 'main' ? { opacity: p } : { opacity: outP };
+            // Match Canvas.tsx: sepia + brightness
+            return role === 'main'
+                ? { sepia: 1 - p, brightness: 1 + (1 - p), opacity: p }
+                : { sepia: p, brightness: 1 + p, opacity: outP };
         case 'luma-dissolve': {
+            // Match Canvas.tsx: contrast + brightness
             const lumaP = 1 - Math.pow(1 - p, 2);
-            return role === 'main' ? { opacity: lumaP } : { opacity: 1 - lumaP };
+            return role === 'main'
+                ? { contrast: 1 + lumaP * 2, brightness: lumaP, opacity: lumaP }
+                : { contrast: 1 + (1 - lumaP) * 2, brightness: 1 - lumaP, opacity: 1 - lumaP };
         }
 
         // === DIGITAL EFFECTS ===
@@ -287,18 +316,34 @@ export function calculateTransitionStyle(
         case 'pixelate':
         case 'chromatic-aberration':
             return role === 'main' ? { opacity: p } : { opacity: outP };
-        case 'datamosh':
-            return { scale: 1 + Math.sin(p * 8) * 0.08, opacity: role === 'main' ? p : outP };
+        case 'datamosh': {
+            // Match Canvas.tsx: scale + skew distortion
+            const skewAmount = Math.sin(p * 20) * 10;
+            return {
+                scale: 1 + Math.sin(p * 10) * 0.1,
+                skewX: skewAmount,
+                opacity: role === 'main' ? p : outP
+            };
+        }
 
         // === DISTORTION ===
         case 'ripple':
-            return role === 'main' ? { scale: 1 + Math.sin(p * 10) * 0.05, opacity: p } : { opacity: outP };
+            // Match Canvas.tsx: scale + blur
+            return role === 'main'
+                ? { scale: 1 + Math.sin(p * 10) * 0.05, blur: Math.abs(Math.sin(p * 10)) * 5 }
+                : { opacity: outP };
         case 'ripple-dissolve':
             return { scale: 1 + Math.sin(p * Math.PI * 4) * 0.05, blur: Math.sin(p * Math.PI) * 2, opacity: role === 'main' ? p : outP };
         case 'stretch':
-            return role === 'main' ? { scale: 0.1 + 0.9 * p, opacity: p } : { scale: 1 + p, opacity: outP };
+            // Match Canvas.tsx: scaleX horizontal stretch
+            return role === 'main'
+                ? { scaleX: 0.1 + 0.9 * p, opacity: p }
+                : { scaleX: 1 + p, opacity: outP };
         case 'liquid':
-            return { opacity: role === 'main' ? p : outP };
+            // Match Canvas.tsx: contrast + blur
+            return role === 'main'
+                ? { contrast: 1.5, blur: (1 - p) * 10, opacity: p }
+                : { contrast: 1.5, blur: p * 10, opacity: outP };
 
         // === MOVEMENT ===
         case 'flow':
@@ -374,29 +419,54 @@ export function calculateTransitionStyle(
                 : { opacity: outP };
         }
 
-        // 3D Transitions (simplified for canvas)
-        case 'cube-rotate':
+        // 3D Transitions - using 2D fallbacks since canvas doesn't support perspective()
+        case 'cube-rotate': {
+            // Simulate 3D cube with scaleX (squash) + scale + opacity
+            const easeP = easeOutCubic(p);
+            if (role === 'main') {
+                // Incoming: expand from squashed, fade in
+                return {
+                    scaleX: 0.1 + 0.9 * easeP,  // 0.1 -> 1 (unsquash)
+                    scale: 0.8 + 0.2 * easeP,
+                    translateX: (1 - easeP) * -50 * (direction === 'left' ? 1 : -1),
+                    opacity: easeP
+                };
+            } else {
+                // Outgoing: squash and fade out
+                return {
+                    scaleX: 1 - 0.9 * easeP,    // 1 -> 0.1 (squash)
+                    scale: 1 - 0.2 * easeP,
+                    translateX: easeP * 50 * (direction === 'left' ? 1 : -1),
+                    opacity: outP
+                };
+            }
+        }
+
         case 'flip-3d': {
+            // Simulate 3D flip with scaleY (vertical squash)
             const easeP = easeOutCubic(p);
             if (role === 'main') {
                 return {
-                    rotate: (1 - easeP) * -90 * (direction === 'left' ? 1 : -1),
+                    scaleY: 0.1 + 0.9 * easeP,  // Vertical unsquash
                     scale: 0.8 + 0.2 * easeP,
+                    translateY: (1 - easeP) * -30,
                     opacity: easeP
                 };
             } else {
                 return {
-                    rotate: easeP * 90 * (direction === 'left' ? 1 : -1),
+                    scaleY: 1 - 0.9 * easeP,    // Vertical squash
                     scale: 1 - 0.2 * easeP,
+                    translateY: easeP * 30,
                     opacity: outP
                 };
             }
         }
 
         case 'spin-3d': {
+            // Match Canvas.tsx: rotation with opacity
             return role === 'main'
-                ? { rotate: (1 - p) * -90, opacity: p }
-                : { rotate: p * 90, opacity: 1 - p };
+                ? { rotate: (1 - p) * -90, scale: 0.5 + 0.5 * p, opacity: p }
+                : { rotate: p * 90, scale: 1 - 0.5 * p, opacity: outP };
         }
 
         case 'page-curl': {
@@ -418,15 +488,16 @@ export function calculateTransitionStyle(
                 : { scale: 0.8, blur: p * 10, opacity: outP };
         }
 
-        // Fade color - fade through color
+        // Fade color - fade through color with brightness
         case 'fade-color': {
+            // Match Canvas.tsx: brightness + opacity fade
             if (role === 'outgoing') {
                 return p < 0.5
-                    ? { opacity: 1 - p * 2 }
+                    ? { brightness: 1 - p * 2, opacity: 1 - p * 2 }
                     : { opacity: 0.01 };
             }
             return p > 0.5
-                ? { opacity: (p - 0.5) * 2 }
+                ? { brightness: (p - 0.5) * 2, opacity: (p - 0.5) * 2 }
                 : { opacity: 0.01 };
         }
 

@@ -726,11 +726,19 @@ export class FrameRenderer {
 
         this.ctx.translate(tx, ty);
 
-        // Combined scale
-        let scaleX = (transitionStyle.scale ?? 1) * (animStyle.scale ?? 1) * (animStyle.scaleX ?? 1);
-        let scaleY = (transitionStyle.scale ?? 1) * (animStyle.scale ?? 1) * (animStyle.scaleY ?? 1);
+        // Combined scale (including transition scaleX/scaleY for effects like stretch, cube-rotate, flip-3d)
+        let scaleX = (transitionStyle.scale ?? 1) * (transitionStyle.scaleX ?? 1) * (animStyle.scale ?? 1) * (animStyle.scaleX ?? 1);
+        let scaleY = (transitionStyle.scale ?? 1) * (transitionStyle.scaleY ?? 1) * (animStyle.scale ?? 1) * (animStyle.scaleY ?? 1);
         if (scaleX !== 1 || scaleY !== 1) {
             this.ctx.scale(scaleX, scaleY);
+        }
+
+        // Apply skew transforms (for datamosh/glitch effects)
+        if (transitionStyle.skewX || transitionStyle.skewY) {
+            const skewXRad = ((transitionStyle.skewX ?? 0) * Math.PI) / 180;
+            const skewYRad = ((transitionStyle.skewY ?? 0) * Math.PI) / 180;
+            // Use transform matrix for skew: [1, tan(skewY), tan(skewX), 1, 0, 0]
+            this.ctx.transform(1, Math.tan(skewYRad), Math.tan(skewXRad), 1, 0, 0);
         }
 
         // Combined rotation
