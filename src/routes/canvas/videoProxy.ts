@@ -11,6 +11,7 @@ import multer from 'multer';
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
+import os from 'os';
 import { v4 as uuidv4 } from 'uuid';
 import { uploadBufferToZata } from '../../utils/storage/zataUpload';
 
@@ -23,9 +24,10 @@ console.log('[ProxyGeneration] Using FFprobe from:', ffprobePath);
 
 const router = express.Router();
 
-// Configure multer for video uploads
+// Configure multer for video uploads (use OS temp directory for cross-platform compatibility)
+const tempDir = path.join(os.tmpdir(), 'video-uploads');
 const upload = multer({
-    dest: '/tmp/video-uploads',
+    dest: tempDir,
     limits: {
         fileSize: 500 * 1024 * 1024, // 500MB max
     },
@@ -202,7 +204,7 @@ async function generateProxy(
     videoId: string,
     userId: string
 ): Promise<{ resolution: string; url: string }> {
-    const outputPath = `/tmp/proxy-${videoId}-${resolution}.mp4`;
+    const outputPath = path.join(os.tmpdir(), `proxy-${videoId}-${resolution}.mp4`);
 
     // Determine target height (width will scale proportionally)
     const targetHeight = resolution === '720p' ? 720 : 1080;
