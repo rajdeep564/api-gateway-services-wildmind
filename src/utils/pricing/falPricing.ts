@@ -295,6 +295,28 @@ export async function computeFalKlingO1SubmitCost(req: Request): Promise<{ cost:
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: dur } };
 }
 
+export async function computeFalKling26ProT2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { duration, generate_audio } = req.body || {};
+  const dur = typeof duration === 'number' ? String(duration) : String(duration || '5').replace(/s$/i, '');
+  const hasAudio = generate_audio !== false; // Default to true
+  const audioSuffix = hasAudio ? ' Audio On' : ' Audio Off';
+  const display = `Kling 2.6 Pro T2V/I2V ${dur}s${audioSuffix}`;
+  const base = findCredits(display);
+  if (base == null) throw new Error(`Unsupported Kling 2.6 Pro pricing: ${display}`);
+  return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: dur, generate_audio: hasAudio } };
+}
+
+export async function computeFalKling26ProI2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { duration, generate_audio } = req.body || {};
+  const dur = typeof duration === 'number' ? String(duration) : String(duration || '5').replace(/s$/i, '');
+  const hasAudio = generate_audio !== false; // Default to true
+  const audioSuffix = hasAudio ? ' Audio On' : ' Audio Off';
+  const display = `Kling 2.6 Pro T2V/I2V ${dur}s${audioSuffix}`;
+  const base = findCredits(display);
+  if (base == null) throw new Error(`Unsupported Kling 2.6 Pro pricing: ${display}`);
+  return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: dur, generate_audio: hasAudio } };
+}
+
 // LTX V2 pricing (Text-to-Video) mirrors I2V
 export async function computeFalLtxV2ProT2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> { return computeLtxCredits(req, 'Pro'); }
 export async function computeFalLtxV2FastT2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> { return computeLtxCredits(req, 'Fast'); }
@@ -427,6 +449,11 @@ export function computeFalVeoCostFromModel(model: string, meta?: any): { cost: n
   } else if (normalized === 'fal-ai/kling-video/o1/standard/image-to-video' || normalized === 'fal-ai/kling-video/o1/image-to-video') {
     const dur = String(meta?.duration ?? '5');
     display = dur.startsWith('10') ? 'Kling o1 10s' : 'Kling o1 5s';
+  } else if (normalized === 'fal-ai/kling-video/v2.6/pro/text-to-video' || normalized === 'fal-ai/kling-video/v2.6/pro/image-to-video') {
+    const dur = String(meta?.duration ?? '5');
+    const hasAudio = meta?.generate_audio !== false; // Default to true
+    const audioSuffix = hasAudio ? ' Audio On' : ' Audio Off';
+    display = `Kling 2.6 Pro T2V/I2V ${dur}s${audioSuffix}`;
   }
   const base = display ? findCredits(display) : null;
   if (base == null) throw new Error('Unsupported FAL Veo model');

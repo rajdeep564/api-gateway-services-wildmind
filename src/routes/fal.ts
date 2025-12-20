@@ -30,6 +30,8 @@ import {
   computeFalMayaTtsCost,
   computeFalElevenSfxCost,
   computeFalKlingO1SubmitCost,
+  computeFalKling26ProT2vSubmitCost,
+  computeFalKling26ProI2vSubmitCost,
 } from "../utils/pricing/falPricing";
 import {
   validateFalGenerate,
@@ -67,6 +69,8 @@ import {
   validateFalBirefnetVideo,
   validateFalKlingO1FirstLastSubmit,
   validateFalKlingO1ReferenceSubmit,
+  validateFalKling26ProT2v,
+  validateFalKling26ProI2v,
   validateFalNanoBananaPro,
 } from "../middlewares/validators/fal/validateFalGenerate";
 
@@ -282,6 +286,26 @@ router.post(
     computeFalKlingO1SubmitCost(req)
   ) as any,
   (falController as any).klingO1ReferenceSubmit
+);
+// Kling 2.6 Pro Text-to-Video
+router.post(
+  "/kling-2.6-pro/text-to-video/submit",
+  requireAuth as any,
+  validateFalKling26ProT2v as any,
+  makeCreditCost("fal", "kling_26_pro_t2v_submit", (req) =>
+    computeFalKling26ProT2vSubmitCost(req)
+  ) as any,
+  (falController as any).kling26ProT2vSubmit
+);
+// Kling 2.6 Pro Image-to-Video
+router.post(
+  "/kling-2.6-pro/image-to-video/submit",
+  requireAuth as any,
+  validateFalKling26ProI2v as any,
+  makeCreditCost("fal", "kling_26_pro_i2v_submit", (req) =>
+    computeFalKling26ProI2vSubmitCost(req)
+  ) as any,
+  (falController as any).kling26ProI2vSubmit
 );
 router.get(
   "/queue/status",

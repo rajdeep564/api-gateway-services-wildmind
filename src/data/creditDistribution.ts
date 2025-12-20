@@ -3780,6 +3780,45 @@ export const creditDistributionData: ModelCreditInfo[] = [
     creditsPerGeneration: 292,
     plans: { planA: 42.32876712, planB: 84.65753425, planC: 211.6438356, planD: 677.260274, free: 6.849315068 },
   },
+
+  {
+    srNo: 187,
+    modelName: "Kling 2.6 Pro T2V/I2V 5s Audio Off",
+    priceToPay: 0.35,
+    overCharge: 0.03,
+    userCost: 0.37,
+    creditsPerGeneration: 740,
+    plans: { planA: 16.7027027, planB: 33.40540541, planC: 83.51351351, planD: 267.2432432, free: 2.702702703 },
+  },
+  {
+    srNo: 188,
+    modelName: "Kling 2.6 Pro T2V/I2V 10s Audio Off",
+    priceToPay: 0.7,
+    overCharge: 0.02,
+    userCost: 0.72,
+    creditsPerGeneration: 1440,
+    plans: { planA: 8.583333333, planB: 17.16666667, planC: 42.91666667, planD: 137.3333333, free: 1.388888889 },
+  },
+
+  {
+    srNo: 189,
+    modelName: "Kling 2.6 Pro T2V/I2V 5s Audio On",
+     priceToPay: 0.7,
+    overCharge: 0.02,
+    userCost: 0.72,
+    creditsPerGeneration: 1440,
+    plans: { planA: 8.583333333, planB: 17.16666667, planC: 42.91666667, planD: 137.3333333, free: 1.388888889 },
+  },
+
+  {
+    srNo: 190,
+    modelName: "Kling 2.6 Pro T2V/I2V 10s Audio On",
+    priceToPay: 1.4,
+    overCharge: 0.02,
+    userCost: 1.42,
+    creditsPerGeneration: 2840,
+    plans: { planA: 4.352112676, planB: 8.704225352, planC: 21.76056338, planD: 69.63380282, free: 0.7042253521 },
+  },
  
 
 
