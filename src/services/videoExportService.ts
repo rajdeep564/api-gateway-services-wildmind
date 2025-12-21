@@ -201,26 +201,25 @@ class VideoExportService {
             }
 
             // ALWAYS use frame-by-frame rendering for full feature support
-            // FrameRenderer supports: filters, adjustments, flip, background color, transitions, animations
-            // FFmpeg filter complex only supports basic compositing
+            // PuppeteerFrameRenderer (GPU): 100% preview parity, GPU-accelerated
+            // FrameRenderer (CPU fallback): node-canvas based backup
             if (hasMediaItems) {
-                console.log('📸 Using STREAMING FRAME RENDERING (memory-optimized)');
+                console.log('🚀 Using PUPPETEER GPU RENDERING (hardware-accelerated)');
 
                 try {
-                    // Import FrameRenderer dynamically to avoid circular dependencies
-                    const { FrameRenderer } = await import('./export/FrameRenderer');
+                    // Import PuppeteerFrameRenderer - GPU accelerated, 100% preview parity
+                    const { PuppeteerFrameRenderer } = await import('./export/PuppeteerFrameRenderer');
 
-                    // Create frame renderer
-                    const frameRenderer = new FrameRenderer(
+                    // Create Puppeteer-based frame renderer
+                    const frameRenderer = new PuppeteerFrameRenderer(
                         settings.resolution.width,
                         settings.resolution.height
                     );
 
-                    // Collect audio items BEFORE starting render (async - probes video files for audio)
+                    // Collect audio items BEFORE starting render
                     const audioInputs = await this.collectAudioInputs(timeline, jobDir);
 
-                    // Use streaming method - renders and encodes in one pass
-                    // No temp frame files are created (memory-optimized)
+                    // Use streaming method - renders with GPU and encodes in one pass
                     this.updateJob(jobId, { status: 'processing', progress: 0 });
 
                     await frameRenderer.renderAllFramesStreaming(
@@ -229,72 +228,106 @@ class VideoExportService {
                         outputPath,
                         audioInputs,
                         (progress) => {
-                            // Streaming method reports 0-90% progress
                             this.updateJob(jobId, { progress });
                             onProgress?.(progress);
                         }
                     );
 
-                    // Cleanup caches
-                    FrameRenderer.clearCache();
+                    console.log('✅ Puppeteer GPU export complete');
 
-                    // No frames directory to cleanup - streaming mode doesn't create temp files!
-                    console.log('🧹 No temp frame files to cleanup (streaming mode)');
+                } catch (puppeteerError) {
+                    console.error('');
+                    console.error('═══════════════════════════════════════════════════════════════');
+                    console.error('[VideoExport] ❌ PUPPETEER GPU RENDER FAILED!');
+                    console.error('═══════════════════════════════════════════════════════════════');
+                    console.error('Error:', puppeteerError);
+                    console.error('═══════════════════════════════════════════════════════════════');
+                    console.error('');
+                    console.log('📸 Fallback: Using CPU FRAME RENDERING (node-canvas)');
 
-                } catch (frameRenderError) {
-                    console.error('[VideoExport] Streaming render failed, falling back to disk-based:', frameRenderError);
-
-                    // Fall back to disk-based frame rendering (original method)
+                    // Fall back to node-canvas FrameRenderer (CPU-based)
                     try {
-                        console.log('🎞️  Fallback: Using disk-based frame rendering');
-                        const { FrameRenderer, encodeFramesToVideo } = await import('./export/FrameRenderer');
+                        console.log('📸 Fallback: Using CPU FRAME RENDERING (node-canvas)');
+                        const { FrameRenderer } = await import('./export/FrameRenderer');
 
                         const frameRenderer = new FrameRenderer(
                             settings.resolution.width,
                             settings.resolution.height
                         );
 
-                        await frameRenderer.renderAllFrames(
+                        const audioInputs = await this.collectAudioInputs(timeline, jobDir);
+                        this.updateJob(jobId, { status: 'processing', progress: 0 });
+
+                        await frameRenderer.renderAllFramesStreaming(
                             timeline,
                             settings,
-                            framesDir,
-                            (renderProgress) => {
-                                const progress = renderProgress * 0.8;
-                                this.updateJob(jobId, { progress });
-                                onProgress?.(progress);
-                            }
-                        );
-
-                        const audioInputs = await this.collectAudioInputs(timeline, jobDir);
-                        this.updateJob(jobId, { status: 'encoding', progress: 80 });
-
-                        await encodeFramesToVideo(
-                            framesDir,
                             outputPath,
-                            settings,
                             audioInputs,
-                            (encodeProgress) => {
-                                const progress = 80 + encodeProgress * 0.2;
+                            (progress) => {
                                 this.updateJob(jobId, { progress });
                                 onProgress?.(progress);
                             }
                         );
 
                         FrameRenderer.clearCache();
+                        console.log('✅ CPU fallback export complete');
+
+                    } catch (cpuFallbackError) {
+                        console.error('[VideoExport] CPU streaming also failed, using disk-based:', cpuFallbackError);
+
+                        // Fall back to disk-based frame rendering (original method)
                         try {
-                            fs.rmSync(framesDir, { recursive: true, force: true });
-                        } catch (e) {
-                            console.warn('[VideoExport] Failed to cleanup frames dir:', e);
+                            console.log('🎞️  Fallback: Using disk-based frame rendering');
+                            const { FrameRenderer, encodeFramesToVideo } = await import('./export/FrameRenderer');
+
+                            const frameRenderer = new FrameRenderer(
+                                settings.resolution.width,
+                                settings.resolution.height
+                            );
+
+                            await frameRenderer.renderAllFrames(
+                                timeline,
+                                settings,
+                                framesDir,
+                                (renderProgress) => {
+                                    const progress = renderProgress * 0.8;
+                                    this.updateJob(jobId, { progress });
+                                    onProgress?.(progress);
+                                }
+                            );
+
+                            const audioInputs = await this.collectAudioInputs(timeline, jobDir);
+                            this.updateJob(jobId, { status: 'encoding', progress: 80 });
+
+                            await encodeFramesToVideo(
+                                framesDir,
+                                outputPath,
+                                settings,
+                                audioInputs,
+                                (encodeProgress) => {
+                                    const progress = 80 + encodeProgress * 0.2;
+                                    this.updateJob(jobId, { progress });
+                                    onProgress?.(progress);
+                                }
+                            );
+
+                            FrameRenderer.clearCache();
+                            try {
+                                fs.rmSync(framesDir, { recursive: true, force: true });
+                            } catch (e) {
+                                console.warn('[VideoExport] Failed to cleanup frames dir:', e);
+                            }
+
+                        } catch (fallbackError) {
+                            console.error('[VideoExport] Disk-based also failed:', fallbackError);
+                            // Last resort: FFmpeg filter complex
+                            console.log('🎞️  Last resort: Using FFmpeg filter complex');
+                            const ffmpegArgs = this.buildFFmpegCommand(timeline, settings, jobDir, outputPath);
+                            await this.runFFmpeg(ffmpegArgs, (progress) => {
+                                this.updateJob(jobId, { progress });
+                                onProgress?.(progress);
+                            });
                         }
-                    } catch (fallbackError) {
-                        console.error('[VideoExport] Fallback also failed:', fallbackError);
-                        // Last resort: FFmpeg filter complex
-                        console.log('🎞️  Last resort: Using FFmpeg filter complex');
-                        const ffmpegArgs = this.buildFFmpegCommand(timeline, settings, jobDir, outputPath);
-                        await this.runFFmpeg(ffmpegArgs, (progress) => {
-                            this.updateJob(jobId, { progress });
-                            onProgress?.(progress);
-                        });
                     }
                 }
             } else {

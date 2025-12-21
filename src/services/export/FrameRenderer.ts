@@ -12,7 +12,7 @@ import ffmpegPath from 'ffmpeg-static';
 import type { TimelineData, TimelineItemData, TrackData, ExportSettings } from '../../types/videoExport';
 import { calculateTransitionStyle, TransitionStyle } from './TransitionEngine';
 import { calculateAnimationStyle, AnimationStyle } from './AnimationEngine';
-import { applyItemFilters, Adjustments, DEFAULT_ADJUSTMENTS } from './ImageFilters';
+import { applyItemFilters, applyTransitionFilters, Adjustments, DEFAULT_ADJUSTMENTS } from './ImageFilters';
 
 // Internal type for rendering items with transition info
 interface RenderItem {
@@ -629,14 +629,9 @@ export class FrameRenderer {
                 role,
                 transition.direction || 'left'
             );
-            // DEBUG: Log transition calculation
-            console.log(`[FrameRenderer] 🔀 TRANSITION on "${item.name}": type=${transition.type}, progress=${transitionProgress.toFixed(2)}, role=${role}, style=`, transitionStyle);
         }
 
-        // DEBUG: Log animation data
-        if (item.animation) {
-            console.log(`[FrameRenderer] 💫 ANIMATION on "${item.name}": type=${item.animation.type}, timing=${item.animation.timing}, duration=${item.animation.duration}`);
-        }
+
 
         return this.renderMediaItemWithStyle(item, currentTime, transitionStyle);
     }
@@ -801,8 +796,26 @@ export class FrameRenderer {
 
             this.ctx.restore();
 
-            // DEBUG: Log ALL media items to see what data we receive
-            console.log(`[FrameRenderer] Item "${item.name}" filter="${item.filter}" adjustments=`, item.adjustments);
+            // Apply TRANSITION filter effects using pixel manipulation
+            // This is needed because node-canvas doesn't support ctx.filter CSS syntax
+            const hasTransitionFilter = transitionStyle.hueRotate !== undefined ||
+                transitionStyle.brightness !== undefined ||
+                transitionStyle.contrast !== undefined ||
+                transitionStyle.sepia !== undefined ||
+                transitionStyle.saturate !== undefined;
+
+            if (hasTransitionFilter) {
+                applyTransitionFilters(
+                    this.ctx,
+                    x, y, width, height,
+                    transitionStyle.hueRotate || 0,
+                    transitionStyle.brightness ?? 1,
+                    transitionStyle.contrast ?? 1,
+                    transitionStyle.sepia ?? 0,
+                    transitionStyle.saturate ?? 1
+                );
+            }
+
 
             // Apply filters and adjustments AFTER restore (in screen coordinates)
             // This processes the pixels that were just drawn
@@ -810,7 +823,6 @@ export class FrameRenderer {
             const hasAdjustments = item.adjustments && Object.values(item.adjustments).some(v => v !== 0 && v !== undefined);
 
             if (hasFilter || hasAdjustments) {
-                console.log(`[FrameRenderer] APPLYING filters/adjustments for "${item.name}"`);
 
                 // Calculate the screen bounds of the drawn item
                 const screenX = x;
@@ -1128,10 +1140,6 @@ export class FrameRenderer {
 
         let width: number;
         let height: number;
-
-        // Debug: Log item properties
-        console.log(`[FrameRenderer] 📌 calculateBounds for "${item.name}": isBackground=${item.isBackground}, fit=${item.fit}`);
-        console.log(`[FrameRenderer]    Canvas: ${canvasWidth}x${canvasHeight}, Media: ${img.width}x${img.height}`);
 
         if (item.isBackground) {
             // Get media aspect ratio

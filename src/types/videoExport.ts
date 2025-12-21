@@ -36,6 +36,7 @@ export interface TimelineItemData {
     type: 'video' | 'image' | 'audio' | 'text' | 'color';
     src: string;       // Original source URL
     localPath?: string; // Local path after upload
+    dataUrl?: string;   // Base64 data URL for Puppeteer rendering
     name: string;
     start: number;
     duration: number;

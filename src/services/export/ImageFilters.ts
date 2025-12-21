@@ -331,3 +331,98 @@ export function applyItemFilters(
 
     applyImageFilters(mainCtx, x, y, w, h, filterId, adjustments);
 }
+
+/**
+ * Apply transition filter effects using pixel manipulation
+ * This is needed because node-canvas doesn't support ctx.filter CSS syntax
+ * @param ctx - Canvas context
+ * @param x, y, width, height - Region to apply filters
+ * @param hueRotate - Hue rotation in degrees
+ * @param brightness - Brightness multiplier (1 = normal, 2 = 200%)
+ * @param contrast - Contrast multiplier (1 = normal)
+ * @param sepia - Sepia intensity (0-1)
+ * @param saturate - Saturation multiplier (1 = normal)
+ */
+export function applyTransitionFilters(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    hueRotate: number = 0,
+    brightness: number = 1,
+    contrast: number = 1,
+    sepia: number = 0,
+    saturate: number = 1
+): void {
+    // Check if any processing is needed
+    if (hueRotate === 0 && brightness === 1 && contrast === 1 && sepia === 0 && saturate === 1) {
+        return;
+    }
+
+    // Clamp to canvas bounds
+    const canvasWidth = ctx.canvas.width;
+    const canvasHeight = ctx.canvas.height;
+    const clampedX = Math.max(0, Math.floor(x));
+    const clampedY = Math.max(0, Math.floor(y));
+    const clampedW = Math.min(canvasWidth - clampedX, Math.ceil(width));
+    const clampedH = Math.min(canvasHeight - clampedY, Math.ceil(height));
+
+    if (clampedW <= 0 || clampedH <= 0) return;
+
+    // Get image data from the region
+    const imageData = ctx.getImageData(clampedX, clampedY, clampedW, clampedH);
+    const data = imageData.data;
+
+    // Convert parameters to percentages for existing functions
+    const brightnessPercent = brightness * 100;
+    const contrastPercent = contrast * 100;
+    const saturatePercent = saturate * 100;
+    const sepiaPercent = sepia * 100;
+
+    // Process each pixel
+    for (let i = 0; i < data.length; i += 4) {
+        let r = data[i];
+        let g = data[i + 1];
+        let b = data[i + 2];
+        // Alpha remains unchanged: data[i + 3]
+
+        // Apply sepia
+        if (sepiaPercent > 0) {
+            [r, g, b] = applySepia(r, g, b, sepiaPercent);
+        }
+
+        // Apply hue rotation
+        if (hueRotate !== 0) {
+            [r, g, b] = applyHueRotate(r, g, b, hueRotate);
+        }
+
+        // Apply saturation
+        if (saturatePercent !== 100) {
+            [r, g, b] = applySaturation(r, g, b, saturatePercent);
+        }
+
+        // Apply brightness
+        if (brightnessPercent !== 100) {
+            r = applyBrightness(r, brightnessPercent);
+            g = applyBrightness(g, brightnessPercent);
+            b = applyBrightness(b, brightnessPercent);
+        }
+
+        // Apply contrast
+        if (contrastPercent !== 100) {
+            r = applyContrast(r, contrastPercent);
+            g = applyContrast(g, contrastPercent);
+            b = applyContrast(b, contrastPercent);
+        }
+
+        data[i] = r;
+        data[i + 1] = g;
+        data[i + 2] = b;
+    }
+
+    // Put the processed image data back
+    ctx.putImageData(imageData, clampedX, clampedY);
+}
+
+
