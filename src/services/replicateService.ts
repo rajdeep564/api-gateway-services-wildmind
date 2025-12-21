@@ -1994,8 +1994,11 @@ export async function generateImage(uid: string, body: any) {
       } else {
         input.aspect_ratio = '1:1'; // Default per schema
       }
-      if (rest.number_of_images != null) {
-        input.number_of_images = Math.max(1, Math.min(10, Number(rest.number_of_images)));
+      // The frontend commonly sends `n`; schema uses `number_of_images`.
+      const requestedImagesRaw =
+        rest.number_of_images != null ? rest.number_of_images : rest.n != null ? rest.n : undefined;
+      if (requestedImagesRaw != null) {
+        input.number_of_images = Math.max(1, Math.min(10, Number(requestedImagesRaw)));
       } else {
         input.number_of_images = 1; // Default per schema
       }
@@ -2133,6 +2136,10 @@ export async function generateImage(uid: string, body: any) {
       if (numImages > 1) {
         // Store num_images for later use in the generation logic
         (body as any).__num_images = numImages;
+
+        // When we fan-out internally, each upstream call should generate 1 image.
+        // This avoids accidental multiplication if the provider starts honoring number_of_images.
+        input.number_of_images = 1;
       }
     }
     const modelSpec = composeModelSpec(replicateModelBase, body.version);
