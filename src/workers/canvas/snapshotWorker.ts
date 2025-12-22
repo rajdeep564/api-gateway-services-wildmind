@@ -1,6 +1,7 @@
 /**
  * Snapshot Worker - Creates snapshots of Canvas projects
  * 
+ * akhj;oauedhikshdbk;jvb kabjlabgklvb jasb
  * This worker can be run:
  * - As a scheduled Cloud Function (every N hours)
  * - As a manual API endpoint
@@ -140,7 +141,7 @@ export async function processSnapshots(
       new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
     );
     const projectsRef = adminDb.collection('canvasProjects');
-    
+
     // Note: This query requires an index on updatedAt
     // For now, we'll limit to recent projects
     const projectsSnap = await projectsRef
