@@ -1,16 +1,17 @@
 import { Request, Response, NextFunction } from 'express';
-import { replicateService } from '../services/replicateService';
+import { replicateService, waitForPrediction } from '../services/replicateService';
 import { formatApiResponse } from '../utils/formatApiResponse';
-import { postSuccessDebit } from '../utils/creditDebit';
+import { postSuccessDebit, issueRefund } from '../utils/creditDebit';
+// Background task queue removed — using fire-and-forget background tasks instead
 
 async function removeBackground(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
     const data = await replicateService.removeBackground(uid, req.body || {});
-  (res as any).locals = { ...(res as any).locals, success: true };
-  const ctx = (req as any).context || {};
-  try { await postSuccessDebit(uid, data, ctx, 'replicate', 'bg-remove'); } catch {}
-  res.json({ responseStatus: 'success', message: 'OK', data });
+    (res as any).locals = { ...(res as any).locals, success: true };
+    const ctx = (req as any).context || {};
+    try { await postSuccessDebit(uid, data, ctx, 'replicate', 'bg-remove'); } catch { }
+    res.json({ responseStatus: 'success', message: 'OK', data });
   } catch (e) {
     next(e);
     return;
@@ -21,12 +22,33 @@ async function upscale(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
     const data = await replicateService.upscale(uid, req.body || {});
-  (res as any).locals = { ...(res as any).locals, success: true };
-  const ctx = (req as any).context || {};
-  try { await postSuccessDebit(uid, data, ctx, 'replicate', 'upscale'); } catch {}
-  res.json({ responseStatus: 'success', message: 'OK', data });
+    (res as any).locals = { ...(res as any).locals, success: true };
+    const ctx = (req as any).context || {};
+    try { await postSuccessDebit(uid, data, ctx, 'replicate', 'upscale'); } catch { }
+    res.json({ responseStatus: 'success', message: 'OK', data });
   } catch (e) {
     next(e);
+    return;
+  }
+}
+
+
+export async function multiangle(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const data = await replicateService.multiangle(uid, req.body || {});
+    (res as any).locals = { ...(res as any).locals, success: true };
+    const ctx = (req as any).context || {};
+    try { await postSuccessDebit(uid, data, ctx, 'replicate', 'multiangle'); } catch { }
+    res.json({ responseStatus: 'success', message: 'OK', data });
+  } catch (e: any) {
+    console.error('[ReplicateController] Multiangle error:', e);
+    // Explicitly sending JSON error to prevent HTML fallback (e.g. from default error handler)
+    res.status(500).json({
+      responseStatus: 'error',
+      message: e.message || 'Internal Server Error',
+      error: e.toString()
+    });
     return;
   }
 }
@@ -35,10 +57,17 @@ async function generateImage(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
     const data = await replicateService.generateImage(uid, req.body || {});
-  (res as any).locals = { ...(res as any).locals, success: true };
-  const ctx = (req as any).context || {};
-  try { await postSuccessDebit(uid, data, ctx, 'replicate', 'generate'); } catch {}
-  res.json({ responseStatus: 'success', message: 'OK', data });
+    (res as any).locals = { ...(res as any).locals, success: true };
+    const ctx = (req as any).context || {};
+    // Perform debit and include credit info in response, similar to FAL image generation
+    const debitOutcome = await postSuccessDebit(uid, data, ctx, 'replicate', 'generate');
+    res.json(
+      formatApiResponse('success', 'OK', {
+        ...data,
+        debitedCredits: ctx.creditCost,
+        debitStatus: debitOutcome,
+      })
+    );
   } catch (e) {
     next(e);
     return;
@@ -69,7 +98,7 @@ async function wanT2V(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-export const replicateController = { removeBackground, upscale, generateImage, wanI2V, wanT2V } as any;
+export const replicateController = { removeBackground, upscale, generateImage, wanI2V, wanT2V, multiangle } as any;
 // Queue-style handlers for Replicate WAN 2.5
 export async function wanT2vSubmit(req: Request, res: Response, next: NextFunction) {
   try {
@@ -135,13 +164,48 @@ export async function klingI2vSubmit(req: Request, res: Response, next: NextFunc
 }
 
 Object.assign(replicateController, { klingT2vSubmit, klingI2vSubmit });
-
 // Seedance queue handlers
 export async function seedanceT2vSubmit(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
     const result = await (replicateService as any).seedanceT2vSubmit(uid, req.body || {});
-    res.json(formatApiResponse('success', 'Submitted', result));
+
+    const ctx = (req as any).context || {};
+    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'seedance-t2v');
+
+    // OPTIMIZED: Return immediately after submission to prevent 524 timeout
+    // Client should poll /api/replicate/queue/result with requestId to get final results
+    // This allows video generation (which can take minutes) to complete asynchronously
+    res.json(formatApiResponse('success', 'Submitted', {
+      ...result,
+      debitedCredits: ctx.creditCost,
+      debitStatus: debitOutcome,
+      // Include requestId so client can poll for results
+      requestId: result.requestId,
+      message: 'Video generation started. Use /api/replicate/queue/result with requestId to check status.'
+    }));
+
+    // OPTIMIZED: Process finalization asynchronously via task queue to limit CPU load
+    // This ensures history is updated and files are uploaded without blocking the HTTP response
+    // Uses a queue system to limit concurrent background operations
+    const requestId = result.requestId;
+    if (requestId) {
+      // Fire-and-forget background finalization (queue removed)
+      const delay = Math.random() * 2000; // 0-2s random delay
+      setImmediate(() => {
+        (async () => {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          try {
+            const finalPrediction = await waitForPrediction(requestId);
+            await (replicateService as any).replicateQueueResult(uid, requestId);
+            console.log('[seedanceT2vSubmit][background] finalization completed for requestId:', requestId);
+          } catch (err: any) {
+            console.error('[seedanceT2vSubmit][background] finalization failed:', err);
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-t2v.failed', { error: err?.message }); } catch(_){}
+          }
+        })().catch((e) => console.error('[seedanceT2vSubmit][background] unexpected error', e));
+      });
+    }
   } catch (e) { next(e); }
 }
 
@@ -149,11 +213,125 @@ export async function seedanceI2vSubmit(req: Request, res: Response, next: NextF
   try {
     const uid = (req as any).uid as string;
     const result = await (replicateService as any).seedanceI2vSubmit(uid, req.body || {});
-    res.json(formatApiResponse('success', 'Submitted', result));
+
+    const ctx = (req as any).context || {};
+    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'seedance-i2v');
+
+    // OPTIMIZED: Return immediately after submission to prevent 524 timeout
+    // Client should poll /api/replicate/queue/result with requestId to get final results
+    // This allows video generation (which can take minutes) to complete asynchronously
+    res.json(formatApiResponse('success', 'Submitted', {
+      ...result,
+      debitedCredits: ctx.creditCost,
+      debitStatus: debitOutcome,
+      // Include requestId so client can poll for results
+      requestId: result.requestId,
+      message: 'Video generation started. Use /api/replicate/queue/result with requestId to check status.'
+    }));
+
+    // OPTIMIZED: Process finalization asynchronously via task queue to limit CPU load
+    const requestId = result.requestId;
+    if (requestId) {
+      const delay = Math.random() * 2000; // 0-2s random delay
+      setImmediate(() => {
+        (async () => {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          try {
+            const finalPrediction = await waitForPrediction(requestId);
+            await (replicateService as any).replicateQueueResult(uid, requestId);
+            console.log('[seedanceI2vSubmit][background] finalization completed for requestId:', requestId);
+          } catch (err: any) {
+            console.error('[seedanceI2vSubmit][background] finalization failed:', err);
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-i2v.failed', { error: err?.message }); } catch(_){}
+          }
+        })().catch((e) => console.error('[seedanceI2vSubmit][background] unexpected error', e));
+      });
+    }
   } catch (e) { next(e); }
 }
 
 Object.assign(replicateController, { seedanceT2vSubmit, seedanceI2vSubmit });
+
+// Seedance Pro Fast queue handlers
+export async function seedanceProFastT2vSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).seedanceProFastT2vSubmit(uid, req.body || {});
+
+    const ctx = (req as any).context || {};
+    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'seedance-pro-fast-t2v');
+
+    // OPTIMIZED: Return immediately after submission to prevent 524 timeout
+    // Client should poll /api/replicate/queue/result with requestId to get final results
+    res.json(formatApiResponse('success', 'Submitted', {
+      ...result,
+      debitedCredits: ctx.creditCost,
+      debitStatus: debitOutcome,
+      requestId: result.requestId,
+      message: 'Video generation started. Use /api/replicate/queue/result with requestId to check status.'
+    }));
+
+    // OPTIMIZED: Process finalization asynchronously via task queue to limit CPU load
+    const requestId = result.requestId;
+    if (requestId) {
+      const delay = Math.random() * 2000;
+      setImmediate(() => {
+        (async () => {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          try {
+            const finalPrediction = await waitForPrediction(requestId);
+            await (replicateService as any).replicateQueueResult(uid, requestId);
+            console.log('[seedanceProFastT2vSubmit][background] finalization completed for requestId:', requestId);
+          } catch (err: any) {
+            console.error('[seedanceProFastT2vSubmit][background] finalization failed:', err);
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-pro-fast-t2v.failed', { error: err?.message }); } catch(_){}
+          }
+        })().catch((e) => console.error('[seedanceProFastT2vSubmit][background] unexpected error', e));
+      });
+    }
+  } catch (e) { next(e); }
+}
+
+export async function seedanceProFastI2vSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).seedanceProFastI2vSubmit(uid, req.body || {});
+
+    const ctx = (req as any).context || {};
+    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'seedance-pro-fast-i2v');
+
+    // OPTIMIZED: Return immediately after submission to prevent 524 timeout
+    // Client should poll /api/replicate/queue/result with requestId to get final results
+    res.json(formatApiResponse('success', 'Submitted', {
+      ...result,
+      debitedCredits: ctx.creditCost,
+      debitStatus: debitOutcome,
+      requestId: result.requestId,
+      message: 'Video generation started. Use /api/replicate/queue/result with requestId to check status.'
+    }));
+
+    // OPTIMIZED: Process finalization asynchronously via task queue to limit CPU load
+    const requestId = result.requestId;
+    if (requestId) {
+      const delay = Math.random() * 2000;
+      setImmediate(() => {
+        (async () => {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          try {
+            const finalPrediction = await waitForPrediction(requestId);
+            await (replicateService as any).replicateQueueResult(uid, requestId);
+            console.log('[seedanceProFastI2vSubmit][background] finalization completed for requestId:', requestId);
+          } catch (err: any) {
+            console.error('[seedanceProFastI2vSubmit][background] finalization failed:', err);
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-pro-fast-i2v.failed', { error: err?.message }); } catch(_){}
+          }
+        })().catch((e) => console.error('[seedanceProFastI2vSubmit][background] unexpected error', e));
+      });
+    }
+  } catch (e) { next(e); }
+}
+
+Object.assign(replicateController, { seedanceProFastT2vSubmit, seedanceProFastI2vSubmit });
 
 // PixVerse queue handlers
 export async function pixverseT2vSubmit(req: Request, res: Response, next: NextFunction) {

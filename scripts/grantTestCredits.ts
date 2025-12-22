@@ -5,7 +5,8 @@
  * This maintains consistency between balance and ledger history
  * 
  * Usage:
- *   npx ts-node scripts/grantTestCredits.ts <email> <amount>
+ *   npx ts-node scripts/grantTestCredits.ts <email> <amount> [--reason <text>] [--dry-run]
+ *   npx ts-node scripts/grantTestCredits.ts --username <username> <amount> [--reason <text>] [--dry-run]
  */
 
 import dotenv from 'dotenv';
@@ -41,9 +42,14 @@ async function resolveUserIdentifier(input: ResolveUserInput): Promise<ResolvedU
 }
 
 async function grantTestCredits(userInput: ResolveUserInput, amount: number) {
+  const reason = options.reason || 'testing.manual_grant';
+  const dryRun = options.dryRun === true;
+
   console.log('\n💰 ==== Grant Test Credits ====\n');
   console.log(userInput.type === 'email' ? `Email: ${userInput.value}` : `Username: ${userInput.value}`);
   console.log(`Amount: ${amount} credits`);
+  console.log(`Reason: ${reason}`);
+  console.log(`Dry run: ${dryRun ? 'YES (no writes)' : 'no'}`);
   console.log('-----------------------------------\n');
 
   try {
@@ -56,6 +62,11 @@ async function grantTestCredits(userInput: ResolveUserInput, amount: number) {
 
     // Ensure user is initialized
     await creditsService.ensureUserInit(userId);
+
+    // Ensure user is on launch plan (migrates if needed)
+    console.log(`🚀 Ensuring user is on launch plan...`);
+    await creditsService.ensureLaunchDailyReset(userId);
+    console.log(`   ✅ User is on launch plan\n`);
 
     // Get current balance
     const beforeInfo = await creditsRepository.readUserInfo(userId);
@@ -94,62 +105,89 @@ async function grantTestCredits(userInput: ResolveUserInput, amount: number) {
       console.log('');
     }
 
-    // Re-read balance after reconciliation
+    // Re-read balance after reconciliation (use reconciled balance as source of truth)
     const currentInfo = await creditsRepository.readUserInfo(userId);
-    const currentBalance = currentInfo?.creditBalance || 0;
+    // Use reconciled balance as it's the true current balance from ledgers
+    const currentBalance = reconciled.calculatedBalance;
 
     console.log(`📊 Before Grant:`);
-    console.log(`   Balance: ${currentBalance} credits`);
+    console.log(`   Stored Balance: ${currentInfo?.creditBalance || 0} credits`);
+    console.log(`   Reconciled Balance: ${currentBalance} credits (using this as source of truth)`);
     console.log(`   Plan: ${currentInfo?.planCode || 'FREE'}`);
     console.log('');
 
-    // Grant credits through ledger system
+    // Grant credits through ledger system using INCREMENT (preserves any debits)
     const requestId = `TEST_GRANT_${Date.now()}`;
-    console.log(`🔄 Granting ${amount} credits...`);
+    console.log(`🔄 Granting ${amount} credits (will be added to current balance)...`);
     console.log(`   Request ID: ${requestId}`);
     console.log('');
 
-    // Calculate new balance (add to current reconciled balance)
-    const newBalance = currentBalance + amount;
-    
-    const result = await creditsRepository.writeGrantAndSetPlanIfAbsent(
-      userId,
-      requestId,
-      newBalance, // Set to new balance (current + grant amount)
-      currentInfo?.planCode || 'FREE',
-      'testing.manual_grant',
-      { 
-        grantedAmount: amount,
-        previousBalance: currentBalance,
-        reconciledBalance: reconciled.calculatedBalance,
-        reason: 'Testing purposes'
-      }
-    );
+    let grantResult: 'WRITTEN' | 'SKIPPED' | 'DRY_RUN' = 'SKIPPED';
 
-    if (result === 'WRITTEN') {
+    if (dryRun) {
+      grantResult = 'DRY_RUN';
+      console.log('🧪 Dry run enabled: skipping writeGrantIncrement');
+    } else {
+      // Use writeGrantIncrement which ADDS to balance (preserves debits)
+      const result = await creditsRepository.writeGrantIncrement(
+        userId,
+        requestId,
+        amount, // Grant amount to ADD (not total balance)
+        reason,
+        { 
+          grantedAmount: amount,
+          previousBalance: currentBalance,
+          storedBalance: currentInfo?.creditBalance || 0,
+          reconciledBalance: reconciled.calculatedBalance,
+          planCode: currentInfo?.planCode || 'FREE',
+          reason: options.reason || 'Testing purposes'
+        }
+      );
+
+      grantResult = result === 'WRITTEN' ? 'WRITTEN' : 'SKIPPED';
+    }
+
+    if (grantResult === 'WRITTEN') {
       console.log('✅ Credits granted successfully!');
+    } else if (grantResult === 'DRY_RUN') {
+      console.log('ℹ️  Dry run complete (no ledger writes performed).');
     } else {
       console.log('⚠️  Transaction was skipped (idempotency)');
     }
     console.log('');
 
-    // Verify new balance
-    const afterInfo = await creditsRepository.readUserInfo(userId);
-    const afterReconciled = await creditsRepository.reconcileBalanceFromLedgers(userId);
+    // Verify new balance (reconcile from ledgers to get true balance) - skip on dry run
+    const afterInfo = dryRun ? currentInfo : await creditsRepository.readUserInfo(userId);
+    const afterReconciled = dryRun ? reconciled : await creditsRepository.reconcileBalanceFromLedgers(userId);
     
-    console.log(`📊 After:`);
-    console.log(`   Balance: ${afterInfo?.creditBalance} credits`);
+    // Expected balance = previous reconciled balance + grant amount (or same on dry run)
+    const expectedBalance = dryRun ? currentBalance : currentBalance + amount;
+    
+    console.log(`📊 After Grant:`);
+    console.log(`   Stored Balance: ${afterInfo?.creditBalance} credits`);
+    console.log(`   Reconciled Balance: ${afterReconciled.calculatedBalance} credits`);
+    console.log(`   Expected Balance: ${expectedBalance} credits (${currentBalance} + ${amount})`);
     console.log(`   Plan: ${afterInfo?.planCode}`);
-    console.log(`   Change: +${(afterInfo?.creditBalance || 0) - currentBalance} credits`);
     console.log('');
     
-    // Verify balance matches ledger
-    const afterMismatch = Math.abs((afterInfo?.creditBalance || 0) - afterReconciled.calculatedBalance) >= 1;
-    if (afterMismatch) {
-      console.log(`   ⚠️  WARNING: Balance mismatch after grant!`);
+    // Verify balance matches expected (reconciled should equal expected)
+    const balanceMatches = Math.abs(afterReconciled.calculatedBalance - expectedBalance) < 1;
+    const storedMatchesReconciled = Math.abs((afterInfo?.creditBalance || 0) - afterReconciled.calculatedBalance) < 1;
+    
+    if (!balanceMatches) {
+      console.log(`   ⚠️  WARNING: Reconciled balance doesn't match expected!`);
+      console.log(`   Expected: ${expectedBalance}`);
+      console.log(`   Reconciled: ${afterReconciled.calculatedBalance}`);
+      console.log(`   Difference: ${afterReconciled.calculatedBalance - expectedBalance}`);
+      console.log(`   🔧 This might indicate concurrent debits or ledger issues`);
+      console.log('');
+    }
+    
+    if (!storedMatchesReconciled) {
+      console.log(`   ⚠️  WARNING: Stored balance doesn't match reconciled!`);
       console.log(`   Stored: ${afterInfo?.creditBalance}`);
-      console.log(`   Calculated: ${afterReconciled.calculatedBalance}`);
-      console.log(`   🔧 Auto-fixing...`);
+      console.log(`   Reconciled: ${afterReconciled.calculatedBalance}`);
+      console.log(`   🔧 Auto-fixing stored balance...`);
       
       const { adminDb, admin } = await import('../src/config/firebaseAdmin');
       const userRef = adminDb.collection('users').doc(userId);
@@ -159,8 +197,9 @@ async function grantTestCredits(userInput: ResolveUserInput, amount: number) {
       });
       console.log(`   ✅ Balance corrected to ${afterReconciled.calculatedBalance} credits`);
       console.log('');
-    } else {
-      console.log(`   ✅ Balance verified: Matches ledger entries`);
+    } else if (balanceMatches) {
+      console.log(`   ✅ Balance verified: Stored and reconciled match expected`);
+      console.log(`   ✅ Grant amount correctly added: ${currentBalance} → ${afterReconciled.calculatedBalance} (+${amount})`);
       console.log('');
     }
 
@@ -201,6 +240,7 @@ async function grantTestCredits(userInput: ResolveUserInput, amount: number) {
 const args = process.argv.slice(2);
 let identifier: ResolveUserInput | null = null;
 let amount = 0;
+let options: { reason?: string; dryRun?: boolean } = {};
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -212,6 +252,16 @@ for (let i = 0; i < args.length; i++) {
     }
     identifier = { type: 'username', value };
     i++;
+  } else if (arg === '--reason') {
+    const value = args[i + 1];
+    if (!value) {
+      console.error('❌ Missing value for --reason');
+      process.exit(1);
+    }
+    options.reason = value;
+    i++;
+  } else if (arg === '--dry-run' || arg === '--dryrun') {
+    options.dryRun = true;
   } else if (!identifier) {
     identifier = { type: 'email', value: arg };
   } else if (!amount) {
@@ -220,10 +270,11 @@ for (let i = 0; i < args.length; i++) {
 }
 
 if (!identifier || !amount || amount <= 0) {
-  console.error('❌ Usage: npx ts-node scripts/grantTestCredits.ts [--username <username> | <email>] <amount>');
+  console.error('❌ Usage: npx ts-node scripts/grantTestCredits.ts [--username <username> | <email>] <amount> [--reason <text>] [--dry-run]');
   console.error('\nExamples:');
   console.error('  npx ts-node scripts/grantTestCredits.ts user@example.com 10000');
-  console.error('  npx ts-node scripts/grantTestCredits.ts --username jane_doe 5000');
+  console.error('  npx ts-node scripts/grantTestCredits.ts --username jane_doe 5000 --reason "qa.test.grant"');
+  console.error('  npx ts-node scripts/grantTestCredits.ts user@example.com 500 --dry-run');
   process.exit(1);
 }
 

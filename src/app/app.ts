@@ -5,6 +5,9 @@ import routes from '../routes';
 import { errorHandler } from '../utils/errorHandler';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { gzipCompression, httpParamPollution, requestId, securityHeaders, originCheck } from '../middlewares/security';
+import { globalLimiter, authLimiter, generationLimiter, apiLimiter, pollingLimiter } from '../middlewares/rateLimiter';
+import { ipFirewall } from '../middlewares/ipFirewall';
+import { sanitizeInput, detectInjectionAttacks } from '../middlewares/validation';
 import { httpLogger } from '../middlewares/logger';
 import { adminDb, admin } from '../config/firebaseAdmin';
 import { env } from '../config/env';
@@ -14,28 +17,29 @@ import { getRedisClient, isRedisEnabled } from '../config/redisClient';
 
 const app = express();
 
+
 // Trust proxy settings (safe for rate limiting)
-const isProd = process.env.NODE_ENV === 'production';
+const isProd = env.nodeEnv === 'production';
 app.set('trust proxy', isProd ? 1 : false);
 
 // Security and common middlewares (SOC2 oriented)
 app.use(requestId);
 app.use(securityHeaders);
 // CORS for frontend with credentials (dev + prod)
-const isProdEnv = process.env.NODE_ENV === 'production';
+const isProdEnv = env.nodeEnv === 'production';
 // Always include production origins (even if NODE_ENV isn't set, Render.com is production)
 const allowedOrigins = [
   // Production hosts (always include these for live site)
-  'https://www.wildmindai.com', 
-  'https://wildmindai.com',
-  'https://studio.wildmindai.com', // Canvas subdomain
+  env.productionWwwDomain,
+  env.productionDomain,
+  env.productionStudioDomain, // Canvas subdomain
   // Development origins (only in dev)
   ...(!isProdEnv ? [
-    'http://localhost:3000', // Main project dev
-    'http://localhost:3001', // Canvas dev
+    env.devFrontendUrl, // Main project dev
+    env.devCanvasUrl, // Canvas dev
   ] : []),
-  process.env.FRONTEND_ORIGIN || '',
-  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : [])
+  ...env.frontendOrigins,
+  ...env.allowedOrigins
 ].filter(Boolean);
 
 const corsOptions: any = {
@@ -44,19 +48,25 @@ const corsOptions: any = {
     if (!origin) return callback(null, true);
     try {
       if (allowedOrigins.includes(origin)) return callback(null, true);
-      // Allow subdomains of wildmindai.com
+      // Allow subdomains of production domain
       const originUrl = new URL(origin);
-      if (originUrl.hostname === 'www.wildmindai.com' || 
-          originUrl.hostname === 'wildmindai.com' ||
-          originUrl.hostname.endsWith('.wildmindai.com')) {
+      const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
+      const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
+      if (prodDomain && (originUrl.hostname === prodWwwDomain || 
+          originUrl.hostname === prodDomain ||
+          originUrl.hostname.endsWith(`.${prodDomain}`))) {
         return callback(null, true);
       }
-      // Allow subdomains of the configured prod origin (e.g., preview/app)
-      if (process.env.FRONTEND_ORIGIN) {
-        const allowHost = new URL(process.env.FRONTEND_ORIGIN).hostname;
-        const reqHost = originUrl.hostname;
-        if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) {
-          return callback(null, true);
+      // Allow subdomains of the configured frontend origins
+      for (const frontendOrigin of env.frontendOrigins) {
+        try {
+          const allowHost = new URL(frontendOrigin).hostname;
+          const reqHost = originUrl.hostname;
+          if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) {
+            return callback(null, true);
+          }
+        } catch {
+          // Skip invalid URLs
         }
       }
     } catch (e) {
@@ -96,15 +106,17 @@ const allowOrigin = (origin?: string) => {
   if (!origin) return false;
   try {
     if (allowedOrigins.includes(origin)) return true;
-    // Allow wildmindai.com and all its subdomains
+    // Allow production domain and all its subdomains
     const originUrl = new URL(origin);
-    if (originUrl.hostname === 'www.wildmindai.com' || 
-        originUrl.hostname === 'wildmindai.com' ||
-        originUrl.hostname.endsWith('.wildmindai.com')) {
+    const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
+    const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
+    if (prodDomain && (originUrl.hostname === prodWwwDomain || 
+        originUrl.hostname === prodDomain ||
+        originUrl.hostname.endsWith(`.${prodDomain}`))) {
       return true;
     }
-    if (process.env.FRONTEND_ORIGIN) {
-      const allowHost = new URL(process.env.FRONTEND_ORIGIN).hostname;
+    if (env.frontendOrigin) {
+      const allowHost = new URL(env.frontendOrigin).hostname;
       const reqHost = originUrl.hostname;
       if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) return true;
     }
@@ -129,15 +141,67 @@ app.use((req, res, next) => {
   }
   return next();
 });
+
+// ============================================================================
+// SECURITY LAYER - Applied in this order for defense-in-depth
+// ============================================================================
+
+// 1. IP Firewall - Block malicious IPs immediately
+app.use(ipFirewall);
+
+// 2. Global Rate Limiter - Prevent DDoS/brute force
+app.use(globalLimiter);
+
+// 3. Injection Attack Detection - Detect SQL/XSS attempts
+app.use(detectInjectionAttacks);
+
+// 4. Input Sanitization - Clean all inputs
+app.use(sanitizeInput);
+
+// Body parsers (after security checks)
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
+
+// Additional security middlewares
 app.use(httpParamPollution);
 app.use(gzipCompression);
 app.use(httpLogger);
 if (isProd) {
   app.use(originCheck);
 }
+
+// ============================================================================
+// ROUTE-SPECIFIC RATE LIMITING
+// ============================================================================
+
+// Polling/Status endpoints - Very high limit (500 req/min) 
+// Applied FIRST so they don't hit the general API limit
+app.use('/api/runway/status', pollingLimiter);
+app.use('/api/replicate/queue/status', pollingLimiter);
+app.use('/api/replicate/status', pollingLimiter);
+app.use('/api/fal/queue/status', pollingLimiter);
+app.use('/api/fal/status', pollingLimiter);
+app.use('/api/minimax/video/status', pollingLimiter);
+app.use('/api/generation/status', pollingLimiter);
+
+// Auth endpoints - Strict rate limiting (5 attempts per 15 min)
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/signup', authLimiter);
+app.use('/api/auth/google', authLimiter);
+
+// Generation endpoints - Moderate rate limiting (30 per min)
+app.use('/api/replicate/generate', generationLimiter);
+app.use('/api/fal/submit', generationLimiter);
+app.use('/api/local/upscale-generation', generationLimiter);
+app.use('/api/gemini/enhance', generationLimiter);
+
+// Standard API endpoints - Standard rate limiting (100 per min)
+app.use('/api', apiLimiter);
+
+console.log('[Security] ✅ All security middlewares applied');
+
+
 
 // Health endpoint
 app.get('/health', (_req, res) => {
@@ -221,6 +285,35 @@ let cachePopulateStarted = false;
     }
   } catch (_e) {
     // Non-fatal: cache will be populated on first request
+  }
+})();
+
+// Email configuration check on startup
+(async () => {
+  try {
+    const { isEmailConfigured } = await import('../utils/mailer');
+    const { env } = await import('../config/env');
+    
+    if (!isEmailConfigured()) {
+      console.warn('[EMAIL CONFIG] ⚠️  Email service is not properly configured!');
+      console.warn('[EMAIL CONFIG] For production, you need:');
+      console.warn('[EMAIL CONFIG]   - RESEND_API_KEY (preferred)');
+      console.warn('[EMAIL CONFIG]   - SMTP_FROM (e.g., no-reply@wildmindai.com)');
+      console.warn('[EMAIL CONFIG] Or as fallback:');
+      console.warn('[EMAIL CONFIG]   - EMAIL_USER (Gmail address)');
+      console.warn('[EMAIL CONFIG]   - EMAIL_APP_PASSWORD (Gmail app password)');
+      console.warn('[EMAIL CONFIG] Current status:', {
+        hasResendKey: !!env.resendApiKey,
+        hasSmtpFrom: !!env.smtpFrom,
+        hasEmailUser: !!env.emailUser,
+        hasEmailAppPassword: !!env.emailAppPassword,
+        environment: env.nodeEnv
+      });
+    } else {
+      console.log('[EMAIL CONFIG] ✅ Email service is configured');
+    }
+  } catch (_e) {
+    // Non-fatal: email check failed
   }
 })();
 

@@ -37,6 +37,7 @@ export const validateKlingI2V = [
     const d = String(req.body.duration ?? '5').toLowerCase();
     const dm = d.match(/(5|10)/); req.body.duration = dm ? Number(dm[1]) : 5;
     if (!req.body.kind && !req.body.type) req.body.kind = 'i2v';
+    
     return next();
   }
 ];

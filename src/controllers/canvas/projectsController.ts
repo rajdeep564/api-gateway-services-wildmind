@@ -62,6 +62,24 @@ export async function updateProject(req: Request, res: Response) {
   }
 }
 
+export async function deleteProject(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+
+    const { id } = req.params;
+    await projectService.deleteProject(id, userId);
+
+    res.json(formatApiResponse('success', 'Project deleted', null));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to delete project', null)
+    );
+  }
+}
+
 export async function addCollaborator(req: Request, res: Response) {
   try {
     const userId = (req as any).uid;
@@ -71,7 +89,7 @@ export async function addCollaborator(req: Request, res: Response) {
 
     const { id } = req.params;
     const { collaboratorUid, role } = req.body;
-    
+
     await projectService.addCollaboratorToProject(id, userId, collaboratorUid, role);
 
     res.json(formatApiResponse('success', 'Collaborator added', null));

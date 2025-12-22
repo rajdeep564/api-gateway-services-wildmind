@@ -10,6 +10,7 @@ import * as cursorAgentController from '../controllers/canvas/cursorAgentControl
 import * as workersController from '../controllers/canvas/workersController';
 import * as presenceController from '../websocket/canvasPresenceServer';
 import * as mediaLibraryController from '../controllers/canvas/mediaLibraryController';
+import * as queryController from '../controllers/canvas/queryController';
 
 const router = Router();
 
@@ -21,6 +22,7 @@ router.post('/projects', projectsController.createProject);
 router.get('/projects', projectsController.listProjects);
 router.get('/projects/:id', projectsController.getProject);
 router.patch('/projects/:id', projectsController.updateProject);
+router.delete('/projects/:id', projectsController.deleteProject);
 router.post('/projects/:id/collaborators', projectsController.addCollaborator);
 
 // Operations
@@ -35,10 +37,42 @@ router.post('/projects/:id/snapshot', snapshotController.createSnapshot);
 router.get('/projects/:id/snapshot/current', snapshotController.getCurrentSnapshot);
 router.put('/projects/:id/snapshot/current', snapshotController.setCurrentSnapshot);
 
+import { makeCreditCost } from '../middlewares/creditCostFactory';
+import {
+    computeCanvasGenerateCost,
+    computeCanvasVideoCost,
+    computeCanvasUpscaleCost,
+    computeCanvasRemoveBgCost,
+    computeCanvasVectorizeCost,
+    computeCanvasEraseCost,
+    computeCanvasReplaceCost,
+    computeCanvasScriptCost,
+    computeCanvasNextSceneCost
+} from '../utils/pricing/canvasPricing';
+
 // Generation (Canvas-specific)
-router.post('/generate', validateCanvasGenerate, generateController.generateForCanvas);
-router.post('/generate-video', requireAuth, generateController.generateVideoForCanvas);
-router.post('/upscale', requireAuth, generateController.upscaleForCanvas);
+// @ts-ignore
+router.post('/generate', validateCanvasGenerate, makeCreditCost('canvas', 'generate', computeCanvasGenerateCost), generateController.generateForCanvas);
+// @ts-ignore
+router.post('/generate-video', requireAuth, makeCreditCost('canvas', 'generate-video', computeCanvasVideoCost), generateController.generateVideoForCanvas);
+// @ts-ignore
+router.post('/upscale', requireAuth, makeCreditCost('canvas', 'upscale', computeCanvasUpscaleCost), generateController.upscaleForCanvas);
+// @ts-ignore
+router.post('/removebg', requireAuth, makeCreditCost('canvas', 'removebg', computeCanvasRemoveBgCost), generateController.removeBgForCanvas);
+// @ts-ignore
+router.post('/vectorize', requireAuth, makeCreditCost('canvas', 'vectorize', computeCanvasVectorizeCost), generateController.vectorizeForCanvas);
+// @ts-ignore
+router.post('/erase', requireAuth, makeCreditCost('canvas', 'erase', computeCanvasEraseCost), generateController.eraseForCanvas);
+// @ts-ignore
+router.post('/replace', requireAuth, makeCreditCost('canvas', 'replace', computeCanvasReplaceCost), generateController.replaceForCanvas);
+// @ts-ignore
+router.post('/next-scene', requireAuth, makeCreditCost('canvas', 'next-scene', computeCanvasNextSceneCost), generateController.generateNextSceneForCanvas);
+router.post('/create-stitched-reference', requireAuth, generateController.createStitchedReferenceImage);
+
+// Query (Canvas prompt enhancement)
+router.post('/query', queryController.queryCanvas);
+// @ts-ignore
+router.post('/generate-scenes', makeCreditCost('canvas', 'generate-scenes', computeCanvasScriptCost), queryController.generateScenes);
 
 // Media Library
 router.get('/media-library', mediaLibraryController.getMediaLibrary);

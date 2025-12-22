@@ -24,11 +24,20 @@ import {
   computeFalSeedVrUpscaleCost,
   computeFalTopazUpscaleImageCost,
   computeFalBirefnetVideoCost,
+  computeFalElevenTtsCost,
+  computeFalElevenDialogueCost,
+  computeFalChatterboxMultilingualCost,
+  computeFalMayaTtsCost,
+  computeFalElevenSfxCost,
+  computeFalKlingO1SubmitCost,
+  computeFalKling26ProT2vSubmitCost,
+  computeFalKling26ProI2vSubmitCost,
 } from "../utils/pricing/falPricing";
 import {
   validateFalGenerate,
   validateFalElevenDialogue,
   validateFalElevenTts,
+  validateFalElevenSfx,
   validateFalMayaTts,
   validateFalChatterboxMultilingual,
   validateFalChatterboxSts,
@@ -58,6 +67,11 @@ import {
   validateFalSeedvrUpscale,
   validateFalTopazUpscaleImage,
   validateFalBirefnetVideo,
+  validateFalKlingO1FirstLastSubmit,
+  validateFalKlingO1ReferenceSubmit,
+  validateFalKling26ProT2v,
+  validateFalKling26ProI2v,
+  validateFalNanoBananaPro,
 } from "../middlewares/validators/fal/validateFalGenerate";
 
 const router = Router();
@@ -75,7 +89,7 @@ router.post(
   "/eleven/dialogue",
   requireAuth,
   validateFalElevenDialogue as any,
-  makeCreditCost("fal", "generate", computeFalImageCost) as any,
+  makeCreditCost("fal", "generate", computeFalElevenDialogueCost) as any,
   falController.generate as any
 );
 
@@ -84,7 +98,16 @@ router.post(
   "/eleven/tts",
   requireAuth,
   validateFalElevenTts as any,
-  makeCreditCost("fal", "generate", computeFalImageCost) as any,
+  makeCreditCost("fal", "generate", computeFalElevenTtsCost) as any,
+  falController.generate as any
+);
+
+// ElevenLabs Sound Effects (SFX)
+router.post(
+  "/eleven/sfx",
+  requireAuth,
+  validateFalElevenSfx as any,
+  makeCreditCost("fal", "generate", computeFalElevenSfxCost) as any,
   falController.generate as any
 );
 
@@ -93,7 +116,7 @@ router.post(
   "/maya/tts",
   requireAuth,
   validateFalMayaTts as any,
-  makeCreditCost("fal", "generate", computeFalImageCost) as any,
+  makeCreditCost("fal", "generate", computeFalMayaTtsCost) as any,
   falController.generate as any
 );
 
@@ -102,7 +125,7 @@ router.post(
   "/chatterbox/multilingual",
   requireAuth,
   validateFalChatterboxMultilingual as any,
-  makeCreditCost("fal", "generate", computeFalImageCost) as any,
+  makeCreditCost("fal", "generate", computeFalChatterboxMultilingualCost) as any,
   falController.generate as any
 );
 
@@ -243,6 +266,46 @@ router.post(
     computeFalVeoI2vSubmitCost(req, true)
   ) as any,
   falController.veoI2vFastSubmit as any
+);
+// Kling o1 First/Last Frame to Video
+router.post(
+  "/kling-o1/first-last-frame-to-video/submit",
+  requireAuth as any,
+  validateFalKlingO1FirstLastSubmit as any,
+  makeCreditCost("fal", "kling_o1_first_last_submit", (req) =>
+    computeFalKlingO1SubmitCost(req)
+  ) as any,
+  (falController as any).klingO1FirstLastSubmit
+);
+// Kling o1 Reference to Video (single or multiple images)
+router.post(
+  "/kling-o1/reference-to-video/submit",
+  requireAuth as any,
+  validateFalKlingO1ReferenceSubmit as any,
+  makeCreditCost("fal", "kling_o1_first_last_submit", (req) =>
+    computeFalKlingO1SubmitCost(req)
+  ) as any,
+  (falController as any).klingO1ReferenceSubmit
+);
+// Kling 2.6 Pro Text-to-Video
+router.post(
+  "/kling-2.6-pro/text-to-video/submit",
+  requireAuth as any,
+  validateFalKling26ProT2v as any,
+  makeCreditCost("fal", "kling_26_pro_t2v_submit", (req) =>
+    computeFalKling26ProT2vSubmitCost(req)
+  ) as any,
+  (falController as any).kling26ProT2vSubmit
+);
+// Kling 2.6 Pro Image-to-Video
+router.post(
+  "/kling-2.6-pro/image-to-video/submit",
+  requireAuth as any,
+  validateFalKling26ProI2v as any,
+  makeCreditCost("fal", "kling_26_pro_i2v_submit", (req) =>
+    computeFalKling26ProI2vSubmitCost(req)
+  ) as any,
+  (falController as any).kling26ProI2vSubmit
 );
 router.get(
   "/queue/status",

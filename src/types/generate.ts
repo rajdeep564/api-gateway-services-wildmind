@@ -90,6 +90,9 @@ export interface GenerationHistoryItem {
   uid: string;
   prompt: string;
   userPrompt?: string; // Original user-entered prompt (e.g., "@buddy is dancing with @emily")
+  // Optional rich text fields for audio/music generations
+  lyrics?: string;      // Full lyrics text for text-to-music
+  fileName?: string;    // User-facing display name for audio track
   model: string;
   generationType: GenerationType;
   status: GenerationStatus;
@@ -108,6 +111,10 @@ export interface GenerationHistoryItem {
   aspectRatio?: string;
   aspect_ratio?: string;
   style?: string;
+  // Video generation specific fields
+  quality?: string;
+  resolution?: string;
+  duration?: number | string;
   // replaced by isPublic in repositories/services
   isPublic?: boolean;
   // soft delete flag; when true item should be hidden everywhere

@@ -70,6 +70,7 @@ export const validateCanvasGenerate = [
     if (!errors.isEmpty()) {
       return next(new ApiError('Validation failed', 422, errors.array()));
     }
+
     next();
   },
 ];

@@ -46,8 +46,8 @@ function getTransporter() {
     });
     
     transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
+      host: env.gmailSmtpHost,
+      port: env.gmailSmtpPort,
       secure: true,
       pool: true,
       maxConnections: 3,
@@ -116,41 +116,94 @@ function getTransporter() {
   return transporter;
 }
 
-export async function sendEmail(to: string, subject: string, text: string) {
+/**
+ * Send email using Resend API as primary, Gmail SMTP as fallback
+ */
+async function sendEmailViaResend(to: string, subject: string, text: string, html?: string): Promise<boolean> {
+  // Check if Resend is configured
+  if (!env.resendApiKey) {
+    console.log('[MAIL] Resend API key not configured, skipping Resend');
+    return false;
+  }
+  
+  if (!env.smtpFrom) {
+    console.log('[MAIL] SMTP_FROM not configured, skipping Resend');
+    return false;
+  }
+
+  try {
+    const resendApiBase = env.resendApiBase || 'https://api.resend.com';
+    const payload: any = {
+      from: env.smtpFrom,
+      to,
+      subject,
+      text
+    };
+    
+    // Add HTML if provided
+    if (html) {
+      payload.html = html;
+    }
+    
+    console.log(`[MAIL] Attempting to send email via Resend to ${to} from ${env.smtpFrom}`);
+    
+    const resp = await fetch(`${resendApiBase}/emails`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.resendApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (resp.ok) {
+      const result = await resp.json().catch(() => ({}));
+      console.log(`[MAIL] Resend email sent successfully to ${to}`, result);
+      return true;
+    } else {
+      const errTxt = await resp.text().catch(() => '');
+      console.error(`[MAIL] Resend send failed: ${resp.status} ${resp.statusText}`, {
+        error: errTxt,
+        from: env.smtpFrom,
+        to,
+        hasApiKey: !!env.resendApiKey,
+        apiKeyLength: env.resendApiKey?.length || 0
+      });
+      return false;
+    }
+  } catch (e: any) {
+    console.error(`[MAIL] Resend error: ${e?.message}`, {
+      stack: e?.stack,
+      from: env.smtpFrom,
+      to,
+      hasApiKey: !!env.resendApiKey
+    });
+    return false;
+  }
+}
+
+/**
+ * Send email using Gmail SMTP as fallback
+ */
+async function sendEmailViaSMTP(to: string, subject: string, text: string, html?: string): Promise<boolean> {
   const from = env.smtpFrom || env.emailUser;
   const t = getTransporter();
   
   if (!t || !from) {
-    // Try Resend API if configured
-    if (env.resendApiKey && env.smtpFrom) {
-      try {
-        const resp = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${env.resendApiKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ from: env.smtpFrom, to, subject, text })
-        });
-        if (!resp.ok) {
-          const errTxt = await resp.text().catch(() => '');
-          console.log(`[MAIL] Resend send failed: ${resp.status} ${errTxt}`);
-        } else {
-          console.log(`[MAIL] Resend email sent successfully to ${to}`);
-          return;
-        }
-      } catch (e: any) {
-        console.log(`[MAIL] Resend error: ${e?.message}`);
-      }
-    }
-    // Fallback to console if no provider works
-    console.log(`[MAIL FALLBACK] To: ${to} | Subject: ${subject} | Body: ${text}`);
-    return;
+    return false;
   }
-  
+
   try {
-    await t.sendMail({ from, to, subject, text });
-    console.log(`[MAIL] Email sent successfully to ${to}`);
+    const mailOptions: any = { from, to, subject, text };
+    
+    // Add HTML if provided
+    if (html) {
+      mailOptions.html = html;
+    }
+    
+    await t.sendMail(mailOptions);
+    console.log(`[MAIL] SMTP email sent successfully to ${to}`);
+    return true;
   } catch (error: any) {
     const errorCode = error?.code || error?.responseCode;
     const errorMessage = error?.message || 'Unknown error';
@@ -167,38 +220,56 @@ export async function sendEmail(to: string, subject: string, text: string) {
       resetTransporter();
     }
     
-    // Try Resend fallback if configured
-    if (env.resendApiKey && env.smtpFrom) {
-      try {
-        const resp = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${env.resendApiKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ from: env.smtpFrom, to, subject, text })
-        });
-        if (resp.ok) {
-          console.log(`[MAIL] Resend fallback delivered email to ${to}`);
-          return;
-        } else {
-          const errTxt = await resp.text().catch(() => '');
-          console.log(`[MAIL] Resend fallback failed: ${resp.status} ${errTxt}`);
-        }
-      } catch (e: any) {
-        console.log(`[MAIL] Resend fallback error: ${e?.message}`);
-      }
-    }
-    console.log(`[MAIL] Email failed, falling back to console log`);
-    console.log(`[MAIL FALLBACK] To: ${to} | Subject: ${subject} | Body: ${text}`);
-    console.log(`[MAIL ERROR] ${error.message}`);
-    // Don't throw error - just log OTP to console as fallback
+    return false;
   }
 }
 
+/**
+ * Send email with optional HTML content
+ * @param to - Recipient email address
+ * @param subject - Email subject
+ * @param text - Plain text email body (required)
+ * @param html - HTML email body (optional)
+ */
+export async function sendEmail(to: string, subject: string, text: string, html?: string) {
+  // Primary: Try Resend API first
+  console.log('[MAIL] Starting email send process', {
+    to,
+    hasResendKey: !!env.resendApiKey,
+    hasSmtpFrom: !!env.smtpFrom,
+    hasEmailUser: !!env.emailUser,
+    hasEmailAppPassword: !!env.emailAppPassword
+  });
+  
+  const resendSuccess = await sendEmailViaResend(to, subject, text, html);
+  if (resendSuccess) {
+    return;
+  }
+
+  // Fallback: Try Gmail SMTP (only if Resend failed)
+  console.log('[MAIL] Resend failed, attempting SMTP fallback');
+  const smtpSuccess = await sendEmailViaSMTP(to, subject, text, html);
+  if (smtpSuccess) {
+    return;
+  }
+
+  // Final fallback: Log to console
+  console.error(`[MAIL] All email providers failed, falling back to console log`, {
+    to,
+    subject,
+    resendConfigured: !!(env.resendApiKey && env.smtpFrom),
+    smtpConfigured: !!(env.emailUser && env.emailAppPassword),
+    environment: env.nodeEnv
+  });
+  console.log(`[MAIL FALLBACK] To: ${to} | Subject: ${subject} | Body: ${text}`);
+}
+
 export function isEmailConfigured(): boolean {
-  // True if Gmail App Password or generic SMTP creds are present
+  // Primary: Check Resend API (preferred method)
+  if (env.resendApiKey && env.smtpFrom) return true;
+  // Fallback: Check Gmail App Password
   if (env.emailUser && env.emailAppPassword) return true;
+  // Fallback: Check generic SMTP creds
   if (env.smtpHost && env.smtpPort && env.smtpUser && env.smtpPass) return true;
   return false;
 }

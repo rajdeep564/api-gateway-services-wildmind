@@ -6,18 +6,20 @@ import path from 'path';
 const envPath = path.resolve(process.cwd(), '.env');
 dotenv.config({ path: envPath });
 
+// Import env after dotenv.config loads the .env file
+import { env } from './config/env';
+
 // Debug: Log if .env was loaded (only in development)
-if (process.env.NODE_ENV !== 'production') {
+if (env.nodeEnv !== 'production') {
   console.log(`[ENV] Loading .env from: ${envPath}`);
-  console.log(`[ENV] GOOGLE_GENAI_API_KEY exists: ${!!process.env.GOOGLE_GENAI_API_KEY}`);
-  console.log(`[ENV] GENAI_API_KEY exists: ${!!process.env.GENAI_API_KEY}`);
+  console.log(`[ENV] GOOGLE_GENAI_API_KEY exists: ${!!env.googleGenAIApiKey}`);
+  console.log(`[ENV] GENAI_API_KEY exists: ${!!env.googleGenAIApiKey}`); // Same value, env.ts handles both
 }
 
 import app from './app/app';
 import type { Server as HttpServer } from 'http';
 import { startRealtimeServer } from './websocket/realtimeServer';
 import { logger } from './utils/logger';
-import { env } from './config/env';
 
 const PORT = env.port || 5000;
 

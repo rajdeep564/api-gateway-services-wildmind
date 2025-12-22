@@ -152,7 +152,8 @@ async function processWithSeedream4K(
   uid: string,
   historyId: string
 ): Promise<string> {
-  const replicateKey = ((env as any).replicateApiKey as string) || process.env.REPLICATE_API_TOKEN;
+  // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
+  const replicateKey = env.replicateApiKey as string;
   if (!replicateKey) {
     throw new ApiError('Replicate API key not configured', 500);
   }

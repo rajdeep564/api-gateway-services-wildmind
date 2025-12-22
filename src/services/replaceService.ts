@@ -27,7 +27,7 @@ interface ReplaceResponse {
  * Ensures mask dimensions match input image dimensions
  * If not, resamples the mask to match
  */
-async function ensureMaskDimensionsMatch(
+export async function ensureMaskDimensionsMatch(
   inputImageUrl: string,
   maskDataUri: string
 ): Promise<string> {
@@ -108,15 +108,10 @@ async function prepareMask(maskDataUri: string): Promise<string> {
   }
 }
 
-/**
- * Google Nano Banana Edit - Queue-based API
- * Uses fal-ai/nano-banana/edit with queue submit/result pattern
- * Note: This model uses image_urls array, so we include both the original image and mask
- */
-async function processGoogleNanoBanana(
+export async function processGoogleNanoBanana(
   uid: string,
-  inputImageUrl: string,
-  maskUrl: string,
+  inputImageUrl: string, // Original input image (without compositing)
+  maskUrl: string | null | undefined, // Optional mask image URL (black background, white mask)
   prompt: string,
   historyId: string
 ): Promise<{ publicUrl: string; key: string }> {
@@ -127,44 +122,62 @@ async function processGoogleNanoBanana(
 
   const model = 'fal-ai/nano-banana/edit';
   
-  // Create an extremely strict prompt that emphasizes ONLY modifying the masked area
-  // This prevents the model from changing other parts of the image
-  // The prompt explicitly references the mask image to ensure only masked regions are changed
-  const strictPrompt = `STRICT INSTRUCTION: You must ONLY modify the white/masked regions shown in the second image (the mask). The user's request is: "${prompt.trim()}". Apply this change ONLY to the white areas in the mask image. CRITICAL RULES: 1) Do NOT modify any black/unmasked areas. 2) Keep all unmasked regions identical to the original image. 3) Only change pixels that correspond to white areas in the mask. 4) Preserve everything outside the mask exactly as it appears in the original image. 5) Do not apply the requested change to any area that is not white in the mask image.`;
+  // Use the prompt as-is (it already contains the base prompt from eraseForCanvas)
+  const strictPrompt = prompt;
   
-  // Add comprehensive negative prompt to prevent changes outside mask
-  const negativePrompt = 'changing unmasked areas, modifying areas outside mask, altering non-masked regions, editing parts not in mask, changing anything outside the white mask area, modifying background, changing other objects, editing non-selected areas, altering black mask regions, modifying areas that are not white in mask, changing anything not explicitly masked, editing unmasked portions, modifying non-white mask areas';
+  // Add comprehensive negative prompt to prevent changes outside mask and preserve quality
+  const negativePrompt = 'changing unmasked areas, modifying areas outside mask, altering non-masked regions, editing parts not in mask, changing anything outside the white mask area, modifying background, changing other objects, editing non-selected areas, altering black mask regions, modifying areas that are not white in mask, changing anything not explicitly masked, editing unmasked portions, modifying non-white mask areas, desaturated colors, dull colors, washed out colors, low contrast, faded appearance, color loss, reduced vibrancy, muted tones, color temperature shift, white balance change, saturation loss, brightness change, contrast reduction, overall image quality degradation, color cast, tint shift, hue shift, color desaturation, color dullness, color washout, color fade, color temperature alteration, white balance alteration, saturation reduction, brightness alteration, contrast alteration';
   
-  // Nano Banana edit uses image_urls array for reference images
-  // For mask-based editing, we use the original image as the primary input
-  // The mask is included as a second image to provide context
-  // Note: The model will use the prompt to edit based on the primary image
   const input: any = {
     prompt: strictPrompt,
-    image_urls: [inputImageUrl], // Primary image for editing
+    image_urls: [inputImageUrl], // Original image as array
     num_images: 1,
     aspect_ratio: 'auto',
-    output_format: 'png',
+    output_format: 'png', // PNG preserves quality better than JPEG (lossless)
     negative_prompt: negativePrompt,
   };
-  
-  // If mask is provided and different from input, include it as additional context
-  // Some models can use additional images as reference
-  if (maskUrl && maskUrl !== inputImageUrl) {
-    input.image_urls.push(maskUrl);
-  }
 
-  console.log('[replaceService] Submitting Google Nano Banana edit:', { 
-    model, 
-    input: { 
-      ...input, 
-      image_urls: input.image_urls.map((url: string) => url.slice(0, 100) + '...')
-    } 
+  // If we have a processed mask, send it as mask_url so Nano Banana erases only
+  // the white area and keeps the black/unmasked area untouched.
+  if (maskUrl) {
+    input.mask_url = maskUrl;
+  }
+  
+  console.log('[replaceService] ✅ Using composited image (mask already included in image)');
+
+  console.log('[replaceService] ========== GOOGLE NANO BANANA REQUEST ==========');
+  console.log('[replaceService] Model:', model);
+  console.log('[replaceService] Input Image URL:', inputImageUrl);
+  console.log('[replaceService] Mask URL (if any):', maskUrl);
+  console.log('[replaceService] Prompt:', prompt);
+  console.log('[replaceService] Input payload:', { 
+    prompt: input.prompt,
+    negative_prompt: input.negative_prompt,
+    num_images: input.num_images,
+    aspect_ratio: input.aspect_ratio,
+    output_format: input.output_format,
+    image_urls: input.image_urls ? (Array.isArray(input.image_urls) ? `[${input.image_urls.length} image(s)]` : 'N/A') : 'N/A',
+    image_urls_preview: input.image_urls && Array.isArray(input.image_urls) && input.image_urls[0] ? (input.image_urls[0].slice(0, 100) + '...') : 'N/A',
+    has_mask_url: !!input.mask_url
   });
+  console.log('[replaceService] ===============================================');
 
   try {
+    console.log('[replaceService] Submitting to FAL queue:', {
+    model, 
+      inputKeys: Object.keys(input),
+      hasImageUrls: !!input.image_urls,
+      imageUrlsCount: Array.isArray(input.image_urls) ? input.image_urls.length : 0,
+      imageUrlsPreview: input.image_urls && Array.isArray(input.image_urls) && input.image_urls[0] ? (input.image_urls[0].slice(0, 100) + '...') : 'N/A'
+  });
+
     // Submit to queue
     const { request_id } = await fal.queue.submit(model, { input } as any);
+    
+    console.log('[replaceService] ✅ FAL queue submission successful:', {
+      request_id,
+      model
+    });
     
     if (!request_id) {
       throw new ApiError('No request ID returned from Google Nano Banana API', 502);
@@ -176,6 +189,8 @@ async function processGoogleNanoBanana(
       providerTaskId: request_id,
       status: 'processing'
     } as any);
+    
+    console.log('[replaceService] History updated with request_id:', request_id);
 
     // Poll for result (with timeout)
     const maxAttempts = 60; // 5 minutes max (5 second intervals)
@@ -187,25 +202,149 @@ async function processGoogleNanoBanana(
       await new Promise(resolve => setTimeout(resolve, pollInterval));
       
       try {
+        console.log(`[replaceService] Polling attempt ${attempts + 1}/${maxAttempts} for request_id: ${request_id}`);
         const status = await fal.queue.status(model, { requestId: request_id, logs: true } as any);
+        
+        console.log('[replaceService] Poll status response:', {
+          status: (status as any)?.status,
+          status_code: (status as any)?.status_code,
+          hasResponseUrl: !!(status as any)?.response_url,
+          responseUrl: (status as any)?.response_url ? ((status as any).response_url.slice(0, 100) + '...') : 'N/A',
+          hasData: !!(status as any)?.data,
+          dataKeys: (status as any)?.data ? Object.keys((status as any).data) : [],
+          fullResponse: JSON.stringify(status).slice(0, 1000) + '...'
+        });
         
         // FAL queue status uses uppercase enum values: 'IN_QUEUE' | 'IN_PROGRESS' | 'COMPLETED'
         const statusValue = (status as any)?.status || (status as any)?.status_code || '';
         
         if (statusValue === 'COMPLETED' || statusValue === 'completed') {
+          console.log('[replaceService] ✅ Task completed, fetching result...');
+          
+          // Check if result is already in the status response
+          // Sometimes FAL includes the result directly in the status response when COMPLETED
+          if ((status as any)?.data) {
+            console.log('[replaceService] ✅ Result found in status response');
+            result = { data: (status as any).data };
+            // Verify it has images
+            if (result.data?.images && Array.isArray(result.data.images) && result.data.images.length > 0) {
+              break;
+            } else if (result.data?.image?.url) {
+              result = { data: { images: [{ url: result.data.image.url }] } };
+              break;
+            }
+          }
+          
+          // Also check if result is at top level of status response
+          if ((status as any)?.images && Array.isArray((status as any).images) && (status as any).images.length > 0) {
+            console.log('[replaceService] ✅ Images found at top level of status response');
+            result = { data: { images: (status as any).images } };
+            break;
+          }
+          
+          // Use fetch (like fetchFalQueueResponse) instead of axios to get result
+          // The queue URL should return the result when status is COMPLETED
+          try {
+            console.log('[replaceService] Fetching result using fetch method (like fetchFalQueueResponse)...');
+            const normalizedModel = model.startsWith('fal-ai/') ? model : `fal-ai/${model}`;
+            const queueUrl = `https://queue.fal.run/${normalizedModel}/requests/${request_id}`;
+            const falKey = env.falKey as string;
+            
+            if (!falKey) {
+              throw new ApiError('FAL AI API key not configured', 500);
+            }
+            
+            const queueResponse = await fetch(queueUrl, {
+              headers: {
+                'Authorization': `Key ${falKey}`,
+              },
+            });
+            
+            if (!queueResponse.ok) {
+              const text = await queueResponse.text().catch(() => queueResponse.statusText);
+              throw new Error(`Failed to fetch queue response (${queueResponse.status}): ${text}`);
+            }
+            
+            result = await queueResponse.json();
+            console.log('[replaceService] ✅ Result fetched from queue URL:', {
+              hasData: !!result?.data,
+              hasImages: !!result?.data?.images,
+              hasImage: !!result?.data?.image,
+              resultKeys: Object.keys(result || {}),
+              dataKeys: result?.data ? Object.keys(result.data) : [],
+              fullResultPreview: JSON.stringify(result).slice(0, 500) + '...'
+            });
+            
+            // Check if result has images in different possible locations
+            if (result?.data?.images && Array.isArray(result.data.images) && result.data.images.length > 0) {
+              console.log('[replaceService] ✅ Found images in result.data.images');
+              break;
+            } else if (result?.data?.image?.url) {
+              console.log('[replaceService] ✅ Found image in result.data.image.url');
+              // Convert single image to array format
+              result = { data: { images: [{ url: result.data.image.url }] } };
+              break;
+            } else if (result?.images && Array.isArray(result.images) && result.images.length > 0) {
+              console.log('[replaceService] ✅ Found images at top level');
+              // Result might be at top level
+              result = { data: { images: result.images } };
+              break;
+            } else {
+              // Result might not be ready yet, continue polling
+              console.log('[replaceService] Result fetched but no images found, continuing to poll...');
+              // Don't break - continue polling
+            }
+          } catch (queueError: any) {
+            console.warn('[replaceService] Failed to fetch from queue URL:', {
+              error: queueError.message,
+              status: queueError.status || queueError.statusCode,
+              stack: queueError.stack?.slice(0, 200)
+            });
+            
+            // Try fal.queue.result as fallback
+            try {
+              console.log('[replaceService] Trying fal.queue.result as fallback...');
           result = await fal.queue.result(model, { requestId: request_id } as any);
+              console.log('[replaceService] ✅ Result fetched from fal.queue.result:', {
+                hasData: !!result?.data,
+                hasImages: !!result?.data?.images,
+                resultKeys: Object.keys(result || {})
+              });
           break;
+            } catch (resultError: any) {
+              console.error('[replaceService] ❌ Both methods failed:', {
+                queueUrlError: queueError.message,
+                queueResultError: resultError.message,
+                queueResultStatus: resultError.status || resultError.statusCode,
+                attempt: attempts + 1
+              });
+              
+              // If we've tried many times, throw error
+              if (attempts >= 10) {
+                throw new ApiError(
+                  `Failed to fetch result after ${attempts} attempts. Queue URL error: ${queueError.message}, Queue result error: ${resultError.message}`,
+                  502
+                );
+              }
+              // Otherwise, continue polling
+              console.log('[replaceService] Will retry on next poll attempt...');
+            }
+          }
         } else if (statusValue === 'FAILED' || statusValue === 'failed') {
           const errorMsg = (status as any)?.error || (status as any)?.message || 'Unknown error';
+          console.error('[replaceService] ❌ Task failed:', errorMsg);
           throw new ApiError(`Google Nano Banana edit failed: ${errorMsg}`, 500);
+        } else {
+          console.log(`[replaceService] Task status: ${statusValue}, continuing to poll...`);
         }
         // Continue polling if status is 'IN_PROGRESS', 'IN_QUEUE', or 'in_progress', 'in_queue'
       } catch (pollError: any) {
         // If status check fails, continue polling unless it's a clear failure
         if (pollError?.message?.includes('failed') || pollError?.status === 'FAILED') {
+          console.error('[replaceService] ❌ Poll error indicates failure:', pollError);
           throw pollError;
         }
-        console.warn('[replaceService] Poll error, retrying:', pollError);
+        console.warn('[replaceService] ⚠️ Poll error, retrying:', pollError.message || pollError);
       }
       
       attempts++;
@@ -239,12 +378,20 @@ async function processGoogleNanoBanana(
 
     return { publicUrl, key };
   } catch (error: any) {
+    console.error('[replaceService] ❌ Google Nano Banana error caught:', {
+      errorMessage: error?.message,
+      errorStatus: error?.status || error?.statusCode,
+      errorData: error?.data ? JSON.stringify(error.data).slice(0, 500) : 'N/A',
+      errorStack: error?.stack ? error.stack.slice(0, 500) : 'N/A',
+      fullError: JSON.stringify(error).slice(0, 1000)
+    });
+    
     const falError = buildFalApiError(error, {
       fallbackMessage: 'Google Nano Banana API error',
       context: 'replaceService.googleNanoBanana',
       toastTitle: 'Image replace failed',
     });
-    console.error('[replaceService] Google Nano Banana error:', JSON.stringify(falError.data, null, 2));
+    console.error('[replaceService] Google Nano Banana formatted error:', JSON.stringify(falError.data, null, 2));
     
     try {
       await generationHistoryRepository.update(uid, historyId, {
@@ -252,7 +399,9 @@ async function processGoogleNanoBanana(
         error: falError.message,
         falError: falError.data,
       } as any);
-    } catch {}
+    } catch (updateError) {
+      console.error('[replaceService] Failed to update history with error:', updateError);
+    }
     
     throw falError;
   }
@@ -395,21 +544,23 @@ export async function replaceImage(
 
     // Resolve and prepare mask
     let maskUrl: string;
-    if (masked_image.startsWith('data:')) {
-      // Ensure mask dimensions match input image
-      const resampledMask = await ensureMaskDimensionsMatch(inputImageUrl, masked_image);
-      const processedMask = await prepareMask(resampledMask);
-      
-      const username = creator?.username || uid;
-      const stored = await uploadDataUriToZata({
-        dataUri: processedMask,
-        keyPrefix: `users/${username}/input/${historyId}`,
-        fileName: 'replace-mask',
-      });
-      maskUrl = stored.publicUrl;
-    } else {
-      maskUrl = masked_image;
-    }
+  if (masked_image.startsWith('data:')) {
+    // Ensure mask dimensions match input image and are in the proper black/white format
+    const resampledMask = await ensureMaskDimensionsMatch(inputImageUrl, masked_image);
+    const processedMask = await prepareMask(resampledMask);
+
+    const username = creator?.username || uid;
+
+    // Store processed mask for history / debugging and for Nano Banana mask_url
+    const storedMask = await uploadDataUriToZata({
+      dataUri: processedMask,
+      keyPrefix: `users/${username}/input/${historyId}`,
+      fileName: 'replace-mask',
+    });
+    maskUrl = storedMask.publicUrl;
+  } else {
+    maskUrl = masked_image;
+  }
 
     // Process based on model - default to Google Nano Banana
     let editedImageResult: { publicUrl: string; key: string };

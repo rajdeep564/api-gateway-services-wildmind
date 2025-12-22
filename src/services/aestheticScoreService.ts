@@ -14,9 +14,9 @@ import { logger } from '../utils/logger';
 import { env } from '../config/env';
 import { ImageMedia, VideoMedia } from '../types/generate';
 
-// Base URL for aesthetic scoring. Prefer SCORE_LOCAL from environment, fallback to previous hardcoded value.
+// Base URL for aesthetic scoring. Must be set via SCORE_LOCAL environment variable.
 // Trim trailing slash to ensure consistent request paths.
-const AESTHETIC_API_BASE = (env.scoreLocal || 'https://0faa6933d5e8.ngrok-free.app').replace(/\/$/, '');
+const AESTHETIC_API_BASE = env.scoreLocal ? env.scoreLocal.replace(/\/$/, '') : undefined;
 
 // API response shapes (new unified format with backward compatibility)
 interface ImageScoreResponse {
@@ -38,6 +38,10 @@ interface VideoScoreResponse {
  * Downloads the image and sends it to the aesthetic scoring API
  */
 async function scoreImage(imageUrl: string): Promise<{ score?: number; raw_output?: any } | null> {
+  if (!AESTHETIC_API_BASE) {
+    logger.warn('[AestheticScore] SCORE_LOCAL not configured, skipping scoring');
+    return null;
+  }
   try {
   logger.info({ imageUrl, base: AESTHETIC_API_BASE }, '[AestheticScore] Scoring image');
 
@@ -100,6 +104,10 @@ async function scoreVideo(videoUrl: string): Promise<{
   raw_outputs?: any;
   frames_sampled?: number;
 } | null> {
+  if (!AESTHETIC_API_BASE) {
+    logger.warn('[AestheticScore] SCORE_LOCAL not configured, skipping scoring');
+    return null;
+  }
   try {
     logger.info({ videoUrl, base: AESTHETIC_API_BASE }, '[AestheticScore] Scoring video');
 
@@ -332,6 +340,10 @@ async function scoreVideoByFramesFallback(videoBuffer: Buffer, _contentType: str
   raw_outputs?: any;
   frames_sampled?: number;
 } | null> {
+  if (!AESTHETIC_API_BASE) {
+    logger.warn('[AestheticScore] SCORE_LOCAL not configured, skipping scoring');
+    return null;
+  }
   // Ensure ffmpeg is available
   if (!ffmpegPath) return null;
   const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'score-'));

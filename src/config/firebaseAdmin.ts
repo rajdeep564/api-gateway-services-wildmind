@@ -1,7 +1,8 @@
 import admin from 'firebase-admin';
+import { env } from './env';
 
 function getServiceAccountFromEnv(): admin.ServiceAccount | null {
-  const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  const json = env.firebaseServiceAccountJson;
   if (json) {
     try {
       return JSON.parse(json);
@@ -9,7 +10,7 @@ function getServiceAccountFromEnv(): admin.ServiceAccount | null {
       // ignore
     }
   }
-  const b64 = process.env.FIREBASE_SERVICE_ACCOUNT_B64;
+  const b64 = env.firebaseServiceAccountB64;
   if (b64) {
     try {
       const decoded = Buffer.from(b64, 'base64').toString('utf8');

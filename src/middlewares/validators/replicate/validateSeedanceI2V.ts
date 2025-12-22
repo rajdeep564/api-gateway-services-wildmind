@@ -48,13 +48,17 @@ export const validateSeedanceI2V = [
     // Default camera_fixed to false
     if (req.body.camera_fixed === undefined) req.body.camera_fixed = false;
     
-    // Validate reference_images: 1-4 images, cannot be used with 1080p or last_frame_image
+    // Validate reference_images: 1-4 images, cannot be used with 1080p or first/last frame images
     if (Array.isArray(req.body.reference_images) && req.body.reference_images.length > 0) {
       if (req.body.reference_images.length > 4) {
         return next(new ApiError('reference_images can contain at most 4 images', 400));
       }
       if (req.body.resolution === '1080p') {
         return next(new ApiError('reference_images cannot be used with 1080p resolution', 400));
+      }
+      // reference_images cannot be used with image (first frame) or last_frame_image
+      if (req.body.image && String(req.body.image).length > 5) {
+        return next(new ApiError('reference_images cannot be used with image (first frame)', 400));
       }
       if (req.body.last_frame_image && String(req.body.last_frame_image).length > 5) {
         return next(new ApiError('reference_images cannot be used with last_frame_image', 400));

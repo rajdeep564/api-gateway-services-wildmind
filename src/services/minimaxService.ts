@@ -22,7 +22,8 @@ import { syncToMirror, updateMirror } from "../utils/mirrorHelper";
 import { aestheticScoreService } from "./aestheticScoreService";
 import { markGenerationCompleted } from "./generationHistoryService";
 
-const MINIMAX_API_BASE = "https://api.minimax.io/v1";
+
+const MINIMAX_API_BASE = env.minimaxApiBase;
 const MINIMAX_MODEL = "image-01";
 
 function mapMiniMaxCodeToHttp(statusCode: number): number {
@@ -569,17 +570,21 @@ async function musicGenerateAndStore(
   if (!apiKey) throw new ApiError('MiniMax API not configured', 500);
   
   // Validate required fields
-  if (!body.prompt || body.prompt.length < 10 || body.prompt.length > 2000) {
-    throw new ApiError('prompt is required and must be 10-2000 characters', 400);
+  if (!body.prompt || body.prompt.length < 10 || body.prompt.length > 1000) {
+    throw new ApiError('prompt is required and must be 10-1000 characters', 400);
   }
-  if (!body.lyrics || body.lyrics.length < 10 || body.lyrics.length > 3000) {
-    throw new ApiError('lyrics is required and must be 10-3000 characters', 400);
+  if (!body.lyrics || body.lyrics.length < 10 || body.lyrics.length > 5000) {
+    throw new ApiError('lyrics is required and must be 10-5000 characters', 400);
   }
   
   const creator = await authRepository.getUserById(uid);
   const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt || body.lyrics || '',
+    // Persist rich music metadata on the canonical history document so the
+    // frontend can render track titles and lyrics after a hard refresh.
+    lyrics: body.lyrics,
+    fileName: (body as any)?.fileName,
     model: 'music-2.0',
     generationType: body?.generationType || 'text-to-music',
     visibility: (body as any)?.visibility || 'private',

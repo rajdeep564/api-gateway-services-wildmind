@@ -7,6 +7,7 @@ import authRoutes from './authRoutes';
 import creditsRoutes from './credits';
 import generationsRoutes from './generations';
 import publicGenerationsRoutes from './publicGenerations';
+import engagementRoutes from './engagement';
 import redeemCodeRoutes from './redeemCodes';
 import proxyRoutes from './proxy';
 import stickerRoutes from './stickers';
@@ -17,12 +18,28 @@ import replaceRoutes from './replace';
 import reimagineRoutes from './reimagine';
 import libraryRoutes from './library';
 import uploadsRoutes from './uploads';
-import videoProxyRoutes from './canvas/videoProxy';
-import videoExportRoutes from './videoExport';
+import wildmindRoutes from './wildmind';
+import chatCompanionRoutes from './chatCompanion';
+import { contentModerationMiddleware } from '../middlewares/contentModeration';
 
 const router = Router();
 
 router.use('/auth', authRoutes);
+// Apply prompt-level moderation to generation-capable services
+router.use(
+  [
+    '/bfl',
+    '/fal',
+    '/minimax',
+    '/runway',
+    '/replicate',
+    '/prompt-enhancer',
+    '/replace',
+    '/reimagine',
+    '/wildmind',
+  ],
+  contentModerationMiddleware
+);
 router.use('/bfl', bflRoutes);
 router.use('/fal', falRoutes);
 router.use('/minimax', minimaxRoutes);
@@ -32,6 +49,7 @@ router.use('/library', libraryRoutes);
 router.use('/uploads', uploadsRoutes);
 router.use('/credits', creditsRoutes);
 router.use('/feed', publicGenerationsRoutes);
+router.use('/engagement', engagementRoutes);
 router.use('/redeem-codes', redeemCodeRoutes);
 router.use('/proxy', proxyRoutes);
 router.use('/stickers', stickerRoutes);
@@ -41,7 +59,8 @@ router.use('/canvas/video', videoProxyRoutes);
 router.use('/prompt-enhancer', promptEnhancerRoutes);
 router.use('/replace', replaceRoutes);
 router.use('/reimagine', reimagineRoutes);
-router.use('/video-export', videoExportRoutes);
+router.use('/wildmind', wildmindRoutes);
+router.use('/chat', chatCompanionRoutes);
 
 export default router;
 

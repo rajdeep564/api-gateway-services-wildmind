@@ -21,11 +21,13 @@ import { generationHistoryRepository } from '../repository/generationHistoryRepo
 import { pollPendingTasks, claimTask, markCompleted, markFailed } from '../repository/mirrorQueueRepository';
 import { GenerationHistoryItem } from '../types/generate';
 
-const POLL_INTERVAL_MS = Number(process.env.MIRROR_QUEUE_POLL_INTERVAL_MS || 2500);
+import { env } from '../config/env';
+
+const POLL_INTERVAL_MS = env.mirrorQueuePollIntervalMs || 2500;
 const EMPTY_BACKOFF_MULTIPLIER = 1.4; // multiply delay when queue empty
 const MAX_BACKOFF_MS = 15000;
-const PROMISE_POOL_SIZE = Number(process.env.MIRROR_QUEUE_CONCURRENCY || 4);
-const BATCH_LIMIT = Number(process.env.MIRROR_QUEUE_BATCH_LIMIT || 12);
+const PROMISE_POOL_SIZE = env.mirrorQueueConcurrency || 4;
+const BATCH_LIMIT = env.mirrorQueueBatchLimit || 12;
 let running = true;
 let emptyCycles = 0;
 

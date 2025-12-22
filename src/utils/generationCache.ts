@@ -16,10 +16,26 @@ function getItemCacheKey(uid: string, historyId: string): string {
 }
 
 function getListCacheKey(uid: string, params: any): string {
-  const { limit = 20, nextCursor, status, generationType, search } = params;
+  const { limit = 20, nextCursor, cursor, status, generationType, search, sortOrder, sortBy, mode, dateStart, dateEnd } = params;
   const typeKey = Array.isArray(generationType) ? generationType.sort().join(',') : (generationType || 'all');
   const searchKey = search ? `:search:${search.substring(0, 20)}` : '';
-  return `gen:list:${uid}:${limit}:${nextCursor || 'start'}:${status || 'all'}:${typeKey}${searchKey}`;
+  const sortKey = sortOrder ? `:sort:${sortOrder}` : '';
+  const sortByKey = sortBy ? `:by:${sortBy}` : '';
+  const modeKey = mode ? `:mode:${mode}` : '';
+  // Cursor key: include both optimized (nextCursor) and legacy (cursor) so pages don't collide
+  const cursorKey = `:${nextCursor || cursor || 'start'}`;
+  // Date range key: include dateStart/dateEnd; without this, date-filtered lists can return cached unfiltered pages
+  const toMs = (d: any) => {
+    try {
+      const ms = new Date(d).getTime();
+      return Number.isNaN(ms) ? '' : String(ms);
+    } catch { return ''; }
+  };
+  const startMs = dateStart ? toMs(dateStart) : '';
+  const endMs = dateEnd ? toMs(dateEnd) : '';
+  const rangeKey = (startMs || endMs) ? `:range:${startMs || '0'}-${endMs || '0'}` : '';
+
+  return `gen:list:${uid}:${limit}${cursorKey}:${status || 'all'}${modeKey}:${typeKey}${rangeKey}${searchKey}${sortKey}${sortByKey}`;
 }
 
 /**

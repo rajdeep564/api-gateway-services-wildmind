@@ -29,6 +29,7 @@ export const validatePixverseI2V = [
     req.body.quality = qm ? `${qm[1]}p` : '720p';
     req.body.resolution = req.body.quality;
     if (!req.body.mode && !req.body.kind && !req.body.type) req.body.mode = 'i2v';
+    
     return next();
   }
 ];

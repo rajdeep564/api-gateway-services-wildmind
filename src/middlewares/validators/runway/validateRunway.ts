@@ -5,6 +5,7 @@ import { ApiError } from '../../../utils/errorHandler';
 const runValidation = (req: Request, _res: Response, next: NextFunction) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+  
   next();
 };
 

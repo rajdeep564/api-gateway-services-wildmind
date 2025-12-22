@@ -34,6 +34,7 @@ export const validateWan25T2V = [
     else if (s.endsWith('*720') || s.startsWith('720*')) req.body.resolution = '720p';
     else if (s.endsWith('*1080') || s.startsWith('1080*')) req.body.resolution = '1080p';
     if (!req.body.mode && !req.body.kind && !req.body.type) req.body.mode = 't2v'; // used by pricing util
+    
     return next();
   }
 ];

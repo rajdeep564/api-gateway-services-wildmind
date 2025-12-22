@@ -1,76 +1,79 @@
-import axios from 'axios';
 import dns from 'dns/promises';
+import { isDisposableEmail, isDisposableEmailDomain } from 'disposable-email-domains-js';
 import { ApiError } from './errorHandler';
 
-let disposableDomains: string[] = [];
-let lastFetch: number | null = null;
+// --- Layer 1: Syntax check (RFC-ish, safe-mode, no SMTP probing) ---
+const EMAIL_SYNTAX_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Fetch list once every 24h
-async function loadDisposableDomains(): Promise<void> {
-  if (lastFetch && (Date.now() - lastFetch < 24 * 60 * 60 * 1000)) {
-    return; // Use cached list if less than 24h old
+function assertValidSyntax(email: string): void {
+  if (typeof email !== 'string') {
+    throw new ApiError('Email is required.', 400);
   }
 
-  try {
-    const response = await axios.get(
-      'https://raw.githubusercontent.com/disposable/disposable-email-domains/master/domains.json',
-      { timeout: 10000 } // 10 second timeout
-    );
-    disposableDomains = response.data || [];
-    lastFetch = Date.now();
-    console.log(`[EMAIL GUARD] Loaded ${disposableDomains.length} disposable domains.`);
-  } catch (err: any) {
-    console.warn('[EMAIL GUARD] Failed to fetch domain list:', err.message);
-    // If we have a cached list, keep using it
-    if (disposableDomains.length === 0) {
-      console.warn('[EMAIL GUARD] No cached list available, email validation may be less strict.');
-    }
+  const trimmed = email.trim();
+
+  if (!trimmed || !EMAIL_SYNTAX_REGEX.test(trimmed)) {
+    throw new ApiError('Invalid email address format.', 400);
+  }
+
+  // Basic unicode safety: reject control chars that can break downstream
+  if (/[\u0000-\u001F\u007F]/.test(trimmed)) {
+    throw new ApiError('Invalid email address characters.', 400);
   }
 }
 
-// Check if domain exists in blocklist
+function getDomain(email: string): string | null {
+  const trimmed = email.trim().toLowerCase();
+  const parts = trimmed.split('@');
+  if (parts.length !== 2) return null;
+  const domain = parts[1]?.trim();
+  return domain || null;
+}
+
+// --- Layer 3: Disposable domain blocking (via disposable-email-domains-js) ---
 function isTempEmail(email: string): boolean {
-  const domain = email.toLowerCase().split('@')[1];
+  const trimmed = email.trim().toLowerCase();
+  const domain = getDomain(trimmed);
   if (!domain) return false;
-  return disposableDomains.includes(domain);
+
+  // Library handles both domain and full-email checks with its own up-to-date list
+  return isDisposableEmail(trimmed) || isDisposableEmailDomain(domain);
 }
 
-// Check if domain has valid mail server (MX records)
+// --- Layer 4: DNS MX validation (safe mode – no SMTP probing) ---
 async function hasMX(email: string): Promise<boolean> {
-  const domain = email.split('@')[1];
+  const domain = getDomain(email);
   if (!domain) return false;
 
   try {
     const records = await dns.resolveMx(domain);
-    return records.length > 0;
-  } catch (err: any) {
-    // DNS resolution failed - domain likely doesn't exist or has no MX records
-    if (err.code === 'ENOTFOUND' || err.code === 'ENODATA') {
+    if (!records || records.length === 0) {
       return false;
     }
+    return true;
+  } catch (err: any) {
+    // DNS resolution failed - domain likely doesn't exist or has no MX records
+    if (err?.code === 'ENOTFOUND' || err?.code === 'ENODATA') {
+      return false; // NXDOMAIN / no MX ⇒ reject
+    }
+
     // Other DNS errors - log but don't block (might be temporary network issue)
-    console.warn(`[EMAIL GUARD] DNS lookup error for ${domain}:`, err.message);
+    console.warn(`[EMAIL GUARD] DNS lookup error for ${domain}:`, err?.message || err);
     return true; // Allow on DNS errors to avoid false positives
   }
 }
 
 /**
- * Validates email address:
- * 1. Checks if it's a temporary/disposable email domain
- * 2. Validates MX records to ensure the domain has mail servers
- * 
- * @param email - Email address to validate
- * @throws ApiError if email is invalid
+ * validateEmail():
+ *  - Layer 1: syntaxCheck
+ *  - Layer 3: disposableListCheck (via disposable-email-domains-js)
+ *  - Layer 4: MX check (safe mode, 3s timeout)
  */
 export async function validateEmail(email: string): Promise<void> {
-  if (!email || typeof email !== 'string') {
-    throw new ApiError('Email is required.', 400);
-  }
+  // Layer 1 – syntax
+  assertValidSyntax(email);
 
-  // Ensure disposable domains list is loaded
-  await loadDisposableDomains();
-
-  // Check if it's a temporary email
+  // Layer 3 – disposable domain (library-based)
   if (isTempEmail(email)) {
     throw new ApiError(
       'Temporary or disposable email addresses are not allowed. Please use a permanent email address.',
@@ -78,17 +81,17 @@ export async function validateEmail(email: string): Promise<void> {
     );
   }
 
-  // Check MX records (with timeout to avoid hanging)
+  // Layer 4 – MX (safe mode with timeout)
   const mxCheckPromise = hasMX(email);
   const timeoutPromise = new Promise<boolean>((resolve) => {
     setTimeout(() => {
       console.warn(`[EMAIL GUARD] MX check timeout for ${email}, allowing email`);
       resolve(true); // Allow on timeout to avoid false positives
-    }, 5000); // 5 second timeout
+    }, 3000); // 3 seconds
   });
 
   const hasValidMX = await Promise.race([mxCheckPromise, timeoutPromise]);
-  
+
   if (!hasValidMX) {
     throw new ApiError(
       'Invalid email address. The email domain does not have a valid mail server. Please use a valid email address.',
@@ -98,19 +101,20 @@ export async function validateEmail(email: string): Promise<void> {
 }
 
 /**
- * Express middleware for email validation
- * Use this in routes that accept email addresses
+ * Express-style guard wrapper for routes that accept email addresses.
+ * Keeps compatibility with existing middleware usage.
  */
-export async function emailGuard(req: any, res: any, next: any): Promise<void> {
+export async function emailGuard(req: any, _res: any, next: any): Promise<void> {
   try {
     const email = req.body?.email;
     if (!email) {
-      return next(new ApiError('Email is required.', 400));
+      throw new ApiError('Email is required.', 400);
     }
     await validateEmail(email);
     next();
-  } catch (error) {
-    next(error);
+  } catch (err) {
+    next(err);
   }
 }
+
 

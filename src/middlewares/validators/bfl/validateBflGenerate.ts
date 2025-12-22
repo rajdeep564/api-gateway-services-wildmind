@@ -33,6 +33,7 @@ export const validateBflGenerate = [
     if (!errors.isEmpty()) {
       return next(new ApiError('Validation failed', 400, errors.array()));
     }
+
     next();
   }
 ];
@@ -49,6 +50,7 @@ const common = [
     if (!errors.isEmpty()) {
       return next(new ApiError('Validation failed', 400, errors.array()));
     }
+
     next();
   }
 ];

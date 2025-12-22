@@ -48,6 +48,9 @@ const filterItemsByMode = <T extends { generationType?: string }>(
 export async function create(uid: string, data: {
   prompt: string;
   userPrompt?: string;
+  // Rich text fields for audio/music generations
+  lyrics?: string;
+  fileName?: string;
   model: string;
   generationType: GenerationType | string;
   visibility?: Visibility | string;
@@ -57,6 +60,9 @@ export async function create(uid: string, data: {
   aspect_ratio?: string;
   isPublic?: boolean;
   characterName?: string;
+  quality?: string;
+  resolution?: string;
+  duration?: number | string;
   createdBy?: { uid: string; username?: string; email?: string };
 }): Promise<{ historyId: string }> {
   // Centralized isPublic validation and audit logging
@@ -81,6 +87,10 @@ export async function create(uid: string, data: {
     uid,
     prompt: data.prompt,
     userPrompt: data.userPrompt || null,
+    // Persist lyrics and fileName when provided so frontend can restore
+    // the track title and lyrics even after a hard refresh.
+    lyrics: data.lyrics || null,
+    fileName: data.fileName || null,
     model: data.model,
     generationType: data.generationType,
     visibility: (data.visibility as Visibility) || Visibility.Private,
@@ -91,6 +101,10 @@ export async function create(uid: string, data: {
     isPublic: normalizedIsPublic,
     // Store characterName only for text-to-character generation type
     ...(data.generationType === 'text-to-character' && data.characterName ? { characterName: data.characterName } : {}),
+    // Video generation specific fields
+    ...(data.quality ? { quality: data.quality } : {}),
+    ...(data.resolution ? { resolution: data.resolution } : {}),
+    ...(data.duration ? { duration: data.duration } : {}),
     createdBy: data.createdBy ? {
       uid: data.createdBy.uid,
       username: data.createdBy.username || null,
@@ -112,7 +126,7 @@ export async function create(uid: string, data: {
     await invalidateUserLists(uid);
   } catch (e) {
     // Non-blocking: logging only
-    try { logger.warn({ uid, err: e }, '[generationHistoryRepository.create] Failed to invalidate cache'); } catch {}
+    try { logger.warn({ uid, err: e }, '[generationHistoryRepository.create] Failed to invalidate cache'); } catch { }
   }
   return { historyId: docRef.id };
 }
@@ -125,11 +139,11 @@ function removeUndefinedValues(obj: any): any {
   if (obj === null || typeof obj !== 'object') {
     return obj;
   }
-  
+
   if (Array.isArray(obj)) {
     return obj.map(item => removeUndefinedValues(item));
   }
-  
+
   const cleaned: any = {};
   for (const [key, value] of Object.entries(obj)) {
     if (value !== undefined) {
@@ -141,19 +155,94 @@ function removeUndefinedValues(obj: any): any {
 
 export async function update(uid: string, historyId: string, updates: Partial<GenerationHistoryItem>): Promise<void> {
   const ref = adminDb.collection('generationHistory').doc(uid).collection('items').doc(historyId);
-  
+
+  // Sanitize large / nested structures before saving to Firestore
+  const safeUpdates: Partial<GenerationHistoryItem> = { ...updates };
+
+  // 1) Guard against very large data URLs inside inputImages / images, which can
+  //    trigger "Property array contains an invalid nested entity" when an element
+  //    exceeds Firestore's per‑field size limit (~1 MiB).
+  const sanitizeOriginalUrl = (value: any): string | undefined => {
+    if (typeof value !== 'string') return undefined;
+    // Strip huge base64 data URLs – we only need the storage URL we persist separately.
+    if (value.startsWith('data:image') || value.startsWith('data:video')) {
+      return undefined;
+    }
+    // Guard against accidentally passing extremely long strings.
+    if (value.length > 5000) {
+      return value.slice(0, 5000);
+    }
+    return value;
+  };
+
+  if (Array.isArray((safeUpdates as any).inputImages)) {
+    (safeUpdates as any).inputImages = (safeUpdates as any).inputImages.map((img: any) => ({
+      id: img?.id,
+      url: img?.url,
+      storagePath: img?.storagePath,
+      // Drop or trim problematic originals; Firestore already has the binary file in storage.
+      originalUrl: sanitizeOriginalUrl(img?.originalUrl),
+    }));
+  }
+
+  if (Array.isArray((safeUpdates as any).images)) {
+    (safeUpdates as any).images = (safeUpdates as any).images.map((img: any) => ({
+      url: img?.url,
+      storagePath: img?.storagePath,
+      originalUrl: sanitizeOriginalUrl(img?.originalUrl),
+      thumbUrl: img?.thumbUrl,
+      avifUrl: img?.avifUrl,
+    }));
+  }
+
   // Remove undefined values before saving to Firestore
-  const cleanedUpdates = removeUndefinedValues(updates);
-  
-  await ref.update({
-    ...cleanedUpdates,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  } as any);
+  const cleanedUpdates = removeUndefinedValues(safeUpdates);
+
+  // Debug: Check for nested structures in images array
+  if (cleanedUpdates.images && Array.isArray(cleanedUpdates.images)) {
+    console.log('[generationHistoryRepository.update] Checking images array for nested structures:', {
+      imagesCount: cleanedUpdates.images.length,
+      firstImageKeys: cleanedUpdates.images[0] ? Object.keys(cleanedUpdates.images[0]) : [],
+      firstImageTypes: cleanedUpdates.images[0] ? Object.entries(cleanedUpdates.images[0]).map(([k, v]) => ({
+        key: k,
+        type: typeof v,
+        isArray: Array.isArray(v),
+        isObject: typeof v === 'object' && v !== null && !Array.isArray(v) && v.constructor === Object,
+        value: typeof v === 'string' ? v.substring(0, 50) + '...' : v,
+      })) : [],
+    });
+
+    // Check each image for nested objects
+    cleanedUpdates.images.forEach((img: any, index: number) => {
+      if (img && typeof img === 'object') {
+        Object.entries(img).forEach(([key, value]) => {
+          if (value && typeof value === 'object' && !Array.isArray(value) && value.constructor === Object) {
+            console.error(`[generationHistoryRepository.update] NESTED OBJECT FOUND in images[${index}].${key}:`, value);
+          }
+        });
+      }
+    });
+  }
+
+  try {
+    await ref.update({
+      ...cleanedUpdates,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    } as any);
+    console.log('[generationHistoryRepository.update] ✅ Successfully updated Firestore');
+  } catch (error: any) {
+    console.error('[generationHistoryRepository.update] ❌ Firestore update failed:', {
+      message: error.message,
+      code: error.code,
+      updates: JSON.stringify(cleanedUpdates, null, 2).substring(0, 1000),
+    });
+    throw error;
+  }
   // Invalidate cache for the single item and user lists
   try {
     await invalidateItem(uid, historyId);
   } catch (e) {
-    try { logger.warn({ uid, historyId, err: e }, '[generationHistoryRepository.update] Failed to invalidate cache'); } catch {}
+    try { logger.warn({ uid, historyId, err: e }, '[generationHistoryRepository.update] Failed to invalidate cache'); } catch { }
   }
 
   // Enqueue mirror update asynchronously so public mirror reflects repository changes.
@@ -163,20 +252,20 @@ export async function update(uid: string, historyId: string, updates: Partial<Ge
     const isBeingDeleted = (updates as any)?.isDeleted === true;
     if (isBeingDeleted) {
       // Item is being deleted - don't enqueue mirror update (deletion is handled by softDelete/update service)
-      try { logger.info({ uid, historyId }, '[generationHistoryRepository.update] Skipping mirror update - item is being deleted'); } catch {}
+      try { logger.info({ uid, historyId }, '[generationHistoryRepository.update] Skipping mirror update - item is being deleted'); } catch { }
       return;
     }
-    
+
     // Only enqueue if there are meaningful updates (avoid noise). For simplicity,
     // enqueue when updates contains images, videos, isPublic, visibility, status, or error fields.
     const interesting = ['images', 'videos', 'isPublic', 'visibility', 'status', 'error'];
-    const hasInteresting = Object.keys(updates || {}).some(k => interesting.includes(k));
+    const hasInteresting = Object.keys(cleanedUpdates || {}).some(k => interesting.includes(k));
     if (hasInteresting) {
       // Fire-and-forget
-      mirrorQueueRepository.enqueueUpdate({ uid, historyId, updates });
+      mirrorQueueRepository.enqueueUpdate({ uid, historyId, updates: cleanedUpdates });
     }
   } catch (e) {
-    try { logger.warn({ uid, historyId, err: e }, '[generationHistoryRepository.update] Failed to enqueue mirror update'); } catch {}
+    try { logger.warn({ uid, historyId, err: e }, '[generationHistoryRepository.update] Failed to enqueue mirror update'); } catch { }
   }
 }
 
@@ -205,31 +294,35 @@ export async function list(uid: string, params: {
   const col = adminDb.collection('generationHistory').doc(uid).collection('items');
   const normalizedMode = normalizeMode(params.mode);
   const hasModeFilter = Boolean(normalizedMode && normalizedMode !== 'all');
-  
+
   // Determine if we're using new optimized pagination or legacy mode
   // Allow explicit sortBy=createdAt without disabling optimized path. Optimized path triggers if:
   // - nextCursor provided OR
   // - (sortBy absent OR sortBy==='createdAt') and no legacy-only fields and no legacy cursor
+  // IMPORTANT: Optimized path supports both 'asc' and 'desc' sortOrder
+  // When sortOrder is explicitly provided (asc or desc), use optimized path if sortBy is createdAt or absent
   const useOptimizedPagination = params.nextCursor !== undefined || (
     (!params.cursor) && (!params.dateStart && !params.dateEnd) && (
       !params.sortBy || params.sortBy === 'createdAt'
     )
   );
-  
-  // NEW OPTIMIZED PATH: Use createdAt DESC with timestamp cursor
+
+  // NEW OPTIMIZED PATH: Use createdAt with proper sortOrder (asc/desc) and timestamp cursor
   if (useOptimizedPagination) {
     // IMPORTANT: Do NOT filter by isDeleted at query level.
     // Many older documents may not have the isDeleted field at all, and Firestore
     // equality filters exclude documents where the field is missing. That caused
     // pages to appear nearly empty when most docs lacked the field.
     // We now filter isDeleted in-memory after fetching, while keeping the query fully indexed.
-    let q: FirebaseFirestore.Query = col.orderBy('createdAt', 'desc');
-    
+    // Respect sortOrder parameter: 'asc' for oldest first, 'desc' for newest first
+    const sortOrder = params.sortOrder || 'desc';
+    let q: FirebaseFirestore.Query = col.orderBy('createdAt', sortOrder);
+
     // Apply filters with proper composite index support
     if (params.status) {
       q = q.where('status', '==', params.status);
     }
-    
+
     if (params.generationType) {
       // Build a synonym set to capture legacy underscore vs hyphen variants and short forms
       const buildTypeSynonyms = (t: string): string[] => {
@@ -280,7 +373,7 @@ export async function list(uid: string, params: {
         console.warn('[list] Invalid nextCursor, ignoring:', e);
       }
     }
-    
+
     // Fetch more than requested to compensate for in-memory filters (e.g., isDeleted true)
     // and still return a full page. Cap to a safe value to avoid large reads.
     const modeMultiplier = hasModeFilter ? 6 : 3;
@@ -288,106 +381,200 @@ export async function list(uid: string, params: {
       400,
       Math.max(params.limit * modeMultiplier, params.limit + (hasModeFilter ? 40 : 10))
     );
-    
-    let snap: FirebaseFirestore.QuerySnapshot;
+
+    // For mode-filtered VIDEO lists, avoid returning empty pages (items:[])
+    // by scanning forward until we collect enough video items or exhaust the collection.
+    // This avoids requiring composite indexes while keeping pagination stable.
+    const wantsVideoScan = hasModeFilter && normalizedMode === 'video' && !params.generationType;
+
+    const normalizeSearchTokens = (s: any): string[] => {
+      try {
+        const str = String(s || '').trim().toLowerCase();
+        if (!str) return [];
+        // Split on whitespace; keep a small cap to avoid pathological queries
+        return str.split(/\s+/g).map(t => t.trim()).filter(Boolean).slice(0, 6);
+      } catch {
+        return [];
+      }
+    };
+
+    const matchesSearch = (promptVal: any, tokens: string[]): boolean => {
+      if (!tokens.length) return true;
+      const hay = String(promptVal || '').toLowerCase();
+      // Require ALL tokens to be present (e.g., "cat lion" matches prompts containing both).
+      return tokens.every((t) => hay.includes(t));
+    };
+
+    const applyInMemoryFilters = (raw: GenerationHistoryItem[]) => {
+      let items = raw;
+      items = items.filter((it: any) => it.isDeleted !== true);
+      const searchTokens = normalizeSearchTokens(params.search);
+      if (searchTokens.length > 0) {
+        items = items.filter((it: any) => matchesSearch((it as any).prompt, searchTokens));
+      }
+      const { filtered: modeFilteredItems, removed: removedByMode } = filterItemsByMode(items, normalizedMode as any);
+      return { items: modeFilteredItems, removedByMode };
+    };
+
+    const getCreatedAtMillisFromDoc = (doc: FirebaseFirestore.QueryDocumentSnapshot): number | null => {
+      try {
+        const rawCreated = (doc?.data() as any)?.createdAt;
+        if (rawCreated && typeof (rawCreated as any).toDate === 'function') {
+          const ms = (rawCreated as any).toDate().getTime();
+          return Number.isNaN(ms) ? null : ms;
+        }
+        if (typeof rawCreated === 'string') {
+          const ms = new Date(rawCreated).getTime();
+          return Number.isNaN(ms) ? null : ms;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    };
+
+    const fetchOnce = async (cursorMs?: number) => {
+      let qq: FirebaseFirestore.Query = col.orderBy('createdAt', sortOrder);
+      if (params.status) qq = qq.where('status', '==', params.status);
+      // generationType filters are handled above (and wantsVideoScan only when generationType is absent)
+      if (cursorMs !== undefined) {
+        try {
+          const ts = admin.firestore.Timestamp.fromMillis(Number(cursorMs));
+          qq = qq.startAfter(ts);
+        } catch { }
+      } else if (params.nextCursor) {
+        try {
+          const ts = admin.firestore.Timestamp.fromMillis(parseInt(String(params.nextCursor)));
+          qq = qq.startAfter(ts);
+        } catch { }
+      }
+      return await qq.limit(fetchLimit).get();
+    };
+
     try {
-      snap = await q.limit(fetchLimit).get();
+      const wantsSearchScan = normalizeSearchTokens(params.search).length > 0;
+      const wantsScan = wantsVideoScan || wantsSearchScan;
+
+      if (!wantsScan) {
+        const snap = await q.limit(fetchLimit).get();
+        if (snap.empty) {
+          return { items: [], nextCursor: null, hasMore: false, diagnostics: params.debug ? { path: 'optimized', empty: true } : undefined };
+        }
+
+        let items: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
+        const beforeDeleteFilterCount = items.length;
+        const { items: filteredItems, removedByMode } = applyInMemoryFilters(items);
+        items = filteredItems;
+
+        const rawCount = snap.docs.length;
+        let hasMore = items.length > params.limit;
+        if (!hasMore && (rawCount >= fetchLimit || removedByMode > 0)) hasMore = true;
+        const pageItems = items.slice(0, params.limit);
+
+        let nextCursor: number | null = null;
+        if (hasMore) {
+          const lastRawDoc = snap.docs[snap.docs.length - 1];
+          nextCursor = getCreatedAtMillisFromDoc(lastRawDoc);
+        }
+
+        return {
+          items: pageItems,
+          nextCursor,
+          hasMore,
+          diagnostics: params.debug ? {
+            path: 'optimized',
+            requestedLimit: params.limit,
+            fetchLimit,
+            fetchedRaw: snap.docs.length,
+            filteredAfterDelete: items.length,
+            returned: pageItems.length,
+            hasMore,
+            appliedFilters: { status: params.status || null, generationType: params.generationType || null, mode: normalizedMode || null },
+            generationTypeSynonymsUsed: params.generationType ? (Array.isArray(params.generationType) ? params.generationType : [params.generationType]) : [],
+            removedByMode,
+            beforeDeleteFilterCount,
+          } : undefined
+        };
+      }
+
+      // Scan path: keep fetching forward until we collect enough items (used for video mode and/or search).
+      const target = params.limit + 1; // +1 to detect hasMore
+      const maxScans = 8; // safety cap
+      let cursorMs: number | undefined = params.nextCursor ? parseInt(String(params.nextCursor)) : undefined;
+      let scanned = 0;
+      let all: GenerationHistoryItem[] = [];
+      let lastRawDoc: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+      let lastRemovedByMode = 0;
+      let ended = false;
+
+      while (all.length < target && scanned < maxScans) {
+        scanned += 1;
+        const snap = await fetchOnce(cursorMs);
+        if (snap.empty) { ended = true; break; }
+        lastRawDoc = snap.docs[snap.docs.length - 1];
+        const newCursorMs = getCreatedAtMillisFromDoc(lastRawDoc);
+        
+        // Ensure cursor advances forward (not backward)
+        if (newCursorMs && cursorMs !== undefined) {
+          if (newCursorMs <= cursorMs) {
+            // Cursor didn't advance or went backward - we've hit the end
+            ended = true;
+            break;
+          }
+        }
+        cursorMs = newCursorMs || cursorMs;
+
+        let batch: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
+        const { items: filteredItems, removedByMode } = applyInMemoryFilters(batch);
+        lastRemovedByMode += removedByMode;
+        all.push(...filteredItems);
+
+        // If we didn't even fill the fetchLimit, we've reached the end.
+        if (snap.docs.length < fetchLimit) { ended = true; break; }
+      }
+
+      // If we scanned but found no items, there are no more matching items
+      // Set hasMore to false to prevent infinite pagination
+      const hasMore = all.length > 0 && (all.length > params.limit || !ended);
+      const pageItems = all.slice(0, params.limit);
+      // Only set nextCursor if we have items and there's more to fetch
+      const nextCursor = hasMore && lastRawDoc && all.length > 0 ? getCreatedAtMillisFromDoc(lastRawDoc) : null;
+
+      return {
+        items: pageItems,
+        nextCursor,
+        hasMore,
+        diagnostics: params.debug ? {
+          path: wantsVideoScan ? 'optimized-video-scan' : 'optimized-scan',
+          requestedLimit: params.limit,
+          fetchLimit,
+          scans: scanned,
+          returned: pageItems.length,
+          accumulated: all.length,
+          nextCursor,
+          removedByMode: lastRemovedByMode,
+        } : undefined
+      };
     } catch (e: any) {
-      // If composite index is missing, provide clear error message
+      // If composite index is missing, fall back to legacy pagination
       const codeStr = String(e?.code || '').toLowerCase();
       const isMissingIndexError =
         codeStr === 'failed-precondition' ||
         e?.code === 9 ||
         /index|composite/i.test(String(e?.message || ''));
-      
+
       if (isMissingIndexError) {
         console.warn(
           `[list] Missing Firestore composite index. Falling back to legacy pagination. ` +
           `Please create index for: generationHistory/{uid}/items with fields: ` +
           `${params.status ? 'status, ' : ''}${params.generationType ? 'generationType, ' : ''}createdAt DESC, isDeleted`
         );
-        // Fall back to legacy mode
         return listLegacy(uid, params);
       }
       throw e;
     }
-    
-    if (snap.empty) {
-      return { items: [], nextCursor: null, hasMore: false, diagnostics: params.debug ? { path: 'optimized', empty: true } : undefined };
-    }
-
-    // Normalize documents
-    let items: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
-
-    // Filter out soft-deleted items in-memory. Documents without the field are treated as NOT deleted.
-    const beforeDeleteFilterCount = items.length;
-    items = items.filter((it: any) => it.isDeleted !== true);
-
-    // Optional free-text search by prompt (case-insensitive) - done in-memory for simplicity
-    if (params.search && params.search.trim().length > 0) {
-      const needle = params.search.toLowerCase();
-      items = items.filter((it: any) => String((it as any).prompt || '').toLowerCase().includes(needle));
-    }
-
-    const { filtered: modeFilteredItems, removed: removedByMode } = filterItemsByMode(items, normalizedMode as any);
-    items = modeFilteredItems;
-
-    // Detect if there are more items AFTER in-memory filtering
-    // Prefer optimistic hasMore when raw fetch hit the cap, to avoid early stop when
-    // filtering trims results to exactly the page size.
-    const rawCount = snap.docs.length;
-    let hasMore = items.length > params.limit;
-    if (!hasMore && (rawCount >= fetchLimit || removedByMode > 0)) {
-      hasMore = true;
-    }
-    const pageItems = items.slice(0, params.limit);
-
-    // Next cursor strategy:
-    // - Prefer the createdAt of the last page item when available
-    // - If the page is empty but we still haveMore due to raw fetch hitting the cap,
-    //   advance the cursor using the last RAW document's createdAt to prevent stalling.
-    let nextCursor: number | null = null;
-    if (hasMore) {
-      try {
-        let createdAtStr: string | undefined;
-        if (pageItems.length > 0) {
-          createdAtStr = (pageItems[pageItems.length - 1] as any)?.createdAt;
-        } else {
-          const lastRawDoc = snap.docs[snap.docs.length - 1];
-          const rawCreated = (lastRawDoc?.data() as any)?.createdAt;
-          if (rawCreated && typeof (rawCreated as any).toDate === 'function') {
-            createdAtStr = (rawCreated as any).toDate().toISOString();
-          } else if (typeof rawCreated === 'string') {
-            createdAtStr = rawCreated;
-          }
-        }
-        if (createdAtStr) {
-          const ms = new Date(createdAtStr).getTime();
-          if (!Number.isNaN(ms)) nextCursor = ms;
-        }
-      } catch (e) {
-        console.warn('[list] Failed to compute nextCursor:', e);
-      }
-    }
-
-    return { items: pageItems, nextCursor, hasMore, diagnostics: params.debug ? {
-      path: 'optimized',
-  requestedLimit: params.limit,
-  fetchLimit,
-  fetchedRaw: snap.docs.length,
-      filteredAfterDelete: items.length,
-      returned: pageItems.length,
-      hasMore,
-      appliedFilters: {
-        status: params.status || null,
-        generationType: params.generationType || null,
-        mode: normalizedMode || null,
-      },
-      generationTypeSynonymsUsed: params.generationType ? (Array.isArray(params.generationType) ? params.generationType : [params.generationType]) : [],
-      removedByMode,
-    } : undefined };
   }
-  
+
   // LEGACY PATH: Support old pagination with sortBy, sortOrder, dateStart, dateEnd
   const legacyResult = await listLegacy(uid, params);
   return { ...legacyResult, diagnostics: params.debug ? { path: 'legacy', requestedLimit: params.limit, returned: legacyResult.items.length } : undefined } as any;
@@ -407,25 +594,25 @@ async function listLegacy(uid: string, params: {
   mode?: 'video' | 'image' | 'music' | 'branding' | 'all';
 }): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string; totalCount?: number }> {
   const col = adminDb.collection('generationHistory').doc(uid).collection('items');
-  
+
   // Default sorting
   const sortBy = params.sortBy || 'createdAt';
   const sortOrder = params.sortOrder || 'desc';
-  
+
   let q: FirebaseFirestore.Query = col.orderBy(sortBy, sortOrder);
-  
+
   // Get total count for pagination context
   let totalCount: number | undefined;
   if (params.generationType || params.status) {
     const countQuery = await col.get();
     totalCount = countQuery.docs.length;
   }
-  
+
   // Apply filters
   if (params.status) {
     q = q.where('status', '==', params.status);
   }
-  
+
   if (params.generationType) {
     if (Array.isArray(params.generationType)) {
       const types = (params.generationType as string[]).filter(t => !!t);
@@ -438,7 +625,7 @@ async function listLegacy(uid: string, params: {
       q = q.where('generationType', '==', params.generationType);
     }
   }
-  
+
   // Optional date filtering
   const wantsDateFilter = typeof params.dateStart === 'string' && typeof params.dateEnd === 'string';
   if (wantsDateFilter) {
@@ -446,8 +633,8 @@ async function listLegacy(uid: string, params: {
       const start = new Date(params.dateStart as string);
       const end = new Date(params.dateEnd as string);
       q = col.where('createdAt', '>=', admin.firestore.Timestamp.fromDate(start))
-             .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(end))
-             .orderBy('createdAt', sortOrder);
+        .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(end))
+        .orderBy('createdAt', sortOrder);
     } catch {
       // Ignore date filter if invalid
     }
@@ -460,12 +647,12 @@ async function listLegacy(uid: string, params: {
       q = q.startAfter(cursorDoc);
     }
   }
-  
+
   const legacyModeMultiplier = (params.mode && params.mode !== 'all') ? 6 : 1;
-  const fetchCount = params.status || params.generationType ? 
-    Math.max(params.limit * 2 * legacyModeMultiplier, params.limit) : 
+  const fetchCount = params.status || params.generationType ?
+    Math.max(params.limit * 2 * legacyModeMultiplier, params.limit) :
     Math.max(params.limit * 4 * legacyModeMultiplier, params.limit);
-  
+
   let snap: FirebaseFirestore.QuerySnapshot;
   try {
     snap = await q.limit(fetchCount).get();
@@ -494,7 +681,7 @@ async function listLegacy(uid: string, params: {
       throw e;
     }
   }
-  
+
   let items: GenerationHistoryItem[] = snap.docs.map(d => normalizeItem(d.id, d.data() as any));
   items = items.filter((it: any) => it.isDeleted !== true);
 
@@ -526,10 +713,15 @@ async function listLegacy(uid: string, params: {
     });
   }
 
-  // Optional free-text search by prompt
-  if (params.search && params.search.trim().length > 0) {
-    const needle = params.search.toLowerCase();
-    items = items.filter((it: any) => String((it as any).prompt || '').toLowerCase().includes(needle));
+  // Optional free-text search by prompt (multi-word; requires all tokens)
+  if (params.search && String(params.search).trim().length > 0) {
+    const tokens = String(params.search).trim().toLowerCase().split(/\s+/g).map(t => t.trim()).filter(Boolean).slice(0, 6);
+    if (tokens.length > 0) {
+      items = items.filter((it: any) => {
+        const hay = String((it as any).prompt || '').toLowerCase();
+        return tokens.every((t) => hay.includes(t));
+      });
+    }
   }
 
   items = filterItemsByMode(items, params.mode).filtered;
@@ -542,10 +734,10 @@ async function listLegacy(uid: string, params: {
     const cmp = ax > bx ? 1 : ax < bx ? -1 : 0;
     return sortOrder === 'asc' ? cmp : -cmp;
   });
-  
+
   const page = items.slice(0, params.limit);
   const nextCursor = page.length === params.limit ? page[page.length - 1].id : undefined;
-  
+
   return { items: page, nextCursor, totalCount };
 }
 

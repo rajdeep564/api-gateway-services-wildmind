@@ -24,6 +24,7 @@ export const validateKlingT2V = [
     const dm = d.match(/(5|10)/); req.body.duration = dm ? Number(dm[1]) : 5;
     // Set pricing kind for util without clobbering provider 'mode'
     if (!req.body.kind && !req.body.type) req.body.kind = 't2v';
+    
     return next();
   }
 ];

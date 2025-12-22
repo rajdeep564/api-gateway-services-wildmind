@@ -9,23 +9,42 @@ import { URL } from 'url';
 
 export type GeneratorOverlay = {
   id: string;
-  type: 'image' | 'video' | 'music' | 'upscale';
+  type: 'image' | 'video' | 'music' | 'text' | 'upscale' | 'removebg' | 'erase' | 'replace' | 'expand' | 'vectorize' | 'storyboard';
   x: number;
   y: number;
   generatedImageUrl?: string | null;
   generatedVideoUrl?: string | null;
   generatedMusicUrl?: string | null;
   upscaledImageUrl?: string | null;
+  removedBgImageUrl?: string | null;
+  erasedImageUrl?: string | null;
+  replacedImageUrl?: string | null;
+  expandedImageUrl?: string | null;
+  vectorizedImageUrl?: string | null;
   sourceImageUrl?: string | null;
   localUpscaledImageUrl?: string | null;
+  localRemovedBgImageUrl?: string | null;
+  localErasedImageUrl?: string | null;
+  localReplacedImageUrl?: string | null;
+  localExpandedImageUrl?: string | null;
+  localVectorizedImageUrl?: string | null;
   frameWidth?: number;
   frameHeight?: number;
   model?: string;
   frame?: string;
   aspectRatio?: string;
   prompt?: string;
+  mode?: string;
   scale?: number;
+  backgroundType?: string;
+  scaleValue?: number;
   isUpscaling?: boolean;
+  isRemovingBg?: boolean;
+  isErasing?: boolean;
+  isReplacing?: boolean;
+  isExpanding?: boolean;
+  isVectorizing?: boolean;
+  value?: string;
 };
 
 export type MediaElement = {
@@ -50,7 +69,9 @@ const projectMedia = new Map<string, Map<string, MediaElement>>();
 function getProjectId(reqUrl: string | undefined): string | null {
   if (!reqUrl) return null;
   try {
-    const u = new URL(reqUrl, 'http://localhost');
+    const { env } = require('../config/env');
+    const defaultBase = env.devFrontendUrl;
+    const u = new URL(reqUrl, defaultBase);
     return u.searchParams.get('projectId');
   } catch {
     return null;

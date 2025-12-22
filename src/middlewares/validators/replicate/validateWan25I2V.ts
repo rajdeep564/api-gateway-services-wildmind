@@ -27,6 +27,7 @@ export const validateWan25I2V = [
     const r = String(req.body.resolution ?? '720p').toLowerCase();
     const rm = r.match(/(480|720|1080)/); req.body.resolution = rm ? `${rm[1]}p` : '720p';
     if (!req.body.mode && !req.body.kind && !req.body.type) req.body.mode = 'i2v'; // used by pricing util
+    
     return next();
   }
 ];

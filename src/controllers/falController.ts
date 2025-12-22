@@ -20,7 +20,20 @@ async function generate(req: Request, res: Response, next: NextFunction) {
     logger.info({ uid, ctx }, '[CREDITS][FAL] Enter generate with context');
     const result = await falService.generate(uid, payload);
     const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'generate');
-    res.json(formatApiResponse('success', 'Images generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
+    
+    // Determine appropriate message based on generation type
+    const generationType = payload.generationType || '';
+    const model = (payload.model || '').toLowerCase();
+    let message = 'Images generated';
+    if (generationType === 'text-to-speech' || generationType === 'tts' || model.includes('tts') || model.includes('elevenlabs') || model.includes('chatterbox') || model.includes('maya')) {
+      message = 'Speech generated';
+    } else if (generationType === 'text-to-dialogue' || generationType === 'dialogue' || model.includes('dialogue')) {
+      message = 'Dialogue generated';
+    } else if (generationType === 'text-to-music' || model.includes('music')) {
+      message = 'Music generated';
+    }
+    
+    res.json(formatApiResponse('success', message, { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
   } catch (err) {
     next(err);
   }
@@ -218,6 +231,38 @@ export const falController = {
       const uid = req.uid;
       const ctx = (req as any).context || {};
       const result = await falQueueService.sora2RemixV2vSubmit(uid, req.body || {});
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
+  async klingO1FirstLastSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.klingO1FirstLastSubmit(uid, req.body || {});
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
+  async klingO1ReferenceSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.klingO1ReferenceSubmit(uid, req.body || {});
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
+  async kling26ProT2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.kling26ProT2vSubmit(uid, req.body || {});
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
+  async kling26ProI2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.kling26ProI2vSubmit(uid, req.body || {});
       res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
     } catch (err) { next(err); }
   },

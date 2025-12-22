@@ -4,6 +4,25 @@ import { PLAN_CREDITS } from '../data/creditDistribution';
 import { creditsRepository, LedgerEntry } from '../repository/creditsRepository';
 
 const FREE_PLAN_CODE = 'FREE';
+// New launch offer fixed plan (4000 credits for 15 days, no daily reset)
+const LAUNCH_PLAN_CODE = 'LAUNCH_4000_FIXED';
+const LAUNCH_FIXED_CREDITS = 4000;
+
+// Launch plan cutoff date: December 25, 2025 (end of day UTC)
+// Users signing up on or before this date get launch plan, after this date get FREE plan
+// ALL users on launch plan get extended trial until this cutoff date (regardless of 15-day period)
+// Can be overridden via LAUNCH_PLAN_CUTOFF_DATE environment variable (ISO string format)
+const LAUNCH_PLAN_CUTOFF_DATE = process.env.LAUNCH_PLAN_CUTOFF_DATE 
+  ? new Date(process.env.LAUNCH_PLAN_CUTOFF_DATE)
+  : new Date('2025-12-25T23:59:59.999Z');
+
+/**
+ * Check if the current date is on or before the launch plan cutoff date
+ */
+function isWithinLaunchPlanPeriod(): boolean {
+  const now = new Date();
+  return now <= LAUNCH_PLAN_CUTOFF_DATE;
+}
 
 export async function ensureFreePlan(): Promise<PlanDoc> {
   const ref = adminDb.collection('plans').doc(FREE_PLAN_CODE);
@@ -12,7 +31,7 @@ export async function ensureFreePlan(): Promise<PlanDoc> {
     const doc: PlanDoc = {
       code: FREE_PLAN_CODE,
       name: 'Free',
-      credits: 4120,
+      credits: 2000,
       priceInPaise: 0,
       active: true,
       sort: 0,
@@ -25,9 +44,30 @@ export async function ensureFreePlan(): Promise<PlanDoc> {
   return snap.data() as PlanDoc;
 }
 
+export async function ensureLaunchPlan(): Promise<PlanDoc> {
+  const ref = adminDb.collection('plans').doc(LAUNCH_PLAN_CODE);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    const doc: PlanDoc = {
+      code: LAUNCH_PLAN_CODE,
+      name: 'Launch Offer (4000 credits)',
+      credits: LAUNCH_FIXED_CREDITS,
+      priceInPaise: 0,
+      active: true,
+      sort: -1,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    } as any;
+    await ref.set(doc);
+    return doc;
+  }
+  return snap.data() as PlanDoc;
+}
+
 export async function ensurePlansSeeded(): Promise<void> {
   const plans: Array<PlanDoc> = [
-    { code: 'FREE', name: 'Free', credits: 4120, priceInPaise: 0, active: true, sort: 0 } as any,
+    { code: LAUNCH_PLAN_CODE, name: 'Launch Offer (4000 credits)', credits: LAUNCH_FIXED_CREDITS, priceInPaise: 0, active: true, sort: -1 } as any,
+    { code: 'FREE', name: 'Free', credits: 2000, priceInPaise: 0, active: false, sort: 0 } as any,
     { code: 'PLAN_A', name: 'Plan A', credits: PLAN_CREDITS.PLAN_A, priceInPaise: 0, active: false, sort: 1 } as any,
     { code: 'PLAN_B', name: 'Plan B', credits: PLAN_CREDITS.PLAN_B, priceInPaise: 0, active: false, sort: 2 } as any,
     { code: 'PLAN_C', name: 'Plan C', credits: PLAN_CREDITS.PLAN_C, priceInPaise: 0, active: false, sort: 3 } as any,
@@ -48,18 +88,44 @@ export async function ensurePlansSeeded(): Promise<void> {
 export async function ensureUserInit(uid: string): Promise<UserCreditsDoc> {
   const userRef = adminDb.collection('users').doc(uid);
   const snap = await userRef.get();
-  const plan = await ensureFreePlan();
+  
+  // Determine which plan to use based on cutoff date
+  const isWithinPeriod = isWithinLaunchPlanPeriod();
+  const defaultPlan = isWithinPeriod 
+    ? await ensureLaunchPlan() 
+    : await ensureFreePlan();
 
   if (!snap.exists) {
+    // New user - assign plan based on cutoff date
     const doc: UserCreditsDoc = {
       uid,
-      creditBalance: plan.credits,
-      planCode: plan.code,
+      creditBalance: defaultPlan.credits,
+      planCode: defaultPlan.code,
+      launchMigrationDone: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     } as any;
+    
+    // If within launch period and on launch plan, set trial start date and mark as migrated
+    if (isWithinPeriod && defaultPlan.code === LAUNCH_PLAN_CODE) {
+      (doc as any).launchTrialStartDate = admin.firestore.FieldValue.serverTimestamp();
+      (doc as any).launchMigrationDone = true; // Mark as migrated for new launch plan users
+      console.log(`[LaunchOffer] New user ${uid} assigned to launch plan with trial start date`);
+    }
+    
     await userRef.set(doc, { merge: true });
-    return doc;
+    
+    // Return the document with all fields including launchTrialStartDate
+    const createdDoc = await userRef.get();
+    const createdData = createdDoc.data() as any;
+    return {
+      uid,
+      creditBalance: createdData.creditBalance || defaultPlan.credits,
+      planCode: createdData.planCode || defaultPlan.code,
+      launchTrialStartDate: createdData.launchTrialStartDate,
+      createdAt: createdData.createdAt,
+      updatedAt: createdData.updatedAt,
+    };
   }
 
   const data = snap.data() as any;
@@ -67,17 +133,19 @@ export async function ensureUserInit(uid: string): Promise<UserCreditsDoc> {
   let planCode = (data.planCode as string) || FREE_PLAN_CODE;
 
   // If fields are missing, backfill them atomically
+  // Use FREE plan if we're past the cutoff date, otherwise use the default
   if (!(data && typeof creditBalance === 'number' && !Number.isNaN(creditBalance))) {
+    const backfillPlan = isWithinPeriod ? defaultPlan : await ensureFreePlan();
     await userRef.set(
       {
-        creditBalance: plan.credits,
-        planCode: plan.code,
+        creditBalance: backfillPlan.credits,
+        planCode: backfillPlan.code,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
     );
-    creditBalance = plan.credits;
-    planCode = plan.code;
+    creditBalance = backfillPlan.credits;
+    planCode = backfillPlan.code;
   }
 
   return {
@@ -91,6 +159,7 @@ export async function ensureUserInit(uid: string): Promise<UserCreditsDoc> {
 
 export const creditsService = {
   ensureFreePlan,
+  ensureLaunchPlan,
   ensurePlansSeeded,
   ensureUserInit,
   /**
@@ -99,8 +168,47 @@ export const creditsService = {
    * IMPORTANT: Now includes ALL grants (not just monthly reset) to preserve manual grants.
    */
   async reconcileCurrentCycle(uid: string): Promise<{ cycle: string; newBalance: number; debitsSinceReset: number; planCredits: number }> {
+    const logger = require('../utils/logger').logger;
+    logger.info({ uid }, '[CREDITS_SERVICE] reconcileCurrentCycle - Starting reconciliation');
+    
+    // Get current balance before reconciliation
+    const beforeInfo = await creditsRepository.readUserInfo(uid);
+    const beforeBalance = beforeInfo?.creditBalance || 0;
+    logger.info({ uid, beforeBalance }, '[CREDITS_SERVICE] Balance before reconciliation');
+    
     // Use the new reconcileBalanceFromLedgers which calculates from ALL ledger entries
     const reconciled = await creditsRepository.reconcileBalanceFromLedgers(uid);
+    
+    logger.info({ 
+      uid, 
+      calculatedBalance: reconciled.calculatedBalance,
+      totalGrants: reconciled.totalGrants,
+      totalDebits: reconciled.totalDebits,
+      ledgerCount: reconciled.ledgerCount
+    }, '[CREDITS_SERVICE] Reconciliation calculation complete');
+    
+    // CRITICAL: Ensure balance never goes below 0, but also log if it's 0 unexpectedly
+    if (reconciled.calculatedBalance === 0 && reconciled.totalGrants > 0) {
+      logger.warn({ 
+        uid, 
+        calculatedBalance: reconciled.calculatedBalance,
+        totalGrants: reconciled.totalGrants,
+        totalDebits: reconciled.totalDebits,
+        beforeBalance
+      }, '[CREDITS_SERVICE] WARNING: Calculated balance is 0 despite having grants!');
+      
+      // If we had a balance before and now it's 0, this might be a calculation error
+      // Log detailed information for debugging but still proceed with the reconciliation
+      if (beforeBalance > 0) {
+        logger.error({ 
+          uid, 
+          beforeBalance,
+          calculatedBalance: reconciled.calculatedBalance,
+          totalGrants: reconciled.totalGrants,
+          totalDebits: reconciled.totalDebits
+        }, '[CREDITS_SERVICE] ERROR: Balance went from positive to 0 during reconciliation!');
+      }
+    }
     
     // Update balance to match calculated value
     const userRef = adminDb.collection('users').doc(uid);
@@ -108,6 +216,8 @@ export const creditsService = {
       creditBalance: reconciled.calculatedBalance, 
       updatedAt: admin.firestore.FieldValue.serverTimestamp() 
     }, { merge: true });
+    
+    logger.info({ uid, beforeBalance, afterBalance: reconciled.calculatedBalance }, '[CREDITS_SERVICE] Balance updated in database');
     
     // Get plan info for return value
     const user = await creditsRepository.readUserInfo(uid);
@@ -117,12 +227,20 @@ export const creditsService = {
     
     let planCredits = 0;
     if (planCode === 'FREE') {
-      planCredits = 4120;
+      planCredits = 2000;
     } else {
       const planSnap = await adminDb.collection('plans').doc(planCode).get();
       const pdata = planSnap.data() as any;
       planCredits = Number(pdata?.credits ?? 0) || 0;
     }
+    
+    logger.info({ 
+      uid, 
+      cycle, 
+      newBalance: reconciled.calculatedBalance, 
+      debitsSinceReset: reconciled.totalDebits, 
+      planCredits 
+    }, '[CREDITS_SERVICE] reconcileCurrentCycle - Completed');
     
     return { 
       cycle, 
@@ -132,18 +250,254 @@ export const creditsService = {
     };
   },
   /**
+   * Launch offer: ensure user is on launch plan with 4000 fixed credits (no daily reset).
+   * - One-time migration: clear all ledgers and move user to launch plan with 0 -> 4000 credits.
+   * - No daily reset: credits are fixed until cutoff date.
+   * - ALL users get extended trial until December 25, 2025 cutoff date (regardless of 15-day period).
+   * - After cutoff date, users get FREE plan.
+   */
+  async ensureLaunchDailyReset(uid: string): Promise<{ planCode: string; creditBalance: number }> {
+    const userRef = adminDb.collection('users').doc(uid);
+    const snap = await userRef.get();
+    
+    // Check if we're past the cutoff date
+    const isWithinPeriod = isWithinLaunchPlanPeriod();
+    
+    if (!snap.exists) {
+      // New user – let ensureUserInit handle default (it will check cutoff date and set trial start date)
+      await ensureUserInit(uid);
+      const userData = (await userRef.get()).data() as any;
+      
+      // Ensure launchTrialStartDate is set if user is on launch plan
+      if (userData?.planCode === LAUNCH_PLAN_CODE && !userData?.launchTrialStartDate && isWithinPeriod) {
+        await userRef.set(
+          {
+            launchTrialStartDate: admin.firestore.FieldValue.serverTimestamp(),
+            launchMigrationDone: true,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        // Re-fetch to get updated data
+        const updatedData = (await userRef.get()).data() as any;
+        return { 
+          planCode: updatedData?.planCode || FREE_PLAN_CODE, 
+          creditBalance: updatedData?.creditBalance || LAUNCH_FIXED_CREDITS 
+        };
+      }
+      
+      return { 
+        planCode: userData?.planCode || FREE_PLAN_CODE, 
+        creditBalance: userData?.creditBalance || (userData?.planCode === LAUNCH_PLAN_CODE ? LAUNCH_FIXED_CREDITS : 2000)
+      };
+    }
+    
+    const data = snap.data() as any;
+    const planCode: string = data.planCode || FREE_PLAN_CODE;
+    const migrated: boolean = Boolean(data.launchMigrationDone);
+    const trialStartDate = data.launchTrialStartDate;
+
+    // PRIORITY 1: Check if user on launch plan has expired trial
+    // Trial extends until December 25, 2025 (cutoff date) for ALL users
+    // Trial expires ONLY when we're past the cutoff date (not based on 15 days alone)
+    // This must be checked FIRST, before any other logic
+    if (planCode === LAUNCH_PLAN_CODE && trialStartDate) {
+      const startDate = trialStartDate.toDate ? trialStartDate.toDate() : new Date(trialStartDate);
+      const now = new Date();
+      const daysSinceStart = Math.floor((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+      
+      // Trial expires ONLY when we're past the cutoff date (Dec 25, 2025)
+      // All users get extended trial until cutoff date, regardless of 15-day period
+      const isPastCutoff = now > LAUNCH_PLAN_CUTOFF_DATE;
+      
+      if (isPastCutoff) {
+        // Trial expired - cutoff date reached, switch to FREE plan
+        console.log(`[LaunchOffer] Trial expired for user ${uid} - cutoff date reached (${daysSinceStart} days since start), switching to FREE plan`);
+        await userRef.set(
+          {
+            planCode: FREE_PLAN_CODE,
+            creditBalance: 2000, // FREE plan credits
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        // Create grant ledger entry for FREE plan credits
+        const requestId = `TRIAL_EXPIRED_TO_FREE_${Date.now()}`;
+        await creditsRepository.writeGrantAndSetPlanIfAbsent(
+          uid,
+          requestId,
+          2000,
+          FREE_PLAN_CODE,
+          'trial.expired_to_free',
+          { previousPlan: LAUNCH_PLAN_CODE, trialDays: daysSinceStart, reason: 'cutoff_date' }
+        );
+        return { planCode: FREE_PLAN_CODE, creditBalance: 2000 };
+      }
+    }
+
+    // PRIORITY 2: Handle users on launch plan but missing trialStartDate
+    // If past cutoff and missing trialStartDate, switch to FREE (can't determine trial status)
+    if (planCode === LAUNCH_PLAN_CODE && !trialStartDate && !isWithinPeriod) {
+      console.log(`[LaunchOffer] User ${uid} on launch plan but missing trialStartDate and past cutoff - switching to FREE`);
+      await userRef.set(
+        {
+          planCode: FREE_PLAN_CODE,
+          creditBalance: 2000,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      // Create grant ledger entry
+      const requestId = `LAUNCH_MISSING_TRIAL_DATE_TO_FREE_${Date.now()}`;
+      await creditsRepository.writeGrantAndSetPlanIfAbsent(
+        uid,
+        requestId,
+        2000,
+        FREE_PLAN_CODE,
+        'trial.missing_trial_date_past_cutoff',
+        { previousPlan: LAUNCH_PLAN_CODE, reason: 'missing_trial_date_past_cutoff' }
+      );
+      return { planCode: FREE_PLAN_CODE, creditBalance: 2000 };
+    }
+
+    // PRIORITY 3: If we're past the cutoff date, don't assign launch plan to new/existing users
+    // But only if they're not already on launch plan with valid trial
+    if (!isWithinPeriod) {
+      // User is already on FREE or another plan, or was handled above
+      if (planCode !== LAUNCH_PLAN_CODE) {
+        return { 
+          planCode: planCode, 
+          creditBalance: Number(data?.creditBalance || 2000) 
+        };
+      }
+      // If somehow still on launch plan (shouldn't happen after above checks), switch to FREE
+      if (planCode === LAUNCH_PLAN_CODE) {
+        console.log(`[LaunchOffer] User ${uid} on launch plan but past cutoff - switching to FREE`);
+        await userRef.set(
+          {
+            planCode: FREE_PLAN_CODE,
+            creditBalance: 2000,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return { planCode: FREE_PLAN_CODE, creditBalance: 2000 };
+      }
+    }
+
+    // One-time migration: clear ledgers, zero out, then set launch plan and 4000 credits
+    // Only if we're within the launch period
+    if (!migrated && isWithinPeriod) {
+      try {
+        await creditsRepository.clearAllLedgersForUser(uid);
+      } catch (e) {
+        console.error('[LaunchOffer] Failed to clear ledgers for user', uid, e);
+      }
+
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      await userRef.set(
+        {
+          planCode: LAUNCH_PLAN_CODE,
+          creditBalance: LAUNCH_FIXED_CREDITS,
+          launchMigrationDone: true,
+          launchTrialStartDate: now, // Set trial start date on migration
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+
+      return { planCode: LAUNCH_PLAN_CODE, creditBalance: LAUNCH_FIXED_CREDITS };
+    }
+    
+    // If not migrated and past cutoff, assign to FREE plan
+    if (!migrated && !isWithinPeriod) {
+      await userRef.set(
+        {
+          planCode: FREE_PLAN_CODE,
+          creditBalance: 2000,
+          launchMigrationDone: true, // Mark as migrated so we don't try again
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      return { planCode: FREE_PLAN_CODE, creditBalance: 2000 };
+    }
+
+    // PRIORITY 4: Already migrated – ensure plan is launch and trial start date is set (only if within period)
+    if (planCode !== LAUNCH_PLAN_CODE && isWithinPeriod) {
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      await userRef.set(
+        {
+          planCode: LAUNCH_PLAN_CODE,
+          launchTrialStartDate: now, // Set trial start date if moving to launch plan
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    } else if (planCode === LAUNCH_PLAN_CODE && !trialStartDate && isWithinPeriod) {
+      // PRIORITY 5: User is on launch plan but missing trial start date - set it now (only if within period)
+      // This handles cases where user was created before trial start date logic was added
+      // Use createdAt as trial start date if available, otherwise use current time
+      const createdAt = data.createdAt;
+      const trialStartTimestamp = createdAt && createdAt.toDate 
+        ? createdAt 
+        : admin.firestore.FieldValue.serverTimestamp();
+      
+      await userRef.set(
+        {
+          launchTrialStartDate: trialStartTimestamp,
+          launchMigrationDone: true, // Also mark as migrated
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      console.log(`[LaunchOffer] Set missing launchTrialStartDate for user ${uid} (using ${createdAt ? 'createdAt' : 'current time'})`);
+    }
+
+    // PRIORITY 6: Final check - ensure trial start date is set for users on launch plan (only if within period)
+    if (planCode === LAUNCH_PLAN_CODE && isWithinPeriod) {
+      const finalData = (await userRef.get()).data() as any;
+      if (!finalData?.launchTrialStartDate) {
+        // Last resort: set trial start date if still missing
+        // Prefer createdAt if available, otherwise use current time
+        const createdAt = finalData.createdAt;
+        const trialStartTimestamp = createdAt && createdAt.toDate 
+          ? createdAt 
+          : admin.firestore.FieldValue.serverTimestamp();
+        
+        await userRef.set(
+          {
+            launchTrialStartDate: trialStartTimestamp,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        console.log(`[LaunchOffer] Final check: Set launchTrialStartDate for user ${uid} (using ${createdAt ? 'createdAt' : 'current time'})`);
+      }
+    }
+
+    // No daily reset - return current balance
+    const currentBalance = Number(data.creditBalance || 0);
+    return { planCode: LAUNCH_PLAN_CODE, creditBalance: currentBalance };
+  },
+  /**
    * Ensure a monthly reroll to the user's current plan credits.
    * Idempotent per user per YYYY-MM cycle using a deterministic requestId.
    * IMPORTANT: Only resets if no manual grants exist this month to preserve test credits.
    */
   async ensureMonthlyReroll(uid: string) {
+    // For launch plan we skip monthly reset (fixed credits, no reset)
+    const info = await creditsRepository.readUserInfo(uid);
+    if (info?.planCode === LAUNCH_PLAN_CODE) {
+      return { cycle: 'LAUNCH_FIXED', planCode: LAUNCH_PLAN_CODE, creditBalance: info.creditBalance };
+    }
     // Ensure user exists and has a plan
     const user = await creditsRepository.readUserInfo(uid);
     const planCode = (user?.planCode as any) || 'FREE';
     // Determine credits for the current plan from seeded plans
     let planCredits: number;
     if (planCode === 'FREE') {
-      planCredits = 4120;
+      planCredits = 2000;
     } else {
       const planSnap = await adminDb.collection('plans').doc(planCode).get();
       const data = planSnap.data() as any;
@@ -224,7 +578,7 @@ export const creditsService = {
   },
   async switchPlan(uid: string, newPlanCode: 'FREE' | 'PLAN_A' | 'PLAN_B' | 'PLAN_C' | 'PLAN_D') {
     const credits = newPlanCode === 'FREE'
-      ? 4120
+      ? 2000
       : newPlanCode === 'PLAN_A' ? PLAN_CREDITS.PLAN_A
       : newPlanCode === 'PLAN_B' ? PLAN_CREDITS.PLAN_B
       : newPlanCode === 'PLAN_C' ? PLAN_CREDITS.PLAN_C

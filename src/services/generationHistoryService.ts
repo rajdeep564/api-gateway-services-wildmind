@@ -328,7 +328,8 @@ export async function getUserGeneration(
       try {
         const creator = await authRepository.getUserById(uid);
         const username = creator?.username || uid;
-        const zataPrefix = (process.env.ZATA_PREFIX || process.env.NEXT_PUBLIC_ZATA_PREFIX || 'https://idr01.zata.ai/devstoragev1/').replace(/\/$/, '') + '/';
+        const { env } = await import('../config/env');
+        const zataPrefix = env.zataPrefix ? (env.zataPrefix.replace(/\/$/, '') + '/') : '';
         
         // Try common input file patterns
         const commonInputPatterns: string[] = [];

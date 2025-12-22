@@ -2,8 +2,8 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { makeCreditCost } from '../middlewares/creditCostFactory';
 // Removed route-level debit writes; controller handles debit via unified helper
-import { replicateController } from '../controllers/replicateController';
-import { computeReplicateBgRemoveCost, computeReplicateImageGenCost, computeReplicateUpscaleCost } from '../utils/pricing/replicatePricing';
+import { replicateController, multiangle } from '../controllers/replicateController';
+import { computeReplicateBgRemoveCost, computeReplicateImageGenCost, computeReplicateUpscaleCost, computeReplicateMultiangleCost } from '../utils/pricing/replicatePricing';
 import { computeWanVideoCost } from '../utils/pricing/wanPricing';
 import { computeKlingVideoCost, computeKlingLipsyncCost } from '../utils/pricing/klingPricing';
 import { computeSeedanceVideoCost } from '../utils/pricing/seedancePricing';
@@ -18,12 +18,16 @@ import { validateKlingI2V } from '../middlewares/validators/replicate/validateKl
 import { validateKlingLipsync } from '../middlewares/validators/replicate/validateKlingLipsync';
 import { validateSeedanceT2V } from '../middlewares/validators/replicate/validateSeedanceT2V';
 import { validateSeedanceI2V } from '../middlewares/validators/replicate/validateSeedanceI2V';
+import { validateSeedanceProFastT2V } from '../middlewares/validators/replicate/validateSeedanceProFastT2V';
+import { validateSeedanceProFastI2V } from '../middlewares/validators/replicate/validateSeedanceProFastI2V';
 import { validatePixverseT2V } from '../middlewares/validators/replicate/validatePixverseT2V';
 import { validatePixverseI2V } from '../middlewares/validators/replicate/validatePixverseI2V';
 import { computeWanAnimateReplaceCost } from '../utils/pricing/wanAnimatePricing';
 import { validateWanAnimateReplace } from '../middlewares/validators/replicate/validateWanAnimateReplace';
 import { computeWanAnimateAnimationCost } from '../utils/pricing/wanAnimateAnimationPricing';
 import { validateWanAnimateAnimation } from '../middlewares/validators/replicate/validateWanAnimateAnimation';
+
+console.log('[ReplicateRoutes] Reloading routes...'); // Force refresh log
 
 const router = Router();
 
@@ -43,6 +47,14 @@ router.post(
   validateUpscale,
   makeCreditCost('replicate', 'upscale', computeReplicateUpscaleCost),
   replicateController.upscale as any
+);
+
+// Multiangle (Replicate)
+router.post(
+  '/multiangle',
+  requireAuth,
+  makeCreditCost('replicate', 'multiangle', computeReplicateMultiangleCost),
+  multiangle as any
 );
 
 // ============ Queue-style endpoints for Replicate WAN 2.5 ============
@@ -175,6 +187,23 @@ router.post(
   validateSeedanceI2V,
   makeCreditCost('replicate', 'seedance-i2v', computeSeedanceVideoCost),
   (replicateController as any).seedanceI2vSubmit
+);
+
+// ============ Queue-style endpoints for Replicate Seedance Pro Fast ============
+router.post(
+  '/seedance-pro-fast-t2v/submit',
+  requireAuth,
+  validateSeedanceProFastT2V,
+  makeCreditCost('replicate', 'seedance-pro-fast-t2v', computeSeedanceVideoCost),
+  (replicateController as any).seedanceProFastT2vSubmit
+);
+
+router.post(
+  '/seedance-pro-fast-i2v/submit',
+  requireAuth,
+  validateSeedanceProFastI2V,
+  makeCreditCost('replicate', 'seedance-pro-fast-i2v', computeSeedanceVideoCost),
+  (replicateController as any).seedanceProFastI2vSubmit
 );
 
 // ============ Queue-style endpoints for Replicate PixVerse v5 ============

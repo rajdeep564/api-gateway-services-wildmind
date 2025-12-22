@@ -8,12 +8,19 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
 
   const m = String(model || '').toLowerCase();
   const isSeedream = m.includes('bytedance/seedream-4');
+  const isSeedream45 = false; // Seedream 4.5 moved to FAL; no longer validated here
   const isIdeogram = m.includes('ideogram-ai/ideogram-v3');
   const isLucidOrigin = m.includes('leonardoai/lucid-origin');
   const isPhoenix = m.includes('leonardoai/phoenix-1.0');
-  const isNanoBananaPro = m.includes('google/nano-banana-pro') || m.includes('nano-banana-pro');
+  // Z Image Turbo model (prunaai/z-image-turbo)
+  const isNewTurboModel = m.includes('z-image-turbo') || m.includes('new-turbo-model') || m.includes('placeholder-model-name');
+  const isPImageEdit = m.includes('p-image-edit');
+  const isPImage = m.includes('p-image') && !isPImageEdit; // avoid double-validating p-image-edit
+  const isGptImage15 = m.includes('openai/gpt-image-1.5') || m.includes('gpt-image-1.5');
 
-  if (isSeedream) {
+  // Seedream 4.5 branch removed: model is now handled by FAL backend.
+
+  if (isSeedream && !isSeedream45) {
     if (size != null && !['1K', '2K', '4K', 'custom'].includes(String(size))) return next(new ApiError("size must be one of '1K' | '2K' | '4K' | 'custom'", 400));
     if (width != null && (typeof width !== 'number' || width < 1024 || width > 4096)) return next(new ApiError('width must be 1024-4096', 400));
     if (height != null && (typeof height !== 'number' || height < 1024 || height > 4096)) return next(new ApiError('height must be 1024-4096', 400));
@@ -101,40 +108,198 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
     if (req.body.prompt_enhance != null && typeof req.body.prompt_enhance !== 'boolean') return next(new ApiError('prompt_enhance must be boolean', 400));
     if (req.body.generation_mode != null && !allowedMode.has(String(req.body.generation_mode))) return next(new ApiError('invalid generation_mode for phoenix-1.0', 400));
   }
-  // Google Nano Banana Pro validations
-  if (isNanoBananaPro) {
-    const allowedResolution = new Set(['1K', '2K', '4K']);
-    const allowedAspectRatio = new Set([
-      'match_input_image', '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'
+  // P-Image (prunaai/p-image) validations
+  if (isPImage) {
+    const allowedAspect = new Set([
+      '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', 'custom'
     ]);
-    const allowedOutputFormat = new Set(['jpg', 'png']);
-    const allowedSafetyFilter = new Set(['block_low_and_above', 'block_medium_and_above', 'block_only_high']);
-    
-    if (req.body.resolution != null && !allowedResolution.has(String(req.body.resolution))) {
-      return next(new ApiError('resolution must be one of: 1K, 2K, 4K', 400));
+
+    if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio))) {
+      return next(new ApiError('invalid aspect_ratio for P-Image', 400));
     }
-    if (req.body.aspect_ratio != null && !allowedAspectRatio.has(String(req.body.aspect_ratio))) {
-      return next(new ApiError('invalid aspect_ratio for nano-banana-pro', 400));
-    }
-    if (req.body.output_format != null && !allowedOutputFormat.has(String(req.body.output_format))) {
-      return next(new ApiError('output_format must be jpg or png', 400));
-    }
-    if (req.body.safety_filter_level != null && !allowedSafetyFilter.has(String(req.body.safety_filter_level))) {
-      return next(new ApiError('invalid safety_filter_level for nano-banana-pro', 400));
-    }
-    if (req.body.image_input != null) {
-      if (!Array.isArray(req.body.image_input)) {
-        return next(new ApiError('image_input must be an array of URLs', 400));
+
+    const validateDim = (value: any, label: string) => {
+      if (value == null) return;
+      if (typeof value !== 'number' || !Number.isInteger(value)) {
+        throw new ApiError(`${label} must be an integer`, 400);
       }
-      if (req.body.image_input.length > 14) {
-        return next(new ApiError('image_input supports up to 14 images', 400));
+      if (value < 256 || value > 1440) {
+        throw new ApiError(`${label} must be between 256 and 1440`, 400);
       }
-      for (const url of req.body.image_input) {
-        if (typeof url !== 'string') {
-          return next(new ApiError('image_input must contain URL strings', 400));
-        }
+      if (value % 16 !== 0) {
+        throw new ApiError(`${label} must be divisible by 16`, 400);
+      }
+    };
+
+    try {
+      validateDim(width, 'width');
+      validateDim(height, 'height');
+    } catch (err) {
+      return next(err as any);
+    }
+
+    // If custom aspect ratio is selected, require width/height
+    if (String(aspect_ratio || '').toLowerCase() === 'custom') {
+      if (width == null || height == null) {
+        return next(new ApiError('width and height are required when aspect_ratio is custom', 400));
+      }
+    }
+
+    if (req.body.seed != null && (!Number.isInteger(req.body.seed))) {
+      return next(new ApiError('seed must be an integer', 400));
+    }
+    if (req.body.prompt_upsampling != null && typeof req.body.prompt_upsampling !== 'boolean') {
+      return next(new ApiError('prompt_upsampling must be boolean', 400));
+    }
+    if (req.body.disable_safety_checker != null && typeof req.body.disable_safety_checker !== 'boolean') {
+      return next(new ApiError('disable_safety_checker must be boolean', 400));
+    }
+    if (req.body.num_images != null) {
+      if (!Number.isInteger(req.body.num_images)) return next(new ApiError('num_images must be an integer', 400));
+      if (req.body.num_images < 1 || req.body.num_images > 4) return next(new ApiError('num_images must be between 1 and 4', 400));
+    }
+  }
+  // P-Image-Edit (prunaai/p-image-edit) validations
+  if (isPImageEdit) {
+    if (!prompt || typeof prompt !== 'string') return next(new ApiError('prompt is required', 400));
+
+    if (!Array.isArray(req.body.images) || req.body.images.length === 0) {
+      return next(new ApiError('images array with at least one URL is required for P-Image-Edit', 400));
+    }
+    for (const img of req.body.images) {
+      if (typeof img !== 'string') {
+        return next(new ApiError('images must contain URI strings', 400));
+      }
+    }
+
+    const allowedAspect = new Set([
+      'match_input_image', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'
+    ]);
+    if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio))) {
+      return next(new ApiError('invalid aspect_ratio for P-Image-Edit', 400));
+    }
+
+    if (req.body.seed != null && (!Number.isInteger(req.body.seed))) {
+      return next(new ApiError('seed must be an integer', 400));
+    }
+    if (req.body.turbo != null && typeof req.body.turbo !== 'boolean') {
+      return next(new ApiError('turbo must be boolean', 400));
+    }
+    if (req.body.disable_safety_checker != null && typeof req.body.disable_safety_checker !== 'boolean') {
+      return next(new ApiError('disable_safety_checker must be boolean', 400));
+    }
+    if (req.body.num_images != null) {
+      if (!Number.isInteger(req.body.num_images)) return next(new ApiError('num_images must be an integer', 400));
+      if (req.body.num_images < 1 || req.body.num_images > 4) return next(new ApiError('num_images must be between 1 and 4', 400));
+    }
+  }
+  // New Turbo Model validations (placeholder - update model name)
+  if (isNewTurboModel) {
+    // Width validation: 64-2048, must be divisible by 16
+    if (req.body.width != null) {
+      if (typeof req.body.width !== 'number' || !Number.isInteger(req.body.width) || req.body.width < 64 || req.body.width > 2048) {
+        return next(new ApiError('width must be an integer between 64 and 2048', 400));
+      }
+      if (req.body.width % 16 !== 0) {
+        return next(new ApiError(`width must be divisible by 16 (got ${req.body.width})`, 400));
+      }
+    }
+    // Height validation: 64-2048, must be divisible by 16
+    if (req.body.height != null) {
+      if (typeof req.body.height !== 'number' || !Number.isInteger(req.body.height) || req.body.height < 64 || req.body.height > 2048) {
+        return next(new ApiError('height must be an integer between 64 and 2048', 400));
+      }
+      if (req.body.height % 16 !== 0) {
+        return next(new ApiError(`height must be divisible by 16 (got ${req.body.height})`, 400));
+      }
+    }
+    // Num inference steps validation: 1-50, default 8
+    if (req.body.num_inference_steps != null) {
+      if (typeof req.body.num_inference_steps !== 'number' || !Number.isInteger(req.body.num_inference_steps) || req.body.num_inference_steps < 1 || req.body.num_inference_steps > 50) {
+        return next(new ApiError('num_inference_steps must be an integer between 1 and 50', 400));
+      }
+    }
+    // Guidance scale validation: 0-20, default 0
+    if (req.body.guidance_scale != null) {
+      if (typeof req.body.guidance_scale !== 'number' || req.body.guidance_scale < 0 || req.body.guidance_scale > 20) {
+        return next(new ApiError('guidance_scale must be a number between 0 and 20', 400));
+      }
+    }
+    // Seed validation: nullable integer
+    if (req.body.seed != null) {
+      if (typeof req.body.seed !== 'number' || !Number.isInteger(req.body.seed)) {
+        return next(new ApiError('seed must be an integer', 400));
+      }
+    }
+    // Output format validation: png, jpg, webp, default jpg
+    if (req.body.output_format != null) {
+      if (!['png', 'jpg', 'webp'].includes(String(req.body.output_format))) {
+        return next(new ApiError('output_format must be one of: png, jpg, webp', 400));
+      }
+    }
+    // Output quality validation: 0-100, default 80
+    if (req.body.output_quality != null) {
+      if (typeof req.body.output_quality !== 'number' || !Number.isInteger(req.body.output_quality) || req.body.output_quality < 0 || req.body.output_quality > 100) {
+        return next(new ApiError('output_quality must be an integer between 0 and 100', 400));
       }
     }
   }
+  // GPT Image 1.5 (openai/gpt-image-1.5) validations
+  if (isGptImage15) {
+    const allowedQuality = new Set(['low', 'medium', 'high', 'auto']);
+    const allowedAspect = new Set(['1:1', '3:2', '2:3']);
+    const allowedBackground = new Set(['auto', 'transparent', 'opaque']);
+    const allowedModeration = new Set(['auto', 'low']);
+    const allowedOutputFormat = new Set(['png', 'jpeg', 'webp']);
+
+    if (req.body.quality != null && !allowedQuality.has(String(req.body.quality))) {
+      return next(new ApiError('quality must be one of: low, medium, high, auto', 400));
+    }
+    if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio))) {
+      return next(new ApiError('aspect_ratio must be one of: 1:1, 3:2, 2:3', 400));
+    }
+    if (req.body.background != null && !allowedBackground.has(String(req.body.background))) {
+      return next(new ApiError('background must be one of: auto, transparent, opaque', 400));
+    }
+    if (req.body.moderation != null && !allowedModeration.has(String(req.body.moderation))) {
+      return next(new ApiError('moderation must be one of: auto, low', 400));
+    }
+    if (req.body.output_format != null && !allowedOutputFormat.has(String(req.body.output_format))) {
+      return next(new ApiError('output_format must be one of: png, jpeg, webp', 400));
+    }
+    const numberOfImagesRaw =
+      req.body.number_of_images != null
+        ? req.body.number_of_images
+        : req.body.n != null
+          ? req.body.n
+          : undefined;
+    if (numberOfImagesRaw != null) {
+      if (!Number.isInteger(numberOfImagesRaw) || numberOfImagesRaw < 1 || numberOfImagesRaw > 10) {
+        return next(new ApiError('number_of_images (or n) must be an integer between 1 and 10', 400));
+      }
+    }
+    if (req.body.output_compression != null) {
+      if (typeof req.body.output_compression !== 'number' || !Number.isInteger(req.body.output_compression) || req.body.output_compression < 0 || req.body.output_compression > 100) {
+        return next(new ApiError('output_compression must be an integer between 0 and 100', 400));
+      }
+    }
+    if (req.body.input_images != null) {
+      if (!Array.isArray(req.body.input_images)) {
+        return next(new ApiError('input_images must be an array', 400));
+      }
+      if (req.body.input_images.length > 10) {
+        return next(new ApiError('input_images supports up to 10 images', 400));
+      }
+      for (const img of req.body.input_images) {
+        if (typeof img !== 'string') {
+          return next(new ApiError('input_images must contain URI strings', 400));
+        }
+      }
+    }
+    if (req.body.input_fidelity != null && !['low', 'high'].includes(String(req.body.input_fidelity))) {
+      return next(new ApiError('input_fidelity must be one of: low, high', 400));
+    }
+  }
+
   next();
 }

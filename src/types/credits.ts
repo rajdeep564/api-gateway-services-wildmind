@@ -16,6 +16,10 @@ export interface UserCreditsDoc {
   uid: string;
   creditBalance: number;
   planCode: string;
+  // Launch offer metadata
+  launchDailyResetKey?: string | null; // YYYY-MM-DD (UTC) of last daily reset
+  launchMigrationDone?: boolean; // one-time flag so we don't repeatedly clear ledgers
+  launchTrialStartDate?: any; // Timestamp when user was moved to launch plan (for 15-day trial tracking)
   createdAt?: any;
   updatedAt?: any;
 }

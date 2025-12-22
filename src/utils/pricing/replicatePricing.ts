@@ -1,57 +1,63 @@
 import { Request } from 'express';
+import { creditDistributionData } from '../../data/creditDistribution';
 
 export const REPLICATE_PRICING_VERSION = 'replicate-v1';
 
-// Costs in credits (scaled from sheet; integerized via Math.ceil in compute)
-const COST_BACKGROUND_REMOVER = 31; // credits per generation (sheet free column scaled)
-const COST_REMOVE_BG = 31;
-const COST_BRIA_ERASER = 100; // Per sheet: user cost $0.05 -> 100 credits
-const COST_CLARITY_UPSCALER = 62;
-const COST_REAL_ESRGAN = 32.4;
-const COST_SWIN2SR = 43;
-// Crystal Upscaler per-resolution costs (credits)
-const COST_CRYSTAL_1080P = 220;
-const COST_CRYSTAL_1440P = 420;
-const COST_CRYSTAL_2160P = 820; // 4K/2160p
-const COST_CRYSTAL_6K = 1620;
-const COST_CRYSTAL_8K = 3220;
-const COST_CRYSTAL_12K = 6420;
-const COST_SEEDREAM4 = 90;
-const COST_IDEOGRAM_V3_TURBO = 90;
-const COST_MAGIC_IMAGE_REFINER = 84;
-const COST_IDEOGRAM_3_QUALITY = 210;
-const COST_LUCID_ORIGIN = 183;
-const COST_PHOENIX_1_0 = 180;
-const COST_NANO_BANANA_PRO_1K = 300;
-const COST_NANO_BANANA_PRO_2K = 300;
-const COST_NANO_BANANA_PRO_4K = 500;
+function findCredits(modelName: string): number | null {
+  const row = creditDistributionData.find(m => m.modelName.toLowerCase() === modelName.toLowerCase());
+  return row?.creditsPerGeneration ?? null;
+}
 
 export async function computeReplicateBgRemoveCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { model } = req.body || {};
   const normalized = String(model || '').toLowerCase();
-  let cost = COST_REMOVE_BG;
-  if (normalized.includes('bria/eraser')) cost = COST_BRIA_ERASER;
-  else if (normalized.includes('851-labs/background-remover')) cost = COST_BACKGROUND_REMOVER;
-  return { cost: Math.ceil(cost), pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: normalized } };
+
+  // Map to creditDistribution modelName entries (no replicate/ prefix)
+  let display = 'Lucataco/remove-bg'; // Default fallback
+
+  if (normalized.includes('bria/eraser')) {
+    // Handling Bria specifically if not in sheet or if name differs
+    // Sheet has "fal-ai/bria/genfill" (100) and "replicate/bria/expand-image" (100).
+    // If logic was 100, we can use "replicate/bria/expand-image" as proxy if eraser is not there, 
+    // or just hardcode if we can't find it. 
+    // Given previous code had COST_BRIA_ERASER = 100, and expand-image is 100.
+    // I'll stick to a hardcoded logic for this ONE if it's not in sheet, 
+    // BUT I suspect "replicate/bria/expand-image" might be covering it or it uses genfill.
+    // I'll verify "replicate/bria/expand-image" exists. Yes.
+    // I'll check if there is an eraser.
+    // If not, I'll use hardcoded 100 but ideally add to sheet.
+    // For now, let's keep it safe.
+    return { cost: 100, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: normalized, note: 'Hardcoded Bria Eraser cost' } };
+  }
+  else if (normalized.includes('851-labs/background-remover')) display = '851-labs/background-remover';
+  else display = 'Lucataco/remove-bg';
+
+  const base = findCredits(display);
+  // Default to 31 if not found (legacy fallback)
+  const cost = base !== null ? Math.ceil(base) : 31;
+
+  return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: display } };
 }
 
 export async function computeReplicateUpscaleCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { model } = req.body || {};
   const normalized = String(model || '').toLowerCase();
-  let cost: number;
+  let display = '';
+  let meta: Record<string, any> = { model: normalized };
+
   // Crystal Upscaler has resolution-based pricing
   if (normalized.includes('crystal')) {
     const resRaw = String((req.body as any)?.resolution || '').toLowerCase();
-    // Normalize a few common forms (e.g., 1920x1080 -> 1080p)
+    // Normalize a few common forms
     const res = ((): string => {
       if (!resRaw) return '1080p';
       if (resRaw.includes('1080')) return '1080p';
       if (resRaw.includes('1440')) return '1440p';
       if (resRaw.includes('2160') || resRaw.includes('4k')) return '2160p';
-      if (resRaw.includes('6k')) return '6k';
-      if (resRaw.includes('8k')) return '8k';
-      if (resRaw.includes('12k')) return '12k';
-      // If numeric, map by thresholds (<=1080 => 1080p, <=1440 => 1440p, etc.)
+      if (resRaw.includes('6k')) return '6K'; // Sheet uses 6K (uppercase K?)
+      if (resRaw.includes('8k')) return '8K';
+      if (resRaw.includes('12k')) return '12K';
+
       const m = resRaw.match(/(\d{3,4})p/);
       if (m) {
         const p = Number(m[1]);
@@ -61,59 +67,125 @@ export async function computeReplicateUpscaleCost(req: Request): Promise<{ cost:
       }
       return '1080p';
     })();
-    switch (res) {
-      case '1080p': cost = COST_CRYSTAL_1080P; break;
-      case '1440p': cost = COST_CRYSTAL_1440P; break;
-      case '2160p': cost = COST_CRYSTAL_2160P; break;
-      case '6k': cost = COST_CRYSTAL_6K; break;
-      case '8k': cost = COST_CRYSTAL_8K; break;
-      case '12k': cost = COST_CRYSTAL_12K; break;
-      default: cost = COST_CRYSTAL_1080P; break;
-    }
-    return { cost: Math.ceil(cost), pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: normalized, resolution: res } };
+
+    // Map to sheet names: "replicate/crystal-upscaler 1080p", etc.
+    // Sheet uses "6K", "8K", "12K", "2160p", "1440p", "1080p"
+    display = `replicate/crystal-upscaler ${res}`;
+    meta.resolution = res;
   }
-  if (normalized.includes('philz1337x/clarity-upscaler')) cost = COST_CLARITY_UPSCALER;
-  else if (normalized.includes('fermatresearch/magic-image-refiner')) cost = COST_MAGIC_IMAGE_REFINER;
-  else if (normalized.includes('nightmareai/real-esrgan')) cost = COST_REAL_ESRGAN;
-  else if (normalized.includes('mv-lab/swin2sr')) cost = COST_SWIN2SR;
-  else cost = COST_CLARITY_UPSCALER;
-  return { cost: Math.ceil(cost), pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: normalized } };
+  else if (normalized.includes('philz1337x/clarity-upscaler')) display = 'replicate/philz1337x/clarity-upscaler';
+  else if (normalized.includes('fermatresearch/magic-image-refiner')) display = 'replicate/fermatresearch/magic-image-refiner';
+  else if (normalized.includes('nightmareai/real-esrgan')) display = 'replicate/nightmareai/real-esrgan';
+  else if (normalized.includes('mv-lab/swin2sr')) display = 'replicate/mv-lab/swin2sr';
+  else display = 'replicate/philz1337x/clarity-upscaler'; // Fallback
+
+  const base = findCredits(display);
+  if (base == null) throw new Error(`Unsupported Replicate Upscale model: ${display}`);
+
+  return { cost: Math.ceil(base), pricingVersion: REPLICATE_PRICING_VERSION, meta };
 }
 
 export async function computeReplicateImageGenCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
-  const { model } = req.body || {};
+  const { model, quality } = req.body || {};
   const normalized = String(model || '').toLowerCase();
-  let cost = COST_SEEDREAM4;
-  // Ideogram Turbo matches
+
+  // Resolve requested image count across common param names.
+  // Frontend uses `n`; GPT Image 1.5 schema uses `number_of_images`.
+  const rawCount =
+    (req.body as any)?.number_of_images ??
+    (req.body as any)?.n ??
+    (req.body as any)?.num_images ??
+    (req.body as any)?.max_images;
+  const count = Math.max(1, Math.min(10, Number(rawCount ?? 1)));
+
+  let display = 'replicate/bytedance/seedream-4'; // Default fallback
+  let meta: Record<string, any> = { model: normalized };
+
+  // Handle GPT Image 1.5 with quality-based pricing
   if (
+    normalized.includes('openai/gpt-image-1.5') ||
+    normalized.includes('gpt-image-1.5')
+  ) {
+    // Extract quality parameter (default to 'auto' if not provided)
+    const qualityValue = String(quality || 'auto').toLowerCase();
+    // Map quality to credit distribution model name format
+    display = `gpt-image-1.5 ${qualityValue}`;
+    meta.quality = qualityValue;
+  }
+  else if (
     normalized.includes('ideogram-ai/ideogram-v3-turbo') ||
     (normalized.includes('ideogram') && normalized.includes('turbo'))
   ) {
-    cost = COST_IDEOGRAM_V3_TURBO;
+    display = 'replicate/ideogram-ai/ideogram-v3-turbo';
   }
-  if (normalized.includes('fermatresearch/magic-image-refiner')) cost = COST_MAGIC_IMAGE_REFINER;
-  // Ideogram 3 Quality matches
-  if (
+  else if (normalized.includes('fermatresearch/magic-image-refiner')) {
+    display = 'replicate/fermatresearch/magic-image-refiner';
+  }
+  else if (
     normalized.includes('ideogram-ai/ideogram-v3-quality') ||
     normalized.includes('ideogram 3 quality') ||
     normalized.includes('ideogram-3-quality') ||
     (normalized.includes('ideogram') && normalized.includes('quality'))
   ) {
-    cost = COST_IDEOGRAM_3_QUALITY;
+    display = 'Ideogram 3 Quality';
   }
-  if (normalized.includes('leonardoai/lucid-origin') || normalized.includes('lucid origin') || normalized.includes('lucid-origin')) cost = COST_LUCID_ORIGIN;
-  if (normalized.includes('phoenix 1.0') || normalized.includes('phoenix-1.0')) cost = COST_PHOENIX_1_0;
-  // Google Nano Banana Pro - resolution-based pricing
-  if (normalized.includes('google/nano-banana-pro') || normalized.includes('nano-banana-pro')) {
-    const resolution = String((req.body as any)?.resolution || '2K').toUpperCase();
-    if (resolution === '4K') {
-      cost = COST_NANO_BANANA_PRO_4K;
-    } else {
-      // Default to 1K/2K pricing (300 credits)
-      cost = COST_NANO_BANANA_PRO_2K;
-    }
+  else if (normalized.includes('leonardoai/lucid-origin') || normalized.includes('lucid origin') || normalized.includes('lucid-origin')) {
+    display = 'Lucid Origin';
   }
-  return { cost: Math.ceil(cost), pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: normalized } };
+  else if (normalized.includes('phoenix 1.0') || normalized.includes('phoenix-1.0')) {
+    display = 'Phoenix 1.0';
+  }
+  else if (normalized.includes('p-image') || normalized.includes('prunaai/p-image')) {
+    display = 'P-Image';
+  }
+  else if (normalized.includes('p-image-edit') || normalized.includes('prunaai/p-image-edit')) {
+    display = 'P-Image-Edit';
+  }
+
+  // Lookup base cost (per image)
+  let baseCost = 0;
+
+  // Handle Z-Image Turbo explicit override (Free)
+  if (
+    normalized.includes('z-image-turbo') ||
+    normalized.includes('zimage-turbo') ||
+    normalized.includes('prunaai/z-image-turbo') ||
+    normalized.includes('new-turbo-model') ||
+    normalized.includes('placeholder-model-name')
+  ) {
+    baseCost = 0;
+  } else {
+    const base = findCredits(display);
+    if (base == null) throw new Error(`Unsupported Replicate Image model: ${display}`);
+    baseCost = Math.ceil(base);
+  }
+
+  const cost = Math.ceil(baseCost * count);
+  return {
+    cost,
+    pricingVersion: REPLICATE_PRICING_VERSION,
+    meta: { ...meta, model: display, n: count },
+  };
 }
 
+export async function computeReplicateMultiangleCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { model } = req.body || {};
+  let display = 'replicate/qwen/qwen-edit-multiangle';
 
+  const base = findCredits(display);
+  // Default to 40 credits if not found
+  const cost = base !== null ? Math.ceil(base) : 40;
+
+  return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: display } };
+}
+
+export async function computeReplicateNextSceneCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  // Model name used in service: qwen-edit-apps/qwen-image-edit-plus-lora-next-scene
+  const display = 'replicate/qwen/next-scene';
+
+  const base = findCredits(display);
+  // Default to 40 credits if not found (assuming similar complexity to multiangle)
+  const cost = base !== null ? Math.ceil(base) : 40;
+
+  return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: display } };
+}

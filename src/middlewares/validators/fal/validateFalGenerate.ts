@@ -8,12 +8,16 @@ import { uploadDataUriToZata } from '../../../utils/storage/zataUpload';
 export const ALLOWED_FAL_MODELS = [
   'gemini-25-flash-image',
   'seedream-v4',
+  'seedream-4.5',
   // Imagen 4 image generation variants (frontend model keys)
   'imagen-4-ultra',
   'imagen-4',
   'imagen-4-fast',
   // Flux 2 Pro
   'flux-2-pro',
+  // Google Nano Banana Pro
+  'google/nano-banana-pro',
+  'nano-banana-pro',
   // ElevenLabs / text-to-dialogue variants // all will call same model 
   'eleven-v3',
   'elevenlabs-text-to-dialogue',
@@ -42,7 +46,16 @@ export const validateFalGenerate = [
   body('image_size').optional().custom((value) => {
     // Allow enum string or custom object with width/height
     if (typeof value === 'string') {
-      return ['square_hd', 'square', 'portrait_4_3', 'portrait_16_9', 'landscape_4_3', 'landscape_16_9'].includes(value);
+      return [
+        'square_hd',
+        'square',
+        'portrait_4_3',
+        'portrait_16_9',
+        'landscape_4_3',
+        'landscape_16_9',
+        'auto_2K',
+        'auto_4K',
+      ].includes(value);
     }
     if (typeof value === 'object' && value !== null) {
       const width = Number(value.width);
@@ -57,7 +70,7 @@ export const validateFalGenerate = [
   body('num_images').optional().isInt({ min: 1, max: 10 }),
   body('uploadedImages').optional().isArray(),
   body('output_format').optional().isIn(['jpeg', 'png', 'webp']),
-  body('resolution').optional().isIn(['1K','2K']),
+  body('resolution').optional().isIn(['1K','2K','4K']),
   body('seed').optional().isInt(),
   body('negative_prompt').optional().isString(),
   (req: Request, _res: Response, next: NextFunction) => {
@@ -100,7 +113,7 @@ export const validateFalGenerate = [
 
 // Maya TTS validator (Maya-1-Voice)
 export const validateFalMayaTts = [
-  body('text').isString().notEmpty().withMessage('text is required'),
+  body('text').isString().notEmpty().withMessage('text is required').isLength({ max: 1000 }).withMessage('text must be at most 1000 characters'),
   body('prompt').optional().isString(),
   body('temperature').optional().isFloat({ min: 0, max: 2 }).withMessage('temperature must be a number'),
   body('top_p').optional().isFloat({ min: 0, max: 1 }).withMessage('top_p must be between 0 and 1'),
@@ -116,7 +129,7 @@ export const validateFalMayaTts = [
 
 // Chatterbox Multilingual TTS validator
 export const validateFalChatterboxMultilingual = [
-  body('text').isString().notEmpty().isLength({ max: 300 }).withMessage('text is required and must be <= 300 characters'),
+  body('text').isString().notEmpty().isLength({ max: 2000 }).withMessage('text is required and must be <= 2000 characters'),
   body('voice').optional().isString().withMessage('voice must be a string'),
   body('custom_audio_language').optional().isIn(['english', 'arabic', 'danish', 'german', 'greek', 'spanish', 'finnish', 'french', 'hebrew', 'hindi', 'italian', 'japanese', 'korean', 'malay', 'dutch', 'norwegian', 'polish', 'portuguese', 'russian', 'swedish', 'swahili', 'turkish', 'chinese']).withMessage('custom_audio_language must be one of the allowed language codes'),
   body('voice_file_name').optional().isString().withMessage('voice_file_name must be a string if provided'),
@@ -195,7 +208,7 @@ export const validateFalVeoImageToVideoFast = validateFalVeoImageToVideo;
 // ElevenLabs Text-to-Dialogue validator
 export const validateFalElevenDialogue = [
   body('inputs').isArray({ min: 1 }).withMessage('inputs must be a non-empty array'),
-  body('inputs.*.text').isString().notEmpty().withMessage('each input must contain text'),
+  body('inputs.*.text').isString().notEmpty().withMessage('each input must contain text').isLength({ max: 1000 }).withMessage('each input text must be at most 1000 characters'),
   body('inputs.*.voice').optional().isString(),
   body('stability').optional().isFloat({ min: 0, max: 1 }).withMessage('stability must be between 0 and 1'),
   body('use_speaker_boost').optional().isBoolean(),
@@ -210,12 +223,30 @@ export const validateFalElevenDialogue = [
 
 // ElevenLabs Text-to-Speech (TTS) validator
 export const validateFalElevenTts = [
-  body('text').isString().notEmpty().withMessage('text is required').isLength({ max: 300 }).withMessage('text must be at most 300 characters'),
+  body('text').isString().notEmpty().withMessage('text is required').isLength({ max: 1000 }).withMessage('text must be at most 1000 characters'),
   body('voice').optional().isString().withMessage('voice must be a string'),
   body('custom_audio_language').optional().isIn(['english', 'arabic', 'danish', 'german', 'greek', 'spanish', 'finnish', 'french', 'hebrew', 'hindi', 'italian', 'japanese', 'korean', 'malay', 'dutch', 'norwegian', 'polish', 'portuguese', 'russian', 'swedish', 'swahili', 'turkish', 'chinese']).withMessage('custom_audio_language must be one of the allowed values'),
   body('exaggeration').optional().isFloat({ min: 0.25, max: 2.0 }).withMessage('exaggeration must be between 0.25 and 2.0'),
   body('temperature').optional().isFloat({ min: 0.05, max: 5.0 }).withMessage('temperature must be between 0.05 and 5.0'),
   body('cfg_scale').optional().isFloat({ min: 0.0, max: 1.0 }).withMessage('cfg_scale must be between 0.0 and 1.0'),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
+// ElevenLabs Sound Effects (SFX) validator
+export const validateFalElevenSfx = [
+  body('text').isString().notEmpty().withMessage('text is required'),
+  body('duration_seconds').optional().isFloat({ min: 0.5, max: 22 }).withMessage('duration_seconds must be between 0.5 and 22 seconds'),
+  body('prompt_influence').optional().isFloat({ min: 0, max: 1 }).withMessage('prompt_influence must be between 0 and 1'),
+  body('output_format').optional().isIn(['mp3_44100_128', 'mp3_44100_192', 'mp3_44100_256', 'pcm_16000', 'pcm_22050', 'pcm_24000', 'pcm_44100', 'ulaw_8000']).withMessage('output_format must be one of the allowed audio formats'),
+  body('loop').optional().isBoolean().withMessage('loop must be a boolean'),
+  body('fileName').optional().isString().withMessage('fileName must be a string'),
+  body('lyrics').optional().isString().withMessage('lyrics must be a string'),
+  body('generationType').optional().isIn(['sfx']).withMessage('generationType must be sfx'),
+  body('model').optional().isString().withMessage('model must be a string'),
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
@@ -237,10 +268,87 @@ export const validateFalQueueStatus = [
 
 export const validateFalQueueResult = validateFalQueueStatus;
 
+// Kling 2.6 Pro Text-to-Video validator
+export const validateFalKling26ProT2v = [
+  body('prompt').isString().notEmpty(),
+  body('aspect_ratio').optional().isIn(['16:9', '9:16', '1:1']),
+  body('duration').optional().custom((value) => {
+    // Accept "5", "10", "5s", "10s", or numbers 5, 10
+    if (value == null) return true; // Optional field
+    const normalized = typeof value === 'number' ? String(value) : String(value).replace(/s$/i, '');
+    return ['5', '10'].includes(normalized);
+  }).withMessage('duration must be 5 or 10'),
+  body('negative_prompt').optional().isString(),
+  body('cfg_scale').optional().isFloat({ min: 0, max: 1 }),
+  body('generate_audio').optional().isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    // Normalize duration: ensure it's a string "5" or "10"
+    const d = (req.body as any)?.duration;
+    if (typeof d === 'number') {
+      (req.body as any).duration = d === 10 ? '10' : '5';
+    } else if (d && typeof d === 'string') {
+      // Remove "s" suffix if present and normalize
+      const normalized = d.replace(/s$/i, '');
+      (req.body as any).duration = normalized === '10' ? '10' : '5';
+    } else if (!d) {
+      (req.body as any).duration = '5'; // Default to 5
+    }
+    next();
+  }
+];
+
+// Kling 2.6 Pro Image-to-Video validator
+export const validateFalKling26ProI2v = [
+  body('prompt').isString().notEmpty(),
+  body('image_url').isString().notEmpty(),
+  body('duration').optional().custom((value) => {
+    // Accept "5", "10", "5s", "10s", or numbers 5, 10
+    if (value == null) return true; // Optional field
+    const normalized = typeof value === 'number' ? String(value) : String(value).replace(/s$/i, '');
+    return ['5', '10'].includes(normalized);
+  }).withMessage('duration must be 5 or 10'),
+  body('negative_prompt').optional().isString(),
+  body('cfg_scale').optional().isFloat({ min: 0, max: 1 }),
+  body('generate_audio').optional().isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    // Normalize duration: ensure it's a string "5" or "10"
+    const d = (req.body as any)?.duration;
+    if (typeof d === 'number') {
+      (req.body as any).duration = d === 10 ? '10' : '5';
+    } else if (d && typeof d === 'string') {
+      // Remove "s" suffix if present and normalize
+      const normalized = d.replace(/s$/i, '');
+      (req.body as any).duration = normalized === '10' ? '10' : '5';
+    } else if (!d) {
+      (req.body as any).duration = '5'; // Default to 5
+    }
+    next();
+  }
+];
+
 export const validateFalVeoTextToVideoSubmit = validateFalVeoTextToVideo;
 export const validateFalVeoTextToVideoFastSubmit = validateFalVeoTextToVideoFast;
 export const validateFalVeoImageToVideoSubmit = validateFalVeoImageToVideo;
-export const validateFalVeoImageToVideoFastSubmit = validateFalVeoImageToVideoFast;
+// Allow 4s/6s/8s for fast I2V and coerce numeric durations to the expected string format
+export const validateFalVeoImageToVideoFastSubmit = [
+  ...validateFalVeoImageToVideoFast,
+  (req: Request, _res: Response, next: NextFunction) => {
+    const d = (req.body as any)?.duration;
+    if (typeof d === 'number') {
+      const mapped = d === 4 || d === 6 || d === 8 ? `${d}s` : '8s';
+      (req.body as any).duration = mapped;
+    }
+    // If duration is not in allowed list, default to 8s
+    if (req.body.duration && !['4s', '6s', '8s'].includes(req.body.duration)) {
+      req.body.duration = '8s';
+    }
+    next();
+  }
+];
 
 // NanoBanana uses unified generate/queue; no separate validators
 
@@ -252,16 +360,15 @@ export const validateFalVeo31FirstLastFast = [
   body('last_frame_image_url').optional().isString(),
   body('first_frame_url').optional().isString(),
   body('last_frame_url').optional().isString(),
-  body('aspect_ratio').optional().isIn(['16:9', '9:16', '1:1','auto']),
-  body('duration').optional().isIn(['8s']),
+  body('aspect_ratio').optional().isIn(['auto','16:9', '9:16']),
+  body('duration').optional().isIn(['4s','6s','8s']),
   body('generate_audio').optional().isBoolean(),
   body('resolution').optional().isIn(['720p', '1080p']),
   (req: Request, _res: Response, next: NextFunction) => {
-    // Ensure at least one pair of first/last is provided
-    const hasStart = typeof (req.body?.start_image_url) === 'string' || typeof (req.body?.first_frame_url) === 'string';
-    const hasLast = typeof (req.body?.last_frame_image_url) === 'string' || typeof (req.body?.last_frame_url) === 'string';
-    if (!hasStart || !hasLast) {
-      return next(new ApiError('first/last frame URLs are required (use first_frame_url/last_frame_url or start_image_url/last_frame_image_url)', 400));
+    // Require at least a first frame; last frame optional (if provided we treat as FLF2V)
+    const hasFirst = typeof (req.body?.start_image_url) === 'string' || typeof (req.body?.first_frame_url) === 'string';
+    if (!hasFirst) {
+      return next(new ApiError('first_frame_url is required (alias: start_image_url)', 400));
     }
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
@@ -277,6 +384,70 @@ export const validateFalVeo31ReferenceToVideo = [
   body('duration').optional().isIn(['8s']),
   body('resolution').optional().isIn(['720p', '1080p']),
   body('generate_audio').optional().isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
+// Kling o1 First/Last Frame to Video (standard model - requires both images)
+export const validateFalKlingO1FirstLastSubmit = [
+  body('prompt').isString().notEmpty().withMessage('prompt is required'),
+  body('start_image_url').optional().isString(),
+  body('first_frame_url').optional().isString(),
+  body('end_image_url').optional().isString(),
+  body('last_frame_url').optional().isString(),
+  body('duration').optional().custom((value) => {
+    // Accept both string and number, but validate as "5" or "10"
+    const str = typeof value === 'string' ? value : String(value);
+    return str === '5' || str === '10';
+  }).withMessage('duration must be "5" or "10"'),
+  (req: Request, _res: Response, next: NextFunction) => {
+    // Normalize aliases
+    if (!req.body.start_image_url && typeof req.body.first_frame_url === 'string') {
+      req.body.start_image_url = req.body.first_frame_url;
+    }
+    if (!req.body.end_image_url && typeof req.body.last_frame_url === 'string') {
+      req.body.end_image_url = req.body.last_frame_url;
+    }
+
+    const hasFirst = typeof req.body?.start_image_url === 'string' && req.body.start_image_url.length > 0;
+    const hasLast = typeof req.body?.end_image_url === 'string' && req.body.end_image_url.length > 0;
+    
+    if (!hasFirst) {
+      return next(new ApiError('start_image_url is required (alias: first_frame_url)', 400));
+    }
+    if (!hasLast) {
+      return next(new ApiError('end_image_url is required (alias: last_frame_url)', 400));
+    }
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
+// Kling o1 Reference to Video (single image or multiple images)
+export const validateFalKlingO1ReferenceSubmit = [
+  body('prompt').isString().notEmpty().withMessage('prompt is required'),
+  body('image_urls').isArray().withMessage('image_urls must be an array'),
+  body('image_urls').custom((value) => {
+    if (!Array.isArray(value) || value.length === 0) {
+      throw new Error('image_urls must contain at least one image URL');
+    }
+    if (value.length > 7) {
+      throw new Error('image_urls must contain at most 7 images');
+    }
+    return true;
+  }).withMessage('image_urls must contain 1-7 image URLs'),
+  body('image_urls.*').isString().withMessage('Each image_urls item must be a string'),
+  body('duration').optional().custom((value) => {
+    const str = typeof value === 'string' ? value : String(value);
+    return str === '5' || str === '10';
+  }).withMessage('duration must be "5" or "10"'),
+  body('aspect_ratio').optional().isIn(['16:9', '9:16', '1:1']).withMessage('aspect_ratio must be "16:9", "9:16", or "1:1"'),
+  body('elements').optional().isArray().withMessage('elements must be an array'),
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
@@ -342,15 +513,14 @@ export const validateFalVeo31FirstLast = [
   // Support alias keys as well for flexibility
   body('start_image_url').optional().isString(),
   body('last_frame_image_url').optional().isString(),
-  body('aspect_ratio').optional().isIn(['auto','16:9', '9:16', '1:1']),
+  body('aspect_ratio').optional().isIn(['auto','16:9', '9:16']),
   body('duration').optional().isIn(['8s','4s','6s']),
   body('generate_audio').optional().isBoolean(),
   body('resolution').optional().isIn(['720p', '1080p']),
   (req: Request, _res: Response, next: NextFunction) => {
     const hasFirst = typeof (req.body?.first_frame_url) === 'string' || typeof (req.body?.start_image_url) === 'string';
-    const hasLast = typeof (req.body?.last_frame_url) === 'string' || typeof (req.body?.last_frame_image_url) === 'string';
-    if (!hasFirst || !hasLast) {
-      return next(new ApiError('first_frame_url and last_frame_url are required (aliases: start_image_url, last_frame_image_url)', 400));
+    if (!hasFirst) {
+      return next(new ApiError('first_frame_url is required (aliases: start_image_url)', 400));
     }
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
@@ -730,6 +900,42 @@ export const validateFalBirefnetVideo = [
     }
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
+// Google Nano Banana Pro validator
+export const validateFalNanoBananaPro = [
+  body('prompt').optional().isString().withMessage('prompt must be a string'),
+  body('num_images').optional().isInt({ min: 1 }).withMessage('num_images must be an integer >= 1'),
+  body('aspect_ratio').optional().isIn(['auto', '21:9', '16:9', '3:2', '4:3', '5:4', '1:1', '4:5', '3:4', '2:3', '9:16']).withMessage('aspect_ratio must be one of the allowed values'),
+  body('output_format').optional().isIn(['jpeg', 'png', 'webp']).withMessage('output_format must be jpeg, png, or webp'),
+  body('sync_mode').optional().isBoolean().withMessage('sync_mode must be boolean'),
+  body('image_urls').optional().isArray().withMessage('image_urls must be an array'),
+  body('image_urls.*').optional().isString().withMessage('image_urls must contain strings'),
+  body('resolution').optional().isIn(['1K', '2K', '4K']).withMessage('resolution must be 1K, 2K, or 4K'),
+  body('limit_generations').optional().isBoolean().withMessage('limit_generations must be boolean'),
+  body('enable_web_search').optional().isBoolean().withMessage('enable_web_search must be boolean'),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    
+    // For text-to-image (no image_urls), prompt is required
+    // For image-to-image (with image_urls), prompt is optional
+    const hasImageUrls = Array.isArray(req.body?.image_urls) && req.body.image_urls.length > 0;
+    if (!hasImageUrls && (!req.body?.prompt || typeof req.body.prompt !== 'string' || req.body.prompt.trim().length === 0)) {
+      return next(new ApiError('prompt is required for text-to-image generation', 400));
+    }
+    
+    // Validate image_urls array elements
+    if (hasImageUrls) {
+      for (const url of req.body.image_urls) {
+        if (typeof url !== 'string' || url.trim().length === 0) {
+          return next(new ApiError('image_urls must contain non-empty URL strings', 400));
+        }
+      }
+    }
+    
     next();
   }
 ];

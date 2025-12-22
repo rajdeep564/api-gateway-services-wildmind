@@ -32,13 +32,30 @@ export async function computeSeedanceVideoCost(req: Request): Promise<{ cost: nu
   const dur = normalizeDuration(duration);
   const res = normalizeResolution(resolution);
   const modelStr = String(model || '').toLowerCase();
-  const tier = modelStr.includes('lite') ? 'Lite' : 'Pro';
+  
+  // Determine tier: check for pro-fast first, then lite, then default to Pro
+  let tier: string;
+  if (modelStr.includes('pro-fast') || modelStr.includes('pro_fast')) {
+    tier = 'Pro Fast';
+  } else if (modelStr.includes('lite')) {
+    tier = 'Lite';
+  } else {
+    tier = 'Pro';
+  }
 
   if (!dur || !res) {
     throw new Error('Seedance pricing: duration and resolution are required');
   }
 
-  const display = `Seedance 1.0 ${tier} ${selectedMode.toUpperCase()} ${dur}s ${res}`;
+  // For Pro Fast, the model name format is "Seedance 1.0 Pro Fast T2V/I2V {dur}s {res}"
+  // For Lite and Pro, the format is "Seedance 1.0 {tier} {mode} {dur}s {res}"
+  let display: string;
+  if (tier === 'Pro Fast') {
+    display = `Seedance 1.0 Pro Fast T2V/I2V ${dur}s ${res}`;
+  } else {
+    display = `Seedance 1.0 ${tier} ${selectedMode.toUpperCase()} ${dur}s ${res}`;
+  }
+  
   const row = creditDistributionData.find(m => m.modelName === display);
   if (!row) {
     throw new Error(`Unsupported Seedance pricing for "${display}". Please add this SKU to creditDistribution.`);

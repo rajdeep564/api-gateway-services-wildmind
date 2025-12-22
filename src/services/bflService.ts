@@ -98,10 +98,13 @@ async function pollForResults(
   pollingUrl: string,
   apiKey: string
 ): Promise<string> {
-  const intervalMs = env.bflPollIntervalMs ?? 1000; // default 1s
+  // OPTIMIZED: Increased base interval and use exponential backoff to reduce CPU load
+  const baseIntervalMs = env.bflPollIntervalMs ?? 2000; // Increased from 1s to 2s
   const maxLoops = env.bflPollMaxLoops ?? 180; // default ~3 minutes
   for (let i = 0; i < maxLoops; i++) {
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    // OPTIMIZED: Exponential backoff - start at 2s, gradually increase to max 10s
+    const backoffInterval = Math.min(baseIntervalMs * (1 + Math.floor(i / 20)), 10000);
+    await new Promise((resolve) => setTimeout(resolve, backoffInterval));
     const pollResponse = await axios.get(pollingUrl, {
       headers: { accept: "application/json", "x-key": apiKey },
       validateStatus: () => true,
@@ -216,7 +219,7 @@ async function generate(
       const normalizedModel = (model as string)
         .toLowerCase()
         .replace(/\s+/g, "-");
-      const endpoint = `https://api.bfl.ai/v1/${normalizedModel}`;
+      const endpoint = `${env.bflApiBase}/v1/${normalizedModel}`;
 
       let body: any = { prompt };
       if (normalizedModel.includes("kontext")) {
@@ -425,7 +428,7 @@ async function fill(uid: string, body: any) {
   if (!apiKey) throw new ApiError("API key not configured", 500);
   const creator = await authRepository.getUserById(uid);
   const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
-  const endpoint = `https://api.bfl.ai/v1/flux-pro-1.0-fill`;
+  const endpoint = `${env.bflApiBase}/v1/flux-pro-1.0-fill`;
   // Normalize inputs to pure base64 strings as required by BFL Fill API
   const normalizedPayload: any = { ...body };
   try {
@@ -528,7 +531,7 @@ async function expand(uid: string, body: any) {
   if (!apiKey) throw new ApiError("API key not configured", 500);
   const creator = await authRepository.getUserById(uid);
   const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
-  const endpoint = `https://api.bfl.ai/v1/flux-pro-1.0-expand`;
+  const endpoint = `${env.bflApiBase}/v1/flux-pro-1.0-expand`;
   const response = await axios.post(endpoint, body, {
     headers: {
       accept: "application/json",
@@ -611,7 +614,7 @@ async function canny(uid: string, body: any) {
   if (!apiKey) throw new ApiError("API key not configured", 500);
   const creator = await authRepository.getUserById(uid);
   const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
-  const endpoint = `https://api.bfl.ai/v1/flux-pro-1.0-canny`;
+  const endpoint = `${env.bflApiBase}/v1/flux-pro-1.0-canny`;
   const response = await axios.post(endpoint, body, {
     headers: {
       accept: "application/json",
@@ -690,7 +693,7 @@ async function depth(uid: string, body: any) {
   if (!apiKey) throw new ApiError("API key not configured", 500);
   const creator = await authRepository.getUserById(uid);
   const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
-  const endpoint = `https://api.bfl.ai/v1/flux-pro-1.0-depth`;
+  const endpoint = `${env.bflApiBase}/v1/flux-pro-1.0-depth`;
   const response = await axios.post(endpoint, body, {
     headers: {
       accept: "application/json",
@@ -858,7 +861,7 @@ async function expandWithFill(uid: string, body: any) {
   const maskBase64 = maskBuffer.toString("base64");
   
   // Call FLUX Fill API
-  const endpoint = `https://api.bfl.ai/v1/flux-pro-1.0-fill`;
+  const endpoint = `${env.bflApiBase}/v1/flux-pro-1.0-fill`;
   const normalizedPayload: any = {
     image: expandedBase64,
     mask: maskBase64,
