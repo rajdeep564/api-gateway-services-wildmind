@@ -13,6 +13,7 @@ import proxyRoutes from './proxy';
 import stickerRoutes from './stickers';
 import replicateRoutes from './replicate';
 import canvasRoutes from './canvas';
+import videoProxyRoutes from './canvas/videoProxy';
 import promptEnhancerRoutes from './promptEnhancer';
 import replaceRoutes from './replace';
 import reimagineRoutes from './reimagine';
@@ -20,6 +21,7 @@ import libraryRoutes from './library';
 import uploadsRoutes from './uploads';
 import wildmindRoutes from './wildmind';
 import chatCompanionRoutes from './chatCompanion';
+import videoExportRoutes from './videoExport';
 import { contentModerationMiddleware } from '../middlewares/contentModeration';
 
 const router = Router();
@@ -61,6 +63,7 @@ router.use('/replace', replaceRoutes);
 router.use('/reimagine', reimagineRoutes);
 router.use('/wildmind', wildmindRoutes);
 router.use('/chat', chatCompanionRoutes);
+router.use('/video-export', videoExportRoutes);
 
 export default router;
 

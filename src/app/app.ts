@@ -37,6 +37,7 @@ const allowedOrigins = [
   ...(!isProdEnv ? [
     env.devFrontendUrl, // Main project dev
     env.devCanvasUrl, // Canvas dev
+    'http://localhost:3005', // Designer dev
   ] : []),
   ...env.frontendOrigins,
   ...env.allowedOrigins
@@ -52,9 +53,9 @@ const corsOptions: any = {
       const originUrl = new URL(origin);
       const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
       const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
-      if (prodDomain && (originUrl.hostname === prodWwwDomain || 
-          originUrl.hostname === prodDomain ||
-          originUrl.hostname.endsWith(`.${prodDomain}`))) {
+      if (prodDomain && (originUrl.hostname === prodWwwDomain ||
+        originUrl.hostname === prodDomain ||
+        originUrl.hostname.endsWith(`.${prodDomain}`))) {
         return callback(null, true);
       }
       // Allow subdomains of the configured frontend origins
@@ -110,9 +111,9 @@ const allowOrigin = (origin?: string) => {
     const originUrl = new URL(origin);
     const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
     const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
-    if (prodDomain && (originUrl.hostname === prodWwwDomain || 
-        originUrl.hostname === prodDomain ||
-        originUrl.hostname.endsWith(`.${prodDomain}`))) {
+    if (prodDomain && (originUrl.hostname === prodWwwDomain ||
+      originUrl.hostname === prodDomain ||
+      originUrl.hostname.endsWith(`.${prodDomain}`))) {
       return true;
     }
     if (env.frontendOrigin) {
@@ -120,7 +121,7 @@ const allowOrigin = (origin?: string) => {
       const reqHost = originUrl.hostname;
       if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) return true;
     }
-  } catch {}
+  } catch { }
   return false;
 };
 
@@ -254,14 +255,14 @@ export default app;
 (async () => {
   try {
     await creditsService.ensurePlansSeeded();
-  } catch (_e) {}
+  } catch (_e) { }
 })();
 
 // Initialize Redis connection in background (non-blocking) when configured
 (async () => {
   try {
     if (isRedisEnabled()) getRedisClient();
-  } catch (_e) {}
+  } catch (_e) { }
 })();
 
 // Auto-populate signup image cache on startup (non-blocking, runs ONCE globally)
@@ -270,7 +271,7 @@ let cachePopulateStarted = false;
   try {
     const { signupImageCache } = await import('../repository/signupImageCache');
     const stats = await signupImageCache.getCacheStats();
-    
+
     if (stats.count === 0 && !cachePopulateStarted) {
       cachePopulateStarted = true;
       console.log('[App] Signup image cache is empty, populating in background (ONE TIME ONLY)...');
@@ -293,7 +294,7 @@ let cachePopulateStarted = false;
   try {
     const { isEmailConfigured } = await import('../utils/mailer');
     const { env } = await import('../config/env');
-    
+
     if (!isEmailConfigured()) {
       console.warn('[EMAIL CONFIG] ⚠️  Email service is not properly configured!');
       console.warn('[EMAIL CONFIG] For production, you need:');
@@ -322,23 +323,23 @@ let refreshSchedulerStarted = false;
 (async () => {
   if (refreshSchedulerStarted) return;
   refreshSchedulerStarted = true;
-  
+
   try {
     const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-    
+
     console.log('[App] Starting automatic signup image cache refresh scheduler (every 24 hours)');
-    
+
     // Refresh immediately if cache is empty
     const { signupImageCache } = await import('../repository/signupImageCache');
     const stats = await signupImageCache.getCacheStats();
-    
+
     if (stats.count === 0) {
       console.log('[App] Cache empty, refreshing now...');
       signupImageCache.refreshSignupImageCache().catch((error) => {
         console.error('[App] Initial cache refresh failed:', error);
       });
     }
-    
+
     // Schedule automatic refresh every 24 hours (runs ONCE globally)
     setInterval(() => {
       console.log('[App] Auto-refreshing signup image cache (24-hour schedule)...');
@@ -348,7 +349,7 @@ let refreshSchedulerStarted = false;
         console.error('[App] Auto-refresh failed:', error);
       });
     }, REFRESH_INTERVAL_MS);
-    
+
     console.log('[App] ✅ Signup image cache auto-refresh scheduler started (runs every 24 hours)');
   } catch (_e) {
     console.error('[App] Failed to start cache refresh scheduler:', _e);

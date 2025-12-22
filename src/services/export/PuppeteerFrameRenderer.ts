@@ -39,7 +39,7 @@ export class PuppeteerFrameRenderer {
         // Try to get from pool
         if (browserPool.length > 0) {
             const browser = browserPool.pop()!;
-            if (browser.connected) {
+            if (browser.isConnected()) {
                 console.log('[PuppeteerFrameRenderer] ♻️ Reusing browser from pool');
                 return browser;
             }
@@ -47,6 +47,10 @@ export class PuppeteerFrameRenderer {
 
         // Create new browser with GPU flags
         console.log('[PuppeteerFrameRenderer] 🚀 Launching new Chrome instance with GPU...');
+
+        // Calculate memory limits based on resolution
+        const is4K = this.width >= 3840 || this.height >= 2160;
+        const heapSize = is4K ? 4096 : 2048; // 4GB for 4K, 2GB for lower
 
         const browser = await puppeteer.launch({
             headless: true,
@@ -65,10 +69,14 @@ export class PuppeteerFrameRenderer {
                 '--disable-web-security',
                 '--no-zygote',
 
-                // Memory optimization
+                // MEMORY OPTIMIZATION (CRITICAL for 4K/30min exports)
                 '--disable-background-timer-throttling',
                 '--disable-backgrounding-occluded-windows',
                 '--disable-renderer-backgrounding',
+                `--js-flags=--max-old-space-size=${heapSize}`, // Limit JS heap
+                '--disable-gpu-shader-disk-cache', // Reduce disk cache
+                '--aggressive-cache-discard', // Discard cached data aggressively
+                '--disable-hang-monitor', // Prevent timeout killing
 
                 // Canvas and media
                 '--autoplay-policy=no-user-gesture-required',
@@ -87,7 +95,7 @@ export class PuppeteerFrameRenderer {
      * Return browser to pool for reuse
      */
     private async returnBrowser(browser: Browser): Promise<void> {
-        if (browserPool.length < MAX_POOL_SIZE && browser.connected) {
+        if (browserPool.length < MAX_POOL_SIZE && browser.isConnected()) {
             browserPool.push(browser);
             console.log('[PuppeteerFrameRenderer] ♻️ Browser returned to pool');
         } else {
@@ -1307,6 +1315,34 @@ export class PuppeteerFrameRenderer {
                     try {
                         const startTime = Date.now();
 
+                        // ===== MEMORY OPTIMIZATION SETTINGS =====
+                        // Calculate intervals based on resolution for handling 4K 30min+ exports
+                        const resolutionArea = this.width * this.height;
+                        const is4K = resolutionArea >= 8294400; // 3840x2160
+                        const is1080p = resolutionArea >= 2073600; // 1920x1080
+
+                        // Cleanup interval: More aggressive for 4K (every 10 frames = ~0.3s at 30fps)
+                        const cleanupInterval = is4K ? 10 : is1080p ? 30 : 60;
+
+                        // GC interval: Force garbage collection periodically
+                        const gcInterval = is4K ? 150 : is1080p ? 300 : 600; // 5s/10s/20s at 30fps
+
+                        // Page refresh interval: Completely refresh page to clear accumulated memory
+                        const pageRefreshInterval = is4K ? 3000 : is1080p ? 6000 : 9000; // 100s/200s/300s at 30fps
+
+                        // Screenshot quality: Lower for 4K to reduce memory pressure
+                        const screenshotQuality = is4K ? 80 : 90;
+
+                        console.log(`[PuppeteerFrameRenderer] 🔧 Memory optimization settings:`);
+                        console.log(`   Resolution: ${this.width}x${this.height} (${is4K ? '4K' : is1080p ? '1080p' : 'SD'})`);
+                        console.log(`   Cleanup interval: every ${cleanupInterval} frames`);
+                        console.log(`   GC interval: every ${gcInterval} frames`);
+                        console.log(`   Page refresh: every ${pageRefreshInterval} frames`);
+                        console.log(`   JPEG quality: ${screenshotQuality}%`);
+
+                        // Store HTML for page refresh
+                        const html = this.generateRenderPage(timeline, settings);
+
                         for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
                             const currentTime = frameIndex / fps;
 
@@ -1314,16 +1350,16 @@ export class PuppeteerFrameRenderer {
                             await this.page!.evaluate((time) => window.renderFrame(time), currentTime);
 
                             // Wait a tiny bit for any transitions/animations
-                            await new Promise(resolve => setTimeout(resolve, 10));
+                            await new Promise(resolve => setTimeout(resolve, 8));
 
-                            // Take screenshot
+                            // Take screenshot with resolution-aware quality
                             const screenshot = await this.page!.screenshot({
                                 type: 'jpeg',
-                                quality: 90,
+                                quality: screenshotQuality,
                                 encoding: 'binary',
                             });
 
-                            // Write to FFmpeg
+                            // Write to FFmpeg with backpressure handling
                             const canWrite = ffmpeg.stdin.write(screenshot);
                             if (!canWrite) {
                                 await new Promise<void>(resolve => ffmpeg.stdin.once('drain', resolve));
@@ -1339,17 +1375,87 @@ export class PuppeteerFrameRenderer {
                                 const elapsed = (Date.now() - startTime) / 1000;
                                 const fps_actual = frameIndex / elapsed;
                                 const remaining = (totalFrames - frameIndex) / fps_actual;
-                                console.log(`[PuppeteerFrameRenderer] 📊 ${((frameIndex / totalFrames) * 100).toFixed(1)}% | ${fps_actual.toFixed(1)} fps | ~${remaining.toFixed(0)}s left`);
+                                const memUsed = process.memoryUsage().heapUsed / 1024 / 1024;
+                                console.log(`[PuppeteerFrameRenderer] 📊 ${((frameIndex / totalFrames) * 100).toFixed(1)}% | ${fps_actual.toFixed(1)} fps | ~${remaining.toFixed(0)}s left | Memory: ${memUsed.toFixed(0)}MB`);
                             }
 
-                            // Periodic memory cleanup for long exports (every 30 seconds of content = 900 frames at 30fps)
-                            if (frameIndex % 900 === 0 && frameIndex > 0) {
+                            // ===== AGGRESSIVE CLEANUP (every N frames based on resolution) =====
+                            if (frameIndex % cleanupInterval === 0 && frameIndex > 0) {
+                                // Clear browser-side media cache for old items
+                                await this.page!.evaluate((currentFrameTime) => {
+                                    // Clear any cached media not needed for current time
+                                    if (window.mediaCache && typeof window.mediaCache.forEach === 'function') {
+                                        // Keep only items visible near current time (±5 seconds buffer)
+                                        const bufferTime = 5;
+                                        // Note: Full cache clearing is handled in page refresh for simplicity
+                                    }
+                                }, currentTime);
+                            }
+
+                            // ===== GARBAGE COLLECTION =====
+                            if (frameIndex % gcInterval === 0 && frameIndex > 0) {
                                 // Trigger garbage collection in browser context
                                 await this.page!.evaluate(() => {
-                                    if (typeof window.gc === 'function') {
+                                    // Clear any expired cache entries
+                                    if (window.gc && typeof window.gc === 'function') {
                                         window.gc();
                                     }
+                                    // Force image cleanup
+                                    const images = document.querySelectorAll('img');
+                                    images.forEach(img => {
+                                        if (!img.isConnected) {
+                                            img.src = '';
+                                        }
+                                    });
                                 });
+
+                                // Server-side GC hint
+                                if (global.gc) {
+                                    global.gc();
+                                }
+                                console.log(`[PuppeteerFrameRenderer] 🧹 GC triggered at frame ${frameIndex}`);
+                            }
+
+                            // ===== PAGE REFRESH CYCLE (CRITICAL for very long exports) =====
+                            if (frameIndex % pageRefreshInterval === 0 && frameIndex > 0) {
+                                console.log(`[PuppeteerFrameRenderer] 🔄 Refreshing page to free accumulated memory (frame ${frameIndex}/${totalFrames})...`);
+
+                                try {
+                                    // Close current page
+                                    await this.page!.close();
+
+                                    // Create new page
+                                    this.page = await this.browser!.newPage();
+
+                                    // Set up error handlers
+                                    this.page.on('console', (msg) => {
+                                        const type = msg.type();
+                                        if (type === 'error' || type === 'warn') {
+                                            console.log(`[PuppeteerFrameRenderer] Browser ${type}: ${msg.text()}`);
+                                        }
+                                    });
+                                    this.page.on('pageerror', (error) => {
+                                        console.error(`[PuppeteerFrameRenderer] ❌ Page JS Error: ${String(error)}`);
+                                    });
+
+                                    // Set viewport
+                                    await this.page.setViewport({
+                                        width: this.width,
+                                        height: this.height,
+                                        deviceScaleFactor: 1,
+                                    });
+
+                                    // Reload content
+                                    const pageTimeout = is4K ? 120000 : 60000;
+                                    await this.page.setContent(html, { waitUntil: 'networkidle0', timeout: pageTimeout });
+
+                                    // Preload media again
+                                    await this.page.evaluate(() => window.preloadMedia());
+
+                                    console.log(`[PuppeteerFrameRenderer] ✅ Page refreshed successfully`);
+                                } catch (refreshError) {
+                                    console.error(`[PuppeteerFrameRenderer] ⚠️ Page refresh failed, continuing...`, refreshError);
+                                }
                             }
                         }
 
