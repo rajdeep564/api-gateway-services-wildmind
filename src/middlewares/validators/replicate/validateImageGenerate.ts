@@ -267,9 +267,15 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
     if (req.body.output_format != null && !allowedOutputFormat.has(String(req.body.output_format))) {
       return next(new ApiError('output_format must be one of: png, jpeg, webp', 400));
     }
-    if (req.body.number_of_images != null) {
-      if (!Number.isInteger(req.body.number_of_images) || req.body.number_of_images < 1 || req.body.number_of_images > 10) {
-        return next(new ApiError('number_of_images must be an integer between 1 and 10', 400));
+    const numberOfImagesRaw =
+      req.body.number_of_images != null
+        ? req.body.number_of_images
+        : req.body.n != null
+          ? req.body.n
+          : undefined;
+    if (numberOfImagesRaw != null) {
+      if (!Number.isInteger(numberOfImagesRaw) || numberOfImagesRaw < 1 || numberOfImagesRaw > 10) {
+        return next(new ApiError('number_of_images (or n) must be an integer between 1 and 10', 400));
       }
     }
     if (req.body.output_compression != null) {
