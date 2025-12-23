@@ -31,6 +31,10 @@ export const globalLimiter = rateLimit({
   skip: (req) => {
     // Skip all GET requests (read-only operations like feed, scroll, polling)
     if (req.method === 'GET') return true;
+    
+    // Skip specific high-frequency POST endpoints (e.g. bulk status checks in feeds)
+    if (req.originalUrl && req.originalUrl.includes('/bulk-status')) return true;
+    
     // Skip WebSocket upgrade requests
     return req.headers.upgrade === 'websocket';
   }
@@ -90,6 +94,16 @@ export const apiLimiter = rateLimit({
   skip: (req) => {
     // Skip all GET requests (read-only operations like feed, scroll, polling, navigation)
     if (req.method === 'GET') return true;
+    
+    // Skip specific high-frequency POST endpoints:
+    // 1. Bulk status checks (feed scrolling)
+    // 2. Like/Bookmark toggles (keyboard navigation can trigger these rapidly)
+    if (req.originalUrl) {
+      if (req.originalUrl.includes('/bulk-status')) return true;
+      if (req.originalUrl.includes('/engagement/like')) return true;
+      if (req.originalUrl.includes('/engagement/bookmark')) return true;
+    }
+
     return false;
   },
   // Note: Using default keyGenerator which properly handles IPv6
