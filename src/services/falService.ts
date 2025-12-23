@@ -201,17 +201,55 @@ async function generate(
           stored = await uploadBufferToZata(key, resizedBuffer, 'image/jpeg');
           stored.originalUrl = src;
         } else {
-          // For other models, use existing upload logic
+          // For other models (including Seedream 4.5), use existing upload logic
           // uploadFromUrlToZata now handles Zata URLs by downloading via S3
-          stored = /^data:/i.test(src)
-            ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
-            : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+          const isDataUri = /^data:/i.test(src);
+          const isBlobUrl = src.startsWith('blob:');
+          
+          if (isDataUri) {
+            // Validate data URI is complete (not truncated)
+            const base64Match = /^data:([^;]+);base64,(.+)$/.exec(src);
+            if (!base64Match || !base64Match[2] || base64Match[2].length < 100) {
+              console.error('[falService] ❌ Invalid or truncated data URI:', {
+                srcLength: src.length,
+                srcPreview: src.substring(0, 100),
+                hasBase64Data: !!base64Match?.[2],
+                base64DataLength: base64Match?.[2]?.length || 0
+              });
+              throw new ApiError(
+                'Invalid or truncated data URI. The image data appears to be incomplete. Please try again or use a different image.',
+                400
+              );
+            }
+            
+            console.log('[falService] 📤 Uploading data URI to Zata for Seedream 4.5:', {
+              dataUriLength: src.length,
+              base64DataLength: base64Match[2].length,
+              contentType: base64Match[1],
+              dataUriPreview: src.substring(0, 50) + '...',
+              keyPrefix,
+              fileName: `input-${idx + 1}`
+            });
+            stored = await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` });
+            console.log('[falService] ✅ Data URI uploaded to Zata:', {
+              publicUrl: stored.publicUrl,
+              key: (stored as any).key
+            });
+          } else if (isBlobUrl) {
+            // Blob URLs should have been converted to data URIs on frontend, but handle gracefully
+            throw new ApiError('Blob URLs are not supported. Please convert to data URI or public URL first.', 400);
+          } else {
+            // Regular URL - upload to Zata (handles Zata URLs via S3)
+            stored = await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+          }
         }
         inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: stored.originalUrl || src });
         publicImageUrls.push(stored.publicUrl);
         console.log('[falService] ✅ Successfully processed uploaded image:', { 
           original: src.substring(0, 80) + '...', 
-          publicUrl: stored.publicUrl.substring(0, 80) + '...' 
+          publicUrl: stored.publicUrl.substring(0, 80) + '...',
+          isDataUri: /^data:/i.test(src),
+          isBlobUrl: src.startsWith('blob:')
         });
       } catch (error: any) {
         console.error('[falService] ❌ Failed to process uploaded image:', {
@@ -219,8 +257,15 @@ async function generate(
           error: error?.message,
           stack: error?.stack?.substring(0, 200)
         });
-        // Don't silently fail - log the error so we can debug
-        // But continue processing other images
+        // Don't silently fail - throw error for data URIs and blob URLs since they must be converted
+        // For regular URLs, we can continue, but data URIs and blob URLs must be uploaded to Zata
+        if (/^data:/i.test(src) || src.startsWith('blob:')) {
+          throw new ApiError(
+            `Failed to upload image to Zata storage: ${error?.message || 'Unknown error'}. Image-to-image generation requires images to be uploaded to public storage.`,
+            500
+          );
+        }
+        // For regular URLs, continue (might be a transient network issue)
       }
     }
     
@@ -907,11 +952,40 @@ async function generate(
           // Store for later use in queue mode detection
           (input as any)._isEditEndpoint = isEditEndpoint;
           if (isEditEndpoint) {
+            // CRITICAL: Always use publicImageUrls (Zata URLs) for Seedream 4.5, never data URIs or blob URLs
+            // If publicImageUrls is empty but uploadedImages has data URIs, that means upload failed
+            if (publicImageUrls.length === 0 && uploadedImages.length > 0) {
+              const hasDataUris = uploadedImages.some((url: string) => /^data:/i.test(url) || url.startsWith('blob:'));
+              if (hasDataUris) {
+                throw new ApiError(
+                  'Failed to upload images to Zata storage. Image-to-image generation requires images to be uploaded to public storage (Zata). Please try again.',
+                  500
+                );
+              }
+            }
+            // Use publicImageUrls (Zata URLs) - these are guaranteed to be public URLs
             const refs = publicImageUrls.length > 0 ? publicImageUrls : uploadedImages;
             if (Array.isArray(refs) && refs.length > 0) {
+              // Validate that we're not sending data URIs or blob URLs
+              const invalidUrls = refs.filter((url: string) => /^data:/i.test(url) || url.startsWith('blob:'));
+              if (invalidUrls.length > 0) {
+                console.error('[falService] ❌ ERROR: Attempting to send data URIs or blob URLs to Fal:', {
+                  invalidUrls: invalidUrls.map((url: string) => url.substring(0, 50) + '...'),
+                  publicImageUrlsCount: publicImageUrls.length,
+                  uploadedImagesCount: uploadedImages.length
+                });
+                throw new ApiError(
+                  'Internal error: Images were not properly uploaded to Zata storage. Please try again.',
+                  500
+                );
+              }
               // Schema: if >10 images are sent, only the last 10 will be used
               const lastTen = refs.slice(-10);
               input.image_urls = lastTen;
+              console.log('[falService] ✅ Seedream 4.5: Using Zata URLs for image-to-image:', {
+                urlCount: lastTen.length,
+                urls: lastTen.map((url: string) => url.substring(0, 80) + '...')
+              });
             } else {
               // Edit endpoint requires at least 1 image, but we have none
               // This shouldn't happen if endpoint selection is correct, but handle gracefully
@@ -1064,11 +1138,268 @@ async function generate(
           try {
             const status: any = await fal.queue.status(modelEndpoint as any, { requestId: request_id, logs: true } as any);
             
-            if (status?.status === 'COMPLETED') {
-              queueResult = status;
-              break;
-            } else if (status?.status === 'FAILED') {
-              throw new ApiError(`FAL queue generation failed: ${status?.error || 'Unknown error'}`, 502);
+            const statusValue = status?.status || status?.status_code || '';
+            
+            if (statusValue === 'COMPLETED' || statusValue === 'completed') {
+              console.log('[falService] ✅ Queue task completed, extracting result...');
+              console.log('[falService] Status response structure:', {
+                hasData: !!status?.data,
+                hasOutput: !!status?.output,
+                hasImages: !!status?.images,
+                dataKeys: status?.data ? Object.keys(status.data) : [],
+                outputKeys: status?.output ? Object.keys(status.output) : [],
+                statusKeys: Object.keys(status || {}),
+                statusPreview: JSON.stringify(status).substring(0, 500)
+              });
+              
+              // Check if result is already in the status response - check multiple locations
+              let foundResult = false;
+              
+              // 1. Check status.data.images (array)
+              if (status?.data?.images && Array.isArray(status.data.images) && status.data.images.length > 0) {
+                console.log('[falService] ✅ Found images in status.data.images');
+                queueResult = { data: status.data };
+                foundResult = true;
+              }
+              // 2. Check status.data.image.url (single image)
+              else if (status?.data?.image?.url) {
+                console.log('[falService] ✅ Found image in status.data.image.url');
+                queueResult = { data: { images: [{ url: status.data.image.url }] } };
+                foundResult = true;
+              }
+              // 3. Check status.data.image_url (direct URL)
+              else if (status?.data?.image_url) {
+                console.log('[falService] ✅ Found image_url in status.data');
+                queueResult = { data: { images: [{ url: status.data.image_url }] } };
+                foundResult = true;
+              }
+              // 4. Check status.images (top level array)
+              else if (status?.images && Array.isArray(status.images) && status.images.length > 0) {
+                console.log('[falService] ✅ Found images at top level');
+                queueResult = { data: { images: status.images } };
+                foundResult = true;
+              }
+              // 5. Check status.output.images
+              else if (status?.output?.images && Array.isArray(status.output.images) && status.output.images.length > 0) {
+                console.log('[falService] ✅ Found images in status.output.images');
+                queueResult = { data: { images: status.output.images } };
+                foundResult = true;
+              }
+              // 6. Check status.output.image.url
+              else if (status?.output?.image?.url) {
+                console.log('[falService] ✅ Found image in status.output.image.url');
+                queueResult = { data: { images: [{ url: status.output.image.url }] } };
+                foundResult = true;
+              }
+              // 7. Check if status.data itself is the result (sometimes the whole data is the result)
+              else if (status?.data && typeof status.data === 'object') {
+                // Try to extract from any nested structure
+                const dataStr = JSON.stringify(status.data);
+                if (dataStr.includes('http') && (dataStr.includes('.jpg') || dataStr.includes('.png') || dataStr.includes('.jpeg'))) {
+                  console.log('[falService] ✅ Found URL-like data in status.data, attempting extraction');
+                  // Try to find URL in the data structure
+                  const findUrlInObject = (obj: any): string | null => {
+                    if (typeof obj === 'string' && obj.startsWith('http')) return obj;
+                    if (obj?.url && typeof obj.url === 'string') return obj.url;
+                    if (obj?.image_url && typeof obj.image_url === 'string') return obj.image_url;
+                    if (Array.isArray(obj)) {
+                      for (const item of obj) {
+                        const url = findUrlInObject(item);
+                        if (url) return url;
+                      }
+                    }
+                    if (typeof obj === 'object' && obj !== null) {
+                      for (const key in obj) {
+                        const url = findUrlInObject(obj[key]);
+                        if (url) return url;
+                      }
+                    }
+                    return null;
+                  };
+                  const foundUrl = findUrlInObject(status.data);
+                  if (foundUrl) {
+                    console.log('[falService] ✅ Extracted URL from status.data:', foundUrl.substring(0, 80));
+                    queueResult = { data: { images: [{ url: foundUrl }] } };
+                    foundResult = true;
+                  }
+                }
+              }
+              
+              if (foundResult) {
+                break;
+              }
+              
+              // If result not in status, fetch from response_url (recommended approach)
+              // The response_url is the direct URL to get the result when COMPLETED
+              if (!foundResult && status?.response_url) {
+                try {
+                  console.log('[falService] Result not in status response, fetching from response_url:', status.response_url.substring(0, 80));
+                  const falKey = env.falKey as string;
+                  
+                  if (!falKey) {
+                    throw new ApiError('FAL AI API key not configured', 500);
+                  }
+                  
+                  const responseUrlFetch = await fetch(status.response_url, {
+                    method: 'GET',
+                    headers: {
+                      'Authorization': `Key ${falKey}`,
+                    },
+                  });
+                  
+                  if (!responseUrlFetch.ok) {
+                    const errorText = await responseUrlFetch.text().catch(() => responseUrlFetch.statusText);
+                    console.warn('[falService] Failed to fetch from response_url:', {
+                      status: responseUrlFetch.status,
+                      statusText: responseUrlFetch.statusText,
+                      errorPreview: errorText.substring(0, 200),
+                      responseUrl: status.response_url
+                    });
+                    // Don't throw - continue to try other methods
+                  } else {
+                    const queueResultData: any = await responseUrlFetch.json();
+                    console.log('[falService] ✅ Raw response from response_url:', {
+                      status: responseUrlFetch.status,
+                      contentType: responseUrlFetch.headers.get('content-type'),
+                      dataKeys: queueResultData ? Object.keys(queueResultData) : [],
+                      fullResponse: JSON.stringify(queueResultData).substring(0, 1000)
+                    });
+                  
+                  console.log('[falService] ✅ Result fetched from response_url:', {
+                    hasData: !!queueResultData?.data,
+                    hasImages: !!(queueResultData?.data && 'images' in queueResultData.data && Array.isArray(queueResultData.data.images)),
+                    hasImage: !!(queueResultData?.data && 'image' in queueResultData.data),
+                    resultKeys: Object.keys(queueResultData || {}),
+                    dataKeys: queueResultData?.data ? Object.keys(queueResultData.data) : [],
+                    resultPreview: JSON.stringify(queueResultData).substring(0, 500)
+                  });
+                  
+                  // Check different result structures (using type-safe checks)
+                  const data = queueResultData?.data;
+                  if (data && 'images' in data && Array.isArray(data.images) && data.images.length > 0) {
+                    console.log('[falService] ✅ Found images in queueResult.data.images');
+                    queueResult = queueResultData;
+                    foundResult = true;
+                    break;
+                  } else if (data && 'image' in data && typeof data.image === 'object' && data.image?.url) {
+                    console.log('[falService] ✅ Found image in queueResult.data.image.url');
+                    queueResult = { data: { images: [{ url: data.image.url }] } };
+                    foundResult = true;
+                    break;
+                  } else if ('images' in queueResultData && Array.isArray((queueResultData as any).images) && (queueResultData as any).images.length > 0) {
+                    console.log('[falService] ✅ Found images at top level of queueResult');
+                    queueResult = { data: { images: (queueResultData as any).images } };
+                    foundResult = true;
+                    break;
+                  } else if (data && 'image_url' in data && typeof data.image_url === 'string') {
+                    console.log('[falService] ✅ Found image_url in queueResult.data');
+                    queueResult = { data: { images: [{ url: data.image_url }] } };
+                    foundResult = true;
+                    break;
+                  } else {
+                    console.warn('[falService] ⚠️ Result fetched from response_url but no images found, structure:', {
+                      resultKeys: Object.keys(queueResultData || {}),
+                      dataKeys: data ? Object.keys(data) : []
+                    });
+                  }
+                  }
+                } catch (responseUrlError: any) {
+                  console.warn('[falService] Failed to fetch from response_url:', {
+                    error: responseUrlError?.message,
+                    status: responseUrlError?.status || responseUrlError?.statusCode,
+                    responseUrl: status?.response_url?.substring(0, 80)
+                  });
+                }
+              }
+              
+              // Fallback: Try fetching from the queue URL directly (like replaceService does)
+              if (!foundResult) {
+                try {
+                  console.log('[falService] Trying to fetch from queue URL directly...');
+                  // Extract model path from response_url or use modelEndpoint
+                  // response_url format: https://queue.fal.run/fal-ai/bytedance/requests/{request_id}
+                  // So we need: fal-ai/bytedance (without /seedream/v4.5/edit)
+                  let queueModelPath = modelEndpoint;
+                  if (status?.response_url) {
+                    // Extract from response_url: https://queue.fal.run/fal-ai/bytedance/requests/...
+                    const urlMatch = status.response_url.match(/https:\/\/queue\.fal\.run\/([^\/]+\/[^\/]+)\//);
+                    if (urlMatch && urlMatch[1]) {
+                      queueModelPath = urlMatch[1];
+                      console.log('[falService] Extracted model path from response_url:', queueModelPath);
+                    }
+                  }
+                  
+                  const queueUrl = `https://queue.fal.run/${queueModelPath}/requests/${request_id}`;
+                  const falKey = env.falKey as string;
+                  
+                  if (!falKey) {
+                    throw new ApiError('FAL AI API key not configured', 500);
+                  }
+                  
+                  const queueResponse = await fetch(queueUrl, {
+                    method: 'GET',
+                    headers: {
+                      'Authorization': `Key ${falKey}`,
+                    },
+                  });
+                  
+                  if (!queueResponse.ok) {
+                    const text = await queueResponse.text().catch(() => queueResponse.statusText);
+                    throw new Error(`Failed to fetch queue response (${queueResponse.status}): ${text.substring(0, 200)}`);
+                  }
+                  
+                  const queueResultData: any = await queueResponse.json();
+                  
+                  console.log('[falService] ✅ Result fetched from queue URL:', {
+                    hasData: !!queueResultData?.data,
+                    hasImages: !!(queueResultData?.data && 'images' in queueResultData.data && Array.isArray(queueResultData.data.images)),
+                    hasImage: !!(queueResultData?.data && 'image' in queueResultData.data),
+                    resultKeys: Object.keys(queueResultData || {}),
+                    dataKeys: queueResultData?.data ? Object.keys(queueResultData.data) : [],
+                    resultPreview: JSON.stringify(queueResultData).substring(0, 500)
+                  });
+                  
+                  // Check different result structures (using type-safe checks)
+                  const data = queueResultData?.data;
+                  if (data && 'images' in data && Array.isArray(data.images) && data.images.length > 0) {
+                    console.log('[falService] ✅ Found images in queueResult.data.images');
+                    queueResult = queueResultData;
+                    foundResult = true;
+                    break;
+                  } else if (data && 'image' in data && typeof data.image === 'object' && data.image?.url) {
+                    console.log('[falService] ✅ Found image in queueResult.data.image.url');
+                    queueResult = { data: { images: [{ url: data.image.url }] } };
+                    foundResult = true;
+                    break;
+                  } else if ('images' in queueResultData && Array.isArray((queueResultData as any).images) && (queueResultData as any).images.length > 0) {
+                    console.log('[falService] ✅ Found images at top level of queueResult');
+                    queueResult = { data: { images: (queueResultData as any).images } };
+                    foundResult = true;
+                    break;
+                  } else if (data && 'image_url' in data && typeof data.image_url === 'string') {
+                    console.log('[falService] ✅ Found image_url in queueResult.data');
+                    queueResult = { data: { images: [{ url: data.image_url }] } };
+                    foundResult = true;
+                    break;
+                  } else {
+                    console.warn('[falService] ⚠️ Result fetched from queue URL but no images found, continuing to poll...');
+                    // Don't break - continue polling as result might appear later
+                  }
+                } catch (queueUrlError: any) {
+                  console.warn('[falService] Failed to fetch from queue URL:', {
+                    error: queueUrlError?.message,
+                    status: queueUrlError?.status || queueUrlError?.statusCode
+                  });
+                }
+              }
+              
+              // If we still don't have a result, log and continue polling (might need more time)
+              if (!foundResult) {
+                console.log('[falService] ⚠️ Result not found, will continue polling (attempt ' + (attempts + 1) + '/' + maxAttempts + ')...');
+                // Don't break - continue polling as the result might appear in next poll
+              }
+            } else if (statusValue === 'FAILED' || statusValue === 'failed') {
+              throw new ApiError(`FAL queue generation failed: ${status?.error || status?.message || 'Unknown error'}`, 502);
             }
             // Continue polling if status is 'IN_QUEUE' or 'IN_PROGRESS'
           } catch (pollError: any) {
@@ -1083,6 +1414,16 @@ async function generate(
           throw new ApiError('FAL queue generation timed out after 10 minutes', 504);
         }
         
+        // Queue result structure might be different from subscribe
+        // Log the structure to debug
+        console.log('[falService] Queue result structure:', {
+          hasData: !!queueResult?.data,
+          hasOutput: !!queueResult?.output,
+          status: queueResult?.status,
+          keys: Object.keys(queueResult || {}),
+          dataKeys: queueResult?.data ? Object.keys(queueResult.data) : [],
+        });
+        
         result = queueResult;
       } else {
         // Use synchronous subscribe for other models (faster for short requests)
@@ -1090,11 +1431,42 @@ async function generate(
       }
 
       let imageUrl = "";
+      // Handle both queue result and subscribe result structures
       if (result?.data?.images?.length > 0) {
+        // Standard subscribe result structure
         imageUrl = result.data.images[0].url;
+      } else if (result?.data?.image?.url) {
+        // Single image in data.image
+        imageUrl = result.data.image.url;
+      } else if (result?.data?.image_url) {
+        // Direct image_url in data
+        imageUrl = result.data.image_url;
+      } else if (result?.output?.images?.length > 0) {
+        // Queue result might have output.images
+        imageUrl = result.output.images[0].url || result.output.images[0];
+      } else if (result?.output?.image?.url) {
+        // Queue result with output.image
+        imageUrl = result.output.image.url;
+      } else if (result?.output?.image_url) {
+        // Queue result with direct output.image_url
+        imageUrl = result.output.image_url;
+      } else if (Array.isArray(result?.output) && result.output.length > 0) {
+        // Queue result with array output
+        const firstOutput = result.output[0];
+        imageUrl = typeof firstOutput === 'string' ? firstOutput : (firstOutput?.url || firstOutput?.image_url);
       }
-      if (!imageUrl)
+      
+      if (!imageUrl) {
+        console.error('[falService] ❌ Failed to extract image URL from result:', {
+          resultKeys: Object.keys(result || {}),
+          dataKeys: result?.data ? Object.keys(result.data) : [],
+          outputKeys: result?.output ? Object.keys(result.output) : [],
+          resultPreview: JSON.stringify(result).substring(0, 500)
+        });
         throw new ApiError("No image URL returned from FAL API", 502);
+      }
+      
+      console.log('[falService] ✅ Successfully extracted image URL from result:', imageUrl.substring(0, 80) + '...');
 
       return {
         url: imageUrl,
