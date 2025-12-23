@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { generationHistoryService } from '../services/generationHistoryService';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { normalizeMode } from '../utils/modeTypeMap';
+import { ApiError } from '../utils/errorHandler';
 
 async function create(req: Request, res: Response, next: NextFunction) {
 	try {
@@ -110,19 +111,24 @@ async function softDelete(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid;
     const { historyId } = req.params as any;
-    const { imageId } = req.query as any;
-    
+    const { imageId, storagePath } = req.query as any;
+
+    if (!historyId) {
+      throw new ApiError("History ID is required", 400);
+    }
+
     console.log('[Controller][softDelete] Request received:', {
       uid,
       historyId,
       imageId,
+      storagePath,
       method: req.method,
       path: req.path,
       timestamp: new Date().toISOString(),
     });
     
     // Pass imageId to service if present
-    const result = await generationHistoryService.softDelete(uid, historyId, imageId);
+    const result = await generationHistoryService.softDelete(uid, historyId, imageId, storagePath);
     
     const response = formatApiResponse('success', imageId ? 'Image deleted' : 'Generation deleted', result);
     console.log('[Controller][softDelete] Response:', {
