@@ -86,12 +86,33 @@ export async function computeReplicateUpscaleCost(req: Request): Promise<{ cost:
 }
 
 export async function computeReplicateImageGenCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
-  const { model } = req.body || {};
+  const { model, quality } = req.body || {};
   const normalized = String(model || '').toLowerCase();
 
-  let display = 'replicate/bytedance/seedream-4'; // Default fallback
+  // Resolve requested image count across common param names.
+  // Frontend uses `n`; GPT Image 1.5 schema uses `number_of_images`.
+  const rawCount =
+    (req.body as any)?.number_of_images ??
+    (req.body as any)?.n ??
+    (req.body as any)?.num_images ??
+    (req.body as any)?.max_images;
+  const count = Math.max(1, Math.min(10, Number(rawCount ?? 1)));
 
+  let display = 'replicate/bytedance/seedream-4'; // Default fallback
+  let meta: Record<string, any> = { model: normalized };
+
+  // Handle GPT Image 1.5 with quality-based pricing
   if (
+    normalized.includes('openai/gpt-image-1.5') ||
+    normalized.includes('gpt-image-1.5')
+  ) {
+    // Extract quality parameter (default to 'auto' if not provided)
+    const qualityValue = String(quality || 'auto').toLowerCase();
+    // Map quality to credit distribution model name format
+    display = `gpt-image-1.5 ${qualityValue}`;
+    meta.quality = qualityValue;
+  }
+  else if (
     normalized.includes('ideogram-ai/ideogram-v3-turbo') ||
     (normalized.includes('ideogram') && normalized.includes('turbo'))
   ) {
@@ -121,8 +142,8 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
     display = 'P-Image-Edit';
   }
 
-  // Lookup cost
-  let cost = 0;
+  // Lookup base cost (per image)
+  let baseCost = 0;
 
   // Handle Z-Image Turbo explicit override (Free)
   if (
@@ -132,15 +153,19 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
     normalized.includes('new-turbo-model') ||
     normalized.includes('placeholder-model-name')
   ) {
-    cost = 0;
+    baseCost = 0;
   } else {
     const base = findCredits(display);
     if (base == null) throw new Error(`Unsupported Replicate Image model: ${display}`);
-    cost = Math.ceil(base);
+    baseCost = Math.ceil(base);
   }
 
-
-  return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: display } };
+  const cost = Math.ceil(baseCost * count);
+  return {
+    cost,
+    pricingVersion: REPLICATE_PRICING_VERSION,
+    meta: { ...meta, model: display, n: count },
+  };
 }
 
 export async function computeReplicateMultiangleCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {

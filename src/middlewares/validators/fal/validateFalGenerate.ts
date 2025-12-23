@@ -268,6 +268,68 @@ export const validateFalQueueStatus = [
 
 export const validateFalQueueResult = validateFalQueueStatus;
 
+// Kling 2.6 Pro Text-to-Video validator
+export const validateFalKling26ProT2v = [
+  body('prompt').isString().notEmpty(),
+  body('aspect_ratio').optional().isIn(['16:9', '9:16', '1:1']),
+  body('duration').optional().custom((value) => {
+    // Accept "5", "10", "5s", "10s", or numbers 5, 10
+    if (value == null) return true; // Optional field
+    const normalized = typeof value === 'number' ? String(value) : String(value).replace(/s$/i, '');
+    return ['5', '10'].includes(normalized);
+  }).withMessage('duration must be 5 or 10'),
+  body('negative_prompt').optional().isString(),
+  body('cfg_scale').optional().isFloat({ min: 0, max: 1 }),
+  body('generate_audio').optional().isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    // Normalize duration: ensure it's a string "5" or "10"
+    const d = (req.body as any)?.duration;
+    if (typeof d === 'number') {
+      (req.body as any).duration = d === 10 ? '10' : '5';
+    } else if (d && typeof d === 'string') {
+      // Remove "s" suffix if present and normalize
+      const normalized = d.replace(/s$/i, '');
+      (req.body as any).duration = normalized === '10' ? '10' : '5';
+    } else if (!d) {
+      (req.body as any).duration = '5'; // Default to 5
+    }
+    next();
+  }
+];
+
+// Kling 2.6 Pro Image-to-Video validator
+export const validateFalKling26ProI2v = [
+  body('prompt').isString().notEmpty(),
+  body('image_url').isString().notEmpty(),
+  body('duration').optional().custom((value) => {
+    // Accept "5", "10", "5s", "10s", or numbers 5, 10
+    if (value == null) return true; // Optional field
+    const normalized = typeof value === 'number' ? String(value) : String(value).replace(/s$/i, '');
+    return ['5', '10'].includes(normalized);
+  }).withMessage('duration must be 5 or 10'),
+  body('negative_prompt').optional().isString(),
+  body('cfg_scale').optional().isFloat({ min: 0, max: 1 }),
+  body('generate_audio').optional().isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    // Normalize duration: ensure it's a string "5" or "10"
+    const d = (req.body as any)?.duration;
+    if (typeof d === 'number') {
+      (req.body as any).duration = d === 10 ? '10' : '5';
+    } else if (d && typeof d === 'string') {
+      // Remove "s" suffix if present and normalize
+      const normalized = d.replace(/s$/i, '');
+      (req.body as any).duration = normalized === '10' ? '10' : '5';
+    } else if (!d) {
+      (req.body as any).duration = '5'; // Default to 5
+    }
+    next();
+  }
+];
+
 export const validateFalVeoTextToVideoSubmit = validateFalVeoTextToVideo;
 export const validateFalVeoTextToVideoFastSubmit = validateFalVeoTextToVideoFast;
 export const validateFalVeoImageToVideoSubmit = validateFalVeoImageToVideo;

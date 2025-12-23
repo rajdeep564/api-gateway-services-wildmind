@@ -3528,11 +3528,90 @@ async function queueResult(uid: string, model: string | undefined, requestId: st
   return result;
 }
 
+async function kling26ProT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+  fal.config({ credentials: falKey });
+  if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+  const model = 'fal-ai/kling-video/v2.6/pro/text-to-video';
+  const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+  const duration = typeof body.duration === 'string' ? body.duration : (body.duration ? `${body.duration}` : '5');
+  const { request_id } = await fal.queue.submit(model, {
+    input: {
+      prompt: body.prompt,
+      duration: duration,
+      aspect_ratio: body.aspect_ratio ?? '16:9',
+      negative_prompt: body.negative_prompt ?? 'blur, distort, and low quality',
+      cfg_scale: body.cfg_scale ?? 0.5,
+      generate_audio: body.generate_audio !== false, // Default to true if not explicitly false
+    },
+  } as any);
+  await generationHistoryRepository.update(uid, historyId, { 
+    provider: 'fal', 
+    providerTaskId: request_id, 
+    generate_audio: body.generate_audio !== false, // Default to true if not explicitly false
+    duration: duration, 
+    aspect_ratio: body.aspect_ratio ?? '16:9' 
+  } as any);
+  return { requestId: request_id, historyId, model, status: 'submitted' };
+}
+
+async function kling26ProI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+  fal.config({ credentials: falKey });
+  if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+  if (!body?.image_url) throw new ApiError('image_url is required', 400);
+  const model = 'fal-ai/kling-video/v2.6/pro/image-to-video';
+  const duration = typeof body.duration === 'string' ? body.duration : (body.duration ? `${body.duration}` : '5');
+  
+  // Upload image_url to Zata if it's a data URI
+  let imageUrl = body.image_url;
+  const creator = await authRepository.getUserById(uid);
+  const username = creator?.username || uid;
+  const { historyId } = await queueCreateHistory(uid, {
+    prompt: body.prompt,
+    model,
+    isPublic: body.isPublic,
+  });
+  
+  const keyPrefix = `users/${username}/input/${historyId}`;
+  try {
+    if (typeof imageUrl === 'string' && /^data:/i.test(imageUrl)) {
+      const stored = await uploadDataUriToZata({ dataUri: imageUrl, keyPrefix, fileName: 'input-1' });
+      imageUrl = stored.publicUrl;
+    }
+    // Persist image to history
+    await persistInputImagesFromUrls(uid, historyId, [imageUrl]);
+  } catch (e: any) {
+    console.error('[falService.kling26ProI2vSubmit] Failed to upload image to Zata:', e);
+    // Continue with original URL if upload fails
+  }
+  
+  const { request_id } = await fal.queue.submit(model, {
+    input: {
+      prompt: body.prompt,
+      image_url: imageUrl,
+      duration: duration,
+      negative_prompt: body.negative_prompt ?? 'blur, distort, and low quality',
+      cfg_scale: body.cfg_scale ?? 0.5,
+      generate_audio: body.generate_audio !== false, // Default to true if not explicitly false
+    },
+  } as any);
+  await generationHistoryRepository.update(uid, historyId, { 
+    provider: 'fal', 
+    providerTaskId: request_id, 
+    generate_audio: body.generate_audio !== false, // Default to true if not explicitly false
+    duration: duration 
+  } as any);
+  return { requestId: request_id, historyId, model, status: 'submitted' };
+}
+
 export const falQueueService = {
   veoTtvSubmit,
   veoI2vSubmit,
   klingO1FirstLastSubmit,
   klingO1ReferenceSubmit,
+  kling26ProT2vSubmit,
+  kling26ProI2vSubmit,
   // Veo 3.1 variants
   async veo31TtvSubmit(uid: string, body: any, fast = false): Promise<SubmitReturn> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);

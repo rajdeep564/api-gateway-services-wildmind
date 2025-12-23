@@ -16,6 +16,7 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
   const isNewTurboModel = m.includes('z-image-turbo') || m.includes('new-turbo-model') || m.includes('placeholder-model-name');
   const isPImageEdit = m.includes('p-image-edit');
   const isPImage = m.includes('p-image') && !isPImageEdit; // avoid double-validating p-image-edit
+  const isGptImage15 = m.includes('openai/gpt-image-1.5') || m.includes('gpt-image-1.5');
 
   // Seedream 4.5 branch removed: model is now handled by FAL backend.
 
@@ -241,6 +242,62 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
       if (typeof req.body.output_quality !== 'number' || !Number.isInteger(req.body.output_quality) || req.body.output_quality < 0 || req.body.output_quality > 100) {
         return next(new ApiError('output_quality must be an integer between 0 and 100', 400));
       }
+    }
+  }
+  // GPT Image 1.5 (openai/gpt-image-1.5) validations
+  if (isGptImage15) {
+    const allowedQuality = new Set(['low', 'medium', 'high', 'auto']);
+    const allowedAspect = new Set(['1:1', '3:2', '2:3']);
+    const allowedBackground = new Set(['auto', 'transparent', 'opaque']);
+    const allowedModeration = new Set(['auto', 'low']);
+    const allowedOutputFormat = new Set(['png', 'jpeg', 'webp']);
+
+    if (req.body.quality != null && !allowedQuality.has(String(req.body.quality))) {
+      return next(new ApiError('quality must be one of: low, medium, high, auto', 400));
+    }
+    if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio))) {
+      return next(new ApiError('aspect_ratio must be one of: 1:1, 3:2, 2:3', 400));
+    }
+    if (req.body.background != null && !allowedBackground.has(String(req.body.background))) {
+      return next(new ApiError('background must be one of: auto, transparent, opaque', 400));
+    }
+    if (req.body.moderation != null && !allowedModeration.has(String(req.body.moderation))) {
+      return next(new ApiError('moderation must be one of: auto, low', 400));
+    }
+    if (req.body.output_format != null && !allowedOutputFormat.has(String(req.body.output_format))) {
+      return next(new ApiError('output_format must be one of: png, jpeg, webp', 400));
+    }
+    const numberOfImagesRaw =
+      req.body.number_of_images != null
+        ? req.body.number_of_images
+        : req.body.n != null
+          ? req.body.n
+          : undefined;
+    if (numberOfImagesRaw != null) {
+      if (!Number.isInteger(numberOfImagesRaw) || numberOfImagesRaw < 1 || numberOfImagesRaw > 10) {
+        return next(new ApiError('number_of_images (or n) must be an integer between 1 and 10', 400));
+      }
+    }
+    if (req.body.output_compression != null) {
+      if (typeof req.body.output_compression !== 'number' || !Number.isInteger(req.body.output_compression) || req.body.output_compression < 0 || req.body.output_compression > 100) {
+        return next(new ApiError('output_compression must be an integer between 0 and 100', 400));
+      }
+    }
+    if (req.body.input_images != null) {
+      if (!Array.isArray(req.body.input_images)) {
+        return next(new ApiError('input_images must be an array', 400));
+      }
+      if (req.body.input_images.length > 10) {
+        return next(new ApiError('input_images supports up to 10 images', 400));
+      }
+      for (const img of req.body.input_images) {
+        if (typeof img !== 'string') {
+          return next(new ApiError('input_images must contain URI strings', 400));
+        }
+      }
+    }
+    if (req.body.input_fidelity != null && !['low', 'high'].includes(String(req.body.input_fidelity))) {
+      return next(new ApiError('input_fidelity must be one of: low, high', 400));
     }
   }
 

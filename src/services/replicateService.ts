@@ -1981,6 +1981,167 @@ export async function generateImage(uid: string, body: any) {
         input.image = rest.image;
       }
     }
+    // GPT Image 1.5 mapping
+    if (modelBase === "openai/gpt-image-1.5") {
+      // Map all supported parameters from schema
+      if (rest.quality && ['low', 'medium', 'high', 'auto'].includes(String(rest.quality))) {
+        input.quality = String(rest.quality);
+      } else {
+        input.quality = 'low'; // Default to low quality
+      }
+      if (rest.aspect_ratio && ['1:1', '3:2', '2:3'].includes(String(rest.aspect_ratio))) {
+        input.aspect_ratio = String(rest.aspect_ratio);
+      } else {
+        input.aspect_ratio = '1:1'; // Default per schema
+      }
+      // The frontend commonly sends `n`; schema uses `number_of_images`.
+      const requestedImagesRaw =
+        rest.number_of_images != null ? rest.number_of_images : rest.n != null ? rest.n : undefined;
+      if (requestedImagesRaw != null) {
+        input.number_of_images = Math.max(1, Math.min(10, Number(requestedImagesRaw)));
+      } else {
+        input.number_of_images = 1; // Default per schema
+      }
+      if (rest.output_format && ['png', 'jpeg', 'webp', 'jpg'].includes(String(rest.output_format))) {
+        // Map 'jpg' to 'jpeg' (API expects 'jpeg')
+        const format = String(rest.output_format);
+        input.output_format = format === 'jpg' ? 'jpeg' : format;
+      } else {
+        input.output_format = 'jpeg'; // Default to jpeg (jpg)
+      }
+      if (rest.background && ['auto', 'transparent', 'opaque'].includes(String(rest.background))) {
+        input.background = String(rest.background);
+      } else {
+        input.background = 'auto'; // Default per schema
+      }
+      if (rest.moderation && ['auto', 'low'].includes(String(rest.moderation))) {
+        input.moderation = String(rest.moderation);
+      } else {
+        input.moderation = 'auto'; // Default per schema
+      }
+      if (rest.output_compression != null) {
+        input.output_compression = Math.max(0, Math.min(100, Number(rest.output_compression)));
+      } else {
+        input.output_compression = 90; // Default per schema
+      }
+      // Handle input_images for I2I - map from uploadedImages if present
+      const inputImagesSource = rest.input_images || rest.uploadedImages;
+      if (inputImagesSource && Array.isArray(inputImagesSource) && inputImagesSource.length > 0) {
+        const username = creator?.username || uid;
+        const keyPrefix = `users/${username}/input/${historyId}`;
+        const inputPersisted: any[] = [];
+        const resolvedImages: string[] = [];
+        for (let i = 0; i < Math.min(inputImagesSource.length, 10); i++) {
+          const img = inputImagesSource[i];
+          try {
+            if (typeof img === "string" && img.startsWith("data:")) {
+              // Handle data URIs
+              const uploaded = await uploadDataUriToZata({
+                dataUri: img,
+                keyPrefix,
+                fileName: `gpt-image-1.5-ref-${i + 1}`,
+              });
+              resolvedImages.push(uploaded.publicUrl);
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: uploaded.publicUrl,
+                storagePath: uploaded.key,
+              });
+            } else if (typeof img === "string") {
+              // Check if it's a proxy URL, Zata URL, or absolute URL
+              const isProxyUrl = /^\/api\/proxy\/resource\//i.test(img) || /^\/proxy\/resource\//i.test(img);
+              const isZataUrl = env.zataPrefix && img.startsWith(env.zataPrefix);
+              const isAbsoluteUrl = img.startsWith("http://") || img.startsWith("https://");
+              
+              if (isProxyUrl) {
+                // Extract storage path from proxy URL and construct Zata URL
+                try {
+                  // Match proxy URL pattern: /api/proxy/resource/... or /proxy/resource/...
+                  // Extract everything after /proxy/resource/ or /api/proxy/resource/
+                  const storagePathMatch = img.match(/\/proxy\/resource\/(.+)$/i);
+                  if (storagePathMatch && storagePathMatch[1]) {
+                    // Decode URL-encoded path (e.g., users%2Fvivek -> users/vivek)
+                    const storagePath = decodeURIComponent(storagePathMatch[1]);
+                    
+                    // Construct Zata URL using zataPrefix
+                    if (env.zataPrefix) {
+                      const zataUrl = env.zataPrefix.replace(/\/$/, '') + '/' + storagePath;
+                      resolvedImages.push(zataUrl);
+                      inputPersisted.push({
+                        id: `in-${i + 1}`,
+                        url: zataUrl,
+                        storagePath: storagePath,
+                      });
+                    } else {
+                      console.warn(`[gpt-image-1.5] zataPrefix not configured, cannot convert proxy URL for image ${i + 1}`);
+                      throw new Error('Zata prefix not configured');
+                    }
+                  } else {
+                    throw new Error('Failed to extract storage path from proxy URL');
+                  }
+                } catch (uploadErr) {
+                  console.error(`[gpt-image-1.5] Failed to process proxy URL ${i + 1}:`, uploadErr);
+                  // If we can't convert, we must fail - proxy URLs can't be used directly with Replicate
+                  throw new ApiError(`Failed to convert proxy URL to accessible URL for image ${i + 1}: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`, 400);
+                }
+              } else if (isZataUrl) {
+                // Already a Zata URL, use directly
+                resolvedImages.push(img);
+                inputPersisted.push({
+                  id: `in-${i + 1}`,
+                  url: img,
+                  storagePath: img.substring(env.zataPrefix!.length),
+                });
+              } else if (isAbsoluteUrl) {
+                // Absolute HTTP/HTTPS URL, use directly (Replicate can fetch these)
+                resolvedImages.push(img);
+                inputPersisted.push({
+                  id: `in-${i + 1}`,
+                  url: img,
+                });
+              } else {
+                // Relative or unknown URL format, try uploadFromUrlToZata
+                try {
+                  const uploaded = await uploadFromUrlToZata({
+                    sourceUrl: img,
+                    keyPrefix,
+                    fileName: `gpt-image-1.5-ref-${i + 1}`,
+                  });
+                  resolvedImages.push(uploaded.publicUrl);
+                  inputPersisted.push({
+                    id: `in-${i + 1}`,
+                    url: uploaded.publicUrl,
+                    storagePath: uploaded.key,
+                  });
+                } catch (uploadErr) {
+                  console.warn(`[gpt-image-1.5] Failed to process URL ${i + 1}:`, uploadErr);
+                }
+              }
+            }
+          } catch (e) {
+            console.warn(`[gpt-image-1.5] Failed to process input image ${i + 1}:`, e);
+          }
+        }
+        if (resolvedImages.length > 0) {
+          input.input_images = resolvedImages;
+        }
+        if (inputPersisted.length > 0) {
+          await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+        }
+      }
+      replicateModelBase = "openai/gpt-image-1.5";
+      
+      // Handle num_images for multiple image generation
+      const numImages = input.number_of_images || 1;
+      if (numImages > 1) {
+        // Store num_images for later use in the generation logic
+        (body as any).__num_images = numImages;
+
+        // When we fan-out internally, each upstream call should generate 1 image.
+        // This avoids accidental multiplication if the provider starts honoring number_of_images.
+        input.number_of_images = 1;
+      }
+    }
     const modelSpec = composeModelSpec(replicateModelBase, body.version);
     // eslint-disable-next-line no-console
     console.log("[replicateService.generateImage] run", {
@@ -2032,14 +2193,15 @@ export async function generateImage(uid: string, body: any) {
       } catch { }
     }
     // Handle num_images fan-out for models that need parallel calls
-    // Supported: z-image-turbo and P-Image / P-Image-Edit
+    // Supported: z-image-turbo, P-Image / P-Image-Edit, and GPT Image 1.5
     let output: any;
     const numImages = (body as any).__num_images || 1;
     const isZTurbo = (modelBase === "new-turbo-model" || modelBase === "placeholder-model-name");
     const isPImage = replicateModelBase === "prunaai/p-image";
     const isPImageEdit = replicateModelBase === "prunaai/p-image-edit";
+    const isGptImage15 = replicateModelBase === "openai/gpt-image-1.5";
 
-    if ((isZTurbo || isPImage || isPImageEdit) && numImages > 1) {
+    if ((isZTurbo || isPImage || isPImageEdit || isGptImage15) && numImages > 1) {
       // Make multiple parallel calls
       const outputPromises = Array.from({ length: numImages }, async () => {
         return await replicate.run(modelSpec as any, { input });

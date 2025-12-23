@@ -250,6 +250,22 @@ export const falController = {
       res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
     } catch (err) { next(err); }
   },
+  async kling26ProT2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.kling26ProT2vSubmit(uid, req.body || {});
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
+  async kling26ProI2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.kling26ProI2vSubmit(uid, req.body || {});
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
   async ltx2ProI2vSubmit(req: Request, res: Response, next: NextFunction) {
     try {
       const uid = req.uid;
