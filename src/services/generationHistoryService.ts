@@ -5,7 +5,7 @@ import { generationStatsRepository } from "../repository/generationStatsReposito
 import { imageOptimizationService } from "./imageOptimizationService";
 // CACHING REMOVED: Redis generationCache disabled due to stale list items not reflecting newly started generations promptly.
 // If reintroducing, ensure immediate inclusion of generating items and robust invalidation on create/complete/fail/update.
-import { deleteGenerationFiles } from "../utils/storage/zataDelete";
+import { deleteGenerationFiles, deleteFiles, extractKeyFromUrl } from "../utils/storage/zataDelete";
 import { getCachedItem, setCachedItem, getCachedList, setCachedList, invalidateLibraryCache } from "../utils/generationCache";
 import {
   GenerationStatus,
@@ -505,9 +505,9 @@ export async function listUserGenerations(
   return response;
 }
 
-export async function softDelete(uid: string, historyId: string): Promise<{ item: GenerationHistoryItem }> {
+export async function softDelete(uid: string, historyId: string, imageId?: string): Promise<{ item: GenerationHistoryItem }> {
   console.log('[softDelete] ========== STARTING DELETION ==========');
-  console.log('[softDelete] Request:', { uid, historyId, timestamp: new Date().toISOString() });
+  console.log('[softDelete] Request:', { uid, historyId, imageId, timestamp: new Date().toISOString() });
   
   // 1. Fetch existing item
   const existing = await generationHistoryRepository.get(uid, historyId);
@@ -515,9 +515,59 @@ export async function softDelete(uid: string, historyId: string): Promise<{ item
     console.error('[softDelete] ❌ History item not found:', { uid, historyId });
     throw new ApiError('History item not found', 404);
   }
+
+  // === SINGLE IMAGE DELETION LOGIC ===
+  if (imageId) {
+    const images = Array.isArray(existing.images) ? existing.images : [];
+    const imageIndex = images.findIndex((img: any) => img.id === imageId);
+
+    if (imageIndex !== -1) {
+      const imageToDelete = images[imageIndex];
+      const newImages = images.filter((_, idx) => idx !== imageIndex);
+
+      // Check if generation becomes empty (no images, no videos, no audios)
+      const hasVideos = Array.isArray(existing.videos) && existing.videos.length > 0;
+      const hasAudios = Array.isArray(existing.audios) && existing.audios.length > 0;
+
+      if (newImages.length === 0 && !hasVideos && !hasAudios) {
+        // Proceed to full delete
+        console.log('[softDelete] Generation became empty after removing image, performing full delete');
+      } else {
+        // Update generation with removed image
+        console.log('[softDelete] Removing single image:', imageId);
+
+        // a. Delete files for this specific image (background)
+        const keysToDelete: string[] = [];
+        if (imageToDelete.url) { const k = extractKeyFromUrl(imageToDelete.url); if (k) keysToDelete.push(k); }
+        if (imageToDelete.avifUrl) { const k = extractKeyFromUrl(imageToDelete.avifUrl); if (k) keysToDelete.push(k); }
+        if ((imageToDelete as any).webpUrl) { const k = extractKeyFromUrl((imageToDelete as any).webpUrl); if (k) keysToDelete.push(k); }
+        if (imageToDelete.thumbnailUrl) { const k = extractKeyFromUrl(imageToDelete.thumbnailUrl); if (k) keysToDelete.push(k); }
+        if (imageToDelete.storagePath) { keysToDelete.push(imageToDelete.storagePath); }
+        
+        if (keysToDelete.length > 0) {
+          console.log('[softDelete] Deleting files for single image:', keysToDelete.length);
+          // Fire and forget deletion
+          deleteFiles(keysToDelete).catch(err => console.error('[softDelete] Failed to delete single image files:', err));
+        }
+
+        // b. Update in DB (using update service to handle cache/mirror/normalization)
+        // Pass images: newImages. The update service will handle isPublic logic.
+        const updateResult = await update(uid, historyId, { images: newImages });
+        
+        console.log('[softDelete] Single image removed successfully');
+        return updateResult;
+      }
+    } else {
+      console.warn('[softDelete] Image ID not found in generation, treating as success (idempotent)', imageId);
+      return { item: existing };
+    }
+  }
+
+  // === FULL GENERATION DELETION LOGIC (Existing) ===
   
   const generationType = existing.generationType || 'unknown';
   const hasImages = Array.isArray(existing.images) && existing.images.length > 0;
+  // ... (rest of function)
   const hasVideos = Array.isArray(existing.videos) && existing.videos.length > 0;
   const hasAudios = Array.isArray(existing.audios) && existing.audios.length > 0;
   const imageCount = hasImages ? existing.images!.length : 0;
