@@ -1,12 +1,12 @@
-import { generationHistoryRepository } from '../repository/generationHistoryRepository';
-import { generationsMirrorRepository } from '../repository/generationsMirrorRepository';
-import { mirrorQueueRepository } from '../repository/mirrorQueueRepository';
+import { generationHistoryRepository } from "../repository/generationHistoryRepository";
+import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
+import { mirrorQueueRepository } from "../repository/mirrorQueueRepository";
 import { generationStatsRepository } from "../repository/generationStatsRepository";
 import { imageOptimizationService } from "./imageOptimizationService";
 // CACHING REMOVED: Redis generationCache disabled due to stale list items not reflecting newly started generations promptly.
 // If reintroducing, ensure immediate inclusion of generating items and robust invalidation on create/complete/fail/update.
-import { deleteFiles, extractKeyFromUrl } from '../utils/storage/zataDelete';
-import { invalidateItem, invalidateUserLists, invalidatePublicFeedCache, setCachedList, setCachedItem, getCachedItem, getCachedList, setCachedItemsBatch, invalidateLibraryCache } from '../utils/generationCache';
+import { deleteGenerationFiles, deleteFiles, extractKeyFromUrl } from "../utils/storage/zataDelete";
+import { getCachedItem, setCachedItem, getCachedList, setCachedList, invalidateLibraryCache } from "../utils/generationCache";
 import {
   GenerationStatus,
   CreateGenerationPayload,
@@ -20,45 +20,6 @@ import { syncToMirror } from "../utils/mirrorHelper";
 import { ApiError } from "../utils/errorHandler";
 import { normalizeGenerationType } from "../utils/normalizeGenerationType";
 import { mapModeToGenerationTypes, normalizeMode } from "../utils/modeTypeMap";
-
-async function deleteGenerationFiles(item: GenerationHistoryItem) {
-  const images = Array.isArray(item.images) ? item.images : [];
-  const videos = Array.isArray(item.videos) ? item.videos : [];
-  const audios = Array.isArray(item.audios) ? item.audios : [];
-
-  const keysToDelete: string[] = [];
-
-  for (const img of images) {
-    if (img.url) keysToDelete.push(extractKeyFromUrl(img.url) || img.url);
-    if (img.originalUrl) keysToDelete.push(extractKeyFromUrl(img.originalUrl) || img.originalUrl);
-    if (img.avifUrl) keysToDelete.push(extractKeyFromUrl(img.avifUrl) || img.avifUrl);
-    if ((img as any).webpUrl) keysToDelete.push(extractKeyFromUrl((img as any).webpUrl) || (img as any).webpUrl);
-    if (img.thumbnailUrl) keysToDelete.push(extractKeyFromUrl(img.thumbnailUrl) || img.thumbnailUrl);
-    if (img.storagePath) keysToDelete.push(img.storagePath);
-  }
-
-  for (const vid of videos) {
-    if (vid.url) keysToDelete.push(extractKeyFromUrl(vid.url) || vid.url);
-    if (vid.thumbUrl) keysToDelete.push(extractKeyFromUrl(vid.thumbUrl) || vid.thumbUrl);
-    if (vid.originalUrl) keysToDelete.push(extractKeyFromUrl(vid.originalUrl) || vid.originalUrl);
-    if (vid.storagePath) keysToDelete.push(vid.storagePath);
-  }
-
-  for (const aud of audios) {
-    if (aud.url) keysToDelete.push(extractKeyFromUrl(aud.url) || aud.url);
-    if (aud.originalUrl) keysToDelete.push(extractKeyFromUrl(aud.originalUrl) || aud.originalUrl);
-    if (aud.storagePath) keysToDelete.push(aud.storagePath);
-  }
-
-  // Filter valid keys (simple heuristic) and unique
-  const cleanKeys = keysToDelete.filter(k => k && k.length > 5);
-  const uniqueKeys = [...new Set(cleanKeys)];
-
-  if (uniqueKeys.length > 0) {
-    console.log(`[deleteGenerationFiles] Deleting ${uniqueKeys.length} files for history ${item.id}`);
-    await deleteFiles(uniqueKeys);
-  }
-}
 
 export async function startGeneration(
   uid: string,
@@ -544,125 +505,97 @@ export async function listUserGenerations(
   return response;
 }
 
-/*
- * Soft delete a generation history item
- * If imageId or storagePath is provided, only that image is removed from the item.
- * If the item becomes empty after removal, the item itself is soft-deleted.
- * If no imageId/storagePath is provided (or item is empty), the entire item is soft-deleted.
- */
-
-export async function softDelete(uid: string, historyId: string, imageId?: string, storagePath?: string): Promise<{ item: GenerationHistoryItem }> {
-  const item = await generationHistoryRepository.get(uid, historyId);
-
-
-  if (!item) {
-    throw new ApiError('Generation not found', 404);
+export async function softDelete(uid: string, historyId: string, imageId?: string): Promise<{ item: GenerationHistoryItem }> {
+  console.log('[softDelete] ========== STARTING DELETION ==========');
+  console.log('[softDelete] Request:', { uid, historyId, imageId, timestamp: new Date().toISOString() });
+  
+  // 1. Fetch existing item
+  const existing = await generationHistoryRepository.get(uid, historyId);
+  if (!existing) {
+    console.error('[softDelete] ❌ History item not found:', { uid, historyId });
+    throw new ApiError('History item not found', 404);
   }
 
-  if (item.uid !== uid) {
-    throw new ApiError('Unauthorized to delete this generation', 403);
-  }
+  // === SINGLE IMAGE DELETION LOGIC ===
+  if (imageId) {
+    const images = Array.isArray(existing.images) ? existing.images : [];
+    const imageIndex = images.findIndex((img: any) => img.id === imageId);
 
-  // Helper to check match
-  const isMatch = (img: any) => {
-    if (imageId && img.id === imageId) return true;
-    if (storagePath) {
-      if (img.storagePath === storagePath) return true;
-    }
-    return false;
-  };
+    if (imageIndex !== -1) {
+      const imageToDelete = images[imageIndex];
+      const newImages = images.filter((_, idx) => idx !== imageIndex);
 
-  // If imageId or storagePath is provided, try to delete single image
-  if (imageId || storagePath) {
-    // Find the image(s) to remove
-    const imagesToDelete = (item.images || []).filter(isMatch);
-    const imagesToKeep = (item.images || []).filter((img: any) => !isMatch(img));
+      // Check if generation becomes empty (no images, no videos, no audios)
+      const hasVideos = Array.isArray(existing.videos) && existing.videos.length > 0;
+      const hasAudios = Array.isArray(existing.audios) && existing.audios.length > 0;
 
-    if (imagesToDelete.length > 0) {
-      // Queue deletion for specific files
-      for (const img of imagesToDelete) {
-        // We need to extract keys for ALL variants of this image
-        const keysToDelete: string[] = [];
-        if (img.url) keysToDelete.push(extractKeyFromUrl(img.url) || img.url);
-        if (img.originalUrl) keysToDelete.push(extractKeyFromUrl(img.originalUrl) || img.originalUrl);
-        if (img.avifUrl) keysToDelete.push(extractKeyFromUrl(img.avifUrl) || img.avifUrl);
-        if ((img as any).webpUrl) keysToDelete.push(extractKeyFromUrl((img as any).webpUrl) || (img as any).webpUrl);
-        if (img.thumbnailUrl) keysToDelete.push(extractKeyFromUrl(img.thumbnailUrl) || img.thumbnailUrl);
-        if (img.storagePath) keysToDelete.push(img.storagePath);
-
-        // Clean and deduplicate keys
-        const cleanKeys = keysToDelete.filter(k => k && k.length > 5); // Basic sanity check
-        const uniqueKeys = [...new Set(cleanKeys)];
-
-        if (uniqueKeys.length > 0) {
-          console.log(`[Service] Deleting single image files:`, uniqueKeys);
-          await deleteFiles(uniqueKeys);
-        }
-      }
-
-      // Update item with remaining images
-      item.images = imagesToKeep;
-
-      // If no images left, default to full delete logic below
-      if (item.images.length === 0) {
-        // Fallthrough to full delete
+      if (newImages.length === 0 && !hasVideos && !hasAudios) {
+        // Proceed to full delete
+        console.log('[softDelete] Generation became empty after removing image, performing full delete');
       } else {
-        // Update and return
-        await generationHistoryRepository.update(uid, historyId, { images: item.images });
+        // Update generation with removed image
+        console.log('[softDelete] Removing single image:', imageId);
 
-        // Invalidate caches
-        await invalidateItem(uid, historyId);
-        await invalidateUserLists(uid);
-
-        // Check public status and invalidate if needed
-        if (item.isPublic) {
-          await generationsMirrorRepository.updateFromHistory(uid, historyId, { images: item.images }); // Update mirror with fewer images
-          await invalidatePublicFeedCache();
+        // a. Delete files for this specific image (background)
+        const keysToDelete: string[] = [];
+        if (imageToDelete.url) { const k = extractKeyFromUrl(imageToDelete.url); if (k) keysToDelete.push(k); }
+        if (imageToDelete.avifUrl) { const k = extractKeyFromUrl(imageToDelete.avifUrl); if (k) keysToDelete.push(k); }
+        if ((imageToDelete as any).webpUrl) { const k = extractKeyFromUrl((imageToDelete as any).webpUrl); if (k) keysToDelete.push(k); }
+        if (imageToDelete.thumbnailUrl) { const k = extractKeyFromUrl(imageToDelete.thumbnailUrl); if (k) keysToDelete.push(k); }
+        if (imageToDelete.storagePath) { keysToDelete.push(imageToDelete.storagePath); }
+        
+        if (keysToDelete.length > 0) {
+          console.log('[softDelete] Deleting files for single image:', keysToDelete.length);
+          // Fire and forget deletion
+          deleteFiles(keysToDelete).catch(err => console.error('[softDelete] Failed to delete single image files:', err));
         }
 
-        return { item };
+        // b. Update in DB (using update service to handle cache/mirror/normalization)
+        // Pass images: newImages. The update service will handle isPublic logic.
+        const updateResult = await update(uid, historyId, { images: newImages });
+        
+        console.log('[softDelete] Single image removed successfully');
+        return updateResult;
       }
     } else {
-        // Not found, check if generation is empty already
-        if ((!item.images || item.images.length === 0)) {
-            // Fallthrough to full delete
-        } else {
-             // Request was for specific image but not found, and generation has other images.
-             // Do nothing / return existing.
-             return { item };
-        }
+      console.warn('[softDelete] Image ID not found in generation, treating as success (idempotent)', imageId);
+      return { item: existing };
     }
   }
 
-  // === FULL GENERATION DELETION LOGIC ===
-  const generationType = item.generationType || 'unknown';
-  const hasImages = Array.isArray(item.images) && item.images.length > 0;
-  const hasVideos = Array.isArray(item.videos) && item.videos.length > 0;
-  const hasAudios = Array.isArray(item.audios) && item.audios.length > 0;
+  // === FULL GENERATION DELETION LOGIC (Existing) ===
   
-  const imageCount = hasImages ? item.images!.length : 0;
-  const videoCount = hasVideos ? item.videos!.length : 0;
-  const audioCount = hasAudios ? item.audios!.length : 0;
-
+  const generationType = existing.generationType || 'unknown';
+  const hasImages = Array.isArray(existing.images) && existing.images.length > 0;
+  // ... (rest of function)
+  const hasVideos = Array.isArray(existing.videos) && existing.videos.length > 0;
+  const hasAudios = Array.isArray(existing.audios) && existing.audios.length > 0;
+  const imageCount = hasImages ? existing.images!.length : 0;
+  const videoCount = hasVideos ? existing.videos!.length : 0;
+  const audioCount = hasAudios ? existing.audios!.length : 0;
+  
   console.log('[softDelete] Item details:', {
     historyId,
     uid,
     generationType,
-    isPublic: item.isPublic,
-    isDeleted: item.isDeleted,
+    isPublic: existing.isPublic,
+    isDeleted: existing.isDeleted,
     hasImages,
     imageCount,
     hasVideos,
     videoCount,
     hasAudios,
     audioCount,
-    status: item.status,
+    status: existing.status,
   });
-
+  
   // CRITICAL: Delete from public mirror FIRST and IMMEDIATELY (synchronous)
+  // This ensures the item disappears from ArtStation instantly, before Zata deletion
+  // We use Firebase Admin DB directly for instant deletion
   console.log('[softDelete] Step 1: INSTANTLY deleting from public mirror repository (Firebase Admin DB)...');
   let mirrorDeleteSuccess = false;
   try {
+    // Delete directly from mirror using Firebase Admin DB - this is INSTANT and SYNCHRONOUS
     await generationsMirrorRepository.remove(historyId);
     mirrorDeleteSuccess = true;
     console.log('[softDelete] ✅ Step 1: Successfully deleted from public mirror repository (INSTANT)');
@@ -671,9 +604,10 @@ export async function softDelete(uid: string, historyId: string, imageId?: strin
       error: e?.message || e,
       stack: e?.stack,
     });
+    // Continue even if mirror deletion fails - we'll try again below
   }
-
-  // Enqueue backup removal
+  
+  // Also enqueue a remove task as backup to ensure it's removed even if there are pending updates
   try {
     const { mirrorQueueRepository } = await import('../repository/mirrorQueueRepository');
     await mirrorQueueRepository.enqueueRemove({ historyId });
@@ -681,36 +615,33 @@ export async function softDelete(uid: string, historyId: string, imageId?: strin
   } catch (queueErr: any) {
     console.warn('[softDelete] ⚠️ Step 1a: Failed to enqueue remove task (non-critical):', queueErr?.message || queueErr);
   }
-
+  
   // 2. Invalidate cache immediately after mirror deletion
   console.log('[softDelete] Step 2: Invalidating cache...');
   try {
+    const { invalidateItem, invalidateUserLists, invalidatePublicFeedCache, invalidateLibraryCache } = await import('../utils/generationCache');
     await invalidateItem(uid, historyId);
     await invalidateUserLists(uid);
     await invalidateLibraryCache(uid);
+    // CRITICAL: Invalidate public feed cache so ArtStation reflects deletion immediately
     await invalidatePublicFeedCache();
     console.log('[softDelete] ✅ Step 2: Cache invalidated (including public feed)');
   } catch (e: any) {
     console.warn('[softDelete] ⚠️ Step 2: Cache invalidation failed (non-critical):', e?.message || e);
   }
-
+  
   // 3. Mark as deleted in generationHistory (soft delete)
+  // This happens AFTER mirror deletion to ensure ArtStation updates first
   console.log('[softDelete] Step 3: Marking as deleted in generationHistory...');
-  const updateData: Partial<GenerationHistoryItem> = {
-    isDeleted: true,
-    visibility: Visibility.Private, 
-    updatedAt: new Date().toISOString()
-  };
-
   try {
-    await generationHistoryRepository.update(uid, historyId, updateData as any);
+    await generationHistoryRepository.update(uid, historyId, { isDeleted: true, isPublic: false } as any);
     console.log('[softDelete] ✅ Step 3: Successfully marked as deleted in generationHistory');
   } catch (e: any) {
     console.error('[softDelete] ❌ Step 3: Failed to mark as deleted in generationHistory:', e?.message || e);
     throw new ApiError('Failed to mark item as deleted', 500);
   }
-
-  // 4. Delete files from Zata storage (in background, non-blocking)
+  
+  // 5. Delete files from Zata storage (in background, non-blocking)
   console.log('[softDelete] Step 4: Queuing Zata file deletion (background)...');
   const fileDeletionPromise = (async () => {
     try {
@@ -721,28 +652,46 @@ export async function softDelete(uid: string, historyId: string, imageId?: strin
         audios: audioCount,
         total: imageCount + videoCount + audioCount,
       };
+      console.log('[softDelete][Zata] Files to delete:', fileCounts);
       
-      await deleteGenerationFiles(item);
+      await deleteGenerationFiles(existing);
       console.log('[softDelete][Zata] ✅ Successfully deleted all files from Zata storage');
       return { success: true, fileCounts };
     } catch (e: any) {
       console.error('[softDelete][Zata] ❌ Failed to delete files from Zata:', {
         error: e?.message || e,
+        stack: e?.stack,
       });
       return { success: false, error: e?.message || 'Unknown error' };
     }
   })();
-
+  
+  // Start file deletion in background (don't await)
   setImmediate(() => {
     fileDeletionPromise.catch(err => {
       console.error('[softDelete][Zata] Unhandled error in background deletion:', err);
     });
   });
-
+  
+  console.log('[softDelete] ========== DELETION COMPLETED ==========');
+  console.log('[softDelete] Summary:', {
+    historyId,
+    uid,
+    generationType,
+    mirrorDeleted: mirrorDeleteSuccess,
+    filesQueuedForDeletion: imageCount + videoCount + audioCount,
+    response: {
+      isDeleted: true,
+      isPublic: false,
+    },
+  });
+  
+  // Return the item with isDeleted flag
   return { 
     item: { 
-      ...item, 
-      ...updateData,
+      ...existing, 
+      isDeleted: true, 
+      isPublic: false 
     } 
   };
 }
