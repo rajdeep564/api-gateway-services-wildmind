@@ -339,8 +339,37 @@ export class FrameRenderer {
                 try {
                     let lastProgressTime = Date.now();
 
+                    // Collect all video items for pre-extraction
+                    const videoItems = timeline.tracks
+                        .flatMap(t => t.items)
+                        .filter(i => i.type === 'video' && (i.localPath || i.src));
+
                     for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
                         const currentTime = frameIndex / fps;
+
+                        // Pre-extract upcoming video frames (every 30 frames, look 2 seconds ahead)
+                        if (frameIndex % 30 === 0 && videoItems.length > 0) {
+                            const preExtractItems = videoItems.map(item => {
+                                const videoPath = item.localPath || item.src || '';
+                                const timestamps: number[] = [];
+                                const sourceOffset = item.offset ?? 0;
+
+                                // Look 2 seconds ahead (60 frames at 30fps)
+                                for (let f = frameIndex; f < Math.min(frameIndex + 60, totalFrames); f++) {
+                                    const t = f / fps;
+                                    if (t >= item.start && t < item.start + item.duration) {
+                                        const videoTime = sourceOffset + (t - item.start);
+                                        timestamps.push(videoTime);
+                                    }
+                                }
+                                return { videoPath, timestamps };
+                            }).filter(i => i.timestamps.length > 0);
+
+                            // Pre-extract in background (don't await - fire and forget)
+                            if (preExtractItems.length > 0) {
+                                this.preExtractVideoFrames(preExtractItems, 4).catch(() => { });
+                            }
+                        }
 
                         // Clear canvas
                         this.ctx.fillStyle = '#000000';
@@ -974,6 +1003,9 @@ export class FrameRenderer {
     // Video frame cache - keyed by "videoPath:timestamp"
     private videoFrameCache = new Map<string, Image>();
     private tempFrameDir: string | null = null;
+    // Track which frames are being pre-extracted
+    private frameExtractionQueue = new Set<string>();
+    private preExtractionActive = false;
 
     /**
      * Set temp directory for video frame extraction
@@ -982,6 +1014,59 @@ export class FrameRenderer {
         this.tempFrameDir = dir;
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
+        }
+    }
+
+    /**
+     * Pre-extract upcoming video frames in parallel for faster rendering
+     * Called periodically during export to stay ahead of the render loop
+     */
+    async preExtractVideoFrames(
+        items: { videoPath: string; timestamps: number[] }[],
+        maxConcurrent: number = 4
+    ): Promise<void> {
+        if (this.preExtractionActive || !this.tempFrameDir) return;
+        this.preExtractionActive = true;
+
+        try {
+            const allTasks: { videoPath: string; timestamp: number }[] = [];
+
+            for (const item of items) {
+                for (const timestamp of item.timestamps) {
+                    const frameKey = `${item.videoPath}:${timestamp.toFixed(2)}`;
+                    // Skip if already cached or being extracted
+                    if (this.videoFrameCache.has(frameKey) || this.frameExtractionQueue.has(frameKey)) {
+                        continue;
+                    }
+                    allTasks.push({ videoPath: item.videoPath, timestamp });
+                    this.frameExtractionQueue.add(frameKey);
+                }
+            }
+
+            // Process in batches
+            for (let i = 0; i < allTasks.length; i += maxConcurrent) {
+                const batch = allTasks.slice(i, i + maxConcurrent);
+                await Promise.allSettled(batch.map(async (task) => {
+                    const frameKey = `${task.videoPath}:${task.timestamp.toFixed(2)}`;
+                    const frameHash = Buffer.from(frameKey).toString('base64').replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
+                    const framePath = path.join(this.tempFrameDir!, `vframe_${frameHash}.jpg`);
+
+                    try {
+                        await this.extractFrame(task.videoPath, task.timestamp, framePath);
+                        const img = await loadImage(framePath);
+                        this.videoFrameCache.set(frameKey, img);
+
+                        // Clean up temp file
+                        try { fs.unlinkSync(framePath); } catch (e) { }
+                    } catch (e) {
+                        // Ignore individual frame failures
+                    } finally {
+                        this.frameExtractionQueue.delete(frameKey);
+                    }
+                }));
+            }
+        } finally {
+            this.preExtractionActive = false;
         }
     }
 
@@ -1089,22 +1174,23 @@ export class FrameRenderer {
                 return reject(new Error('FFmpeg binary not found'));
             }
 
-            // Optimized frame extraction:
-            // - Use faster seeking with -noaccurate_seek for approximate seeking
-            // - Limit output size for very high-res videos to reduce memory
-            // - Use lower quality for temp frames (they're just for canvas rendering)
+            // Optimized frame extraction for JPEG output:
+            // - Use faster seeking with -noaccurate_seek
+            // - Use yuvj420p (full range YUV) which is compatible with JPEG
+            // - -update 1 ensures single frame output works correctly
             const args = [
                 '-ss', String(Math.max(0, timestamp)),
                 '-noaccurate_seek', // Faster seeking (acceptable for video frames)
                 '-i', videoPath,
                 '-vframes', '1',
-                '-q:v', '5', // Lower quality for temp frames (faster)
+                '-update', '1', // Ensures single frame output works
+                '-q:v', '3', // Good quality for accurate rendering
                 '-y',
                 outputPath
             ];
 
             // Kill FFmpeg faster if it hangs
-            const ffmpeg = spawn(ffmpegPath, args, { timeout: 10000 }); // 10 second timeout
+            const ffmpeg = spawn(ffmpegPath, args, { timeout: 15000 }); // 15 second timeout
             let stderr = '';
 
             ffmpeg.stderr.on('data', (data) => {
@@ -1112,8 +1198,19 @@ export class FrameRenderer {
             });
 
             ffmpeg.on('close', (code) => {
-                if (code === 0 && fs.existsSync(outputPath)) {
-                    resolve();
+                // Check if output file exists regardless of exit code
+                // FFmpeg sometimes returns non-zero but still creates the file
+                if (fs.existsSync(outputPath)) {
+                    const stats = fs.statSync(outputPath);
+                    if (stats.size > 0) {
+                        resolve();
+                        return;
+                    }
+                }
+
+                if (code === 0) {
+                    // Code 0 but no file - this is an error
+                    reject(new Error(`FFmpeg frame extraction failed: output file not created. ${stderr.slice(-200)}`));
                 } else {
                     reject(new Error(`FFmpeg frame extraction failed (code ${code}): ${stderr.slice(-200)}`));
                 }

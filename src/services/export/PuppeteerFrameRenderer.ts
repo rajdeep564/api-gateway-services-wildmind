@@ -8,8 +8,10 @@ import puppeteer, { Browser, Page } from 'puppeteer';
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as http from 'http';
+import express from 'express';
 import ffmpegPath from 'ffmpeg-static';
-import type { TimelineData, ExportSettings } from '../../types/videoExport';
+import type { TimelineData, ExportSettings, TimelineItemData } from '../../types/videoExport';
 
 // Browser pool for reuse
 let browserPool: Browser[] = [];
@@ -25,6 +27,11 @@ export class PuppeteerFrameRenderer {
     private browser: Browser | null = null;
     private page: Page | null = null;
     private tempFrameDir: string | null = null;
+
+    // Local HTTP server for serving media files (avoids base64 timeout)
+    private mediaServer: http.Server | null = null;
+    private mediaServerPort: number = 0;
+    private exportDir: string = '';
 
     constructor(width: number, height: number) {
         this.width = width;
@@ -54,6 +61,8 @@ export class PuppeteerFrameRenderer {
 
         const browser = await puppeteer.launch({
             headless: true,
+            // Increase protocol timeout for slow 4K screenshot operations
+            protocolTimeout: 300000, // 5 minutes for 4K screenshots
             args: [
                 // GPU Acceleration
                 '--enable-gpu',
@@ -115,7 +124,73 @@ export class PuppeteerFrameRenderer {
     }
 
     /**
-     * Convert local file to base64 data URL
+     * Start local HTTP server to serve media files
+     * This avoids base64 embedding which causes timeout for large videos
+     */
+    private async startMediaServer(exportDir: string): Promise<number> {
+        this.exportDir = exportDir;
+
+        const app = express();
+
+        // Serve all files from the export directory with CORS enabled
+        app.use('/media', (req, res, next) => {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET');
+            res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+            res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+            next();
+        }, express.static(exportDir, {
+            setHeaders: (res, filePath) => {
+                const ext = path.extname(filePath).toLowerCase();
+                // Set correct MIME types
+                if (ext === '.mp4') res.setHeader('Content-Type', 'video/mp4');
+                else if (ext === '.webm') res.setHeader('Content-Type', 'video/webm');
+                else if (ext === '.mov') res.setHeader('Content-Type', 'video/quicktime');
+                else if (ext === '.png') res.setHeader('Content-Type', 'image/png');
+                else if (ext === '.jpg' || ext === '.jpeg') res.setHeader('Content-Type', 'image/jpeg');
+                else if (ext === '.gif') res.setHeader('Content-Type', 'image/gif');
+                else if (ext === '.webp') res.setHeader('Content-Type', 'image/webp');
+            }
+        }));
+
+        return new Promise((resolve, reject) => {
+            // Use port 0 to get a random available port
+            this.mediaServer = app.listen(0, '127.0.0.1', () => {
+                const addr = this.mediaServer!.address();
+                if (addr && typeof addr === 'object') {
+                    this.mediaServerPort = addr.port;
+                    console.log(`[PuppeteerFrameRenderer] 📦 Media server started on port ${this.mediaServerPort}`);
+                    resolve(this.mediaServerPort);
+                } else {
+                    reject(new Error('Failed to get media server port'));
+                }
+            });
+
+            this.mediaServer.on('error', (err) => {
+                console.error('[PuppeteerFrameRenderer] Media server error:', err);
+                reject(err);
+            });
+        });
+    }
+
+    /**
+     * Stop the local media server
+     */
+    private async stopMediaServer(): Promise<void> {
+        if (this.mediaServer) {
+            return new Promise((resolve) => {
+                this.mediaServer!.close(() => {
+                    console.log('[PuppeteerFrameRenderer] 📦 Media server stopped');
+                    this.mediaServer = null;
+                    this.mediaServerPort = 0;
+                    resolve();
+                });
+            });
+        }
+    }
+
+    /**
+     * Convert local file to base64 data URL (fallback for small files)
      */
     private fileToBase64(filePath: string): string {
         try {
@@ -141,19 +216,42 @@ export class PuppeteerFrameRenderer {
     }
 
     /**
-     * Preprocess timeline to convert local paths to base64 data URLs
+     * Preprocess timeline to use HTTP URLs for media files
+     * Uses local HTTP server instead of base64 to avoid timeout on large files
      */
     private preprocessTimeline(timeline: TimelineData): TimelineData {
         const processedTimeline = JSON.parse(JSON.stringify(timeline)) as TimelineData;
 
+        // Size threshold for base64 (10MB) - larger files use HTTP
+        const BASE64_SIZE_THRESHOLD = 10 * 1024 * 1024;
+
         for (const track of processedTimeline.tracks) {
             for (const item of track.items) {
-                // Convert local paths to base64
+                // Convert local paths to HTTP URLs (or base64 for small files)
                 if (item.localPath && (item.type === 'image' || item.type === 'video')) {
-                    const base64 = this.fileToBase64(item.localPath);
-                    if (base64) {
-                        console.log(`[PuppeteerFrameRenderer] 🔄 Converted to base64: ${item.name}`);
-                        item.dataUrl = base64;
+                    try {
+                        const stats = fs.statSync(item.localPath);
+                        const filename = path.basename(item.localPath);
+
+                        if (stats.size > BASE64_SIZE_THRESHOLD && this.mediaServerPort > 0) {
+                            // Large file: use HTTP URL from local server
+                            (item as any).httpUrl = `http://127.0.0.1:${this.mediaServerPort}/media/${filename}`;
+                            console.log(`[PuppeteerFrameRenderer] 🌐 Using HTTP URL for large file: ${item.name} (${(stats.size / 1024 / 1024).toFixed(1)}MB)`);
+                        } else {
+                            // Small file: use base64 (faster for small files)
+                            const base64 = this.fileToBase64(item.localPath);
+                            if (base64) {
+                                console.log(`[PuppeteerFrameRenderer] 🔄 Converted to base64: ${item.name} (${(stats.size / 1024 / 1024).toFixed(1)}MB)`);
+                                item.dataUrl = base64;
+                            }
+                        }
+                    } catch (e) {
+                        // Fallback to base64 on error
+                        const base64 = this.fileToBase64(item.localPath);
+                        if (base64) {
+                            console.log(`[PuppeteerFrameRenderer] 🔄 Fallback to base64: ${item.name}`);
+                            item.dataUrl = base64;
+                        }
                     }
                 }
             }
@@ -252,8 +350,8 @@ export class PuppeteerFrameRenderer {
             for (const track of timeline.tracks) {
                 for (const item of track.items) {
                     if (item.type === 'video' || item.type === 'image') {
-                        // Priority: dataUrl (base64) > localPath > src
-                        const src = item.dataUrl || item.localPath || item.src;
+                        // Priority: httpUrl (local server) > dataUrl (base64) > localPath > src
+                        const src = item.httpUrl || item.dataUrl || item.localPath || item.src;
                         if (!src || mediaCache.has(item.id)) continue;
                         
                         const promise = new Promise((resolve, reject) => {
@@ -1048,19 +1146,48 @@ export class PuppeteerFrameRenderer {
                     const mediaEl = mediaCache.get(item.id);
                     
                     if (mediaEl) {
-                        const clone = mediaEl.cloneNode(true);
-                        clone.style.width = '100%';
-                        clone.style.height = '100%';
-                        clone.style.objectFit = item.fit || 'cover';
-                        
                         if (item.type === 'video') {
-                            // Seek video to correct time
+                            // For video: seek to target time and capture frame to canvas
                             const videoTime = (item.offset || 0) + (currentTime - item.start) * (item.speed || 1);
-                            clone.currentTime = Math.max(0, Math.min(videoTime, clone.duration || 999));
-                            clone.muted = true;
+                            const targetTime = Math.max(0, Math.min(videoTime, mediaEl.duration || 999));
+                            
+                            // Only seek if needed
+                            if (Math.abs(mediaEl.currentTime - targetTime) > 0.01) {
+                                mediaEl.currentTime = targetTime;
+                                // Wait for seeked event
+                                await new Promise((resolve) => {
+                                    const onSeeked = () => {
+                                        mediaEl.removeEventListener('seeked', onSeeked);
+                                        resolve();
+                                    };
+                                    mediaEl.addEventListener('seeked', onSeeked);
+                                    // Timeout fallback
+                                    setTimeout(resolve, 100);
+                                });
+                            }
+                            
+                            // Draw video frame to canvas
+                            const canvas = document.createElement('canvas');
+                            canvas.width = mediaEl.videoWidth || 1920;
+                            canvas.height = mediaEl.videoHeight || 1080;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(mediaEl, 0, 0, canvas.width, canvas.height);
+                            
+                            // Use canvas as image
+                            const img = document.createElement('img');
+                            img.src = canvas.toDataURL('image/jpeg', 0.9);
+                            img.style.width = '100%';
+                            img.style.height = '100%';
+                            img.style.objectFit = item.fit || 'cover';
+                            div.appendChild(img);
+                        } else {
+                            // For images: just clone
+                            const clone = mediaEl.cloneNode(true);
+                            clone.style.width = '100%';
+                            clone.style.height = '100%';
+                            clone.style.objectFit = item.fit || 'cover';
+                            div.appendChild(clone);
                         }
-                        
-                        div.appendChild(clone);
                     }
                 } else if (item.type === 'text') {
                     div.className += ' text-item';
@@ -1164,6 +1291,22 @@ export class PuppeteerFrameRenderer {
         }
 
         try {
+            // Start local HTTP server to serve large media files
+            // This avoids base64 embedding timeout for videos/images > 10MB
+            await this.startMediaServer(tempDir);
+
+            // Generate render page HTML (AFTER server starts so it has the port)
+            const html = this.generateRenderPage(timeline, settings);
+
+            // Debug: save HTML to file for inspection
+            const debugHtmlPath = path.join(this.tempFrameDir || '/tmp', 'debug_render_page.html');
+            try {
+                fs.writeFileSync(debugHtmlPath, html);
+                console.log(`[PuppeteerFrameRenderer] 🔍 Debug HTML saved to: ${debugHtmlPath}`);
+            } catch (e) {
+                // Ignore save error
+            }
+
             // Get browser
             this.browser = await this.getBrowser();
             this.page = await this.browser.newPage();
@@ -1188,22 +1331,9 @@ export class PuppeteerFrameRenderer {
                 deviceScaleFactor: 1,
             });
 
-            // Generate and load render page
-            const html = this.generateRenderPage(timeline, settings);
-
-            // Debug: save HTML to file for inspection
-            const fs = require('fs');
-            const path = require('path');
-            const debugHtmlPath = path.join(this.tempFrameDir || '/tmp', 'debug_render_page.html');
-            try {
-                fs.writeFileSync(debugHtmlPath, html);
-                console.log(`[PuppeteerFrameRenderer] 🔍 Debug HTML saved to: ${debugHtmlPath}`);
-            } catch (e) {
-                // Ignore save error
-            }
-
-            // Page load timeout - 2 minutes for 4K exports with many base64 images
-            const pageTimeout = isHighRes ? 120000 : 60000;
+            // Page load timeout - reduced since we're not embedding large base64 anymore
+            // Still give extra time for 4K to allow fonts/external resources to load
+            const pageTimeout = isHighRes ? 60000 : 30000;
             await this.page.setContent(html, { waitUntil: 'networkidle0', timeout: pageTimeout });
 
             // Preload media
@@ -1290,6 +1420,9 @@ export class PuppeteerFrameRenderer {
                         console.warn('[PuppeteerFrameRenderer] Cleanup warning:', e);
                     }
 
+                    // Stop media server
+                    await this.stopMediaServer();
+
                     // Close page and return browser to pool
                     if (this.page) {
                         await this.page.close();
@@ -1343,26 +1476,39 @@ export class PuppeteerFrameRenderer {
                         // Store HTML for page refresh
                         const html = this.generateRenderPage(timeline, settings);
 
+                        // Check if timeline has videos (need extra wait for seeking)
+                        const hasVideos = timeline.tracks.some(t => t.items.some(i => i.type === 'video'));
+
                         for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
                             const currentTime = frameIndex / fps;
 
-                            // Render frame in Puppeteer
-                            await this.page!.evaluate((time) => window.renderFrame(time), currentTime);
+                            try {
+                                // Render frame in Puppeteer
+                                await this.page!.evaluate((time) => window.renderFrame(time), currentTime);
 
-                            // Wait a tiny bit for any transitions/animations
-                            await new Promise(resolve => setTimeout(resolve, 8));
+                                // Brief wait for video frames to seek (videos need time to decode)
+                                if (hasVideos) {
+                                    await new Promise(resolve => setTimeout(resolve, 5));
+                                }
 
-                            // Take screenshot with resolution-aware quality
-                            const screenshot = await this.page!.screenshot({
-                                type: 'jpeg',
-                                quality: screenshotQuality,
-                                encoding: 'binary',
-                            });
+                                // Take screenshot - optimized settings for speed and reliability
+                                const screenshot = await this.page!.screenshot({
+                                    type: 'jpeg',
+                                    quality: screenshotQuality,
+                                    encoding: 'binary',
+                                    captureBeyondViewport: false, // Only capture viewport (faster)
+                                    fromSurface: true, // Capture from surface (GPU accelerated)
+                                });
 
-                            // Write to FFmpeg with backpressure handling
-                            const canWrite = ffmpeg.stdin.write(screenshot);
-                            if (!canWrite) {
-                                await new Promise<void>(resolve => ffmpeg.stdin.once('drain', resolve));
+                                // Write to FFmpeg with backpressure handling
+                                const canWrite = ffmpeg.stdin.write(screenshot);
+                                if (!canWrite) {
+                                    await new Promise<void>(resolve => ffmpeg.stdin.once('drain', resolve));
+                                }
+                            } catch (frameError) {
+                                console.error(`[PuppeteerFrameRenderer] ⚠️ Frame ${frameIndex} error:`, frameError);
+                                // Continue with next frame rather than failing completely
+                                continue;
                             }
 
                             // Progress
@@ -1477,6 +1623,7 @@ export class PuppeteerFrameRenderer {
 
         } catch (error) {
             // Cleanup on error
+            await this.stopMediaServer();
             if (this.page) {
                 await this.page.close();
                 this.page = null;
