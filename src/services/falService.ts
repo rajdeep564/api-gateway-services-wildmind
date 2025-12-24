@@ -271,13 +271,50 @@ async function generate(
     
     // For nano-banana-pro, also persist image_urls from payload if provided
     if (isNanoBananaPro && payloadImageUrls.length > 0) {
-      for (const url of payloadImageUrls) {
-        if (!url || typeof url !== 'string') continue;
+      for (const src of payloadImageUrls) {
+        if (!src || typeof src !== 'string') continue;
+        
         // Check if already persisted (avoid duplicates)
-        const alreadyPersisted = inputPersisted.some(img => img.url === url || img.originalUrl === url);
-        if (!alreadyPersisted) {
-          inputPersisted.push({ id: `in-${++idx}`, url, originalUrl: url });
-          publicImageUrls.push(url);
+        const alreadyPersisted = inputPersisted.some(img => img.url === src || img.originalUrl === src);
+        if (alreadyPersisted) continue;
+
+        try {
+          // Upload to Zata to ensure we have a public URL (FAL cannot access /api/proxy/...)
+          let stored: any;
+          const isDataUri = /^data:/i.test(src);
+          const isBlobUrl = src.startsWith('blob:');
+          
+          if (isDataUri) {
+             const base64Match = /^data:([^;]+);base64,(.+)$/.exec(src);
+             if (base64Match && base64Match[2]) {
+                stored = await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` });
+             } else {
+                continue; 
+             }
+          } else if (isBlobUrl) {
+             throw new ApiError('Blob URLs are not supported. Please convert to data URI or public URL first.', 400);
+          } else {
+             // Regular URL - upload to Zata (handles Zata URLs via S3 AND proxy URLs)
+             // This is CRTIICAL: /api/proxy URLs must be fetched and uploaded to Zata
+             stored = await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+          }
+          
+          if (stored && stored.publicUrl) {
+            inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: stored.originalUrl || src });
+            publicImageUrls.push(stored.publicUrl);
+            console.log('[falService] ✅ Successfully processed Nano Banana image_url:', { 
+              original: src.substring(0, 50) + '...', 
+              publicUrl: stored.publicUrl.substring(0, 50) + '...' 
+            });
+          }
+        } catch (error: any) {
+          console.error('[falService] ❌ Failed to process Nano Banana image_url:', {
+             src: src.substring(0, 50) + '...',
+             error: error?.message
+          });
+          // Fallback: push original if upload fails (though likely to fail at FAL too if it's a proxy URL)
+          inputPersisted.push({ id: `in-${++idx}`, url: src, originalUrl: src });
+          publicImageUrls.push(src);
         }
       }
     }
