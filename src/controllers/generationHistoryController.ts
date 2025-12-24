@@ -63,6 +63,15 @@ async function listMine(req: Request, res: Response, next: NextFunction) {
 		const uid = (req as any).uid;
 		const { limit = 20, cursor, nextCursor, status, generationType, sortBy, sortOrder, sort, mode, dateStart, dateEnd, search, debug } = req.query as any;
 		const normalizedMode = normalizeMode(mode);
+
+		// Backward compatibility: some clients still send a numeric timestamp cursor under `cursor`.
+		// The optimized repository path expects this under `nextCursor` and `cursor` is reserved for legacy doc-id cursors.
+		let legacyCursor: string | undefined = cursor ? String(cursor) : undefined;
+		let effectiveNextCursor: string | undefined = nextCursor ? String(nextCursor) : undefined;
+		if (!effectiveNextCursor && legacyCursor && /^\d+$/.test(legacyCursor)) {
+			effectiveNextCursor = legacyCursor;
+			legacyCursor = undefined;
+		}
 		
 		// Allow explicit generationType override, otherwise rely on mode down the chain
 		const generationTypeFilter: string | string[] | undefined = generationType;
@@ -86,8 +95,8 @@ async function listMine(req: Request, res: Response, next: NextFunction) {
 		const result = await generationHistoryService.listUserGenerations(uid, { 
 			limit: Number(limit),
 			// Legacy cursor only if explicitly provided (kept for backward compatibility)
-			cursor: cursor || undefined,
-			nextCursor: nextCursor || undefined,
+			cursor: legacyCursor || undefined,
+			nextCursor: effectiveNextCursor || undefined,
 			status, 
 			generationType: generationTypeFilter as any,
 			// Pass sortBy/sortOrder only if they were explicitly included to avoid disabling optimized path
