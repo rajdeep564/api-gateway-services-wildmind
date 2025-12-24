@@ -102,45 +102,45 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
 // Strong preflight guard + always-set CORS headers (defensive against proxies/edges)
-const allowOrigin = (origin?: string) => {
-  if (!origin) return false;
-  try {
-    if (allowedOrigins.includes(origin)) return true;
-    // Allow production domain and all its subdomains
-    const originUrl = new URL(origin);
-    const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
-    const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
-    if (prodDomain && (originUrl.hostname === prodWwwDomain || 
-        originUrl.hostname === prodDomain ||
-        originUrl.hostname.endsWith(`.${prodDomain}`))) {
-      return true;
-    }
-    if (env.frontendOrigin) {
-      const allowHost = new URL(env.frontendOrigin).hostname;
-      const reqHost = originUrl.hostname;
-      if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) return true;
-    }
-  } catch {}
-  return false;
-};
+// const allowOrigin = (origin?: string) => {
+//   if (!origin) return false;
+//   try {
+//     if (allowedOrigins.includes(origin)) return true;
+//     // Allow production domain and all its subdomains
+//     const originUrl = new URL(origin);
+//     const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
+//     const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
+//     if (prodDomain && (originUrl.hostname === prodWwwDomain || 
+//         originUrl.hostname === prodDomain ||
+//         originUrl.hostname.endsWith(`.${prodDomain}`))) {
+//       return true;
+//     }
+//     if (env.frontendOrigin) {
+//       const allowHost = new URL(env.frontendOrigin).hostname;
+//       const reqHost = originUrl.hostname;
+//       if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) return true;
+//     }
+//   } catch {}
+//   return false;
+// };
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin as string | undefined;
-  if (allowOrigin(origin)) {
-    res.header('Access-Control-Allow-Origin', origin as string);
-    res.header('Vary', 'Origin');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD');
-    res.header(
-      'Access-Control-Allow-Headers',
-      'Content-Type, Authorization, X-Requested-With, X-Request-Id, X-Device-Id, X-Device-Name, X-Device-Info, ngrok-skip-browser-warning, Range, Cache-Control, Pragma, Expires'
-    );
-  }
-  if (req.method === 'OPTIONS') {
-    return res.status(204).end();
-  }
-  return next();
-});
+// app.use((req, res, next) => {
+//   const origin = req.headers.origin as string | undefined;
+//   if (allowOrigin(origin)) {
+//     res.header('Access-Control-Allow-Origin', origin as string);
+//     res.header('Vary', 'Origin');
+//     res.header('Access-Control-Allow-Credentials', 'true');
+//     res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD');
+//     res.header(
+//       'Access-Control-Allow-Headers',
+//       'Content-Type, Authorization, X-Requested-With, X-Request-Id, X-Device-Id, X-Device-Name, X-Device-Info, ngrok-skip-browser-warning, Range, Cache-Control, Pragma, Expires'
+//     );
+//   }
+//   if (req.method === 'OPTIONS') {
+//     return res.status(204).end();
+//   }
+//   return next();
+// });
 
 // ============================================================================
 // SECURITY LAYER - Applied in this order for defense-in-depth
