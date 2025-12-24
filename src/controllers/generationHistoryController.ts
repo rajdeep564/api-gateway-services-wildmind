@@ -119,24 +119,29 @@ async function softDelete(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid;
     const { historyId } = req.params as any;
+    const { imageId } = req.query as any;
     
     console.log('[Controller][softDelete] Request received:', {
       uid,
       historyId,
+      imageId,
       method: req.method,
       path: req.path,
       timestamp: new Date().toISOString(),
     });
     
-    const result = await generationHistoryService.softDelete(uid, historyId);
+    // Pass imageId to service if present
+    const result = await generationHistoryService.softDelete(uid, historyId, imageId);
     
-    const response = formatApiResponse('success', 'Deleted', result);
+    const response = formatApiResponse('success', imageId ? 'Image deleted' : 'Generation deleted', result);
     console.log('[Controller][softDelete] Response:', {
       status: 'success',
       historyId,
+      imageId,
       itemId: result.item?.id,
       isDeleted: result.item?.isDeleted,
       isPublic: result.item?.isPublic,
+      remainingImages: Array.isArray(result.item?.images) ? result.item?.images?.length : 0,
     });
     
     return res.json(response);

@@ -116,6 +116,8 @@ router.get('/resource/:path(*)', async (req: Request, res: Response) => {
     if (!response.headers.get('cache-control')) {
       res.setHeader('Cache-Control', 'public, max-age=31536000');
     }
+    // Always support range requests for media players
+    res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     const origin = req.headers.origin as string | undefined;
@@ -249,6 +251,8 @@ router.get('/media/:path(*)', async (req: Request, res: Response) => {
     if (!response.headers.get('cache-control')) {
       res.setHeader('Cache-Control', 'public, max-age=31536000');
     }
+    // Always support range requests for media players
+    res.setHeader('Accept-Ranges', 'bytes');
     // Avoid NotSameOriginResourcePolicy (CORP) blocking when embedding across origins
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');

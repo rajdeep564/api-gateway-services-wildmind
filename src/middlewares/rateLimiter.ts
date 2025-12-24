@@ -29,6 +29,18 @@ export const globalLimiter = rateLimit({
     })
   }),
   skip: (req) => {
+    // Skip all GET requests (read-only operations like feed, scroll, polling, navigation)
+    if (req.method === 'GET') return true;
+    
+    // Skip specific high-frequency POST endpoints:
+    // 1. Bulk status checks (feed scrolling)
+    // 2. Like/Bookmark toggles (keyboard navigation can trigger these rapidly)
+    if (req.originalUrl) {
+      if (req.originalUrl.includes('/bulk-status')) return true;
+      if (req.originalUrl.includes('/engagement/like')) return true;
+      if (req.originalUrl.includes('/engagement/bookmark')) return true;
+    }
+    
     // Skip WebSocket upgrade requests
     return req.headers.upgrade === 'websocket';
   }
@@ -61,6 +73,11 @@ export const generationLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    // Skip GET requests (e.g. checking status) if applied here
+    if (req.method === 'GET') return true;
+    return false;
+  },
   // Note: Using default keyGenerator which properly handles IPv6
   ...(isRedisEnabled() && {
     store: new RedisStore({
@@ -73,13 +90,28 @@ export const generationLimiter = rateLimit({
 // API endpoints - standard limit
 export const apiLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 100, // 100 requests per minute
+  max: 1000, // INCREASED: 1000 requests per minute
   message: {
     status: 'error',
     message: 'API rate limit exceeded'
   },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    // Skip all GET requests (read-only operations like feed, scroll, polling, navigation)
+    if (req.method === 'GET') return true;
+    
+    // Skip specific high-frequency POST endpoints:
+    // 1. Bulk status checks (feed scrolling)
+    // 2. Like/Bookmark toggles (keyboard navigation can trigger these rapidly)
+    if (req.originalUrl) {
+      if (req.originalUrl.includes('/bulk-status')) return true;
+      if (req.originalUrl.includes('/engagement/like')) return true;
+      if (req.originalUrl.includes('/engagement/bookmark')) return true;
+    }
+
+    return false;
+  },
   // Note: Using default keyGenerator which properly handles IPv6
   ...(isRedisEnabled() && {
     store: new RedisStore({
@@ -89,11 +121,11 @@ export const apiLimiter = rateLimit({
   })
 });
 
-// Polling endpoints - Very high limit (500 req/min) for status checks
-// These are called frequently (every 2-3 seconds) so need generous limits
+// Polling endpoints - Very high limit (5000 req/min) for status checks
+// effectively disabled for polling
 export const pollingLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 500, // 500 requests per minute (allows polling every ~120ms)
+  max: 5000, // INCREASED: 5000 requests per minute
   message: {
     status: 'error',
     message: 'Polling rate limit exceeded'
@@ -108,9 +140,13 @@ export const pollingLimiter = rateLimit({
     })
   }),
   skip: (req) => {
+    // Skip all GET requests (polling is usually GET)
+    if (req.method === 'GET') return true;
     // Skip WebSocket upgrade requests
     return req.headers.upgrade === 'websocket';
   }
 });
+
+
 
 console.log('[Rate Limiter] Initialized with Redis:', isRedisEnabled() ? 'ENABLED' : 'DISABLED (in-memory)');
