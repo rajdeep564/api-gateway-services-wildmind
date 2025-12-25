@@ -189,6 +189,22 @@ export async function computeReplicateNextSceneCost(req: Request): Promise<{ cos
 
   return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: display } };
 }
+
+export async function computeQwenImageEditCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  // Credit distribution uses the short model name (no replicate/ prefix)
+  const display = 'qwen-image-edit-2511';
+
+  const base = findCredits(display);
+  // Default to 80 credits if not found (matches current creditDistribution.ts)
+  const cost = base !== null ? Math.ceil(base) : 80;
+
+  return {
+    cost,
+    pricingVersion: REPLICATE_PRICING_VERSION,
+    meta: { model: display, requestedModel: (req.body as any)?.model },
+  };
+}
+
 export async function computeReplicateVideoCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { model, duration, resolution, firstFrameUrl } = req.body || {};
   const normalized = String(model || '').toLowerCase();
