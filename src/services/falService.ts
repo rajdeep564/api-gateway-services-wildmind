@@ -141,10 +141,10 @@ async function generate(
   let publicImageUrls: string[] = [];
   const isFlux2Pro = modelLower.includes('flux-2-pro');
   const isNanoBananaPro = modelLower.includes('google/nano-banana-pro') || modelLower.includes('nano-banana-pro');
-  
+
   // For nano-banana-pro, also check image_urls from payload
   const payloadImageUrls = isNanoBananaPro && Array.isArray((payload as any).image_urls) ? (payload as any).image_urls : [];
-  
+
   try {
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/${inputFolder}/${historyId}`;
@@ -205,7 +205,7 @@ async function generate(
           // uploadFromUrlToZata now handles Zata URLs by downloading via S3
           const isDataUri = /^data:/i.test(src);
           const isBlobUrl = src.startsWith('blob:');
-          
+
           if (isDataUri) {
             // Validate data URI is complete (not truncated)
             const base64Match = /^data:([^;]+);base64,(.+)$/.exec(src);
@@ -221,7 +221,7 @@ async function generate(
                 400
               );
             }
-            
+
             console.log('[falService] 📤 Uploading data URI to Zata for Seedream 4.5:', {
               dataUriLength: src.length,
               base64DataLength: base64Match[2].length,
@@ -245,8 +245,8 @@ async function generate(
         }
         inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: stored.originalUrl || src });
         publicImageUrls.push(stored.publicUrl);
-        console.log('[falService] ✅ Successfully processed uploaded image:', { 
-          original: src.substring(0, 80) + '...', 
+        console.log('[falService] ✅ Successfully processed uploaded image:', {
+          original: src.substring(0, 80) + '...',
           publicUrl: stored.publicUrl.substring(0, 80) + '...',
           isDataUri: /^data:/i.test(src),
           isBlobUrl: src.startsWith('blob:')
@@ -268,12 +268,12 @@ async function generate(
         // For regular URLs, continue (might be a transient network issue)
       }
     }
-    
+
     // For nano-banana-pro, also persist image_urls from payload if provided
     if (isNanoBananaPro && payloadImageUrls.length > 0) {
       for (const src of payloadImageUrls) {
         if (!src || typeof src !== 'string') continue;
-        
+
         // Check if already persisted (avoid duplicates)
         const alreadyPersisted = inputPersisted.some(img => img.url === src || img.originalUrl === src);
         if (alreadyPersisted) continue;
@@ -283,34 +283,34 @@ async function generate(
           let stored: any;
           const isDataUri = /^data:/i.test(src);
           const isBlobUrl = src.startsWith('blob:');
-          
+
           if (isDataUri) {
-             const base64Match = /^data:([^;]+);base64,(.+)$/.exec(src);
-             if (base64Match && base64Match[2]) {
-                stored = await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` });
-             } else {
-                continue; 
-             }
+            const base64Match = /^data:([^;]+);base64,(.+)$/.exec(src);
+            if (base64Match && base64Match[2]) {
+              stored = await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` });
+            } else {
+              continue;
+            }
           } else if (isBlobUrl) {
-             throw new ApiError('Blob URLs are not supported. Please convert to data URI or public URL first.', 400);
+            throw new ApiError('Blob URLs are not supported. Please convert to data URI or public URL first.', 400);
           } else {
-             // Regular URL - upload to Zata (handles Zata URLs via S3 AND proxy URLs)
-             // This is CRTIICAL: /api/proxy URLs must be fetched and uploaded to Zata
-             stored = await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+            // Regular URL - upload to Zata (handles Zata URLs via S3 AND proxy URLs)
+            // This is CRTIICAL: /api/proxy URLs must be fetched and uploaded to Zata
+            stored = await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
           }
-          
+
           if (stored && stored.publicUrl) {
             inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: stored.originalUrl || src });
             publicImageUrls.push(stored.publicUrl);
-            console.log('[falService] ✅ Successfully processed Nano Banana image_url:', { 
-              original: src.substring(0, 50) + '...', 
-              publicUrl: stored.publicUrl.substring(0, 50) + '...' 
+            console.log('[falService] ✅ Successfully processed Nano Banana image_url:', {
+              original: src.substring(0, 50) + '...',
+              publicUrl: stored.publicUrl.substring(0, 50) + '...'
             });
           }
         } catch (error: any) {
           console.error('[falService] ❌ Failed to process Nano Banana image_url:', {
-             src: src.substring(0, 50) + '...',
-             error: error?.message
+            src: src.substring(0, 50) + '...',
+            error: error?.message
           });
           // Fallback: push original if upload fails (though likely to fail at FAL too if it's a proxy URL)
           inputPersisted.push({ id: `in-${++idx}`, url: src, originalUrl: src });
@@ -318,7 +318,7 @@ async function generate(
         }
       }
     }
-    
+
     if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
   } catch { }
   // Create public generations record for FAL (like BFL)
@@ -348,8 +348,8 @@ async function generate(
     else if (modelLower.includes('fast')) modelEndpoint = 'fal-ai/imagen4/preview/fast';
     else modelEndpoint = 'fal-ai/imagen4/preview'; // standard
   } else if (
-    modelLower.includes('seedream-4.5') || 
-    modelLower.includes('seedream_v45') || 
+    modelLower.includes('seedream-4.5') ||
+    modelLower.includes('seedream_v45') ||
     modelLower.includes('seedreamv45') ||
     (modelLower.includes('seedream') && (modelLower.includes('4.5') || modelLower.includes('v4.5') || modelLower.includes('v45')))
   ) {
@@ -362,7 +362,7 @@ async function generate(
     modelEndpoint = hasImages
       ? 'fal-ai/bytedance/seedream/v4.5/edit'
       : 'fal-ai/bytedance/seedream/v4.5/text-to-image';
-    
+
     // Store flag for later use in queue mode detection
     (payload as any)._isSeedream45 = true;
   } else if (modelLower.includes('seedream')) {
@@ -922,12 +922,12 @@ async function generate(
         const explicitSize = (payload as any).image_size;
         // Check for Seedream 4.5 - handle both 'seedream-4.5' (from backend) and 'seedream 4.5' (from frontend)
         // Use flag from payload if set, otherwise check model name
-        const isSeedream45 = (payload as any)._isSeedream45 || 
+        const isSeedream45 = (payload as any)._isSeedream45 ||
           modelLower.includes('seedream-4.5') ||
           modelLower.includes('seedream_v45') ||
           modelLower.includes('seedreamv45') ||
           (modelLower.includes('seedream') && (modelLower.includes('4.5') || modelLower.includes('v4.5') || modelLower.includes('v45')));
-        
+
         // Store for later use in queue mode detection
         (input as any)._isSeedream45 = isSeedream45;
 
@@ -1049,11 +1049,11 @@ async function generate(
         // Google Nano Banana Pro specific schema mapping
         // prompt is required for T2I, optional for I2I
         if (finalPrompt) input.prompt = finalPrompt;
-        
+
         // num_images (default 1)
         const numImg = (payload as any).num_images || (payload as any).n || 1;
         input.num_images = Math.max(1, Math.min(10, Number(numImg)));
-        
+
         // aspect_ratio (default "auto")
         if ((payload as any).aspect_ratio) {
           input.aspect_ratio = String((payload as any).aspect_ratio);
@@ -1062,36 +1062,36 @@ async function generate(
         } else {
           input.aspect_ratio = 'auto';
         }
-        
+
         // output_format (default "png")
         if ((payload as any).output_format) {
           input.output_format = String((payload as any).output_format);
         } else {
           input.output_format = output_format || 'png';
         }
-        
+
         // sync_mode (boolean, optional)
         if ((payload as any).sync_mode !== undefined) {
           input.sync_mode = Boolean((payload as any).sync_mode);
         }
-        
+
         // resolution (default "1K")
         if ((payload as any).resolution) {
           input.resolution = String((payload as any).resolution);
         } else {
           input.resolution = '1K';
         }
-        
+
         // limit_generations (boolean, optional)
         if ((payload as any).limit_generations !== undefined) {
           input.limit_generations = Boolean((payload as any).limit_generations);
         }
-        
+
         // enable_web_search (boolean, optional)
         if ((payload as any).enable_web_search !== undefined) {
           input.enable_web_search = Boolean((payload as any).enable_web_search);
         }
-        
+
         // image_urls (for I2I mode) - only include if using /edit endpoint (I2I)
         // Note: T2I uses base endpoint (no image_urls), I2I uses /edit endpoint (with image_urls)
         const isI2IMode = modelEndpoint === 'fal-ai/nano-banana-pro/edit'; // /edit endpoint = I2I
@@ -1151,32 +1151,32 @@ async function generate(
       const isSeedream45 = (input as any)._isSeedream45 === true;
       const isEditEndpoint = (input as any)._isEditEndpoint === true || modelEndpoint.includes('/edit');
       const isSeedream45I2I = isSeedream45 && isEditEndpoint && publicImageUrls.length > 0;
-      
+
       let result: any;
       if (isSeedream45I2I) {
         // Use queue mode for Seedream 4.5 image-to-image to avoid timeout
         console.log('[falService] Using queue mode for Seedream 4.5 image-to-image to avoid timeout');
         const { request_id } = await fal.queue.submit(modelEndpoint as any, { input } as any);
-        
+
         if (!request_id) {
           throw new ApiError('No request ID returned from FAL queue', 502);
         }
-        
+
         // Poll for result (max 10 minutes, check every 2 seconds)
         const maxAttempts = 300; // 10 minutes max (2 second intervals)
         const pollInterval = 2000; // 2 seconds
         let attempts = 0;
         let queueResult: any = null;
-        
+
         while (attempts < maxAttempts) {
           await new Promise(resolve => setTimeout(resolve, pollInterval));
           attempts++;
-          
+
           try {
             const status: any = await fal.queue.status(modelEndpoint as any, { requestId: request_id, logs: true } as any);
-            
+
             const statusValue = status?.status || status?.status_code || '';
-            
+
             if (statusValue === 'COMPLETED' || statusValue === 'completed') {
               console.log('[falService] ✅ Queue task completed, extracting result...');
               console.log('[falService] Status response structure:', {
@@ -1188,10 +1188,10 @@ async function generate(
                 statusKeys: Object.keys(status || {}),
                 statusPreview: JSON.stringify(status).substring(0, 500)
               });
-              
+
               // Check if result is already in the status response - check multiple locations
               let foundResult = false;
-              
+
               // 1. Check status.data.images (array)
               if (status?.data?.images && Array.isArray(status.data.images) && status.data.images.length > 0) {
                 console.log('[falService] ✅ Found images in status.data.images');
@@ -1261,29 +1261,29 @@ async function generate(
                   }
                 }
               }
-              
+
               if (foundResult) {
                 break;
               }
-              
+
               // If result not in status, fetch from response_url (recommended approach)
               // The response_url is the direct URL to get the result when COMPLETED
               if (!foundResult && status?.response_url) {
                 try {
                   console.log('[falService] Result not in status response, fetching from response_url:', status.response_url.substring(0, 80));
                   const falKey = env.falKey as string;
-                  
+
                   if (!falKey) {
                     throw new ApiError('FAL AI API key not configured', 500);
                   }
-                  
+
                   const responseUrlFetch = await fetch(status.response_url, {
                     method: 'GET',
                     headers: {
                       'Authorization': `Key ${falKey}`,
                     },
                   });
-                  
+
                   if (!responseUrlFetch.ok) {
                     const errorText = await responseUrlFetch.text().catch(() => responseUrlFetch.statusText);
                     console.warn('[falService] Failed to fetch from response_url:', {
@@ -1301,44 +1301,44 @@ async function generate(
                       dataKeys: queueResultData ? Object.keys(queueResultData) : [],
                       fullResponse: JSON.stringify(queueResultData).substring(0, 1000)
                     });
-                  
-                  console.log('[falService] ✅ Result fetched from response_url:', {
-                    hasData: !!queueResultData?.data,
-                    hasImages: !!(queueResultData?.data && 'images' in queueResultData.data && Array.isArray(queueResultData.data.images)),
-                    hasImage: !!(queueResultData?.data && 'image' in queueResultData.data),
-                    resultKeys: Object.keys(queueResultData || {}),
-                    dataKeys: queueResultData?.data ? Object.keys(queueResultData.data) : [],
-                    resultPreview: JSON.stringify(queueResultData).substring(0, 500)
-                  });
-                  
-                  // Check different result structures (using type-safe checks)
-                  const data = queueResultData?.data;
-                  if (data && 'images' in data && Array.isArray(data.images) && data.images.length > 0) {
-                    console.log('[falService] ✅ Found images in queueResult.data.images');
-                    queueResult = queueResultData;
-                    foundResult = true;
-                    break;
-                  } else if (data && 'image' in data && typeof data.image === 'object' && data.image?.url) {
-                    console.log('[falService] ✅ Found image in queueResult.data.image.url');
-                    queueResult = { data: { images: [{ url: data.image.url }] } };
-                    foundResult = true;
-                    break;
-                  } else if ('images' in queueResultData && Array.isArray((queueResultData as any).images) && (queueResultData as any).images.length > 0) {
-                    console.log('[falService] ✅ Found images at top level of queueResult');
-                    queueResult = { data: { images: (queueResultData as any).images } };
-                    foundResult = true;
-                    break;
-                  } else if (data && 'image_url' in data && typeof data.image_url === 'string') {
-                    console.log('[falService] ✅ Found image_url in queueResult.data');
-                    queueResult = { data: { images: [{ url: data.image_url }] } };
-                    foundResult = true;
-                    break;
-                  } else {
-                    console.warn('[falService] ⚠️ Result fetched from response_url but no images found, structure:', {
+
+                    console.log('[falService] ✅ Result fetched from response_url:', {
+                      hasData: !!queueResultData?.data,
+                      hasImages: !!(queueResultData?.data && 'images' in queueResultData.data && Array.isArray(queueResultData.data.images)),
+                      hasImage: !!(queueResultData?.data && 'image' in queueResultData.data),
                       resultKeys: Object.keys(queueResultData || {}),
-                      dataKeys: data ? Object.keys(data) : []
+                      dataKeys: queueResultData?.data ? Object.keys(queueResultData.data) : [],
+                      resultPreview: JSON.stringify(queueResultData).substring(0, 500)
                     });
-                  }
+
+                    // Check different result structures (using type-safe checks)
+                    const data = queueResultData?.data;
+                    if (data && 'images' in data && Array.isArray(data.images) && data.images.length > 0) {
+                      console.log('[falService] ✅ Found images in queueResult.data.images');
+                      queueResult = queueResultData;
+                      foundResult = true;
+                      break;
+                    } else if (data && 'image' in data && typeof data.image === 'object' && data.image?.url) {
+                      console.log('[falService] ✅ Found image in queueResult.data.image.url');
+                      queueResult = { data: { images: [{ url: data.image.url }] } };
+                      foundResult = true;
+                      break;
+                    } else if ('images' in queueResultData && Array.isArray((queueResultData as any).images) && (queueResultData as any).images.length > 0) {
+                      console.log('[falService] ✅ Found images at top level of queueResult');
+                      queueResult = { data: { images: (queueResultData as any).images } };
+                      foundResult = true;
+                      break;
+                    } else if (data && 'image_url' in data && typeof data.image_url === 'string') {
+                      console.log('[falService] ✅ Found image_url in queueResult.data');
+                      queueResult = { data: { images: [{ url: data.image_url }] } };
+                      foundResult = true;
+                      break;
+                    } else {
+                      console.warn('[falService] ⚠️ Result fetched from response_url but no images found, structure:', {
+                        resultKeys: Object.keys(queueResultData || {}),
+                        dataKeys: data ? Object.keys(data) : []
+                      });
+                    }
                   }
                 } catch (responseUrlError: any) {
                   console.warn('[falService] Failed to fetch from response_url:', {
@@ -1348,7 +1348,7 @@ async function generate(
                   });
                 }
               }
-              
+
               // Fallback: Try fetching from the queue URL directly (like replaceService does)
               if (!foundResult) {
                 try {
@@ -1365,28 +1365,28 @@ async function generate(
                       console.log('[falService] Extracted model path from response_url:', queueModelPath);
                     }
                   }
-                  
+
                   const queueUrl = `https://queue.fal.run/${queueModelPath}/requests/${request_id}`;
                   const falKey = env.falKey as string;
-                  
+
                   if (!falKey) {
                     throw new ApiError('FAL AI API key not configured', 500);
                   }
-                  
+
                   const queueResponse = await fetch(queueUrl, {
                     method: 'GET',
                     headers: {
                       'Authorization': `Key ${falKey}`,
                     },
                   });
-                  
+
                   if (!queueResponse.ok) {
                     const text = await queueResponse.text().catch(() => queueResponse.statusText);
                     throw new Error(`Failed to fetch queue response (${queueResponse.status}): ${text.substring(0, 200)}`);
                   }
-                  
+
                   const queueResultData: any = await queueResponse.json();
-                  
+
                   console.log('[falService] ✅ Result fetched from queue URL:', {
                     hasData: !!queueResultData?.data,
                     hasImages: !!(queueResultData?.data && 'images' in queueResultData.data && Array.isArray(queueResultData.data.images)),
@@ -1395,7 +1395,7 @@ async function generate(
                     dataKeys: queueResultData?.data ? Object.keys(queueResultData.data) : [],
                     resultPreview: JSON.stringify(queueResultData).substring(0, 500)
                   });
-                  
+
                   // Check different result structures (using type-safe checks)
                   const data = queueResultData?.data;
                   if (data && 'images' in data && Array.isArray(data.images) && data.images.length > 0) {
@@ -1429,7 +1429,7 @@ async function generate(
                   });
                 }
               }
-              
+
               // If we still don't have a result, log and continue polling (might need more time)
               if (!foundResult) {
                 console.log('[falService] ⚠️ Result not found, will continue polling (attempt ' + (attempts + 1) + '/' + maxAttempts + ')...');
@@ -1446,11 +1446,11 @@ async function generate(
             }
           }
         }
-        
+
         if (!queueResult) {
           throw new ApiError('FAL queue generation timed out after 10 minutes', 504);
         }
-        
+
         // Queue result structure might be different from subscribe
         // Log the structure to debug
         console.log('[falService] Queue result structure:', {
@@ -1460,7 +1460,7 @@ async function generate(
           keys: Object.keys(queueResult || {}),
           dataKeys: queueResult?.data ? Object.keys(queueResult.data) : [],
         });
-        
+
         result = queueResult;
       } else {
         // Use synchronous subscribe for other models (faster for short requests)
@@ -1492,7 +1492,7 @@ async function generate(
         const firstOutput = result.output[0];
         imageUrl = typeof firstOutput === 'string' ? firstOutput : (firstOutput?.url || firstOutput?.image_url);
       }
-      
+
       if (!imageUrl) {
         console.error('[falService] ❌ Failed to extract image URL from result:', {
           resultKeys: Object.keys(result || {}),
@@ -1502,7 +1502,7 @@ async function generate(
         });
         throw new ApiError("No image URL returned from FAL API", 502);
       }
-      
+
       console.log('[falService] ✅ Successfully extracted image URL from result:', imageUrl.substring(0, 80) + '...');
 
       return {
@@ -2608,7 +2608,27 @@ export const falService = {
     });
 
     try {
-      const input: any = { video_url: body.video_url };
+      let resolvedUrl = body.video_url;
+      if (resolvedUrl && resolvedUrl.includes('idr01.zata.ai')) {
+        try {
+          const username = creator?.username || uid;
+          // Download from Zata using our backend (bypasses TLS) and re-upload
+          // This creates a new Zata URL, but FAL may still not be able to access it
+          // Ideally we would upload to FAL storage, but for now we try re-uploading to Zata
+          const reuploaded = await uploadFromUrlToZata({
+            sourceUrl: resolvedUrl,
+            keyPrefix: `users/${username}/input/${historyId}`,
+            fileName: `upscale-fal-${Date.now()}`
+          });
+          resolvedUrl = reuploaded.publicUrl;
+          console.log('[falService.seedvrUpscale] Re-uploaded video for FAL access:', resolvedUrl);
+        } catch (err: any) {
+          console.error('[falService.seedvrUpscale] Failed to re-upload video for FAL access:', err?.message || err);
+          // Continue with original URL
+        }
+      }
+
+      const input: any = { video_url: resolvedUrl };
       if (body.upscale_mode) input.upscale_mode = body.upscale_mode;
       if (body.upscale_factor != null) input.upscale_factor = body.upscale_factor;
       if (body.target_resolution) input.target_resolution = body.target_resolution;
@@ -2620,17 +2640,25 @@ export const falService = {
 
       console.log('[seedvrUpscale] Calling FAL API with input:', { ...input, video_url: input.video_url?.substring(0, 100) + '...' });
 
-      let result: any;
-      try {
-        result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
-      } catch (falErr: any) {
-        const errorDetails = falErr?.response?.data || falErr?.message || falErr;
-        console.error('[seedvrUpscale] FAL API error:', JSON.stringify(errorDetails, null, 2));
-        const errorMessage = typeof errorDetails === 'string'
-          ? errorDetails
-          : errorDetails?.error || errorDetails?.message || errorDetails?.detail || 'FAL API request failed';
-        throw new ApiError(`FAL API error: ${errorMessage}`, 502);
+      // Validate that the video URL is an http(s) URL and reachable by FAL
+      if (!input.video_url || typeof input.video_url !== 'string' || !/^https?:\/\//i.test(input.video_url)) {
+        console.error('[seedvrUpscale] Invalid video_url provided:', input.video_url);
+        throw new ApiError('video_url must be a public http(s) URL accessible by the FAL service', 400);
       }
+
+      try {
+        const headResp = await axios.head(input.video_url, { timeout: 5000 });
+        const contentType = headResp.headers && (headResp.headers['content-type'] || headResp.headers['Content-Type']);
+        if (contentType && !/^video\//i.test(contentType) && !/octet-stream/i.test(contentType)) {
+          console.warn('[seedvrUpscale] video_url content-type is not a recognized video type:', contentType);
+        }
+      } catch (headErr: any) {
+        console.error('[seedvrUpscale] Unable to reach video_url or non-200 response:', headErr?.message || headErr);
+        throw new ApiError('Unable to download video_url; ensure it is a public, reachable URL (FAL needs to fetch it)', 400);
+      }
+
+      let result: any;
+      result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
 
       const videoUrl: string | undefined = (result as any)?.data?.video?.url || (result as any)?.data?.video_url || (result as any)?.data?.output?.video?.url;
       if (!videoUrl) {
@@ -3193,12 +3221,12 @@ async function klingO1FirstLastSubmit(uid: string, body: any): Promise<SubmitRet
   const model = 'fal-ai/kling-video/o1/standard/image-to-video';
 
   const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-  
+
   // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
   const creator = await authRepository.getUserById(uid);
   const username = creator?.username || uid;
   const keyPrefix = `users/${username}/input/${historyId}`;
-  
+
   try {
     // Upload first image if it's a data URI
     if (typeof first === 'string' && /^data:/i.test(first)) {
@@ -3214,7 +3242,7 @@ async function klingO1FirstLastSubmit(uid: string, body: any): Promise<SubmitRet
     console.error('[falService.klingO1FirstLastSubmit] Failed to upload images to Zata:', e);
     throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
   }
-  
+
   // Persist images to history
   await persistInputImagesFromUrls(uid, historyId, [first, last]);
 
@@ -3245,28 +3273,28 @@ async function klingO1ReferenceSubmit(uid: string, body: any): Promise<SubmitRet
   if (!body?.image_urls || !Array.isArray(body.image_urls) || body.image_urls.length === 0) {
     throw new ApiError('image_urls array is required and must contain at least one image', 400);
   }
-  
+
   // Duration must be "5" or "10" as string enum
   const duration = typeof body.duration === 'number' ? String(body.duration) : String(body.duration || '5');
   if (duration !== '5' && duration !== '10') {
     throw new ApiError('duration must be "5" or "10"', 400);
   }
-  
+
   // Aspect ratio validation
   const aspectRatio = body.aspect_ratio || '16:9';
   if (!['16:9', '9:16', '1:1'].includes(aspectRatio)) {
     throw new ApiError('aspect_ratio must be "16:9", "9:16", or "1:1"', 400);
   }
-  
+
   const model = 'fal-ai/kling-video/o1/standard/reference-to-video';
   const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-  
+
   // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
   const creator = await authRepository.getUserById(uid);
   const username = creator?.username || uid;
   const keyPrefix = `users/${username}/input/${historyId}`;
   const imageUrls: string[] = [];
-  
+
   try {
     // Upload each image if it's a data URI
     for (let i = 0; i < body.image_urls.length; i++) {
@@ -3281,10 +3309,10 @@ async function klingO1ReferenceSubmit(uid: string, body: any): Promise<SubmitRet
     console.error('[falService.klingO1ReferenceSubmit] Failed to upload images to Zata:', e);
     throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
   }
-  
+
   // Persist images to history
   await persistInputImagesFromUrls(uid, historyId, imageUrls);
-  
+
   // Build request payload
   const input: any = {
     prompt: body.prompt,
@@ -3292,14 +3320,14 @@ async function klingO1ReferenceSubmit(uid: string, body: any): Promise<SubmitRet
     duration,
     aspect_ratio: aspectRatio,
   };
-  
+
   // Add elements if provided (for future support)
   if (body.elements && Array.isArray(body.elements) && body.elements.length > 0) {
     input.elements = body.elements;
   }
-  
+
   const { request_id } = await fal.queue.submit(model, { input } as any);
-  
+
   await generationHistoryRepository.update(uid, historyId, {
     provider: 'fal',
     providerTaskId: request_id,
@@ -3307,7 +3335,7 @@ async function klingO1ReferenceSubmit(uid: string, body: any): Promise<SubmitRet
     aspect_ratio: aspectRatio,
     image_urls: imageUrls,
   } as any);
-  
+
   return { requestId: request_id, historyId, model, status: 'submitted' };
 }
 
@@ -3582,12 +3610,12 @@ async function kling26ProT2vSubmit(uid: string, body: any): Promise<SubmitReturn
       generate_audio: body.generate_audio !== false, // Default to true if not explicitly false
     },
   } as any);
-  await generationHistoryRepository.update(uid, historyId, { 
-    provider: 'fal', 
-    providerTaskId: request_id, 
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: 'fal',
+    providerTaskId: request_id,
     generate_audio: body.generate_audio !== false, // Default to true if not explicitly false
-    duration: duration, 
-    aspect_ratio: body.aspect_ratio ?? '16:9' 
+    duration: duration,
+    aspect_ratio: body.aspect_ratio ?? '16:9'
   } as any);
   return { requestId: request_id, historyId, model, status: 'submitted' };
 }
@@ -3599,7 +3627,7 @@ async function kling26ProI2vSubmit(uid: string, body: any): Promise<SubmitReturn
   if (!body?.image_url) throw new ApiError('image_url is required', 400);
   const model = 'fal-ai/kling-video/v2.6/pro/image-to-video';
   const duration = typeof body.duration === 'string' ? body.duration : (body.duration ? `${body.duration}` : '5');
-  
+
   // Upload image_url to Zata if it's a data URI
   let imageUrl = body.image_url;
   const creator = await authRepository.getUserById(uid);
@@ -3609,7 +3637,7 @@ async function kling26ProI2vSubmit(uid: string, body: any): Promise<SubmitReturn
     model,
     isPublic: body.isPublic,
   });
-  
+
   const keyPrefix = `users/${username}/input/${historyId}`;
   try {
     if (typeof imageUrl === 'string' && /^data:/i.test(imageUrl)) {
@@ -3622,7 +3650,7 @@ async function kling26ProI2vSubmit(uid: string, body: any): Promise<SubmitReturn
     console.error('[falService.kling26ProI2vSubmit] Failed to upload image to Zata:', e);
     // Continue with original URL if upload fails
   }
-  
+
   const { request_id } = await fal.queue.submit(model, {
     input: {
       prompt: body.prompt,
@@ -3633,11 +3661,11 @@ async function kling26ProI2vSubmit(uid: string, body: any): Promise<SubmitReturn
       generate_audio: body.generate_audio !== false, // Default to true if not explicitly false
     },
   } as any);
-  await generationHistoryRepository.update(uid, historyId, { 
-    provider: 'fal', 
-    providerTaskId: request_id, 
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: 'fal',
+    providerTaskId: request_id,
     generate_audio: body.generate_audio !== false, // Default to true if not explicitly false
-    duration: duration 
+    duration: duration
   } as any);
   return { requestId: request_id, historyId, model, status: 'submitted' };
 }
@@ -3697,7 +3725,7 @@ export const falQueueService = {
     const creator = await authRepository.getUserById(uid);
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
-    
+
     try {
       if (typeof imageUrl === 'string' && /^data:/i.test(imageUrl)) {
         const stored = await uploadDataUriToZata({ dataUri: imageUrl, keyPrefix, fileName: 'input-1' });
@@ -3730,13 +3758,13 @@ export const falQueueService = {
     if (!Array.isArray(body?.image_urls) || body.image_urls.length === 0) throw new ApiError('image_urls is required and must contain at least one URL', 400);
     const model = 'fal-ai/veo3.1/reference-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    
+
     // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
     const creator = await authRepository.getUserById(uid);
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
     const imageUrls = Array.isArray(body.image_urls) ? body.image_urls : [];
-    
+
     try {
       for (let i = 0; i < imageUrls.length; i++) {
         if (typeof imageUrls[i] === 'string' && /^data:/i.test(imageUrls[i])) {
@@ -3748,7 +3776,7 @@ export const falQueueService = {
       console.error('[falService.veo31ReferenceToVideoSubmit] Failed to upload images to Zata:', e);
       throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
     }
-    
+
     // Persist reference images
     await persistInputImagesFromUrls(uid, historyId, imageUrls);
     const { request_id } = await fal.queue.submit(model, {
@@ -3786,12 +3814,12 @@ export const falQueueService = {
 
     const model = 'fal-ai/veo3.1/fast/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    
+
     // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
     const creator = await authRepository.getUserById(uid);
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
-    
+
     try {
       // Upload first image if it's a data URI
       if (typeof firstUrl === 'string' && /^data:/i.test(firstUrl)) {
@@ -3807,7 +3835,7 @@ export const falQueueService = {
       console.error('[falService.veo31FirstLastFastSubmit] Failed to upload images to Zata:', e);
       throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
     }
-    
+
     // Persist first and last frame images
     await persistInputImagesFromUrls(uid, historyId, [firstUrl, lastUrl]);
     const { request_id } = await fal.queue.submit(model, {
@@ -3847,12 +3875,12 @@ export const falQueueService = {
 
     const model = 'fal-ai/veo3.1/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    
+
     // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
     const creator = await authRepository.getUserById(uid);
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
-    
+
     try {
       // Upload first image if it's a data URI
       if (typeof firstUrl === 'string' && /^data:/i.test(firstUrl)) {
@@ -3868,7 +3896,7 @@ export const falQueueService = {
       console.error('[falService.veo31FirstLastSubmit] Failed to upload images to Zata:', e);
       throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
     }
-    
+
     // Persist first and last frame images
     await persistInputImagesFromUrls(uid, historyId, [firstUrl, lastUrl]);
     const { request_id } = await fal.queue.submit(model, {
