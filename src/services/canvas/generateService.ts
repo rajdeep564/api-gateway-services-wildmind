@@ -1017,6 +1017,14 @@ function mapVideoModelToBackend(frontendModel: string): VideoModelConfig {
   if (modelLower.includes('seedance 1.0 lite') || modelLower === 'seedance 1.0 lite') {
     return { service: 'replicate', method: 'seedanceT2vSubmit', backendModel: 'bytedance/seedance-1-lite' };
   }
+  // Seedance 1.5 (audio-capable)
+  if (
+    modelLower.includes('seedance 1.5') ||
+    modelLower.includes('seedance-1.5') ||
+    modelLower.includes('seedance-1.5-pro')
+  ) {
+    return { service: 'replicate', method: 'seedanceT2vSubmit', backendModel: 'bytedance/seedance-1.5-pro' };
+  }
   if (modelLower.includes('seedance 1.0 pro') || modelLower === 'seedance 1.0 pro' || modelLower.includes('seedance')) {
     return { service: 'replicate', method: 'seedanceT2vSubmit', backendModel: 'bytedance/seedance-1-pro' };
   }
@@ -1081,6 +1089,7 @@ export async function generateVideoForCanvas(
     elementId?: string;
     firstFrameUrl?: string;
     lastFrameUrl?: string;
+    generate_audio?: boolean;
   }
 ): Promise<{ mediaId: string; url: string; storagePath: string; generationId?: string; taskId?: string; provider?: string }> {
   if (!request.prompt) {
@@ -1203,6 +1212,12 @@ export async function generateVideoForCanvas(
         aspect_ratio: aspectRatio,
         isPublic: false,
       };
+
+      // Seedance 1.5 supports optional audio generation
+      const isSeedance15 = Boolean(modelConfig.backendModel?.includes('seedance-1.5'));
+      if (isSeedance15 && typeof request.generate_audio === 'boolean') {
+        replicatePayload.generate_audio = request.generate_audio;
+      }
 
       // PixVerse uses "quality" instead of "resolution" for T2V (no image/frame parameters)
       if (modelConfig.method === 'pixverseT2vSubmit') {

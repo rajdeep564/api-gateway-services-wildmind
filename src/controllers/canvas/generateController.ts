@@ -17,7 +17,11 @@ export async function generateVideoForCanvas(req: Request, res: Response) {
       );
     }
 
-    const { prompt, model, aspectRatio, duration, resolution, meta, firstFrameUrl, lastFrameUrl } = req.body;
+    const { prompt, model, aspectRatio, duration, resolution, meta, firstFrameUrl, lastFrameUrl, generate_audio, generateAudio } = req.body;
+    const normalizedGenerateAudio: boolean | undefined =
+      typeof generate_audio === 'boolean'
+        ? generate_audio
+        : (typeof generateAudio === 'boolean' ? generateAudio : undefined);
 
     console.log('[generateVideoForCanvas] Request received:', {
       userId,
@@ -51,6 +55,7 @@ export async function generateVideoForCanvas(req: Request, res: Response) {
       elementId: meta.elementId,
       firstFrameUrl,
       lastFrameUrl,
+      generate_audio: normalizedGenerateAudio,
     });
 
     console.log('[generateVideoForCanvas] Video generation completed:', {
