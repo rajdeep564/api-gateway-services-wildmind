@@ -1431,18 +1431,35 @@ export async function generateImage(uid: string, body: any) {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
 
   const replicate = new Replicate({ auth: key });
-  const modelBase = (
-    body.model && body.model.length > 0
-      ? String(body.model)
-      : "bytedance/seedream-4"
+
+  const normalizeModelAlias = (raw: string): string => {
+    const s = String(raw || '').trim();
+    const lower = s.toLowerCase();
+
+    // Frontend sometimes sends short aliases; Replicate expects owner/name or owner/name:version
+    if (
+      lower === 'qwen-image-edit' ||
+      lower === 'qwen-image-edit-2511' ||
+      lower === 'qwen/qwen-image-edit-2511' ||
+      lower === 'replicate/qwen/qwen-image-edit-2511'
+    ) {
+      return 'qwen/qwen-image-edit-2511';
+    }
+
+    return s;
+  };
+
+  const modelBase = normalizeModelAlias(
+    body?.model && String(body.model).length > 0 ? String(body.model) : 'bytedance/seedream-4'
   ).trim();
   const creator = await authRepository.getUserById(uid);
   const storageKeyPrefixOverride: string | undefined = (body as any)?.storageKeyPrefixOverride;
   const aspectRatio = body.aspect_ratio || body.frameSize || null;
+  const isQwenImageEdit = modelBase.toLowerCase() === 'qwen/qwen-image-edit-2511';
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
     model: modelBase,
-    generationType: "text-to-image",
+    generationType: isQwenImageEdit ? 'image-to-image' : "text-to-image",
     visibility: body.isPublic ? "public" : "private",
     isPublic: body.isPublic ?? false,
     frameSize: aspectRatio,
@@ -1464,6 +1481,119 @@ export async function generateImage(uid: string, body: any) {
   try {
     const { model: _m, isPublic: _p, ...rest } = body || {};
     const input: any = { prompt: body.prompt };
+
+    // Qwen Image Edit (image-to-image)
+    // The frontend currently posts to /api/replicate/generate with model "qwen-image-edit".
+    // Replicate requires an owner/name slug, and Qwen requires an image input.
+    if (isQwenImageEdit) {
+      replicateModelBase = 'qwen/qwen-image-edit-2511';
+
+      const candidateImages: string[] = Array.isArray(rest.image)
+        ? rest.image
+        : (typeof rest.image === 'string' && rest.image.length > 5)
+          ? [rest.image]
+          : Array.isArray((body as any)?.uploadedImages)
+            ? (body as any).uploadedImages
+            : Array.isArray(rest.image_input)
+              ? rest.image_input
+              : [];
+
+      const images = candidateImages
+        .map((u: any) => (typeof u === 'string' ? u.trim() : ''))
+        .filter((u: string) => u.length > 0)
+        .slice(0, 8);
+
+      if (images.length === 0) {
+        throw new ApiError('image is required for qwen-image-edit', 400);
+      }
+
+      // Replicate validates image inputs as "uri" (must be data: or http(s) or other valid URI).
+      // The frontend often supplies internal proxy URLs like "/api/proxy/resource/<encodedStoragePath>".
+      // Convert those to a public Zata URL using env.zataPrefix.
+      const username = creator?.username || uid;
+      const keyPrefix = `users/${username}/input/${historyId}`;
+      const resolvedImages: string[] = [];
+
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        // Data URI -> upload to Zata and pass public URL
+        if (/^data:/i.test(img)) {
+          const uploaded = await uploadDataUriToZata({
+            dataUri: img,
+            keyPrefix,
+            fileName: `qwen-image-edit-ref-${i + 1}`,
+          });
+          resolvedImages.push(uploaded.publicUrl);
+          continue;
+        }
+
+        // Absolute URL already OK
+        if (/^https?:\/\//i.test(img)) {
+          resolvedImages.push(img);
+          continue;
+        }
+
+        // Proxy URL -> extract storage path and convert to Zata URL
+        const isProxyUrl = /^\/api\/proxy\/resource\//i.test(img) || /^\/proxy\/resource\//i.test(img);
+        if (isProxyUrl) {
+          const match = img.match(/\/(?:api\/)?proxy\/resource\/(.+)$/i);
+          if (match && match[1]) {
+            const storagePath = decodeURIComponent(match[1]);
+            if (env.zataPrefix) {
+              const zataUrl = env.zataPrefix.replace(/\/$/, '') + '/' + storagePath;
+              resolvedImages.push(zataUrl);
+              continue;
+            }
+          }
+        }
+
+        // If we got a bare storage path like "users/...", make it a Zata URL
+        if (!img.startsWith('/') && env.zataPrefix && /^users\//i.test(img)) {
+          resolvedImages.push(env.zataPrefix.replace(/\/$/, '') + '/' + img);
+          continue;
+        }
+
+        // Fallback: last resort, try uploading from URL (will only work if accessible)
+        try {
+          const uploaded = await uploadFromUrlToZata({
+            sourceUrl: img,
+            keyPrefix,
+            fileName: `qwen-image-edit-ref-${i + 1}`,
+          });
+          resolvedImages.push(uploaded.publicUrl);
+          continue;
+        } catch (e) {
+          // keep going to final error
+        }
+
+        throw new ApiError(`Invalid image uri for qwen-image-edit: ${img}`, 400);
+      }
+
+      if (resolvedImages.length === 0) {
+        throw new ApiError('image is required for qwen-image-edit', 400);
+      }
+
+      input.image = resolvedImages;
+
+      // Prefer explicit aspect_ratio; fallback to frameSize mapping
+      const aspect = rest.aspect_ratio ?? aspectRatio ?? 'match_input_image';
+      input.aspect_ratio = String(aspect);
+
+      // Qwen schema uses output_format values: webp | jpg | png
+      if (rest.output_format != null) {
+        const f = String(rest.output_format);
+        input.output_format = f === 'jpeg' ? 'jpg' : f;
+      }
+
+      if (rest.output_quality != null && Number.isFinite(Number(rest.output_quality))) {
+        input.output_quality = Math.max(1, Math.min(100, Number(rest.output_quality)));
+      }
+
+      if (typeof rest.go_fast === 'boolean') input.go_fast = rest.go_fast;
+      if (typeof rest.disable_safety_checker === 'boolean') input.disable_safety_checker = rest.disable_safety_checker;
+      if (rest.seed != null && Number.isInteger(Number(rest.seed))) input.seed = Number(rest.seed);
+    }
+
     // Seedream 4.5 mapping removed – model now handled via FAL.
     // Seedream schema mapping
     if (modelBase === "bytedance/seedream-4") {
@@ -2499,6 +2629,113 @@ export async function generateImage(uid: string, body: any) {
   } as any;
 }
 
+export async function qwenImageEditSubmit(
+  uid: string,
+  body: any
+): Promise<SubmitReturn> {
+  if (!body?.prompt) throw new ApiError("prompt is required", 400);
+  if (!body?.image) throw new ApiError("image is required", 400);
+
+  const key = env.replicateApiKey as string;
+  if (!key) {
+    console.error("[replicateService.qwenImageEditSubmit] Missing REPLICATE_API_TOKEN");
+    throw new ApiError("Replicate API key not configured", 500);
+  }
+
+  const replicate = new Replicate({ auth: key });
+  const modelBase = 'qwen/qwen-image-edit-2511';
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator
+    ? { uid, username: creator.username, email: (creator as any)?.email }
+    : ({ uid } as any);
+
+  const aspect = ((): string => {
+    const a = String(body?.aspect_ratio ?? 'match_input_image');
+    const allowed = ['1:1','16:9','9:16','4:3','3:4','match_input_image'];
+    return allowed.includes(a) ? a : 'match_input_image';
+  })();
+
+  const outFormat = ((): string => {
+    const f = String(body?.output_format ?? 'webp');
+    return ['webp','jpg','png'].includes(f) ? f : 'webp';
+  })();
+
+  const outputQuality = Number.isFinite(Number(body?.output_quality)) ? Number(body.output_quality) : 95;
+  const goFast = typeof body.go_fast === 'boolean' ? body.go_fast : true;
+  const disableSafety = typeof body.disable_safety_checker === 'boolean' ? body.disable_safety_checker : false;
+
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt,
+    model: modelBase,
+    generationType: 'image-to-image',
+    visibility: body.isPublic ? 'public' : 'private',
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    aspect_ratio: aspect,
+    output_format: outFormat,
+    output_quality: outputQuality,
+    go_fast: goFast,
+    disable_safety_checker: disableSafety,
+  } as any);
+
+  // Persist input images for preview/storage (if any)
+  try {
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    const urls: string[] = [];
+    if (Array.isArray(body.image)) {
+      for (const it of body.image.slice(0, 8)) if (typeof it === 'string' && it.length > 5) urls.push(it);
+    } else if (typeof body.image === 'string' && body.image.length > 5) {
+      urls.push(body.image);
+    }
+    const inputPersisted: any[] = [];
+    let idx = 0;
+    for (const src of urls) {
+      try {
+        const stored = /^data:/i.test(src)
+          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
+          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+      } catch (e) { /* ignore upload failures */ }
+    }
+    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+  } catch { }
+
+  // Build replicate input
+  const input: any = {
+    prompt: body.prompt,
+    image: Array.isArray(body.image) ? body.image : [String(body.image)],
+    aspect_ratio: aspect,
+    output_format: outFormat,
+    output_quality: outputQuality,
+    go_fast: goFast,
+    disable_safety_checker: disableSafety,
+  };
+  if (body.seed != null && Number.isInteger(Number(body.seed))) input.seed = Number(body.seed);
+
+  // Submit prediction to Replicate (queue-style)
+  let predictionId = '';
+  try {
+    let version: string | null = null;
+    try { version = await getLatestModelVersion(replicate, modelBase); } catch (vErr) { /* ignore */ }
+    const pred = await replicate.predictions.create(version ? { version, input } : { model: modelBase, input });
+    predictionId = (pred as any)?.id || '';
+    if (!predictionId) throw new Error('Missing prediction id');
+  } catch (e: any) {
+    await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: e?.message || 'Replicate submit failed' } as any);
+    throw new ApiError(`Failed to submit Qwen image edit job: ${e?.message || e}`, 502, e);
+  }
+
+  await generationHistoryRepository.update(uid, historyId, { provider: 'replicate', providerTaskId: predictionId } as any);
+
+  return {
+    requestId: predictionId,
+    historyId,
+    model: modelBase,
+    status: 'submitted',
+  } as any;
+}
+
 export const replicateService = {
   removeBackground,
   upscale,
@@ -2507,6 +2744,7 @@ export const replicateService = {
   wanI2V,
   wanT2V,
   nextScene,
+  qwenImageEditSubmit,
 };
 // Wan 2.5 Image-to-Video via Replicate
 export async function wanI2V(uid: string, body: any) {
@@ -3238,6 +3476,17 @@ export async function replicateQueueResult(
     const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
     // Get current history to preserve duration/resolution/quality/inputImages if they exist
     const currentHistory = await generationHistoryRepository.get(uid, historyId).catch(() => null);
+    const inputFromPrediction = (result as any)?.input || {};
+    const audioFromPrediction =
+      typeof inputFromPrediction?.generate_audio === "boolean"
+        ? inputFromPrediction.generate_audio
+        : typeof inputFromPrediction?.generateAudio === "boolean"
+          ? inputFromPrediction.generateAudio
+          : undefined;
+    const aspectFromPrediction =
+      typeof inputFromPrediction?.aspect_ratio === "string"
+        ? inputFromPrediction.aspect_ratio
+        : undefined;
     await generationHistoryRepository.update(uid, historyId, {
       status: "completed",
       videos: scoredVideos,
@@ -3247,6 +3496,17 @@ export async function replicateQueueResult(
       ...(currentHistory && (currentHistory as any)?.resolution ? { resolution: (currentHistory as any).resolution } : {}),
       // Preserve quality field (for PixVerse models)
       ...(currentHistory && (currentHistory as any)?.quality ? { quality: (currentHistory as any).quality } : {}),
+      // Preserve Seedance 1.5 fields if we have them (needed for correct pricing)
+      ...(currentHistory && typeof (currentHistory as any)?.generate_audio === "boolean"
+        ? { generate_audio: (currentHistory as any).generate_audio }
+        : typeof audioFromPrediction === "boolean"
+          ? { generate_audio: audioFromPrediction }
+          : {}),
+      ...(currentHistory && typeof (currentHistory as any)?.aspect_ratio === "string"
+        ? { aspect_ratio: (currentHistory as any).aspect_ratio }
+        : typeof aspectFromPrediction === "string"
+          ? { aspect_ratio: aspectFromPrediction }
+          : {}),
       // Preserve inputImages if they exist (for showing "Your Uploads" in UI)
       ...(currentHistory && Array.isArray((currentHistory as any)?.inputImages) && (currentHistory as any).inputImages.length > 0
         ? { inputImages: (currentHistory as any).inputImages }
@@ -3366,12 +3626,22 @@ export async function replicateQueueResult(
         // Ensure duration and resolution have defaults if not stored in history
         const duration = (fresh as any)?.duration ?? 5;
         const resolution = (fresh as any)?.resolution ?? "1080p";
+        const audioFromPredictionInput = (result as any)?.input?.generate_audio ?? (result as any)?.input?.generateAudio;
         const fakeReq = {
           body: {
             kind: kindFromHistory,
             duration: duration,
             resolution: resolution,
             model: (fresh as any)?.model,
+            // Preserve audio flag from stored history so pricing uses correct SKU (Audio On/Off)
+            generate_audio:
+              typeof (fresh as any)?.generate_audio === "boolean"
+                ? (fresh as any).generate_audio
+                : typeof (fresh as any)?.generateAudio === "boolean"
+                  ? (fresh as any).generateAudio
+                  : typeof audioFromPredictionInput === "boolean"
+                    ? audioFromPredictionInput
+                    : false,
           },
         } as any;
         console.log('[replicateQueueResult] Computing Seedance cost', {
@@ -4180,24 +4450,22 @@ export async function seedanceT2vSubmit(
   const replicate = ensureReplicate();
   const modelStr = String(body.model || "").toLowerCase();
   const speed = String(body.speed || "").toLowerCase();
+  const isSeedance15 = modelStr.includes('seedance-1.5') || speed.includes('1.5');
   const isLite =
     modelStr.includes("lite") || speed === "lite" || speed.includes("lite");
   // Correct model names on Replicate: bytedance/seedance-1-pro and bytedance/seedance-1-lite (not 1.0)
-  const modelBase = isLite
-    ? "bytedance/seedance-1-lite"
-    : "bytedance/seedance-1-pro";
+  // Seedance 1.5: bytedance/seedance-1.5-pro
+  const modelBase = isSeedance15
+    ? 'bytedance/seedance-1.5-pro'
+    : (isLite ? "bytedance/seedance-1-lite" : "bytedance/seedance-1-pro");
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
     : ({ uid } as any);
   const durationSec = ((): number => {
     const d = Number(body?.duration ?? 5);
-    return Math.max(2, Math.min(12, Math.round(d)));
-  })();
-  const res = ((): string => {
-    const r = String(body?.resolution ?? "1080p").toLowerCase();
-    const m = r.match(/(480|720|1080)/);
-    return m ? `${m[1]}p` : "1080p";
+    const minAllowed = isSeedance15 ? 4 : 2;
+    return Math.max(minAllowed, Math.min(12, Math.round(d)));
   })();
   const aspect = ((): string => {
     const a = String(body?.aspect_ratio ?? "16:9");
@@ -4205,7 +4473,21 @@ export async function seedanceT2vSubmit(
       ? a
       : "16:9";
   })();
-  const { historyId } = await generationHistoryRepository.create(uid, {
+  const res = isSeedance15
+    ? undefined
+    : (((): string => {
+      const r = String(body?.resolution ?? "1080p").toLowerCase();
+      const m = r.match(/(480|720|1080)/);
+      return m ? `${m[1]}p` : "1080p";
+    })());
+  const audioFlag =
+    typeof body.generate_audio === "boolean"
+      ? body.generate_audio
+      : typeof body.generateAudio === "boolean"
+      ? body.generateAudio
+      : undefined;
+
+  const createPayload: any = {
     prompt: body.prompt,
     model: modelBase,
     generationType: "text-to-video",
@@ -4213,8 +4495,17 @@ export async function seedanceT2vSubmit(
     isPublic: body.isPublic ?? false,
     createdBy,
     duration: durationSec as any,
-    resolution: res as any,
-  } as any);
+    ...(res ? { resolution: res as any } : {}),
+  };
+
+  if (isSeedance15) {
+    createPayload.aspect_ratio = aspect;
+    if (typeof audioFlag === "boolean") createPayload.generate_audio = audioFlag;
+  }
+
+  const { historyId } = await generationHistoryRepository.create(uid, createPayload as any);
+
+  // Seedance 1.5 fields were persisted during create above; no-op here.
 
   // Persist image (first frame), last_frame_image, and reference_images (if provided) as inputImages so preview shows uploads
   try {
@@ -4245,10 +4536,18 @@ export async function seedanceT2vSubmit(
   const input: any = {
     prompt: body.prompt,
     duration: durationSec,
-    resolution: res,
-    aspect_ratio: aspect,
     fps: 24,
   };
+  if (!isSeedance15) {
+    input.resolution = res;
+    input.aspect_ratio = aspect;
+  } else {
+    // Seedance 1.5 uses aspect_ratio for T2V
+    input.aspect_ratio = aspect;
+    // Seedance 1.5 supports audio generation
+    if (typeof body.generate_audio === 'boolean') input.generate_audio = body.generate_audio;
+    else if (typeof body.generateAudio === 'boolean') input.generate_audio = body.generateAudio;
+  }
   if (body.seed != null && Number.isInteger(Number(body.seed)))
     input.seed = Number(body.seed);
   if (typeof body.camera_fixed === "boolean")
@@ -4261,26 +4560,28 @@ export async function seedanceT2vSubmit(
   if (typeof body.last_frame_image === 'string' && body.last_frame_image.length > 5) {
     input.last_frame_image = String(body.last_frame_image);
   }
-  // Reference images (1-4 images) for guiding video generation
-  // Note: Cannot be used with 1080p resolution or first/last frame images
-  if (
-    Array.isArray(body.reference_images) &&
-    body.reference_images.length > 0 &&
-    body.reference_images.length <= 4
-  ) {
-    // Validate that reference images are not used with incompatible settings
-    const hasFirstFrame = body.image && String(body.image).length > 5;
-    const hasLastFrame = body.last_frame_image && String(body.last_frame_image).length > 5;
-    if (res === "1080p") {
-      console.warn(
-        "[seedanceT2vSubmit] reference_images cannot be used with 1080p resolution, ignoring"
-      );
-    } else if (hasFirstFrame || hasLastFrame) {
-      console.warn(
-        "[seedanceT2vSubmit] reference_images cannot be used with first/last frame images, ignoring"
-      );
-    } else {
-      input.reference_images = body.reference_images.slice(0, 4); // Limit to 4 images
+  if (!isSeedance15) {
+    // Reference images (1-4 images) for guiding video generation
+    // Note: Cannot be used with 1080p resolution or first/last frame images
+    if (
+      Array.isArray(body.reference_images) &&
+      body.reference_images.length > 0 &&
+      body.reference_images.length <= 4
+    ) {
+      // Validate that reference images are not used with incompatible settings
+      const hasFirstFrame = body.image && String(body.image).length > 5;
+      const hasLastFrame = body.last_frame_image && String(body.last_frame_image).length > 5;
+      if (res === "1080p") {
+        console.warn(
+          "[seedanceT2vSubmit] reference_images cannot be used with 1080p resolution, ignoring"
+        );
+      } else if (hasFirstFrame || hasLastFrame) {
+        console.warn(
+          "[seedanceT2vSubmit] reference_images cannot be used with first/last frame images, ignoring"
+        );
+      } else {
+        input.reference_images = body.reference_images.slice(0, 4); // Limit to 4 images
+      }
     }
   }
 
@@ -4420,26 +4721,44 @@ export async function seedanceI2vSubmit(
   const replicate = ensureReplicate();
   const modelStr = String(body.model || "").toLowerCase();
   const speed = String(body.speed || "").toLowerCase();
+  const isSeedance15 = modelStr.includes('seedance-1.5') || speed.includes('1.5');
   const isLite =
     modelStr.includes("lite") || speed === "lite" || speed.includes("lite");
   // Correct model names on Replicate: bytedance/seedance-1-pro and bytedance/seedance-1-lite (not 1.0)
-  const modelBase = isLite
-    ? "bytedance/seedance-1-lite"
-    : "bytedance/seedance-1-pro";
+  // Seedance 1.5: bytedance/seedance-1.5-pro
+  const modelBase = isSeedance15
+    ? 'bytedance/seedance-1.5-pro'
+    : (isLite ? "bytedance/seedance-1-lite" : "bytedance/seedance-1-pro");
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
     : ({ uid } as any);
   const durationSec = ((): number => {
     const d = Number(body?.duration ?? 5);
-    return Math.max(2, Math.min(12, Math.round(d)));
+    const minAllowed = isSeedance15 ? 4 : 2;
+    return Math.max(minAllowed, Math.min(12, Math.round(d)));
   })();
-  const res = ((): string => {
-    const r = String(body?.resolution ?? "1080p").toLowerCase();
-    const m = r.match(/(480|720|1080)/);
-    return m ? `${m[1]}p` : "1080p";
+  const aspect = ((): string => {
+    const a = String(body?.aspect_ratio ?? "16:9");
+    return ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "9:21"].includes(a)
+      ? a
+      : "16:9";
   })();
-  const { historyId } = await generationHistoryRepository.create(uid, {
+  const res = isSeedance15
+    ? undefined
+    : (((): string => {
+      const r = String(body?.resolution ?? "1080p").toLowerCase();
+      const m = r.match(/(480|720|1080)/);
+      return m ? `${m[1]}p` : "1080p";
+    })());
+  const audioFlag =
+    typeof body.generate_audio === "boolean"
+      ? body.generate_audio
+      : typeof body.generateAudio === "boolean"
+      ? body.generateAudio
+      : undefined;
+
+  const createPayloadImg: any = {
     prompt: body.prompt,
     model: modelBase,
     generationType: "image-to-video",
@@ -4447,8 +4766,60 @@ export async function seedanceI2vSubmit(
     isPublic: body.isPublic ?? false,
     createdBy,
     duration: durationSec as any,
-    resolution: res as any,
-  } as any);
+    ...(res ? { resolution: res as any } : {}),
+  };
+
+  if (isSeedance15) {
+    createPayloadImg.aspect_ratio = aspect;
+    if (typeof audioFlag === "boolean") createPayloadImg.generate_audio = audioFlag;
+  }
+
+  const { historyId } = await generationHistoryRepository.create(uid, createPayloadImg as any);
+  const input: any = {
+    prompt: body.prompt,
+    duration: durationSec,
+    fps: 24,
+    image: String(body.image),
+    aspect_ratio: aspect,
+  };
+  if (!isSeedance15) {
+    input.resolution = res;
+  } else {
+    // Seedance 1.5 supports audio generation
+    if (typeof body.generate_audio === 'boolean') input.generate_audio = body.generate_audio;
+    else if (typeof body.generateAudio === 'boolean') input.generate_audio = body.generateAudio;
+  }
+
+  if (body.seed != null && Number.isInteger(Number(body.seed))) input.seed = Number(body.seed);
+  if (typeof body.camera_fixed === 'boolean') input.camera_fixed = body.camera_fixed;
+  if (typeof body.last_frame_image === 'string' && body.last_frame_image.length > 5) {
+    input.last_frame_image = String(body.last_frame_image);
+  }
+
+  if (!isSeedance15) {
+    // Reference images (1-4 images) for guiding video generation
+    // Note: Cannot be used with 1080p resolution or first/last frame images
+    if (
+      Array.isArray(body.reference_images) &&
+      body.reference_images.length > 0 &&
+      body.reference_images.length <= 4
+    ) {
+      // In I2V, `image` is always present (acts as first frame image), so reference_images are incompatible.
+      const hasFirstFrame = true;
+      const hasLastFrame = body.last_frame_image && String(body.last_frame_image).length > 5;
+      if (res === '1080p') {
+        console.warn(
+          '[seedanceI2vSubmit] reference_images cannot be used with 1080p resolution or first/last frame images, ignoring'
+        );
+      } else if (hasFirstFrame || hasLastFrame) {
+        console.warn(
+          '[seedanceI2vSubmit] reference_images cannot be used with 1080p resolution or first/last frame images, ignoring'
+        );
+      } else {
+        input.reference_images = body.reference_images.slice(0, 4);
+      }
+    }
+  }
 
   // Persist input image, last_frame_image, and reference_images to history
   try {
@@ -4472,42 +4843,6 @@ export async function seedanceI2vSubmit(
     }
     if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
   } catch { }
-
-  const input: any = {
-    prompt: body.prompt,
-    image: String(body.image),
-    duration: durationSec,
-    resolution: res,
-    fps: 24,
-  };
-  if (body.seed != null && Number.isInteger(Number(body.seed)))
-    input.seed = Number(body.seed);
-  if (typeof body.camera_fixed === "boolean")
-    input.camera_fixed = body.camera_fixed;
-  if (body.last_frame_image && String(body.last_frame_image).length > 5)
-    input.last_frame_image = String(body.last_frame_image);
-  // Reference images (1-4 images) for guiding video generation
-  // Note: Cannot be used with 1080p resolution or first/last frame images
-  if (
-    Array.isArray(body.reference_images) &&
-    body.reference_images.length > 0 &&
-    body.reference_images.length <= 4
-  ) {
-    // Validate that reference images are not used with incompatible settings
-    const hasFirstFrame = body.image && String(body.image).length > 5;
-    const hasLastFrame = body.last_frame_image && String(body.last_frame_image).length > 5;
-    if (
-      res === "1080p" ||
-      hasFirstFrame ||
-      hasLastFrame
-    ) {
-      console.warn(
-        "[seedanceI2vSubmit] reference_images cannot be used with 1080p resolution or first/last frame images, ignoring"
-      );
-    } else {
-      input.reference_images = body.reference_images.slice(0, 4); // Limit to 4 images
-    }
-  }
 
   let predictionId = "";
   try {

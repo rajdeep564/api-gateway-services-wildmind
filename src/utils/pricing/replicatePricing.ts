@@ -189,3 +189,11 @@ export async function computeReplicateNextSceneCost(req: Request): Promise<{ cos
 
   return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: display } };
 }
+
+export async function computeQwenImageEditCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  // Use the creditDistribution model name for qwen image edit
+  const display = 'qwen-image-edit-2511';
+  const base = findCredits(display);
+  const cost = base !== null ? Math.ceil(base) : 80;
+  return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: display } };
+}

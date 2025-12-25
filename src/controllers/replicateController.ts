@@ -116,6 +116,17 @@ export async function wanI2vSubmit(req: Request, res: Response, next: NextFuncti
   } catch (e) { next(e); }
 }
 
+export async function qwenImageEditSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).qwenImageEditSubmit(uid, req.body || {});
+    res.json(formatApiResponse('success', 'Submitted', result));
+  } catch (e) { next(e); }
+}
+
+// Ensure the controller map includes the Qwen image-edit submit handler
+Object.assign(replicateController, { qwenImageEditSubmit });
+
 export async function queueStatus(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
@@ -171,15 +182,12 @@ export async function seedanceT2vSubmit(req: Request, res: Response, next: NextF
     const result = await (replicateService as any).seedanceT2vSubmit(uid, req.body || {});
 
     const ctx = (req as any).context || {};
-    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'seedance-t2v');
 
     // OPTIMIZED: Return immediately after submission to prevent 524 timeout
-    // Client should poll /api/replicate/queue/result with requestId to get final results
-    // This allows video generation (which can take minutes) to complete asynchronously
+    // Do NOT perform the actual debit here. Return only the expected debit amount.
     res.json(formatApiResponse('success', 'Submitted', {
       ...result,
-      debitedCredits: ctx.creditCost,
-      debitStatus: debitOutcome,
+      expectedDebit: typeof ctx.creditCost === 'number' ? ctx.creditCost : undefined,
       // Include requestId so client can poll for results
       requestId: result.requestId,
       message: 'Video generation started. Use /api/replicate/queue/result with requestId to check status.'
@@ -215,15 +223,12 @@ export async function seedanceI2vSubmit(req: Request, res: Response, next: NextF
     const result = await (replicateService as any).seedanceI2vSubmit(uid, req.body || {});
 
     const ctx = (req as any).context || {};
-    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'seedance-i2v');
 
     // OPTIMIZED: Return immediately after submission to prevent 524 timeout
-    // Client should poll /api/replicate/queue/result with requestId to get final results
-    // This allows video generation (which can take minutes) to complete asynchronously
+    // Do NOT perform the actual debit here. Return only the expected debit amount.
     res.json(formatApiResponse('success', 'Submitted', {
       ...result,
-      debitedCredits: ctx.creditCost,
-      debitStatus: debitOutcome,
+      expectedDebit: typeof ctx.creditCost === 'number' ? ctx.creditCost : undefined,
       // Include requestId so client can poll for results
       requestId: result.requestId,
       message: 'Video generation started. Use /api/replicate/queue/result with requestId to check status.'
@@ -259,14 +264,12 @@ export async function seedanceProFastT2vSubmit(req: Request, res: Response, next
     const result = await (replicateService as any).seedanceProFastT2vSubmit(uid, req.body || {});
 
     const ctx = (req as any).context || {};
-    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'seedance-pro-fast-t2v');
 
     // OPTIMIZED: Return immediately after submission to prevent 524 timeout
-    // Client should poll /api/replicate/queue/result with requestId to get final results
+    // Do NOT perform the actual debit here. Return only the expected debit amount.
     res.json(formatApiResponse('success', 'Submitted', {
       ...result,
-      debitedCredits: ctx.creditCost,
-      debitStatus: debitOutcome,
+      expectedDebit: typeof ctx.creditCost === 'number' ? ctx.creditCost : undefined,
       requestId: result.requestId,
       message: 'Video generation started. Use /api/replicate/queue/result with requestId to check status.'
     }));
@@ -298,14 +301,12 @@ export async function seedanceProFastI2vSubmit(req: Request, res: Response, next
     const result = await (replicateService as any).seedanceProFastI2vSubmit(uid, req.body || {});
 
     const ctx = (req as any).context || {};
-    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'seedance-pro-fast-i2v');
 
     // OPTIMIZED: Return immediately after submission to prevent 524 timeout
-    // Client should poll /api/replicate/queue/result with requestId to get final results
+    // Do NOT perform the actual debit here. Return only the expected debit amount.
     res.json(formatApiResponse('success', 'Submitted', {
       ...result,
-      debitedCredits: ctx.creditCost,
-      debitStatus: debitOutcome,
+      expectedDebit: typeof ctx.creditCost === 'number' ? ctx.creditCost : undefined,
       requestId: result.requestId,
       message: 'Video generation started. Use /api/replicate/queue/result with requestId to check status.'
     }));

@@ -4,6 +4,7 @@ import { makeCreditCost } from '../middlewares/creditCostFactory';
 // Removed route-level debit writes; controller handles debit via unified helper
 import { replicateController, multiangle } from '../controllers/replicateController';
 import { computeReplicateBgRemoveCost, computeReplicateImageGenCost, computeReplicateUpscaleCost, computeReplicateMultiangleCost } from '../utils/pricing/replicatePricing';
+import { computeQwenImageEditCost } from '../utils/pricing/replicatePricing';
 import { computeWanVideoCost } from '../utils/pricing/wanPricing';
 import { computeKlingVideoCost, computeKlingLipsyncCost } from '../utils/pricing/klingPricing';
 import { computeSeedanceVideoCost } from '../utils/pricing/seedancePricing';
@@ -221,6 +222,15 @@ router.post(
   validatePixverseI2V,
   makeCreditCost('replicate', 'pixverse-i2v', computePixverseVideoCost),
   (replicateController as any).pixverseI2vSubmit
+);
+
+// Qwen image edit (Replicate qwen/qwen-image-edit-2511)
+router.post(
+  '/qwen-image-edit/submit',
+  requireAuth,
+  validateReplicateGenerate,
+  makeCreditCost('replicate', 'qwen-image-edit', computeQwenImageEditCost),
+  (replicateController as any).qwenImageEditSubmit
 );
 
 export default router;

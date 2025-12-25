@@ -159,6 +159,12 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
     return { service: 'replicate', backendModel: 'prunaai/p-image' };
   }
 
+  // Qwen Image Edit - Replicate model (qwen/qwen-image-edit-2511)
+  // Frontend often sends the short alias "qwen-image-edit"
+  if (modelLower === 'qwen-image-edit' || modelLower.includes('qwen image edit') || modelLower.includes('qwen-image-edit')) {
+    return { service: 'replicate', backendModel: 'qwen/qwen-image-edit-2511' };
+  }
+
   // BFL Flux models - check in order of specificity
   if (modelLower.includes('flux-pro-1.1-ultra') || modelLower.includes('pro 1.1 ultra')) {
     return { service: 'bfl', backendModel: 'flux-pro-1.1-ultra' };
