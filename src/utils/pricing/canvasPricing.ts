@@ -4,7 +4,7 @@ import { creditDistributionData, PRICING_VERSION } from '../../data/creditDistri
 import { mapModelToBackend } from '../../services/canvas/generateService';
 import { computeFalImageCost, computeFalVeoTtvSubmitCost, computeFalVeoI2vSubmitCost, computeFalVeo31TtvSubmitCost, computeFalVeo31I2vSubmitCost, computeFalSora2I2vSubmitCost, computeFalSora2ProI2vSubmitCost, computeFalSora2T2vSubmitCost, computeFalSora2ProT2vSubmitCost, computeFalSora2RemixSubmitCost, computeFalLtxV2ProI2vSubmitCost, computeFalLtxV2FastI2vSubmitCost, computeFalLtxV2ProT2vSubmitCost, computeFalLtxV2FastT2vSubmitCost, computeFalImage2SvgCost, computeFalRecraftVectorizeCost, computeFalBriaGenfillCost, computeFalSeedVrUpscaleCost, computeFalBirefnetVideoCost, computeFalTopazUpscaleImageCost, computeFalElevenTtsCost, computeFalElevenDialogueCost, computeFalChatterboxMultilingualCost, computeFalMayaTtsCost, computeFalOutpaintCost } from './falPricing';
 import { computeBflCost, computeBflFillCost, computeBflExpandCost, computeBflCannyCost, computeBflDepthCost, computeBflExpandWithFillCost } from './bflPricing';
-import { computeReplicateImageGenCost, computeReplicateUpscaleCost, computeReplicateBgRemoveCost, computeReplicateNextSceneCost } from './replicatePricing';
+import { computeReplicateImageGenCost, computeReplicateUpscaleCost, computeReplicateBgRemoveCost, computeReplicateNextSceneCost, computeReplicateVideoCost } from './replicatePricing';
 import { computeRunwayImageCost, computeRunwayVideoCost } from './runwayPricing';
 import { computeMinimaxVideoCost } from './minimaxPricing';
 
@@ -76,16 +76,8 @@ export async function computeCanvasVideoCost(req: Request): Promise<{ cost: numb
             if (isI2v) return isFast ? computeFalLtxV2FastI2vSubmitCost(req) : computeFalLtxV2ProI2vSubmitCost(req);
             return isFast ? computeFalLtxV2FastT2vSubmitCost(req) : computeFalLtxV2ProT2vSubmitCost(req);
         }
-    } else if (m.includes('replicate') || m.includes('wan') || m.includes('seedance')) {
-        // Basic Replicate video pricing (not heavily implemented in canvas currently? check requirements)
-        // Assuming for now fallback or specific implementation. 
-        // Wait, Wan and Seedance are in creditDistribution.
-        // We should implement a basic lookup for them if they are accessed via canvas.
-        // For now, let's assume they might be routed or handled.
-        // But since `generateVideoForCanvas` handles mapVideoModelToBackend which returns service/backendModel.
-        // If service is 'replicate', we might need `computeReplicateVideoCost`?
-        // replicatePricing.ts doesn't have video function exported yet (only ImageGen, Upscale, BgRemove).
-        // Let's rely on generic lookup if needed or throw for now if not supported.
+    } else if (m.includes('replicate') || m.includes('wan') || m.includes('seedance') || m.includes('kling') || m.includes('pixverse')) {
+        return computeReplicateVideoCost(req);
     }
 
     throw new Error(`Unsupported canvas video model: ${model}`);
