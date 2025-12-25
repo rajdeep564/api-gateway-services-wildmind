@@ -2991,7 +2991,27 @@ export const falService = {
     });
 
     try {
-      const input: any = { video_url: body.video_url };
+      let resolvedUrl = body.video_url;
+      if (resolvedUrl && resolvedUrl.includes('idr01.zata.ai')) {
+        try {
+          const username = creator?.username || uid;
+          // Download from Zata using our backend (bypasses TLS) and re-upload
+          // This creates a new Zata URL, but FAL may still not be able to access it
+          // Ideally we would upload to FAL storage, but for now we try re-uploading to Zata
+          const reuploaded = await uploadFromUrlToZata({
+            sourceUrl: resolvedUrl,
+            keyPrefix: `users/${username}/input/${historyId}`,
+            fileName: `upscale-fal-${Date.now()}`
+          });
+          resolvedUrl = reuploaded.publicUrl;
+          console.log('[falService.seedvrUpscale] Re-uploaded video for FAL access:', resolvedUrl);
+        } catch (err: any) {
+          console.error('[falService.seedvrUpscale] Failed to re-upload video for FAL access:', err?.message || err);
+          // Continue with original URL
+        }
+      }
+
+      const input: any = { video_url: resolvedUrl };
       if (body.upscale_mode) input.upscale_mode = body.upscale_mode;
       if (body.upscale_factor != null) input.upscale_factor = body.upscale_factor;
       if (body.target_resolution) input.target_resolution = body.target_resolution;
@@ -3003,17 +3023,25 @@ export const falService = {
 
       console.log('[seedvrUpscale] Calling FAL API with input:', { ...input, video_url: input.video_url?.substring(0, 100) + '...' });
 
-      let result: any;
-      try {
-        result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
-      } catch (falErr: any) {
-        const errorDetails = falErr?.response?.data || falErr?.message || falErr;
-        console.error('[seedvrUpscale] FAL API error:', JSON.stringify(errorDetails, null, 2));
-        const errorMessage = typeof errorDetails === 'string'
-          ? errorDetails
-          : errorDetails?.error || errorDetails?.message || errorDetails?.detail || 'FAL API request failed';
-        throw new ApiError(`FAL API error: ${errorMessage}`, 502);
+      // Validate that the video URL is an http(s) URL and reachable by FAL
+      if (!input.video_url || typeof input.video_url !== 'string' || !/^https?:\/\//i.test(input.video_url)) {
+        console.error('[seedvrUpscale] Invalid video_url provided:', input.video_url);
+        throw new ApiError('video_url must be a public http(s) URL accessible by the FAL service', 400);
       }
+
+      try {
+        const headResp = await axios.head(input.video_url, { timeout: 5000 });
+        const contentType = headResp.headers && (headResp.headers['content-type'] || headResp.headers['Content-Type']);
+        if (contentType && !/^video\//i.test(contentType) && !/octet-stream/i.test(contentType)) {
+          console.warn('[seedvrUpscale] video_url content-type is not a recognized video type:', contentType);
+        }
+      } catch (headErr: any) {
+        console.error('[seedvrUpscale] Unable to reach video_url or non-200 response:', headErr?.message || headErr);
+        throw new ApiError('Unable to download video_url; ensure it is a public, reachable URL (FAL needs to fetch it)', 400);
+      }
+
+      let result: any;
+      result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
 
       const videoUrl: string | undefined = (result as any)?.data?.video?.url || (result as any)?.data?.video_url || (result as any)?.data?.output?.video?.url;
       if (!videoUrl) {
