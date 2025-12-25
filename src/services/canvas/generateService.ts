@@ -110,7 +110,7 @@ function calculateAspectRatio(width?: number, height?: number): string {
  */
 export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 'replicate' | 'fal' | 'runway'; backendModel: string; resolution?: string } {
   const modelLower = frontendModel.toLowerCase().trim();
-  
+
   // Extract resolution from model name if present (e.g., "Google nano banana pro 2K" -> resolution: "2K")
   // Check in reverse order (4K, 2K, 1K) to match longer suffixes first
   let resolution: string | undefined;
@@ -134,8 +134,8 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
   // Seedream 4.5 - MUST check BEFORE Seedream 4K check to avoid false matches
   // Check for "seedream 4.5", "seedream-4.5", "seedream_v45", etc. (with or without resolution suffix)
   const seedream45Base = modelLower.replace(/\s+(1k|2k|4k)$/, ''); // Remove resolution suffix for matching
-  if (seedream45Base.includes('seedream-4.5') || seedream45Base.includes('seedream_v45') || seedream45Base.includes('seedreamv45') || 
-      (seedream45Base.includes('seedream') && (seedream45Base.includes('4.5') || seedream45Base.includes('v4.5') || seedream45Base.includes('v45')))) {
+  if (seedream45Base.includes('seedream-4.5') || seedream45Base.includes('seedream_v45') || seedream45Base.includes('seedreamv45') ||
+    (seedream45Base.includes('seedream') && (seedream45Base.includes('4.5') || seedream45Base.includes('v4.5') || seedream45Base.includes('v45')))) {
     return { service: 'fal', backendModel: 'seedream-4.5', resolution };
   }
 
@@ -146,7 +146,8 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
     modelLower.includes('4 k') ||
     (modelLower.includes('v4') && modelLower.includes('4k'))
   ) && !modelLower.includes('4.5') && !modelLower.includes('v4.5') && !modelLower.includes('v45')) {
-    return { service: 'replicate', backendModel: 'bytedance/seedream-4' };
+    // Switch to FAL for Seedream v4 to avoid Replicate credit issues
+    return { service: 'fal', backendModel: 'fal-ai/bytedance/seedream/v4/text-to-image', resolution };
   }
 
   // Z Image Turbo - Replicate model (prunaai/z-image-turbo)
@@ -165,12 +166,15 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
     return { service: 'replicate', backendModel: 'qwen/qwen-image-edit-2511' };
   }
 
-  // BFL Flux models - check in order of specificity
-  if (modelLower.includes('flux-pro-1.1-ultra') || modelLower.includes('pro 1.1 ultra')) {
-    return { service: 'bfl', backendModel: 'flux-pro-1.1-ultra' };
+  // Explicit mapping for Flux 2 Pro to FAL as requested by user
+  if (modelLower.includes('flux 2 pro') || modelLower.includes('flux-2-pro')) {
+    return { service: 'fal', backendModel: 'fal-ai/flux-2-pro', resolution };
+  }
+  if (modelLower.includes('flux-pro/v1.1-ultra') || (modelLower.includes('pro 1.1') && modelLower.includes('ultra'))) {
+    return { service: 'fal', backendModel: 'fal-ai/flux-pro/v1.1-ultra', resolution };
   }
   if (modelLower.includes('flux-pro-1.1') || (modelLower.includes('pro 1.1') && !modelLower.includes('ultra'))) {
-    return { service: 'bfl', backendModel: 'flux-pro-1.1' };
+    return { service: 'bfl', backendModel: 'flux-pro-1.1', resolution };
   }
   if (modelLower.includes('flux-kontext-max') || modelLower.includes('kontext max')) {
     return { service: 'bfl', backendModel: 'flux-kontext-max' };
@@ -210,9 +214,9 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
     return { service: 'fal', backendModel: 'gemini-25-flash-image' };
   }
   if (modelLower.includes('flux 2 pro') || modelLower.includes('flux-2-pro')) {
-    return { service: 'fal', backendModel: 'flux-2-pro' };
+    return { service: 'fal', backendModel: 'flux-2-pro', resolution };
   }
-  
+
   // Seedream v4 (without 4K) - goes to FAL
   // This check comes after Seedream 4.5 and Seedream 4K checks
   if (modelLower.includes('seedream') && !modelLower.includes('4.5') && !modelLower.includes('v4.5') && !modelLower.includes('v45') && !modelLower.includes('4k')) {
@@ -464,6 +468,8 @@ export async function generateForCanvas(
         model: backendModel, // 'gen4_image' or 'gen4_image_turbo'
         ratio: runwayRatio as any,
         generationType: 'text-to-image',
+        ...(request.options?.style ? { style: request.options.style } : {}),
+        ...(request.seed !== undefined ? { seed: request.seed } : {}),
       };
 
       // Handle reference images based on scene number
@@ -561,25 +567,70 @@ export async function generateForCanvas(
       const falPayload: any = {
         prompt: request.prompt,
         model: backendModel, // Use mapped backend model name (e.g., 'seedream-4.5')
-        aspect_ratio: aspectRatio as any,
+        // aspect_ratio: aspectRatio as any, // MOVED: Conditionally set below
         num_images: clampedImageCount, // Pass imageCount to generate multiple images
+        resolution: extractedResolution, // Pass resolution (e.g., '2K', '4K') to FAL service
         storageKeyPrefixOverride: canvasKeyPrefix,
         forceSyncUpload: true,
       };
 
-      // Pass resolution for Google Nano Banana Pro and Seedream 4.5 if provided
+      // Special handling for Flux Pro (1.1 Ultra, 2 Pro) capability on FAL
+      // If we have custom width/height (from Fit-Inside logic), use 'image_size' object and OMIT aspect_ratio
+      const isFluxUltra = backendModel.includes('flux-pro/v1.1-ultra') || backendModel.includes('flux-2-pro');
+
+      // Special check for Seedream models (v4, v4.5): Only use custom image_size if it meets API constraints
+      // Constraints: width/height >= 1920 OR total pixels >= 3,686,400 (approx 2560x1440)
+      // Otherwise fall back to 'resolution' parameter (which maps to auto_2K/auto_4K enums in falService)
+      const isSeedreamCheck = backendModel.includes('seedream');
+      const customWidth = (request as any).width;
+      const customHeight = (request as any).height;
+
+      let useCustomSize = false;
+      if (customWidth && customHeight) {
+        if (isFluxUltra) {
+          useCustomSize = true;
+        } else if (isSeedreamCheck) {
+          // Seedream 4.5 Smart Logic:
+          // Check strict constraints
+          const totalPixels = customWidth * customHeight;
+          const minSide = 1920;
+          const minPixels = 2560 * 1440; // 3,686,400
+
+          if ((customWidth >= minSide && customHeight >= minSide) || totalPixels >= minPixels) {
+            useCustomSize = true;
+            console.log(`[generateForCanvas] ✅ Seedream 4.5: Dimensions ${customWidth}x${customHeight} meet custom size constraints`);
+          } else {
+            console.log(`[generateForCanvas] ⚠️ Seedream 4.5: Dimensions ${customWidth}x${customHeight} are too small for custom size, falling back to auto resolution enum`);
+            useCustomSize = false;
+          }
+        }
+      }
+
+      if (useCustomSize && customWidth && customHeight) {
+        falPayload.image_size = {
+          width: customWidth,
+          height: customHeight
+        };
+        console.log(`[generateForCanvas] ✅ Using custom image_size for ${isFluxUltra ? 'Flux Ultra/Pro' : 'Seedream'}: ${customWidth}x${customHeight}`);
+        // Do NOT set falPayload.aspect_ratio here
+      } else {
+        // Default behavior: use aspect_ratio
+        falPayload.aspect_ratio = aspectRatio as any;
+      }
+
+      // Pass resolution for Google Nano Banana Pro and Seedream if provided
       // Priority: extracted from model name > direct resolution field > options.resolution
       const resolution = extractedResolution || (request as any).resolution || (request.options && request.options.resolution);
       const isNanoBananaPro = backendModel.includes('nano-banana-pro') || backendModel.includes('google/nano-banana-pro');
-      const isSeedream45 = backendModel.includes('seedream-4.5');
-      
-      if (resolution && (isNanoBananaPro || isSeedream45)) {
+      const isSeedream = backendModel.includes('seedream');
+
+      if (resolution && (isNanoBananaPro || isSeedream)) {
         falPayload.resolution = resolution;
-        console.log(`[generateForCanvas] ✅ Setting resolution for ${isNanoBananaPro ? 'Google Nano Banana Pro' : 'Seedream 4.5'}:`, resolution);
+        console.log(`[generateForCanvas] ✅ Setting resolution for ${isNanoBananaPro ? 'Google Nano Banana Pro' : 'Seedream'}:`, resolution);
       } else if (isNanoBananaPro) {
         console.log('[generateForCanvas] ⚠️ No resolution provided for Google Nano Banana Pro, Fal service will default to 1K');
-      } else if (isSeedream45) {
-        console.log('[generateForCanvas] ⚠️ No resolution provided for Seedream 4.5, Fal service will use default image_size');
+      } else if (isSeedream) {
+        console.log('[generateForCanvas] ⚠️ No resolution provided for Seedream, Fal service will use default image_size');
       }
 
       // Handle reference images based on scene number
@@ -970,7 +1021,7 @@ function mapVideoModelToBackend(frontendModel: string): VideoModelConfig {
     return { service: 'replicate', method: 'seedanceT2vSubmit', backendModel: 'bytedance/seedance-1-pro' };
   }
   if (modelLower.includes('pixverse v5') || modelLower === 'pixverse v5' || modelLower.includes('pixverse')) {
-    return { service: 'replicate', method: 'pixverseT2vSubmit', backendModel: 'pixverseai/pixverse-v5' };
+    return { service: 'replicate', method: 'pixverseT2vSubmit', backendModel: 'pixverse/pixverse-v5' };
   }
   if (modelLower.includes('wan 2.5 fast') || modelLower === 'wan 2.5 fast') {
     return { service: 'replicate', method: 'wanT2vSubmit', backendModel: 'wan-video/wan-2.5-t2v-fast', isFast: true };
@@ -1085,9 +1136,17 @@ export async function generateVideoForCanvas(
         isPublic: false,
       };
 
+      // FAL LTX V2 Pro (Text-to-Video) ONLY supports 16:9 aspect ratio.
+      // Other ratios (9:16, 1:1) will cause a 422 Unprocessable Entity error from FAL.
+      const isLtx = modelConfig.method.includes('ltx');
+      const isT2v = !request.firstFrameUrl;
+      if (isLtx && isT2v && aspectRatio !== '16:9') {
+        console.warn(`[generateVideoForCanvas] LTX T2V only supports 16:9. Adjusting ${aspectRatio} to 16:9.`);
+        falPayload.aspect_ratio = '16:9';
+      }
+
       // FAL Sora 2 expects duration as number, Veo expects as string "8s"
       const isSora2 = modelConfig.method.includes('sora2');
-      const isLtx = modelConfig.method.includes('ltx');
       if (isSora2 || isLtx) {
         falPayload.duration = duration; // Number for Sora 2 and LTX
       } else {
@@ -1499,7 +1558,7 @@ export async function removeBgForCanvas(
       imageLength: request.image?.length || 0,
       imageInlined: inlined.wasInlined,
     });
-    
+
     const result = await replicateService.removeBackground(uid, {
       image: inlined.image,
       model: replicateModel,

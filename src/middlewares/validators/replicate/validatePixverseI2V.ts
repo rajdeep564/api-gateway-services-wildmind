@@ -2,8 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import { body, validationResult } from 'express-validator';
 import { ApiError } from '../../../utils/errorHandler';
 
-const allowedQualities = ['360p','540p','720p','1080p','360','540','720','1080'];
-const allowedAspects = ['16:9','9:16','1:1'];
+const allowedQualities = ['360p', '540p', '720p', '1080p', '360', '540', '720', '1080'];
+const allowedAspects = ['16:9', '9:16', '1:1'];
 
 export const validatePixverseI2V = [
   body('model').optional().isString(),
@@ -20,7 +20,7 @@ export const validatePixverseI2V = [
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
 
     // Defaults and normalization
-    if (!req.body.model) req.body.model = 'pixverseai/pixverse-v5';
+    if (!req.body.model) req.body.model = 'pixverse/pixverse-v5';
     const d = String(req.body.duration ?? '5').toLowerCase();
     const dm = d.match(/(5|8)/); req.body.duration = dm ? Number(dm[1]) : 5;
     // Normalize quality/resolution to 'Xp'
@@ -29,7 +29,7 @@ export const validatePixverseI2V = [
     req.body.quality = qm ? `${qm[1]}p` : '720p';
     req.body.resolution = req.body.quality;
     if (!req.body.mode && !req.body.kind && !req.body.type) req.body.mode = 'i2v';
-    
+
     return next();
   }
 ];

@@ -139,8 +139,8 @@ async function generate(
   // Use 'character' folder for text-to-character generation input images
   const inputFolder = generationType === 'text-to-character' ? 'character' : 'input';
   let publicImageUrls: string[] = [];
-  const isFlux2Pro = modelLower.includes('flux-2-pro');
-  const isNanoBananaPro = modelLower.includes('google/nano-banana-pro') || modelLower.includes('nano-banana-pro');
+  const isFlux2Pro = modelLower.includes('flux-2-pro') || modelLower.includes('flux 2 pro');
+  const isNanoBananaPro = modelLower.includes('google/nano-banana-pro') || modelLower.includes('nano-banana-pro') || modelLower.includes('nano banana pro');
 
   // For nano-banana-pro, also check image_urls from payload
   const payloadImageUrls = isNanoBananaPro && Array.isArray((payload as any).image_urls) ? (payload as any).image_urls : [];
@@ -336,7 +336,7 @@ async function generate(
     modelEndpoint = hasImages
       ? 'fal-ai/nano-banana-pro/edit'
       : 'fal-ai/nano-banana-pro';
-  } else if (modelLower.includes('flux-2-pro')) {
+  } else if (isFlux2Pro) {
     // Flux 2 Pro: use /edit endpoint when images are uploaded, otherwise use text-to-image endpoint
     const hasImages = Array.isArray(uploadedImages) && uploadedImages.length > 0;
     modelEndpoint = hasImages
@@ -373,6 +373,15 @@ async function generate(
     modelEndpoint = uploadedImages.length > 0
       ? 'fal-ai/gemini-25-flash-image/edit'
       : 'fal-ai/gemini-25-flash-image';
+  }
+
+  // Handle explicit Flux Pro Text-to-Image request (e.g. from generateService routing)
+  if (modelLower.includes('flux-pro')) {
+    // Use the model string passed from generateService (which should be 'fal-ai/flux-pro/v1.1-ultra')
+    // If it's just 'flux-pro', default to ultra or pro depending on string
+    if (modelLower.includes('ultra')) modelEndpoint = 'fal-ai/flux-pro/v1.1-ultra';
+    else if (modelLower.includes('1.1')) modelEndpoint = 'fal-ai/flux-pro/v1.1';
+    else modelEndpoint = 'fal-ai/flux-pro/v1.1-ultra'; // Default to ultra for generic 'flux-pro' on FAL
   }
 
   // Parse prompt to extract @references and map them to image indices
@@ -837,6 +846,380 @@ async function generate(
         }
         throw falError;
       }
+    }
+  }
+
+  // >>> FLUX PRO 1.1 ULTRA HANDLER <<<
+  if (modelLower.includes('flux-pro')) {
+    console.log(`[falService] 🚀 Handling Flux Pro request: ${modelEndpoint}`);
+
+    const inputBody: any = {
+      prompt: finalPrompt,
+      safety_tolerance: (payload as any).safety_tolerance || "2",
+      output_format: (payload as any).output_format || "jpeg",
+      num_images: imagesRequestedClamped,
+      enable_safety_checker: (payload as any).enable_safety_checker !== false, // Default true
+      raw: (payload as any).raw === true,
+    };
+
+    // Add seed if provided
+    if ((payload as any).seed) inputBody.seed = (payload as any).seed;
+
+    // CRITICAL: Handle image_size (custom dimensions) vs aspect_ratio
+    // If image_size is present (passed from generateService), use it and IGNORE aspect_ratio
+    if ((payload as any).image_size) {
+      inputBody.image_size = (payload as any).image_size;
+      console.log('[falService] ✅ Using custom image_size for Flux Pro:', JSON.stringify(inputBody.image_size));
+    } else {
+      // Fallback to aspect_ratio if no custom size
+      inputBody.aspect_ratio = (payload as any).aspect_ratio || "16:9";
+    }
+
+    // Add optional sync_mode to return URLs directly (though we use subscribe)
+    inputBody.sync_mode = false;
+
+    try {
+      console.log('[falService] Submitting Flux Pro request to FAL:', { modelEndpoint, input: inputBody });
+      const result = await fal.subscribe(modelEndpoint as any, {
+        input: inputBody,
+        logs: true,
+        onQueueUpdate: (update) => {
+          if (update.status === "IN_PROGRESS") {
+            update.logs.map((log) => log.message).forEach(msg => console.log(`[FAL Flux Log] ${msg}`));
+          }
+        },
+      });
+
+      // Check for images in result
+      if (!result.data || !result.data.images || !Array.isArray(result.data.images) || result.data.images.length === 0) {
+        console.error('[falService] No images returned from Flux Pro generation:', result);
+        throw new ApiError('No images returned from Flux Pro generation', 502, result);
+      }
+
+      const images = result.data.images;
+      const requestId = result.requestId;
+
+      // Upload images to Zata
+      const username = creator?.username || uid;
+      const storedImages = await Promise.all(images.map(async (img: any, idx: number) => {
+        const url = img.url;
+        if (!url) return null;
+
+        try {
+          const stored = await uploadFromUrlToZata({
+            sourceUrl: url,
+            keyPrefix: `users/${username}/image/${historyId}`,
+            fileName: `flux-pro-${idx + 1}`
+          });
+          return {
+            id: `${requestId}-${idx}`,
+            url: stored.publicUrl,
+            storagePath: stored.key,
+            originalUrl: url,
+            content_type: img.content_type
+          };
+        } catch (e) {
+          console.warn('[falService] Failed to upload Flux Pro image to Zata, using original:', e);
+          return {
+            id: `${requestId}-${idx}`,
+            url: url,
+            originalUrl: url,
+            content_type: img.content_type
+          };
+        }
+      }));
+
+      const validStoredImages = storedImages.filter(img => img !== null);
+
+      // Update history
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: validStoredImages,
+      } as any);
+
+      await falRepository.updateGenerationRecord(legacyId, {
+        status: 'completed',
+        images: validStoredImages
+      } as any);
+
+      await syncToMirror(uid, historyId);
+
+      // Trigger optimization
+      markGenerationCompleted(uid, historyId, {
+        status: 'completed',
+        images: validStoredImages,
+        isPublic: (payload as any).isPublic === true,
+      }).catch(err => console.error('[falService] Optimization failed:', err));
+
+      return {
+        images: validStoredImages,
+        historyId,
+        model: modelEndpoint,
+        status: 'completed',
+        seed: result.data.seed,
+        has_nsfw_concepts: result.data.has_nsfw_concepts
+      } as any;
+
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to generate image with Flux Pro',
+        context: 'falService.generate.fluxPro',
+      });
+      try {
+        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
+      } catch (mirrorErr) {
+        console.error('[falService.generate][flux-pro] Failed to mirror error state:', mirrorErr);
+      }
+      throw falError;
+    }
+  }
+
+  // >>> FLUX PRO HANDLER (v1.1 Ultra, v1.1, and Flux 2 Pro) <<<
+  // Update: Exclude 'flux-2-pro' so it falls through to the specific handler below (which handles parallel requests)
+  if (modelLower.includes('flux-pro') && !modelLower.includes('flux-2-pro')) {
+    console.log(`[falService] 🚀 Handling Flux Pro request: ${modelEndpoint}`);
+
+    const inputBody: any = {
+      prompt: finalPrompt,
+      safety_tolerance: (payload as any).safety_tolerance || "2",
+      output_format: (payload as any).output_format || "jpeg",
+      num_images: imagesRequestedClamped,
+      enable_safety_checker: (payload as any).enable_safety_checker !== false, // Default true
+      raw: (payload as any).raw === true,
+    };
+
+    // Add seed if provided
+    if ((payload as any).seed) inputBody.seed = (payload as any).seed;
+
+    // CRITICAL: Handle image_size (custom dimensions) vs aspect_ratio
+    // If image_size is present (passed from generateService), use it and IGNORE aspect_ratio
+    if ((payload as any).image_size) {
+      inputBody.image_size = (payload as any).image_size;
+      console.log('[falService] ✅ Using custom image_size for Flux Pro:', JSON.stringify(inputBody.image_size));
+    } else {
+      // Fallback to aspect_ratio if no custom size
+      inputBody.aspect_ratio = (payload as any).aspect_ratio || "16:9";
+    }
+
+    // Add optional sync_mode to return URLs directly (though we use subscribe)
+    inputBody.sync_mode = false;
+
+    try {
+      console.log('[falService] Submitting Flux Pro request to FAL:', { modelEndpoint, input: inputBody });
+      const result = await fal.subscribe(modelEndpoint as any, {
+        input: inputBody,
+        logs: true,
+        onQueueUpdate: (update) => {
+          if (update.status === "IN_PROGRESS") {
+            update.logs.map((log) => log.message).forEach(msg => console.log(`[FAL Flux Log] ${msg}`));
+          }
+        },
+      });
+
+      // Check for images in result
+      if (!result.data || !result.data.images || !Array.isArray(result.data.images) || result.data.images.length === 0) {
+        console.error('[falService] No images returned from Flux Pro generation:', result);
+        throw new ApiError('No images returned from Flux Pro generation', 502, result);
+      }
+
+      const images = result.data.images;
+      const requestId = result.requestId;
+
+      // Upload images to Zata
+      const username = creator?.username || uid;
+      const storedImages = await Promise.all(images.map(async (img: any, idx: number) => {
+        const url = img.url;
+        if (!url) return null;
+
+        try {
+          const stored = await uploadFromUrlToZata({
+            sourceUrl: url,
+            keyPrefix: `users/${username}/image/${historyId}`,
+            fileName: `flux-pro-${idx + 1}`
+          });
+          return {
+            id: `${requestId}-${idx}`,
+            url: stored.publicUrl,
+            storagePath: stored.key,
+            originalUrl: url,
+            content_type: img.content_type
+          };
+        } catch (e) {
+          console.warn('[falService] Failed to upload Flux Pro image to Zata, using original:', e);
+          return {
+            id: `${requestId}-${idx}`,
+            url: url,
+            originalUrl: url,
+            content_type: img.content_type
+          };
+        }
+      }));
+
+      const validStoredImages = storedImages.filter(img => img !== null);
+
+      // Update history
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: validStoredImages,
+      } as any);
+
+      await falRepository.updateGenerationRecord(legacyId, {
+        status: 'completed',
+        images: validStoredImages
+      } as any);
+
+      await syncToMirror(uid, historyId);
+
+      // Trigger optimization
+      markGenerationCompleted(uid, historyId, {
+        status: 'completed',
+        images: validStoredImages,
+        isPublic: (payload as any).isPublic === true,
+      }).catch(err => console.error('[falService] Optimization failed:', err));
+
+      return {
+        images: validStoredImages,
+        historyId,
+        model: modelEndpoint,
+        status: 'completed',
+        seed: result.data.seed,
+        has_nsfw_concepts: result.data.has_nsfw_concepts
+      } as any;
+
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to generate image with Flux Pro',
+        context: 'falService.generate.fluxPro',
+      });
+      try {
+        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
+      } catch (mirrorErr) {
+        console.error('[falService.generate][flux-pro] Failed to mirror error state:', mirrorErr);
+      }
+      throw falError;
+    }
+  }
+
+  // >>> GOOGLE NANO BANANA PRO HANDLER <<<
+  if (isNanoBananaPro) {
+    console.log(`[falService] 🚀 Handling Nano Banana Pro request: ${modelEndpoint}`);
+
+    const inputBody: any = {
+      prompt: finalPrompt,
+      num_images: imagesRequestedClamped,
+      aspect_ratio: (payload as any).aspect_ratio || resolvedAspect || "auto",
+      output_format: (payload as any).output_format || output_format || "png",
+      resolution: (payload as any).resolution || "1K",
+      sync_mode: (payload as any).sync_mode || false,
+    };
+
+    if ((payload as any).limit_generations !== undefined) inputBody.limit_generations = (payload as any).limit_generations;
+    if ((payload as any).enable_web_search !== undefined) inputBody.enable_web_search = (payload as any).enable_web_search;
+    if ((payload as any).seed != null) inputBody.seed = Number((payload as any).seed);
+
+    // I2I mode for Nano Banana Pro
+    const isI2IMode = modelEndpoint.includes('/edit');
+    if (isI2IMode) {
+      const payloadImageUrls = Array.isArray((payload as any).image_urls) ? (payload as any).image_urls : [];
+      const refs = payloadImageUrls.length > 0 ? payloadImageUrls : (publicImageUrls.length > 0 ? publicImageUrls : uploadedImages);
+      if (Array.isArray(refs) && refs.length > 0) {
+        inputBody.image_urls = refs;
+      } else {
+        throw new ApiError('Image-to-image mode requires at least one input image', 400);
+      }
+    }
+
+    try {
+      console.log('[falService] Submitting Nano Banana Pro request to FAL:', { modelEndpoint, input: inputBody });
+      const result = await fal.subscribe(modelEndpoint as any, {
+        input: inputBody,
+        logs: true,
+      });
+
+      // Extract images from Nano Banana Pro response
+      const images = result.data?.images || result.data?.image || [];
+      const finalImages = Array.isArray(images) ? images : (images ? [images] : []);
+
+      if (finalImages.length === 0) {
+        console.error('[falService] No images returned from Nano Banana Pro generation:', result);
+        throw new ApiError('No images returned from Nano Banana Pro generation', 502, result);
+      }
+
+      const requestId = result.requestId;
+      const username = creator?.username || uid;
+
+      // Upload images to Zata
+      const storedImages = await Promise.all(finalImages.map(async (img: any, idx: number) => {
+        const url = typeof img === 'string' ? img : img.url;
+        if (!url) return null;
+
+        try {
+          const stored = await uploadFromUrlToZata({
+            sourceUrl: url,
+            keyPrefix: `users/${username}/image/${historyId}`,
+            fileName: `nano-banana-${idx + 1}`
+          });
+          return {
+            id: `${requestId}-${idx}`,
+            url: stored.publicUrl,
+            storagePath: stored.key,
+            originalUrl: url,
+            content_type: img.content_type || 'image/png'
+          };
+        } catch (e) {
+          console.warn('[falService] Failed to upload Nano Banana image to Zata:', e);
+          return {
+            id: `${requestId}-${idx}`,
+            url: url,
+            originalUrl: url,
+            content_type: img.content_type || 'image/png'
+          };
+        }
+      }));
+
+      const validStoredImages = storedImages.filter(img => img !== null);
+
+      // Update history
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: validStoredImages,
+        frameSize: resolvedAspect,
+      } as any);
+
+      await falRepository.updateGenerationRecord(legacyId, {
+        status: 'completed',
+        images: validStoredImages
+      } as any);
+
+      await syncToMirror(uid, historyId);
+      markGenerationCompleted(uid, historyId, {
+        status: 'completed',
+        images: validStoredImages,
+        isPublic: (payload as any).isPublic === true,
+      }).catch(() => { });
+
+      return {
+        images: validStoredImages,
+        historyId,
+        model: modelEndpoint,
+        status: 'completed',
+        seed: (result.data as any)?.seed
+      } as any;
+
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to generate image with Nano Banana Pro',
+        context: 'falService.generate.nanoBanana',
+      });
+      try {
+        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message } as any);
+      } catch { }
+      throw falError;
     }
   }
 

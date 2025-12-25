@@ -48,10 +48,10 @@ async function textToImage(
     );
   if (!["gen4_image", "gen4_image_turbo"].includes(model))
     throw new ApiError("Invalid model", 400);
-  
+
   // Prefer SDK
   const client = getRunwayClient();
-  
+
   // If referenceImages are provided directly (e.g., for mask support), use them
   // Otherwise, map uploadedImages to referenceImages with default tags
   let referenceImages: Array<{ uri: string; tag?: string }>;
@@ -64,32 +64,41 @@ async function textToImage(
   } else {
     referenceImages = [];
   }
-  
-  if (
-    model === "gen4_image_turbo" &&
-    referenceImages.length === 0
-  ) {
-    throw new ApiError(
-      "gen4_image_turbo requires at least one reference image",
-      400
-    );
-  }
-  const created = await client.textToImage.create({
-    model,
-    promptText,
-    ratio: ratio as any,
-    ...(seed !== undefined ? { seed } : {}),
-    ...(referenceImages.length > 0 ? { referenceImages } : {}),
-    ...(contentModeration
-      ? {
+
+
+  let created;
+  try {
+    console.log('[RunwayService] Calling textToImage.create with payload:', JSON.stringify({
+      model,
+      promptText,
+      ratio,
+      seed,
+      style: payload.style,
+      referenceImagesCount: referenceImages.length,
+    }, null, 2));
+
+    created = await client.textToImage.create({
+      model,
+      promptText,
+      ratio: ratio as any,
+      ...(seed !== undefined ? { seed } : {}),
+      ...(payload.style ? { style: payload.style } : {}),
+      referenceImages, // Always include, even if empty, as required by validation
+      ...(contentModeration
+        ? {
           contentModeration: {
             publicFigureThreshold: contentModeration.publicFigureThreshold as
               | "auto"
               | "low",
           },
         }
-      : {}),
-  });
+        : {}),
+    });
+  } catch (error: any) {
+    console.error('[RunwayService] SDK Error:', error);
+    console.error('[RunwayService] SDK Error Details:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+    throw new ApiError(`Runway SDK Error: ${error.message}`, 400);
+  }
   // Create authoritative history first
   const creator = await authRepository.getUserById(uid);
   const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
@@ -114,10 +123,10 @@ async function textToImage(
       isPublic: (payload as any).isPublic === true,
       createdBy,
     });
-  } catch {}
+  } catch { }
   // Store provider identifiers on history
   await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
-  
+
   // Persist user uploaded input images (if any)
   if (uploadedImages && uploadedImages.length > 0) {
     try {
@@ -132,7 +141,7 @@ async function textToImage(
             ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
             : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
           inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
-        } catch {}
+        } catch { }
       }
       if (inputPersisted.length > 0) {
         await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
@@ -142,7 +151,7 @@ async function textToImage(
       console.warn('[runwayService.textToImage] Failed to save inputImages:', e);
     }
   }
-  
+
   return { taskId: created.id, status: "pending", historyId };
 }
 
@@ -159,7 +168,7 @@ async function getStatus(uid: string, id: string): Promise<any> {
           ? (task as any).output
           : undefined,
       });
-    } catch {}
+    } catch { }
     // When completed, attach outputs into history and mirror
     if (task.status === 'SUCCEEDED') {
       // Find history by providerTaskId (requires uid-scoped search)
@@ -189,18 +198,18 @@ async function getStatus(uid: string, id: string): Promise<any> {
           const highestScore = aestheticScoreService.getHighestScore(scoredImages);
 
           await generationHistoryRepository.update(uid, found.id, { status: 'completed', images: scoredImages, aestheticScore: highestScore } as any);
-          try { console.log('[Runway] History updated with scores', { historyId: found.id, imageCount: scoredImages.length, highestScore }); } catch {}
-          
+          try { console.log('[Runway] History updated with scores', { historyId: found.id, imageCount: scoredImages.length, highestScore }); } catch { }
+
           // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
           markGenerationCompleted(uid, found.id, {
             status: "completed",
             images: scoredImages,
           }).catch(err => console.error('[Runway] Image optimization failed:', err));
-          
+
           try {
             const { cost, pricingVersion, meta } = computeRunwayCostFromHistoryModel(found.item.model);
             await creditsRepository.writeDebitIfAbsent(uid, found.id, cost, 'runway.generate', { ...meta, historyId: found.id, provider: 'runway', pricingVersion });
-          } catch {}
+          } catch { }
         } else {
           const storedVideos = await Promise.all((outputs as any[]).map(async (u: string, i: number) => {
             try {
@@ -220,11 +229,11 @@ async function getStatus(uid: string, id: string): Promise<any> {
           const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
 
           await generationHistoryRepository.update(uid, found.id, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
-          try { console.log('[Runway] Video history updated with scores', { historyId: found.id, videoCount: scoredVideos.length, highestScore }); } catch {}
+          try { console.log('[Runway] Video history updated with scores', { historyId: found.id, videoCount: scoredVideos.length, highestScore }); } catch { }
           try {
             const { cost, pricingVersion, meta } = computeRunwayCostFromHistoryModel(found.item.model);
             await creditsRepository.writeDebitIfAbsent(uid, found.id, cost, 'runway.video', { ...meta, historyId: found.id, provider: 'runway', pricingVersion });
-          } catch {}
+          } catch { }
         }
         // Robust mirror sync with retry logic
         await syncToMirror(uid, found.id);
@@ -292,10 +301,10 @@ async function videoGenerate(
             ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++i}` })
             : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++i}` });
           imgs.push({ id: `${created.id}-in-${i}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
-        } catch {}
+        } catch { }
       }
       if (imgs.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: imgs } as any);
-    } catch {}
+    } catch { }
 
     return {
       success: true,
@@ -362,7 +371,7 @@ async function videoGenerate(
             ? await uploadDataUriToZata({ dataUri: v, keyPrefix: base, fileName: 'input-video-1' })
             : await uploadFromUrlToZata({ sourceUrl: v, keyPrefix: base, fileName: 'input-video-1' });
           videos.push({ id: `${created.id}-vin-1`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: v });
-        } catch {}
+        } catch { }
       }
       if (videoToVideo && Array.isArray((videoToVideo as any).references)) {
         let i = 0;
@@ -374,14 +383,14 @@ async function videoGenerate(
               ? await uploadDataUriToZata({ dataUri: uri, keyPrefix: base, fileName: `input-ref-${++i}` })
               : await uploadFromUrlToZata({ sourceUrl: uri, keyPrefix: base, fileName: `input-ref-${++i}` });
             refs.push({ id: `${created.id}-iin-${i}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: uri });
-          } catch {}
+          } catch { }
         }
       }
       const updates: any = {};
       if (videos.length > 0) updates.inputVideos = videos;
       if (refs.length > 0) updates.inputImages = refs;
       if (Object.keys(updates).length > 0) await generationHistoryRepository.update(uid, historyId, updates);
-    } catch {}
+    } catch { }
 
     return {
       success: true,
@@ -422,9 +431,9 @@ async function videoGenerate(
             : await uploadFromUrlToZata({ sourceUrl: v, keyPrefix: base, fileName: 'input-video-1' });
           const videos = [{ id: `${created.id}-vin-1`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: v }];
           await generationHistoryRepository.update(uid, historyId, { inputVideos: videos } as any);
-        } catch {}
+        } catch { }
       }
-    } catch {}
+    } catch { }
     return {
       success: true,
       taskId: created.id,
@@ -449,19 +458,19 @@ async function characterPerformance(
 }> {
   const client = getRunwayClient();
   const { model, character, reference, ratio, seed, bodyControl, expressionIntensity, contentModeration } = body || {};
-  
+
   if (model !== 'act_two') {
     throw new ApiError("Model must be 'act_two' for Runway Act-Two", 400);
   }
-  
+
   if (!character || !character.type || !character.uri) {
     throw new ApiError("Character is required with type and uri", 400);
   }
-  
+
   if (!reference || !reference.type || reference.type !== 'video' || !reference.uri) {
     throw new ApiError("Reference video is required with type 'video' and uri", 400);
   }
-  
+
   // Build the request payload
   const payload: any = {
     model: 'act_two',
@@ -475,7 +484,7 @@ async function characterPerformance(
     },
     ratio: ratio || '1280:720',
   };
-  
+
   if (seed !== undefined) payload.seed = seed;
   if (bodyControl !== undefined) payload.bodyControl = bodyControl;
   if (expressionIntensity !== undefined) payload.expressionIntensity = expressionIntensity;
@@ -484,11 +493,11 @@ async function characterPerformance(
       publicFigureThreshold: contentModeration.publicFigureThreshold || 'auto',
     };
   }
-  
+
   console.log('[Runway Act-Two] Calling SDK with payload:', JSON.stringify(payload, null, 2));
   console.log('[Runway Act-Two] Client methods available:', Object.keys(client || {}));
   console.log('[Runway Act-Two] Client.characterPerformance exists:', !!client.characterPerformance);
-  
+
   let created;
   try {
     // Check if characterPerformance method exists on the client
@@ -509,16 +518,16 @@ async function characterPerformance(
     } else {
       created = await client.characterPerformance.create(payload);
     }
-    
+
     console.log('[Runway Act-Two] SDK response:', JSON.stringify(created, null, 2));
     console.log('[Runway Act-Two] Response type:', typeof created);
     console.log('[Runway Act-Two] Response has id:', !!created?.id);
-    
+
     // Check if the response is just the payload (error case)
     if (created && JSON.stringify(created) === JSON.stringify(payload)) {
       throw new ApiError("Runway SDK returned the payload unchanged. This usually means the method doesn't exist or the SDK version doesn't support Act-Two. Please update @runwayml/sdk.", 500);
     }
-    
+
     if (!created || !created.id) {
       console.error('[Runway Act-Two] Invalid response - missing task ID. Response:', created);
       throw new ApiError(`Invalid response from Runway SDK: missing task ID. Response: ${JSON.stringify(created)}`, 500);
@@ -535,10 +544,10 @@ async function characterPerformance(
       throw error;
     }
     // Check if it's a method not found error
-    if (error?.message?.includes('characterPerformance') || 
-        error?.message?.includes('not a function') ||
-        error?.code === 'ERR_METHOD_NOT_FOUND' ||
-        error?.name === 'TypeError') {
+    if (error?.message?.includes('characterPerformance') ||
+      error?.message?.includes('not a function') ||
+      error?.code === 'ERR_METHOD_NOT_FOUND' ||
+      error?.name === 'TypeError') {
       throw new ApiError(`Runway SDK method 'characterPerformance' not found or not supported. Error: ${error?.message}. Please ensure @runwayml/sdk is updated to the latest version that supports Act-Two API (act_two model).`, 500);
     }
     // Check for API errors
@@ -549,11 +558,11 @@ async function characterPerformance(
     }
     throw new ApiError(`Runway Act-Two API error: ${error?.message || 'Unknown error'}`, 500, error);
   }
-  
+
   const prompt = body?.promptText || 'Act-Two generation';
   const historyModel = body?.model || 'runway_act_two';
   const generationType = body?.generationType || 'video-to-video';
-  
+
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt,
     model: historyModel,
@@ -564,50 +573,50 @@ async function characterPerformance(
     isPublic: (body as any)?.isPublic === true,
     ...(ratio ? { ratio } : {}),
   } as any);
-  
+
   await generationHistoryRepository.update(uid, historyId, { provider: 'runway', providerTaskId: created.id } as any);
-  
+
   // Persist input character and reference
   try {
     const creator = await authRepository.getUserById(uid);
     const username = (creator?.username || uid) as string;
     const base = `users/${username}/input/${historyId}`;
     const updates: any = {};
-    
+
     // Store character (image or video)
     if (character && character.uri) {
       try {
         const stored = /^data:/i.test(character.uri)
-          ? (character.type === 'image' 
-              ? await uploadDataUriToZata({ dataUri: character.uri, keyPrefix: base, fileName: 'character-1' })
-              : await uploadDataUriToZata({ dataUri: character.uri, keyPrefix: base, fileName: 'character-video-1' }))
+          ? (character.type === 'image'
+            ? await uploadDataUriToZata({ dataUri: character.uri, keyPrefix: base, fileName: 'character-1' })
+            : await uploadDataUriToZata({ dataUri: character.uri, keyPrefix: base, fileName: 'character-video-1' }))
           : await uploadFromUrlToZata({ sourceUrl: character.uri, keyPrefix: base, fileName: character.type === 'image' ? 'character-1' : 'character-video-1' });
-        
+
         if (character.type === 'image') {
           updates.inputImages = [{ id: `${created.id}-char-1`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: character.uri }];
         } else {
           updates.inputVideos = [{ id: `${created.id}-char-video-1`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: character.uri }];
         }
-      } catch {}
+      } catch { }
     }
-    
+
     // Store reference video
     if (reference && reference.uri) {
       try {
         const stored = /^data:/i.test(reference.uri)
           ? await uploadDataUriToZata({ dataUri: reference.uri, keyPrefix: base, fileName: 'reference-video-1' })
           : await uploadFromUrlToZata({ sourceUrl: reference.uri, keyPrefix: base, fileName: 'reference-video-1' });
-        
+
         if (!updates.inputVideos) updates.inputVideos = [];
         updates.inputVideos.push({ id: `${created.id}-ref-video-1`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: reference.uri });
-      } catch {}
+      } catch { }
     }
-    
+
     if (Object.keys(updates).length > 0) {
       await generationHistoryRepository.update(uid, historyId, updates);
     }
-  } catch {}
-  
+  } catch { }
+
   return {
     success: true,
     taskId: created.id,

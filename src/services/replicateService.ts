@@ -1958,7 +1958,7 @@ export async function generateImage(uid: string, body: any) {
       if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
       if (typeof rest.prompt_upsampling === 'boolean') input.prompt_upsampling = rest.prompt_upsampling;
       if (typeof rest.disable_safety_checker === 'boolean') input.disable_safety_checker = rest.disable_safety_checker;
-      
+
       // Handle image-to-image: P-Image supports image_input parameter for image-to-image generation
       if (rest.image_input && Array.isArray(rest.image_input) && rest.image_input.length > 0) {
         // P-Image uses 'image' parameter (single image) for image-to-image, not 'image_input'
@@ -2182,7 +2182,7 @@ export async function generateImage(uid: string, body: any) {
               const isProxyUrl = /^\/api\/proxy\/resource\//i.test(img) || /^\/proxy\/resource\//i.test(img);
               const isZataUrl = env.zataPrefix && img.startsWith(env.zataPrefix);
               const isAbsoluteUrl = img.startsWith("http://") || img.startsWith("https://");
-              
+
               if (isProxyUrl) {
                 // Extract storage path from proxy URL and construct Zata URL
                 try {
@@ -2192,7 +2192,7 @@ export async function generateImage(uid: string, body: any) {
                   if (storagePathMatch && storagePathMatch[1]) {
                     // Decode URL-encoded path (e.g., users%2Fvivek -> users/vivek)
                     const storagePath = decodeURIComponent(storagePathMatch[1]);
-                    
+
                     // Construct Zata URL using zataPrefix
                     if (env.zataPrefix) {
                       const zataUrl = env.zataPrefix.replace(/\/$/, '') + '/' + storagePath;
@@ -2260,7 +2260,7 @@ export async function generateImage(uid: string, body: any) {
         }
       }
       replicateModelBase = "openai/gpt-image-1.5";
-      
+
       // Handle num_images for multiple image generation
       const numImages = input.number_of_images || 1;
       if (numImages > 1) {
@@ -3404,7 +3404,7 @@ export async function waitForPrediction(
   const replicate = ensureReplicate();
   const startTime = Date.now();
   let pollCount = 0;
-  
+
   while (Date.now() - startTime < timeoutMs) {
     const prediction = await replicate.predictions.get(predictionId);
     const status = prediction.status;
@@ -3418,7 +3418,7 @@ export async function waitForPrediction(
     pollCount++;
     // OPTIMIZED: Exponential backoff to reduce CPU load - start at 5s, increase gradually
     const backoffInterval = Math.min(intervalMs * (1 + Math.floor(pollCount / 10)), 30000); // Max 30s
-    
+
     // Wait before next poll with exponential backoff
     await new Promise(resolve => setTimeout(resolve, backoffInterval));
   }
@@ -5381,7 +5381,7 @@ export async function pixverseT2vSubmit(
   const modelBase =
     body.model && String(body.model).length > 0
       ? String(body.model)
-      : "pixverseai/pixverse-v5";
+      : "pixverse/pixverse-v5";
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
@@ -5572,7 +5572,7 @@ export async function pixverseI2vSubmit(
   const modelBase =
     body.model && String(body.model).length > 0
       ? String(body.model)
-      : "pixverseai/pixverse-v5";
+      : "pixverse/pixverse-v5";
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }

@@ -189,11 +189,76 @@ export async function computeReplicateNextSceneCost(req: Request): Promise<{ cos
 
   return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: display } };
 }
+export async function computeReplicateVideoCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { model, duration, resolution, firstFrameUrl } = req.body || {};
+  const normalized = String(model || '').toLowerCase();
+  const isI2V = !!firstFrameUrl;
+  const dur = duration || 5;
+  const res = (resolution || '720p').toLowerCase();
 
-export async function computeQwenImageEditCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
-  // Use the creditDistribution model name for qwen image edit
-  const display = 'qwen-image-edit-2511';
+  let display = '';
+  let meta: Record<string, any> = {
+    model: normalized,
+    duration: dur,
+    resolution: res,
+    mode: isI2V ? 'I2V' : 'T2V'
+  };
+
+  if (normalized.includes('kling')) {
+    // Patterns: "Kling 2.5 Turbo Pro T2V 5s", "Kling 2.5 Turbo Pro I2V 10s"
+    const type = isI2V ? 'I2V' : 'T2V';
+    // Round duration to nearest supported (5 or 10)
+    const durTag = dur > 5 ? '10s' : '5s';
+    display = `Kling 2.5 Turbo Pro ${type} ${durTag}`;
+  }
+  else if (normalized.includes('wan')) {
+    // Patterns: "Wan 2.5 T2V 5s 720p", "Wan 2.5 Fast T2V 5s 1080p"
+    const isFast = normalized.includes('fast');
+    const type = isI2V ? 'I2V' : 'T2V';
+    const durTag = dur > 5 ? '10s' : '5s';
+    const fastTag = isFast ? 'Fast ' : '';
+    // Wan supports 480p, 720p, 1080p
+    let resTag = '720p';
+    if (res.includes('480')) resTag = '480p';
+    else if (res.includes('1080')) resTag = '1080p';
+
+    display = `Wan 2.5 ${fastTag}${type} ${durTag} ${resTag}`;
+  }
+  else if (normalized.includes('seedance')) {
+    // Patterns: "Seedance 1.0 Pro T2V 5s 720p", "Seedance 1.0 Lite T2V 5s 480p"
+    const isLite = normalized.includes('lite');
+    const type = isI2V ? 'I2V' : 'T2V';
+    const durTag = dur > 5 ? '10s' : '5s';
+    const variant = isLite ? 'Lite' : 'Pro';
+    let resTag = '720p';
+    if (res.includes('480')) resTag = '480p';
+    else if (res.includes('1080')) resTag = '1080p';
+
+    display = `Seedance 1.0 ${variant} ${type} ${durTag} ${resTag}`;
+  }
+  else if (normalized.includes('pixverse')) {
+    // Patterns: "PixVerse 5 T2V 5s 360p", "PixVerse 5 I2V 8s 1080p"
+    const type = isI2V ? 'I2V' : 'T2V';
+    // PixVerse v5 supports 5s and 8s
+    const durTag = dur > 5 ? '8s' : '5s';
+    // PixVerse v5 supports 360p, 540p, 720p, 1080p
+    let resTag = '720p';
+    if (res.includes('360')) resTag = '360p';
+    else if (res.includes('540')) resTag = '540p';
+    else if (res.includes('1080')) resTag = '1080p';
+
+    display = `PixVerse 5 ${type} ${durTag} ${resTag}`;
+  }
+
+  if (!display) {
+    throw new Error(`Unsupported Replicate Video model: ${model}`);
+  }
+
   const base = findCredits(display);
-  const cost = base !== null ? Math.ceil(base) : 80;
-  return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: display } };
+  if (base == null) {
+    console.warn(`[computeReplicateVideoCost] Pricing not found for "${display}", using fallback 760`);
+    return { cost: 760, pricingVersion: REPLICATE_PRICING_VERSION, meta: { ...meta, display, note: 'Fallback pricing' } };
+  }
+
+  return { cost: Math.ceil(base), pricingVersion: REPLICATE_PRICING_VERSION, meta: { ...meta, display } };
 }
