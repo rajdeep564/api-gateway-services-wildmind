@@ -4447,17 +4447,45 @@ export async function seedanceT2vSubmit(
   body: any
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
+  // eslint-disable-next-line no-console
+  console.log(`[seedanceT2vSubmit] Received request`, {
+    model: body.model,
+    speed: body.speed,
+    isPublic: body.isPublic
+  });
+
   const replicate = ensureReplicate();
   const modelStr = String(body.model || "").toLowerCase();
   const speed = String(body.speed || "").toLowerCase();
-  const isSeedance15 = modelStr.includes('seedance-1.5') || speed.includes('1.5');
+
+  // Robust check for Seedance 1.5
+  const isSeedance15 =
+    modelStr.includes('seedance-1.5') ||
+    speed.includes('1.5');
+
   const isLite =
-    modelStr.includes("lite") || speed === "lite" || speed.includes("lite");
+    modelStr.includes("lite") ||
+    speed === "lite" ||
+    speed.includes("lite");
+
+  // Determine base model
   // Correct model names on Replicate: bytedance/seedance-1-pro and bytedance/seedance-1-lite (not 1.0)
   // Seedance 1.5: bytedance/seedance-1.5-pro
-  const modelBase = isSeedance15
-    ? 'bytedance/seedance-1.5-pro'
-    : (isLite ? "bytedance/seedance-1-lite" : "bytedance/seedance-1-pro");
+  let modelBase = "bytedance/seedance-1-pro"; // Default to 1.0 Pro
+
+  if (isSeedance15) {
+    modelBase = 'bytedance/seedance-1.5-pro';
+  } else if (isLite) {
+    modelBase = "bytedance/seedance-1-lite";
+  }
+
+  // eslint-disable-next-line no-console
+  console.log(`[seedanceT2vSubmit] Determined model`, {
+    originalModel: body.model,
+    determinedBase: modelBase,
+    isSeedance15,
+    isLite
+  });
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
@@ -4718,17 +4746,45 @@ export async function seedanceI2vSubmit(
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   if (!body?.image) throw new ApiError("image is required", 400);
+  // eslint-disable-next-line no-console
+  console.log(`[seedanceI2vSubmit] Received request`, {
+    model: body.model,
+    speed: body.speed,
+    isPublic: body.isPublic
+  });
+
   const replicate = ensureReplicate();
   const modelStr = String(body.model || "").toLowerCase();
   const speed = String(body.speed || "").toLowerCase();
-  const isSeedance15 = modelStr.includes('seedance-1.5') || speed.includes('1.5');
+
+  // Robust check for Seedance 1.5
+  const isSeedance15 =
+    modelStr.includes('seedance-1.5') ||
+    speed.includes('1.5');
+
   const isLite =
-    modelStr.includes("lite") || speed === "lite" || speed.includes("lite");
+    modelStr.includes("lite") ||
+    speed === "lite" ||
+    speed.includes("lite");
+
+  // Determine base model
   // Correct model names on Replicate: bytedance/seedance-1-pro and bytedance/seedance-1-lite (not 1.0)
   // Seedance 1.5: bytedance/seedance-1.5-pro
-  const modelBase = isSeedance15
-    ? 'bytedance/seedance-1.5-pro'
-    : (isLite ? "bytedance/seedance-1-lite" : "bytedance/seedance-1-pro");
+  let modelBase = "bytedance/seedance-1-pro"; // Default to 1.0 Pro
+
+  if (isSeedance15) {
+    modelBase = 'bytedance/seedance-1.5-pro';
+  } else if (isLite) {
+    modelBase = "bytedance/seedance-1-lite";
+  }
+
+  // eslint-disable-next-line no-console
+  console.log(`[seedanceI2vSubmit] Determined model`, {
+    originalModel: body.model,
+    determinedBase: modelBase,
+    isSeedance15,
+    isLite
+  });
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }

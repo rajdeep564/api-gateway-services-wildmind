@@ -178,6 +178,7 @@ Object.assign(replicateController, { klingT2vSubmit, klingI2vSubmit });
 // Seedance queue handlers
 export async function seedanceT2vSubmit(req: Request, res: Response, next: NextFunction) {
   try {
+    console.log('seedanceT2vSubmit', req.body);
     const uid = (req as any).uid as string;
     const result = await (replicateService as any).seedanceT2vSubmit(uid, req.body || {});
 
