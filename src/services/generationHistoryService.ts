@@ -482,20 +482,99 @@ export async function listUserGenerations(
 
   const result = await generationHistoryRepository.list(uid, effectiveParams as any);
 
-  // Post-filter: exclude failed items while preserving original hasMore/nextCursor semantics.
-  // Note: If we filter out many failed items and end up with < limit while hasMore=true, we still return hasMore=true
-  // so client can request the next page. For a perfect fill we could iteratively fetch more pages, but that is omitted
-  // for performance simplicity.
-  const filteredItems = Array.isArray(result.items) ? result.items.filter(it => it.status !== GenerationStatus.Failed) : [];
-  const response = { ...result, items: filteredItems };
+  // Post-filter: exclude failed items.
+  // IMPORTANT: If we remove items (especially at page tail), we must recompute nextCursor
+  // based on the last item we actually return; otherwise the client cursor can "jump".
+  const parseItemCursorMs = (it: any): number | null => {
+    try {
+      const raw = it?.createdAt || it?.updatedAt;
+      if (typeof raw === 'string') {
+        const ms = Date.parse(raw);
+        return Number.isNaN(ms) ? null : ms;
+      }
+      if (typeof raw === 'number') return raw;
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const isFailed = (it: any) => it?.status === GenerationStatus.Failed;
+  const aggregated: GenerationHistoryItem[] = [];
+  const seenIds = new Set<string>();
+
+  const pushNonFailed = (items: any[]) => {
+    for (const it of items || []) {
+      if (!it || isFailed(it)) continue;
+      const id = String((it as any).id || '');
+      if (id && seenIds.has(id)) continue;
+      if (id) seenIds.add(id);
+      aggregated.push(it as GenerationHistoryItem);
+      if (aggregated.length >= params.limit) break;
+    }
+  };
+
+  pushNonFailed(Array.isArray(result.items) ? result.items : []);
+
+  // Top-up: if filters removed items and there are more pages, fetch subsequent pages until we fill `limit`
+  // (bounded by a small safety cap to avoid runaway reads).
+  let currentNextCursor: any = (result as any).nextCursor;
+  let hasMore: boolean = Boolean((result as any).hasMore);
+  let scans = 0;
+  const maxScans = 6;
+  while (aggregated.length < params.limit && hasMore && scans < maxScans) {
+    scans += 1;
+    const remaining = Math.max(1, params.limit - aggregated.length);
+    const nextCursorStr = currentNextCursor === null || currentNextCursor === undefined ? undefined : String(currentNextCursor);
+    if (!nextCursorStr) break;
+
+    const page = await generationHistoryRepository.list(uid, {
+      ...effectiveParams,
+      limit: remaining,
+      nextCursor: nextCursorStr,
+      cursor: undefined,
+    } as any);
+
+    pushNonFailed(Array.isArray(page.items) ? page.items : []);
+    hasMore = Boolean((page as any).hasMore);
+
+    // Ensure cursor advances; otherwise break to avoid infinite loops.
+    if ((page as any).nextCursor === currentNextCursor) break;
+    currentNextCursor = (page as any).nextCursor;
+  }
+
+  // Final cursor must reflect the last item ACTUALLY returned to the client.
+  // If we couldn't compute from items, fall back to repository cursor.
+  let finalNextCursor: string | number | null | undefined = undefined;
+  if (hasMore && aggregated.length > 0) {
+    const ms = parseItemCursorMs(aggregated[aggregated.length - 1]);
+    finalNextCursor = ms ?? (currentNextCursor ?? (result as any).nextCursor ?? null);
+  } else {
+    finalNextCursor = null;
+  }
+
+  const response = {
+    ...result,
+    items: aggregated,
+    hasMore,
+    nextCursor: finalNextCursor,
+  } as any;
+
   if (debugFlag) {
-    (response as any).diagnostics = {
+    const rawLen = Array.isArray(result.items) ? result.items.length : 0;
+    const failedInFirst = Array.isArray(result.items) ? result.items.filter(isFailed).length : 0;
+    response.diagnostics = {
       ...(response as any).diagnostics,
-      postFilterReturned: filteredItems.length,
-      postFilterExcluded: Array.isArray(result.items) ? (result.items.length - filteredItems.length) : 0,
+      postFilterExcludedFirstPage: failedInFirst,
+      returned: aggregated.length,
+      requestedLimit: params.limit,
+      topUpScans: scans,
+      finalNextCursor,
+      rawFirstPage: rawLen,
       debug: true,
     };
   }
+
   try {
     await setCachedList(uid, effectiveParams, response);
   } catch (e) {

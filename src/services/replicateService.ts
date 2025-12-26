@@ -1449,6 +1449,26 @@ export async function generateImage(uid: string, body: any) {
     return s;
   };
 
+  const ensureValidReplicateModelRef = (raw: string): string => {
+    const s = normalizeModelAlias(raw);
+    const trimmed = String(s || '').trim();
+    const base = trimmed.includes(':') ? trimmed.split(':')[0] : trimmed;
+
+    // Replicate requires owner/name or owner/name:version.
+    if (!base.includes('/')) {
+      // Known aliases we intentionally support
+      const lower = base.toLowerCase();
+      if (lower === 'qwen-image-edit' || lower === 'qwen-image-edit-2511') {
+        return 'qwen/qwen-image-edit-2511';
+      }
+      throw new ApiError(
+        `Invalid replicate model reference: ${trimmed}. Expected owner/name or owner/name:version`,
+        400
+      );
+    }
+    return trimmed;
+  };
+
   const modelBase = normalizeModelAlias(
     body?.model && String(body.model).length > 0 ? String(body.model) : 'bytedance/seedream-4'
   ).trim();
@@ -2274,6 +2294,8 @@ export async function generateImage(uid: string, body: any) {
         input.number_of_images = 1;
       }
     }
+    // Final safety: never pass a bare alias to Replicate.
+    replicateModelBase = ensureValidReplicateModelRef(replicateModelBase);
     const modelSpec = composeModelSpec(replicateModelBase, body.version);
     // eslint-disable-next-line no-console
     console.log("[replicateService.generateImage] run", {
@@ -2508,6 +2530,11 @@ export async function generateImage(uid: string, body: any) {
       errorDetails: e?.response?.data || e?.data || e,
     });
 
+    // IMPORTANT: if we intentionally threw an ApiError (e.g. validation),
+    // do not mask it as a 502. Surface the original status code to the client.
+    const isApiError = e instanceof ApiError || (e && typeof e?.statusCode === 'number');
+    const apiStatusCode: number | undefined = isApiError ? Number(e.statusCode) : undefined;
+
     // Extract more detailed error message
     let errorMessage = "Replicate generation failed";
     if (e?.message) {
@@ -2530,6 +2557,10 @@ export async function generateImage(uid: string, body: any) {
       status: "failed",
       error: errorMessage || "Replicate failed",
     } as any);
+
+    if (isApiError && apiStatusCode && apiStatusCode >= 400 && apiStatusCode < 500) {
+      throw new ApiError(errorMessage || "Bad Request", apiStatusCode, e?.data);
+    }
     throw new ApiError(errorMessage || "Replicate generation failed", 502, e);
   }
 
