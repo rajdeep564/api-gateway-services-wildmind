@@ -1419,6 +1419,7 @@ export async function nextScene(uid: string, body: any) {
 }
 
 export async function generateImage(uid: string, body: any) {
+  console.log('[DEBUG-DEPLOY-CHECK-V1] generateImage called', { model: body?.model });
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
   if (!key) {
