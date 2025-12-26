@@ -1593,9 +1593,9 @@ export async function generateImage(uid: string, body: any) {
         throw new ApiError('image is required for qwen-image-edit', 400);
       }
 
-      // Replicate Qwen Image Edit schema expects a single image URI.
-      // The frontend may send multiple uploadedImages; use the first as the primary edit source.
-      input.image = resolvedImages[0];
+      // qwen/qwen-image-edit-2511 schema expects `image` as an array of URI strings.
+      // If the frontend sends multiple reference images, pass them through (capped above).
+      input.image = resolvedImages;
 
       // Prefer explicit aspect_ratio; fallback to frameSize mapping
       const aspect = rest.aspect_ratio ?? aspectRatio ?? 'match_input_image';
@@ -2737,8 +2737,10 @@ export async function qwenImageEditSubmit(
   // Build replicate input
   const input: any = {
     prompt: body.prompt,
-    // Replicate Qwen Image Edit schema expects a single image URI.
-    image: Array.isArray(body.image) ? String(body.image[0] || '') : String(body.image),
+    // qwen/qwen-image-edit-2511 schema expects an array of image URIs.
+    image: Array.isArray(body.image)
+      ? (body.image as any[]).map((x: any) => String(x || '')).filter((s: string) => s.length > 0).slice(0, 8)
+      : [String(body.image || '')].filter((s: string) => s.length > 0),
     aspect_ratio: aspect,
     output_format: outFormat,
     output_quality: outputQuality,
