@@ -1426,6 +1426,11 @@ export async function upscaleForCanvas(
     scale?: number;
     projectId: string;
     elementId?: string;
+    faceEnhance?: boolean;
+    faceEnhanceStrength?: number;
+    topazModel?: string;
+    faceEnhanceCreativity?: number;
+    [key: string]: any;
   }
 ): Promise<{ url: string; storagePath: string; mediaId?: string; generationId?: string }> {
   if (!request.image) {
@@ -1441,28 +1446,51 @@ export async function upscaleForCanvas(
     scale: request.scale,
     projectId: request.projectId,
     hasImage: !!request.image,
+    faceEnhance: request.faceEnhance,
+    topazModel: request.topazModel,
   });
 
   try {
-    // Map frontend model name to Replicate model
-    const replicateModel = request.model === 'Crystal Upscaler'
-      ? 'philz1337x/crystal-upscaler'
-      : 'philz1337x/crystal-upscaler'; // Default to Crystal Upscaler
+    let result: any;
 
-    // Clamp scale to valid range (1-4 for Crystal Upscaler, but we allow up to 6 in UI)
-    // For scale > 4, we'll use 4 as the maximum
-    const scaleFactor = Math.min(Math.max(request.scale || 2, 1), 4);
+    if (request.model === 'Topaz Upscaler') {
+      // Call FAL Topaz Upscale
+      result = await falService.topazUpscaleImage(uid, {
+        image_url: request.image,
+        upscale_factor: Math.min(request.scale || 2, 4), // Cap at 4x for Topaz
+        model: request.topazModel || 'Standard V2',
+        face_enhancement: request.faceEnhance ?? true,
+        face_enhancement_strength: request.faceEnhanceStrength ?? 0.8,
+        face_enhancement_creativity: request.faceEnhanceCreativity ?? 0,
+        isPublic: false,
+      });
+    } else if (request.model === 'Real-ESRGAN') {
+      // Call Replicate Real-ESRGAN
+      const scaleFactor = Math.min(Math.max(request.scale || 2, 1), 10);
+      result = await replicateService.upscale(uid, {
+        image: request.image,
+        model: 'nightmareai/real-esrgan',
+        scale: scaleFactor,
+        face_enhance: request.faceEnhance ?? false,
+        output_format: 'png',
+        isPublic: false,
+      });
+    } else {
+      // Default to Crystal Upscaler (Replicate)
+      const replicateModel = 'philz1337x/crystal-upscaler';
+      const scaleFactor = Math.min(Math.max(request.scale || 2, 1), 4);
 
-    // Call Replicate upscale service
-    const result = await replicateService.upscale(uid, {
-      image: request.image,
-      model: replicateModel,
-      scale_factor: scaleFactor,
-      output_format: 'png',
-      isPublic: false,
-    });
+      result = await replicateService.upscale(uid, {
+        image: request.image,
+        model: replicateModel,
+        scale_factor: scaleFactor,
+        output_format: 'png',
+        isPublic: false,
+      });
+    }
 
-    console.log('[upscaleForCanvas] Replicate upscale completed:', {
+    console.log('[upscaleForCanvas] Upscale service completed:', {
+      model: request.model,
       hasImages: !!result.images,
       imageCount: result.images?.length || 0,
       hasHistoryId: !!result.historyId,

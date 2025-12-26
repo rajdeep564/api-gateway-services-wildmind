@@ -2913,12 +2913,21 @@ export const falService = {
 
     try {
       // Resolve input URL: allow direct URL or data URI via temporary upload
-      let resolvedUrl: string | undefined = typeof body.image_url === 'string' ? body.image_url : undefined;
-      if (!resolvedUrl && typeof body.image === 'string' && /^data:/i.test(body.image)) {
+      let resolvedUrl: string | undefined = typeof body.image_url === 'string' ? body.image_url : (typeof body.image === 'string' ? body.image : undefined);
+
+      if (resolvedUrl && /^data:/i.test(resolvedUrl)) {
         try {
-          const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${(creator?.username || uid)}/input/${historyId}`, fileName: 'topaz-source' });
+          const stored = await uploadDataUriToZata({ dataUri: resolvedUrl, keyPrefix: `users/${(creator?.username || uid)}/input/${historyId}`, fileName: 'topaz-source' });
           resolvedUrl = stored.publicUrl;
         } catch { }
+      } else if (resolvedUrl) {
+        // Ensure regular URLs (especially proxy URLs) are uploaded to Zata
+        try {
+          const stored = await uploadFromUrlToZata({ sourceUrl: resolvedUrl, keyPrefix: `users/${(creator?.username || uid)}/input/${historyId}`, fileName: 'topaz-source' });
+          resolvedUrl = stored.publicUrl;
+        } catch (err) {
+          console.warn('[topazUpscaleImage] Failed to upload input image to Zata, using original:', err);
+        }
       }
       if (!resolvedUrl) throw new ApiError('Unable to resolve image_url for Topaz upscale', 400);
 

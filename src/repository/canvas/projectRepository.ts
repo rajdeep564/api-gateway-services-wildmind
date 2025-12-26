@@ -62,7 +62,8 @@ export async function getProject(projectId: string): Promise<CanvasProject | nul
   const snap = await projectRef.get();
 
   if (!snap.exists) return null;
-  return { id: snap.id, ...snap.data() } as CanvasProject;
+  const project = { id: snap.id, ...snap.data() } as CanvasProject;
+  return ensureProjectThumbnail(project);
 }
 
 export async function updateProject(
@@ -216,6 +217,56 @@ export async function getCurrentSnapshot(projectId: string): Promise<CanvasSnaps
   return snap.data() as CanvasSnapshot;
 }
 
+/**
+ * Helper to ensure a project has a thumbnail by checking its current snapshot
+ */
+async function ensureProjectThumbnail(p: CanvasProject): Promise<CanvasProject> {
+  if (p.thumbnail) return p;
+
+  try {
+    const snapshotRef = adminDb
+      .collection('canvasProjects')
+      .doc(p.id)
+      .collection('snapshots')
+      .doc('current');
+    const snapDoc = await snapshotRef.get();
+    if (snapDoc.exists) {
+      const snap = snapDoc.data() as CanvasSnapshot;
+      const imageUrls: string[] = [];
+
+      if (snap.metadata?.['stitched-image']) {
+        const url = typeof snap.metadata['stitched-image'] === 'string'
+          ? snap.metadata['stitched-image']
+          : (snap.metadata['stitched-image'] as any).url;
+        if (url) imageUrls.push(url);
+      }
+
+      if (snap.elements) {
+        for (const elId in snap.elements) {
+          const el = snap.elements[elId];
+          const url = el.meta?.url || (el as any).generatedImageUrl || (el as any).generatedVideoUrl;
+          if (url && typeof url === 'string') {
+            imageUrls.push(url);
+            if (imageUrls.length >= 5) break;
+          }
+        }
+      }
+
+      if (imageUrls.length > 0) {
+        p.thumbnail = imageUrls[0];
+        p.previewImages = imageUrls;
+        adminDb.collection('canvasProjects').doc(p.id).update({
+          thumbnail: p.thumbnail,
+          previewImages: p.previewImages,
+        }).catch(e => console.error('Failed to auto-update project thumbnail:', e));
+      }
+    }
+  } catch (e) {
+    console.error('Failed to backfill project thumbnail:', e);
+  }
+  return p;
+}
+
 export async function listUserProjects(uid: string, limit: number = 20): Promise<CanvasProject[]> {
   const projectsRef = adminDb.collection('canvasProjects');
 
@@ -229,7 +280,9 @@ export async function listUserProjects(uid: string, limit: number = 20): Promise
       .limit(limit);
 
     const ownerSnap = await ownerQuery.get();
-    const ownerProjects = ownerSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CanvasProject));
+    const ownerProjects = await Promise.all(
+      ownerSnap.docs.map(doc => ensureProjectThumbnail({ id: doc.id, ...doc.data() } as CanvasProject))
+    );
 
     // Also get projects where user is a collaborator
     // Note: Firestore doesn't support querying array-contains on nested fields easily
@@ -246,7 +299,9 @@ export async function listUserProjects(uid: string, limit: number = 20): Promise
         .limit(limit);
 
       const ownerSnap = await ownerQuery.get();
-      const ownerProjects = ownerSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CanvasProject));
+      const ownerProjects = await Promise.all(
+        ownerSnap.docs.map(doc => ensureProjectThumbnail({ id: doc.id, ...doc.data() } as CanvasProject))
+      );
 
       // Sort client-side by updatedAt
       ownerProjects.sort((a, b) => {
