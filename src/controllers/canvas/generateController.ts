@@ -186,8 +186,9 @@ export async function upscaleForCanvas(req: Request, res: Response) {
     }
 
     const result = await generateService.upscaleForCanvas(userId, {
+      ...req.body,
       image,
-      model: model || 'recraft/upscaler',
+      model: model || 'philz1337x/crystal-upscaler',
       projectId: meta.projectId,
       elementId: meta.elementId,
     });
