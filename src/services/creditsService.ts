@@ -6,15 +6,15 @@ import { creditsRepository, LedgerEntry } from '../repository/creditsRepository'
 const FREE_PLAN_CODE = 'FREE';
 // New launch offer fixed plan (4000 credits for 15 days, no daily reset)
 const LAUNCH_PLAN_CODE = 'LAUNCH_4000_FIXED';
-const LAUNCH_FIXED_CREDITS = 4000;
+const LAUNCH_FIXED_CREDITS = 2000;
 
-// Launch plan cutoff date: December 25, 2025 (end of day UTC)
+// Launch plan cutoff date: January 10, 2026 (end of day UTC)
 // Users signing up on or before this date get launch plan, after this date get FREE plan
 // ALL users on launch plan get extended trial until this cutoff date (regardless of 15-day period)
 // Can be overridden via LAUNCH_PLAN_CUTOFF_DATE environment variable (ISO string format)
 const LAUNCH_PLAN_CUTOFF_DATE = process.env.LAUNCH_PLAN_CUTOFF_DATE 
   ? new Date(process.env.LAUNCH_PLAN_CUTOFF_DATE)
-  : new Date('2025-12-25T23:59:59.999Z');
+  : new Date('2026-01-10T23:59:59.999Z');
 
 /**
  * Check if the current date is on or before the launch plan cutoff date
