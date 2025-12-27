@@ -62,8 +62,8 @@ export const originCheck = (req: Request, res: Response, next: NextFunction) => 
   ].filter(Boolean);
   const devDefaults = !isProd ? [env.devFrontendUrl, env.devCanvasUrl].filter(Boolean) : [];
   // Combine allowedOrigins array with frontendOrigins if provided
-  const extra = env.allowedOrigins.length > 0 
-    ? env.allowedOrigins 
+  const extra = env.allowedOrigins.length > 0
+    ? env.allowedOrigins
     : env.frontendOrigins;
   const all = [...defaults, ...devDefaults, ...extra];
   const allowedHosts = new Set<string>();
@@ -72,7 +72,7 @@ export const originCheck = (req: Request, res: Response, next: NextFunction) => 
     try {
       const u = new URL(o);
       allowedHosts.add(u.host);
-    } catch {}
+    } catch { }
   }
 
   const origin = (req.headers.origin as string | undefined) || undefined;
@@ -89,13 +89,13 @@ export const originCheck = (req: Request, res: Response, next: NextFunction) => 
       // Allow production domain and all its subdomains
       const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : 'wildmindai.com';
       const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : 'www.wildmindai.com';
-      if (originUrl.hostname === prodWwwDomain || 
-          originUrl.hostname === prodDomain ||
-          originUrl.hostname.endsWith(`.${prodDomain}`)) {
+      if (originUrl.hostname === prodWwwDomain ||
+        originUrl.hostname === prodDomain ||
+        originUrl.hostname.endsWith(`.${prodDomain}`)) {
         return next();
       }
     }
-  } catch {}
+  } catch { }
 
   try {
     if (referer) {
@@ -105,13 +105,13 @@ export const originCheck = (req: Request, res: Response, next: NextFunction) => 
       // Allow production domain and all its subdomains
       const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
       const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
-      if (prodDomain && (refererUrl.hostname === prodWwwDomain || 
-          refererUrl.hostname === prodDomain ||
-          refererUrl.hostname.endsWith(`.${prodDomain}`))) {
+      if (prodDomain && (refererUrl.hostname === prodWwwDomain ||
+        refererUrl.hostname === prodDomain ||
+        refererUrl.hostname.endsWith(`.${prodDomain}`))) {
         return next();
       }
     }
-  } catch {}
+  } catch { }
 
   return res.status(403).json({ status: 'error', message: 'Forbidden origin' });
 };

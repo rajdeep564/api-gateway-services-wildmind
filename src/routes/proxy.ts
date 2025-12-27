@@ -14,7 +14,7 @@ import path from 'path';
 try {
   sharp.cache({ memory: 32, files: 0 });
   sharp.concurrency(2);
-} catch {}
+} catch { }
 
 // Concurrency gate for ffmpeg to avoid CPU/memory spikes in production
 import { env } from '../config/env';
@@ -25,7 +25,7 @@ let ffmpegActive = 0;
 // Create HTTPS agent that ignores SSL certificate errors for Zata (certificate expired)
 const httpsAgent = new HttpsAgent({
   rejectUnauthorized: false,
-  keepAlive: true,  
+  keepAlive: true,
 });
 
 const router = Router();
@@ -33,7 +33,7 @@ const router = Router();
 // Helper function to get content type and file extension
 const getContentInfo = (contentType: string, url: string) => {
   const extension = url.split('.').pop()?.toLowerCase() || '';
-  
+
   // Map common extensions to content types
   const extensionMap: { [key: string]: string } = {
     'jpg': 'image/jpeg',
@@ -56,7 +56,7 @@ const getContentInfo = (contentType: string, url: string) => {
   };
 
   const detectedType = extensionMap[extension] || contentType;
-  
+
   return {
     contentType: detectedType,
     extension,
@@ -77,11 +77,11 @@ function buildZataUrl(resourcePath: string): string {
 router.get('/resource/:path(*)', async (req: Request, res: Response) => {
   try {
     const resourcePath = req.params.path;
-    
+
     // Check if the path is an external URL
     const isExternalUrl = /^https?:\/\//i.test(resourcePath);
     const targetUrl = isExternalUrl ? resourcePath : buildZataUrl(resourcePath);
-    
+
     // Forward Range header for media streaming
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
@@ -100,15 +100,15 @@ router.get('/resource/:path(*)', async (req: Request, res: Response) => {
       if (response.status === 404) return res.status(404).json({ error: 'Resource not found' });
       return res.status(response.status).json({ error: 'Upstream error' });
     }
-    
-  const contentType = response.headers.get('content-type') || '';
-  const contentLenHeader = response.headers.get('content-length');
-  const contentLen = contentLenHeader ? parseInt(contentLenHeader, 10) : undefined;
+
+    const contentType = response.headers.get('content-type') || '';
+    const contentLenHeader = response.headers.get('content-length');
+    const contentLen = contentLenHeader ? parseInt(contentLenHeader, 10) : undefined;
     const contentInfo = getContentInfo(contentType, targetUrl);
-    
+
     // Set appropriate headers and forward key upstream headers
     res.status(response.status);
-    const pass = ['content-type','content-length','accept-ranges','content-range','cache-control','etag','last-modified','access-control-allow-origin','access-control-allow-credentials'];
+    const pass = ['content-type', 'content-length', 'accept-ranges', 'content-range', 'cache-control', 'etag', 'last-modified', 'access-control-allow-origin', 'access-control-allow-credentials'];
     pass.forEach((h) => {
       const v = response.headers.get(h);
       if (v) res.setHeader(h, v);
@@ -143,15 +143,15 @@ router.get('/resource/:path(*)', async (req: Request, res: Response) => {
 router.get('/download/:path(*)', async (req: Request, res: Response) => {
   try {
     const resourcePath = req.params.path;
-    
+
     // Check if the path is an external URL
     const isExternalUrl = /^https?:\/\//i.test(resourcePath);
     const targetUrl = isExternalUrl ? resourcePath : buildZataUrl(resourcePath);
-    
+
     // Fetch the resource from Zata storage with timeout
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
-    const response = await fetch(targetUrl, { 
+    const response = await fetch(targetUrl, {
       headers: {
         ...(req.headers['if-none-match'] ? { 'if-none-match': String(req.headers['if-none-match']) } : {}),
         ...(req.headers['if-modified-since'] ? { 'if-modified-since': String(req.headers['if-modified-since']) } : {}),
@@ -159,21 +159,21 @@ router.get('/download/:path(*)', async (req: Request, res: Response) => {
       signal: controller.signal,
       agent: isExternalUrl ? undefined : (httpsAgent as any),
     }).finally(() => clearTimeout(timeout));
-    
+
     if (!response.ok && response.status !== 304) {
       if (response.status === 404) return res.status(404).json({ error: 'Resource not found' });
       return res.status(response.status).json({ error: 'Upstream error' });
     }
-    
-  const contentType = response.headers.get('content-type') || '';
-  const contentLenHeader = response.headers.get('content-length');
-  const contentLen = contentLenHeader ? parseInt(contentLenHeader, 10) : undefined;
+
+    const contentType = response.headers.get('content-type') || '';
+    const contentLenHeader = response.headers.get('content-length');
+    const contentLen = contentLenHeader ? parseInt(contentLenHeader, 10) : undefined;
     const contentInfo = getContentInfo(contentType, targetUrl);
-    
+
     // Extract filename from path
     const filename = resourcePath.split('/').pop() || 'download';
     const finalFilename = contentInfo.extension ? filename : `${filename}.${contentInfo.extension}`;
-    
+
     // Set download headers and forward key upstream headers
     res.status(response.status);
     res.setHeader('Content-Type', contentInfo.contentType);
@@ -188,7 +188,7 @@ router.get('/download/:path(*)', async (req: Request, res: Response) => {
       res.setHeader('Vary', 'Origin');
       res.setHeader('Access-Control-Allow-Credentials', 'true');
     }
-    
+
     // Get content length if available
     const contentLength = response.headers.get('content-length');
     if (contentLength) {
@@ -213,11 +213,11 @@ router.get('/download/:path(*)', async (req: Request, res: Response) => {
 router.get('/media/:path(*)', async (req: Request, res: Response) => {
   try {
     const resourcePath = req.params.path;
-    
+
     // Check if the path is an external URL (provider URL like fal.media, replicate.delivery, etc.)
     const isExternalUrl = /^https?:\/\//i.test(resourcePath);
     const targetUrl = isExternalUrl ? resourcePath : buildZataUrl(resourcePath);
-    
+
     // Fetch the resource with Range support and timeout
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
@@ -230,18 +230,18 @@ router.get('/media/:path(*)', async (req: Request, res: Response) => {
       signal: controller.signal,
       agent: isExternalUrl ? undefined : (httpsAgent as any), // Don't use custom agent for external URLs
     }).finally(() => clearTimeout(timeout));
-    
+
     if (!response.ok && response.status !== 304) {
       if (response.status === 404) return res.status(404).json({ error: 'Resource not found' });
       return res.status(response.status).json({ error: 'Upstream error' });
     }
-    
+
     const contentType = response.headers.get('content-type') || '';
     const contentInfo = getContentInfo(contentType, targetUrl);
-    
+
     // Set appropriate headers for all media types, forward key headers
     res.status(response.status);
-    const pass = ['content-type','content-length','accept-ranges','content-range','cache-control','etag','last-modified','access-control-allow-origin','access-control-allow-credentials'];
+    const pass = ['content-type', 'content-length', 'accept-ranges', 'content-range', 'cache-control', 'etag', 'last-modified', 'access-control-allow-origin', 'access-control-allow-credentials'];
     pass.forEach((h) => {
       const v = response.headers.get(h);
       if (v) res.setHeader(h, v);
@@ -293,7 +293,7 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
-    const response = await fetch(zataUrl, { 
+    const response = await fetch(zataUrl, {
       signal: controller.signal,
       agent: httpsAgent as any,
     }).finally(() => clearTimeout(timeout));
@@ -353,7 +353,7 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
         return;
       } catch (e) {
         const placeholder = await sharp({ create: { width, height: Math.max(1, Math.round(width * 9 / 16)), channels: 3, background: { r: 12, g: 12, b: 14 } } })
-          [outFormat === 'avif' ? 'avif' : 'webp']({ quality, effort: 0 } as any)
+        [outFormat === 'avif' ? 'avif' : 'webp']({ quality, effort: 0 } as any)
           .toBuffer();
         return res.send(placeholder);
       }
@@ -410,15 +410,15 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
           r.on('data', (chunk: Buffer) => {
             written += chunk.length;
             if (written > MAX_BYTES) {
-              try { r.destroy(); } catch {}
+              try { r.destroy(); } catch { }
             }
             if (!ws.write(chunk)) {
               r.pause();
               ws.once('drain', () => r.resume());
             }
           });
-          r.on('end', () => { try { ws.end(); } catch {}; resolve(); });
-          r.on('error', (err: any) => { try { ws.destroy(); } catch {}; reject(err); });
+          r.on('end', () => { try { ws.end(); } catch { }; resolve(); });
+          r.on('error', (err: any) => { try { ws.destroy(); } catch { }; reject(err); });
           ws.on('error', reject);
         });
         ffmpegActive++;
@@ -431,7 +431,7 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
           // Safety: if process hangs beyond timeout, Node will kill due to timeout option
           child.on('error', () => resolve(false));
           // If client disconnects, attempt to kill ffmpeg early
-          res.once('close', () => { try { child.kill('SIGKILL'); } catch {} });
+          res.once('close', () => { try { child.kill('SIGKILL'); } catch { } });
         });
         let webp: Buffer;
         if (execOk) {
@@ -460,8 +460,8 @@ router.get('/thumb/:path(*)', async (req: Request, res: Response) => {
       } finally {
         ffmpegActive = Math.max(0, ffmpegActive - 1);
         // best-effort cleanup
-        try { await fs.unlink(inPath); } catch {}
-        try { await fs.unlink(outPath); } catch {}
+        try { await fs.unlink(inPath); } catch { }
+        try { await fs.unlink(outPath); } catch { }
       }
     }
 
