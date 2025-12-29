@@ -49,19 +49,18 @@ function extractKeyFromZataUrl(url: string): string | null {
       const urlObj = new URL(url);
       const pathParts = urlObj.pathname.split('/').filter(p => p);
       
-      // Find the index of 'users' or 'devstoragev1' to extract the key
-      let keyStartIndex = -1;
-      for (let i = 0; i < pathParts.length; i++) {
-        if (pathParts[i] === 'users' || pathParts[i] === 'devstoragev1') {
-          keyStartIndex = i;
-          break;
-        }
+      // Prefer extracting from the actual object key root (typically starts at 'users/...').
+      // NOTE: Many public URLs include a prefix segment like 'devstoragev1' which is NOT part of the S3 key.
+      const usersIndex = pathParts.indexOf('users');
+      if (usersIndex >= 0) {
+        return pathParts.slice(usersIndex).join('/');
       }
-      
-      if (keyStartIndex >= 0) {
-        // Extract everything after 'users' or 'devstoragev1'
-        const keyParts = pathParts.slice(keyStartIndex);
-        return keyParts.join('/');
+
+      // If there's a storage prefix segment (e.g. devstoragev1/storagev1), skip it.
+      const storagePrefixIndex = pathParts.findIndex((p) => /^(?:dev)?storagev\d+$/i.test(p));
+      if (storagePrefixIndex >= 0) {
+        const afterPrefix = pathParts.slice(storagePrefixIndex + 1);
+        return afterPrefix.length > 0 ? afterPrefix.join('/') : null;
       }
       
       // Fallback: try to extract from pathname (skip bucket name if present)

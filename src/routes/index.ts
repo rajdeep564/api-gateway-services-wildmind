@@ -20,6 +20,7 @@ import libraryRoutes from './library';
 import uploadsRoutes from './uploads';
 import wildmindRoutes from './wildmind';
 import chatCompanionRoutes from './chatCompanion';
+import workflowsRoutes from './workflows';
 import { contentModerationMiddleware } from '../middlewares/contentModeration';
 
 const router = Router();
@@ -60,5 +61,6 @@ router.use('/replace', replaceRoutes);
 router.use('/reimagine', reimagineRoutes);
 router.use('/wildmind', wildmindRoutes);
 router.use('/chat', chatCompanionRoutes);
+router.use('/workflows', workflowsRoutes);
 
 export default router;

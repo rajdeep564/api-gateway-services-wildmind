@@ -481,11 +481,13 @@ export async function list(uid: string, params: {
           hasMore = rawCount >= fetchLimit; // Only continue if we hit the fetch limit
         }
 
-        // Always set nextCursor if we fetched documents and there's more to fetch
+        // IMPORTANT: nextCursor must advance to the last RETURNED item, not the last
+        // over-fetched raw doc. Otherwise pagination will skip large time ranges.
         let nextCursor: number | null = null;
-        if (snap.docs.length > 0 && hasMore) {
-          const lastRawDoc = snap.docs[snap.docs.length - 1];
-          nextCursor = getCreatedAtMillisFromDoc(lastRawDoc);
+        if (hasMore && snap.docs.length > 0 && pageItems.length > 0) {
+          const lastReturnedId = (pageItems[pageItems.length - 1] as any)?.id;
+          const cursorDoc = lastReturnedId ? snap.docs.find((d) => d.id === lastReturnedId) : undefined;
+          nextCursor = cursorDoc ? getCreatedAtMillisFromDoc(cursorDoc) : getCreatedAtMillisFromDoc(snap.docs[snap.docs.length - 1]);
         }
 
         return {
@@ -549,9 +551,15 @@ export async function list(uid: string, params: {
       // Also check if we actually reached the end vs just filtering everything out
       const hasMore = all.length > params.limit || (!ended && all.length > 0);
       const pageItems = all.slice(0, params.limit);
-      // Only set nextCursor if we have items and there's more to fetch
-      // Even if pageItems is less than limit, if !ended, we should keep the cursor
-      const nextCursor = hasMore && lastRawDoc ? getCreatedAtMillisFromDoc(lastRawDoc) : null;
+      // IMPORTANT: nextCursor must be based on the last RETURNED item.
+      // Using the last scanned raw doc causes skipped results (especially when scanning/overfetching).
+      let nextCursor: number | null = null;
+      if (hasMore && pageItems.length > 0) {
+        const last = pageItems[pageItems.length - 1] as any;
+        const lastCreated = last?.createdAt || last?.updatedAt;
+        const ms = typeof lastCreated === 'string' ? Date.parse(lastCreated) : NaN;
+        nextCursor = Number.isNaN(ms) ? null : ms;
+      }
 
       return {
         items: pageItems,

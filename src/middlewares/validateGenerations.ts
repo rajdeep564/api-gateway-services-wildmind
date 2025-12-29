@@ -44,6 +44,7 @@ export const validateListGenerations = [
   query('limit').optional().toInt().isInt({ min: 1, max: 100 }),
   query('page').optional().toInt().isInt({ min: 1 }),
   query('cursor').optional().isString(),
+  query('nextCursor').optional().isString(),
   query('status').optional().isIn(['generating','completed','failed']),
   // Accept legacy alias 'logo-generation' and normalize downstream
   // Also accept audio generation types: text-to-speech, tts, sfx, text-to-dialogue, dialogue, voicecloning

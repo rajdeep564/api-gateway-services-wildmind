@@ -1419,6 +1419,7 @@ export async function nextScene(uid: string, body: any) {
 }
 
 export async function generateImage(uid: string, body: any) {
+  console.log('[DEBUG-DEPLOY-CHECK-V1] generateImage called', { model: body?.model });
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
   if (!key) {
@@ -1440,6 +1441,7 @@ export async function generateImage(uid: string, body: any) {
     if (
       lower === 'qwen-image-edit' ||
       lower === 'qwen-image-edit-2511' ||
+      lower.includes('qwen-image-edit') || // Fallback for any qwen-image-edit variations
       lower === 'qwen/qwen-image-edit-2511' ||
       lower === 'replicate/qwen/qwen-image-edit-2511'
     ) {
@@ -1449,13 +1451,35 @@ export async function generateImage(uid: string, body: any) {
     return s;
   };
 
+  const ensureValidReplicateModelRef = (raw: string): string => {
+    const s = normalizeModelAlias(raw);
+    const trimmed = String(s || '').trim();
+    const base = trimmed.includes(':') ? trimmed.split(':')[0] : trimmed;
+
+    // Replicate requires owner/name or owner/name:version.
+    if (!base.includes('/')) {
+      // Known aliases we intentionally support
+      const lower = base.toLowerCase();
+      if (lower.includes('qwen-image-edit')) {
+        // Replicate documentation confirms model ID: qwen/qwen-image-edit-2511
+        // It does not require a version hash for this specific ID pattern
+        return 'qwen/qwen-image-edit-2511';
+      }
+      throw new ApiError(
+        `Invalid replicate model reference: ${trimmed}. Expected owner/name or owner/name:version`,
+        400
+      );
+    }
+    return trimmed;
+  };
+
   const modelBase = normalizeModelAlias(
     body?.model && String(body.model).length > 0 ? String(body.model) : 'bytedance/seedream-4'
   ).trim();
   const creator = await authRepository.getUserById(uid);
   const storageKeyPrefixOverride: string | undefined = (body as any)?.storageKeyPrefixOverride;
   const aspectRatio = body.aspect_ratio || body.frameSize || null;
-  const isQwenImageEdit = modelBase.toLowerCase() === 'qwen/qwen-image-edit-2511';
+  const isQwenImageEdit = modelBase.toLowerCase().includes('qwen-image-edit');
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
     model: modelBase,
@@ -1573,6 +1597,8 @@ export async function generateImage(uid: string, body: any) {
         throw new ApiError('image is required for qwen-image-edit', 400);
       }
 
+      // qwen/qwen-image-edit-2511 schema expects `image` as an array of URI strings.
+      // If the frontend sends multiple reference images, pass them through (capped above).
       input.image = resolvedImages;
 
       // Prefer explicit aspect_ratio; fallback to frameSize mapping
@@ -2272,6 +2298,8 @@ export async function generateImage(uid: string, body: any) {
         input.number_of_images = 1;
       }
     }
+    // Final safety: never pass a bare alias to Replicate.
+    replicateModelBase = ensureValidReplicateModelRef(replicateModelBase);
     const modelSpec = composeModelSpec(replicateModelBase, body.version);
     // eslint-disable-next-line no-console
     console.log("[replicateService.generateImage] run", {
@@ -2506,6 +2534,11 @@ export async function generateImage(uid: string, body: any) {
       errorDetails: e?.response?.data || e?.data || e,
     });
 
+    // IMPORTANT: if we intentionally threw an ApiError (e.g. validation),
+    // do not mask it as a 502. Surface the original status code to the client.
+    const isApiError = e instanceof ApiError || (e && typeof e?.statusCode === 'number');
+    const apiStatusCode: number | undefined = isApiError ? Number(e.statusCode) : undefined;
+
     // Extract more detailed error message
     let errorMessage = "Replicate generation failed";
     if (e?.message) {
@@ -2528,6 +2561,10 @@ export async function generateImage(uid: string, body: any) {
       status: "failed",
       error: errorMessage || "Replicate failed",
     } as any);
+
+    if (isApiError && apiStatusCode && apiStatusCode >= 400 && apiStatusCode < 500) {
+      throw new ApiError(errorMessage || "Bad Request", apiStatusCode, e?.data);
+    }
     throw new ApiError(errorMessage || "Replicate generation failed", 502, e);
   }
 
@@ -2704,7 +2741,10 @@ export async function qwenImageEditSubmit(
   // Build replicate input
   const input: any = {
     prompt: body.prompt,
-    image: Array.isArray(body.image) ? body.image : [String(body.image)],
+    // qwen/qwen-image-edit-2511 schema expects an array of image URIs.
+    image: Array.isArray(body.image)
+      ? (body.image as any[]).map((x: any) => String(x || '')).filter((s: string) => s.length > 0).slice(0, 8)
+      : [String(body.image || '')].filter((s: string) => s.length > 0),
     aspect_ratio: aspect,
     output_format: outFormat,
     output_quality: outputQuality,
@@ -4447,45 +4487,17 @@ export async function seedanceT2vSubmit(
   body: any
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
-  // eslint-disable-next-line no-console
-  console.log(`[seedanceT2vSubmit] Received request`, {
-    model: body.model,
-    speed: body.speed,
-    isPublic: body.isPublic
-  });
-
   const replicate = ensureReplicate();
   const modelStr = String(body.model || "").toLowerCase();
   const speed = String(body.speed || "").toLowerCase();
-
-  // Robust check for Seedance 1.5
-  const isSeedance15 =
-    modelStr.includes('seedance-1.5') ||
-    speed.includes('1.5');
-
+  const isSeedance15 = modelStr.includes('seedance-1.5') || speed.includes('1.5');
   const isLite =
-    modelStr.includes("lite") ||
-    speed === "lite" ||
-    speed.includes("lite");
-
-  // Determine base model
+    modelStr.includes("lite") || speed === "lite" || speed.includes("lite");
   // Correct model names on Replicate: bytedance/seedance-1-pro and bytedance/seedance-1-lite (not 1.0)
   // Seedance 1.5: bytedance/seedance-1.5-pro
-  let modelBase = "bytedance/seedance-1-pro"; // Default to 1.0 Pro
-
-  if (isSeedance15) {
-    modelBase = 'bytedance/seedance-1.5-pro';
-  } else if (isLite) {
-    modelBase = "bytedance/seedance-1-lite";
-  }
-
-  // eslint-disable-next-line no-console
-  console.log(`[seedanceT2vSubmit] Determined model`, {
-    originalModel: body.model,
-    determinedBase: modelBase,
-    isSeedance15,
-    isLite
-  });
+  const modelBase = isSeedance15
+    ? 'bytedance/seedance-1.5-pro'
+    : (isLite ? "bytedance/seedance-1-lite" : "bytedance/seedance-1-pro");
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
@@ -4746,45 +4758,17 @@ export async function seedanceI2vSubmit(
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   if (!body?.image) throw new ApiError("image is required", 400);
-  // eslint-disable-next-line no-console
-  console.log(`[seedanceI2vSubmit] Received request`, {
-    model: body.model,
-    speed: body.speed,
-    isPublic: body.isPublic
-  });
-
   const replicate = ensureReplicate();
   const modelStr = String(body.model || "").toLowerCase();
   const speed = String(body.speed || "").toLowerCase();
-
-  // Robust check for Seedance 1.5
-  const isSeedance15 =
-    modelStr.includes('seedance-1.5') ||
-    speed.includes('1.5');
-
+  const isSeedance15 = modelStr.includes('seedance-1.5') || speed.includes('1.5');
   const isLite =
-    modelStr.includes("lite") ||
-    speed === "lite" ||
-    speed.includes("lite");
-
-  // Determine base model
+    modelStr.includes("lite") || speed === "lite" || speed.includes("lite");
   // Correct model names on Replicate: bytedance/seedance-1-pro and bytedance/seedance-1-lite (not 1.0)
   // Seedance 1.5: bytedance/seedance-1.5-pro
-  let modelBase = "bytedance/seedance-1-pro"; // Default to 1.0 Pro
-
-  if (isSeedance15) {
-    modelBase = 'bytedance/seedance-1.5-pro';
-  } else if (isLite) {
-    modelBase = "bytedance/seedance-1-lite";
-  }
-
-  // eslint-disable-next-line no-console
-  console.log(`[seedanceI2vSubmit] Determined model`, {
-    originalModel: body.model,
-    determinedBase: modelBase,
-    isSeedance15,
-    isLite
-  });
+  const modelBase = isSeedance15
+    ? 'bytedance/seedance-1.5-pro'
+    : (isLite ? "bytedance/seedance-1-lite" : "bytedance/seedance-1-pro");
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
