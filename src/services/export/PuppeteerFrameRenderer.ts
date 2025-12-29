@@ -1161,8 +1161,8 @@ export class PuppeteerFrameRenderer {
                                         resolve();
                                     };
                                     mediaEl.addEventListener('seeked', onSeeked);
-                                    // Timeout fallback
-                                    setTimeout(resolve, 100);
+                                    // Timeout fallback - increased for reliable seeking
+                                    setTimeout(resolve, 300);
                                 });
                             }
                             
@@ -1486,9 +1486,10 @@ export class PuppeteerFrameRenderer {
                                 // Render frame in Puppeteer
                                 await this.page!.evaluate((time) => window.renderFrame(time), currentTime);
 
-                                // Brief wait for video frames to seek (videos need time to decode)
+                                // Wait for video frames to fully decode after seeking
+                                // Increased from 5ms to 50ms to prevent laggy/blurry frames in export
                                 if (hasVideos) {
-                                    await new Promise(resolve => setTimeout(resolve, 5));
+                                    await new Promise(resolve => setTimeout(resolve, 50));
                                 }
 
                                 // Take screenshot - optimized settings for speed and reliability
