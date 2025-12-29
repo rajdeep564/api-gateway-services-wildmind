@@ -15,6 +15,7 @@ import sharp from 'sharp';
 import axios from 'axios';
 import { createStoryboard, downloadImageAsBuffer, StoryboardFrame } from '../../utils/createStoryboard';
 import { Agent as HttpsAgent } from 'https';
+import { processGoogleGeminiFlash } from '../replaceService';
 
 // Zata sometimes has TLS issues; proxy route already works around it.
 // For server-side downloads (to inline images for Replicate), we use a permissive agent.
@@ -2549,7 +2550,7 @@ export async function eraseForCanvas(
     // improved: pass original image + mask explicitly if we have them
     // this allows the model to see the original context under the mask if needed (though usually it just needs the mask)
     // and avoids "white hole" artifacts if the model expects to do the masking itself
-    const { processGoogleGeminiFlash } = await import('../replaceService');
+    // const { processGoogleGeminiFlash } = await import('../replaceService'); // Replaced with static import
 
     // If we have a mask URL, use the original image + mask URL for standard inpainting
     // Otherwise fallback to the composited image (if for some reason we only have that)
@@ -2773,7 +2774,7 @@ export async function replaceForCanvas(
     }
 
     // Process with Google Nano Banana edit - send the composited image
-    const { processGoogleGeminiFlash } = await import('../replaceService');
+    // const { processGoogleGeminiFlash } = await import('../replaceService'); // Replaced with static import
     const result = await processGoogleGeminiFlash(
       uid,
       compositedImageUrl,
