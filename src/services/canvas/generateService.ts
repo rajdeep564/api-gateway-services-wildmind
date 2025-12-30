@@ -15,6 +15,7 @@ import sharp from 'sharp';
 import axios from 'axios';
 import { createStoryboard, downloadImageAsBuffer, StoryboardFrame } from '../../utils/createStoryboard';
 import { Agent as HttpsAgent } from 'https';
+import { processGoogleGeminiFlash } from '../replaceService';
 
 // Zata sometimes has TLS issues; proxy route already works around it.
 // For server-side downloads (to inline images for Replicate), we use a permissive agent.
@@ -2395,7 +2396,7 @@ export async function eraseForCanvas(
     // Create history record - Firestore will auto-generate the ID
     const { historyId } = await generationHistoryRepository.create(uid, {
       prompt: request.prompt || 'Erase selected area',
-      model: 'google-nano-banana-edit',
+      model: 'google-gemini-flash-edit',
       generationType: 'image-to-image',
       isPublic: false,
       createdBy: creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid },
@@ -2412,13 +2413,27 @@ export async function eraseForCanvas(
       console.warn('[eraseForCanvas] Failed to link to canvas project:', e);
     }
 
-    // Base prompt - enhanced to preserve image vibrancy, color, and temperature
-    const basePrompt = 'Edit ONLY the white masked region. Keep the ENTIRE unmasked image IDENTICAL - do not modify any pixels outside the white mask. Reconstruct the masked area with natural continuation that seamlessly matches the surrounding environment. Maintain the EXACT original camera angle, lighting conditions, color temperature, color saturation, vibrancy, brightness, contrast, white balance, and depth of field. Preserve the original image quality, sharpness, color richness, and overall visual appearance. CRITICAL: The unmasked areas must remain pixel-perfect identical to the original image with no color shifts, desaturation, or quality degradation. Do not add new objects or alter any existing ones outside the mask. The result must blend seamlessly while maintaining the original image\'s exact color palette, temperature, and visual characteristics.';
+    // Base prompts for different modes
+    const eraseBasePrompt = 'Edit ONLY the white masked region. Keep the ENTIRE unmasked image IDENTICAL - do not modify any pixels outside the white mask. Reconstruct the masked area with natural continuation that seamlessly matches the surrounding environment. Maintain the EXACT original camera angle, lighting conditions, color temperature, color saturation, vibrancy, brightness, contrast, white balance, and depth of field. Preserve the original image quality, sharpness, color richness, and overall visual appearance. CRITICAL: The unmasked areas must remain pixel-perfect identical to the original image with no color shifts, desaturation, or quality degradation. Do not add new objects or alter any existing ones outside the mask. The result must blend seamlessly while maintaining the original image\'s exact color palette, temperature, and visual characteristics.';
 
-    // Combine user prompt with base prompt if provided
-    const finalPrompt = request.prompt && request.prompt.trim()
-      ? `${request.prompt.trim()}. ${basePrompt}`
-      : basePrompt;
+    const replaceBasePrompt = 'Replace ONLY the white masked region with the requested object/content. The replacement must naturally blend into the scene and match the style of the original image. Keep the ENTIRE unmasked area pixel-perfect identical — do not modify any pixels outside the mask. Maintain the original camera perspective, lighting direction, color temperature, shadows, reflections, texture sharpness, and depth of field. Ensure the replaced object fits realistically into the environment, scaled and positioned naturally. Match the original visual quality, contrast, brightness, and color palette. No new elements should appear outside the masked area. The final result must look like the new object was originally part of the photo.';
+
+    // Determine if this is a Replace or Erase operation
+    const userPrompt = request.prompt ? request.prompt.trim() : '';
+    const isReplaceOperation = userPrompt.length > 0 &&
+      userPrompt.toLowerCase() !== 'remove object' &&
+      userPrompt.toLowerCase() !== 'erase';
+
+    // Combine user prompt with appropriate base prompt
+    let finalPrompt = '';
+
+    if (isReplaceOperation) {
+      console.log('[eraseForCanvas] Detected REPLACE operation with prompt:', userPrompt);
+      finalPrompt = `${userPrompt}. ${replaceBasePrompt}`;
+    } else {
+      console.log('[eraseForCanvas] Detected ERASE operation (defaulting to remove object)');
+      finalPrompt = `remove object. ${eraseBasePrompt}`;
+    }
 
     console.log('[eraseForCanvas] Using prompt:', finalPrompt);
     console.log('[eraseForCanvas] Received image and mask:', {
@@ -2477,6 +2492,20 @@ export async function eraseForCanvas(
       const imageResponse = await axios.get(originalImageUrl, { responseType: 'arraybuffer' });
       const originalImageBuffer = Buffer.from(imageResponse.data);
 
+      // If originalImageUrl is a local/proxy URL (e.g. localhost), we must upload the original image
+      // to Zata so FAL can access it.
+      if (originalImageUrl.includes('localhost') || originalImageUrl.includes('127.0.0.1')) {
+        console.log('[eraseForCanvas] Original image is local/proxy, uploading to Zata...');
+        const { uploadBufferToZata } = await import('../../utils/storage/zataUpload');
+        const originalUpload = await uploadBufferToZata(
+          `users/${username}/canvas/${request.projectId}/erase-original-${Date.now()}.png`,
+          originalImageBuffer,
+          'image/png'
+        );
+        originalImageUrl = originalUpload.publicUrl;
+        console.log('[eraseForCanvas] ✅ Original image uploaded to Zata:', originalImageUrl);
+      }
+
       // Download mask
       const maskResponse = await axios.get(maskUrl, { responseType: 'arraybuffer' });
       const maskBuffer = Buffer.from(maskResponse.data);
@@ -2517,12 +2546,26 @@ export async function eraseForCanvas(
       console.log('[eraseForCanvas] No mask provided, using original image only');
     }
 
-    // Process with Google Nano Banana edit - send the composited image
-    const { processGoogleNanoBanana } = await import('../replaceService');
-    const result = await processGoogleNanoBanana(
+    // Process with Google Nano Banana edit
+    // improved: pass original image + mask explicitly if we have them
+    // this allows the model to see the original context under the mask if needed (though usually it just needs the mask)
+    // and avoids "white hole" artifacts if the model expects to do the masking itself
+    // const { processGoogleGeminiFlash } = await import('../replaceService'); // Replaced with static import
+
+    // If we have a mask URL, use the original image + mask URL for standard inpainting
+    // Otherwise fallback to the composited image (if for some reason we only have that)
+    const imageInput = maskUrl ? originalImageUrl : compositedImageUrl;
+    const maskInput = maskUrl || null;
+
+    console.log('[eraseForCanvas] calling processGoogleGeminiFlash with:', {
+      usingOriginalImage: imageInput === originalImageUrl,
+      hasMask: !!maskInput
+    });
+
+    const result = await processGoogleGeminiFlash(
       uid,
-      compositedImageUrl,
-      null, // No separate mask - mask is already composited into the image
+      imageInput,
+      maskInput,
       finalPrompt,
       historyId
     );
@@ -2731,8 +2774,8 @@ export async function replaceForCanvas(
     }
 
     // Process with Google Nano Banana edit - send the composited image
-    const { processGoogleNanoBanana } = await import('../replaceService');
-    const result = await processGoogleNanoBanana(
+    // const { processGoogleGeminiFlash } = await import('../replaceService'); // Replaced with static import
+    const result = await processGoogleGeminiFlash(
       uid,
       compositedImageUrl,
       null, // No separate mask - mask is already composited into the image

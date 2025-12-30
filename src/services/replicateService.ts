@@ -1419,6 +1419,7 @@ export async function nextScene(uid: string, body: any) {
 }
 
 export async function generateImage(uid: string, body: any) {
+  console.log('[DEBUG-DEPLOY-CHECK-V1] generateImage called', { model: body?.model });
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
   if (!key) {
@@ -1440,6 +1441,7 @@ export async function generateImage(uid: string, body: any) {
     if (
       lower === 'qwen-image-edit' ||
       lower === 'qwen-image-edit-2511' ||
+      lower.includes('qwen-image-edit') || // Fallback for any qwen-image-edit variations
       lower === 'qwen/qwen-image-edit-2511' ||
       lower === 'replicate/qwen/qwen-image-edit-2511'
     ) {
@@ -1458,7 +1460,9 @@ export async function generateImage(uid: string, body: any) {
     if (!base.includes('/')) {
       // Known aliases we intentionally support
       const lower = base.toLowerCase();
-      if (lower === 'qwen-image-edit' || lower === 'qwen-image-edit-2511') {
+      if (lower.includes('qwen-image-edit')) {
+        // Replicate documentation confirms model ID: qwen/qwen-image-edit-2511
+        // It does not require a version hash for this specific ID pattern
         return 'qwen/qwen-image-edit-2511';
       }
       throw new ApiError(
@@ -1475,7 +1479,7 @@ export async function generateImage(uid: string, body: any) {
   const creator = await authRepository.getUserById(uid);
   const storageKeyPrefixOverride: string | undefined = (body as any)?.storageKeyPrefixOverride;
   const aspectRatio = body.aspect_ratio || body.frameSize || null;
-  const isQwenImageEdit = modelBase.toLowerCase() === 'qwen/qwen-image-edit-2511';
+  const isQwenImageEdit = modelBase.toLowerCase().includes('qwen-image-edit');
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
     model: modelBase,

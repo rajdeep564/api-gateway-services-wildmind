@@ -6,7 +6,8 @@ let lastErrorLog = 0;
 const ERROR_THROTTLE_MS = 30000; // log at most once every 30s
 
 export function isRedisEnabled(): boolean {
-  return Boolean(env.redisUrl);
+  return false; // Force disabled as Redis is not running
+  // return Boolean(env.redisUrl);
 }
 
 export function getRedisClient(): RedisClientType | null {
@@ -36,13 +37,13 @@ export function getRedisClient(): RedisClientType | null {
       }
     })
     .catch((e: unknown) => {
-    const now = Date.now();
-    if (now - lastErrorLog > ERROR_THROTTLE_MS) {
-      lastErrorLog = now;
-      // eslint-disable-next-line no-console
-      console.warn('[Redis] Connect failed (continuing without cache):', (e as any)?.message || e);
-    }
-  });
+      const now = Date.now();
+      if (now - lastErrorLog > ERROR_THROTTLE_MS) {
+        lastErrorLog = now;
+        // eslint-disable-next-line no-console
+        console.warn('[Redis] Connect failed (continuing without cache):', (e as any)?.message || e);
+      }
+    });
   return client;
 }
 
