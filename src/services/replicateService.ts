@@ -2141,11 +2141,8 @@ export async function generateImage(uid: string, body: any) {
       } else {
         input.quality = 'low'; // Default to low quality
       }
-      if (rest.aspect_ratio && ['1:1', '3:2', '2:3'].includes(String(rest.aspect_ratio))) {
-        input.aspect_ratio = String(rest.aspect_ratio);
-      } else {
-        input.aspect_ratio = '1:1'; // Default per schema
-      }
+      // Always use 2:3 aspect ratio for gpt-image-1.5
+      input.aspect_ratio = '2:3';
       // The frontend commonly sends `n`; schema uses `number_of_images`.
       const requestedImagesRaw =
         rest.number_of_images != null ? rest.number_of_images : rest.n != null ? rest.n : undefined;

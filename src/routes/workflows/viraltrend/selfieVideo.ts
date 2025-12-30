@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { requireAuth } from '../../middlewares/authMiddleware';
-import * as selfieVideoController from '../../controllers/workflows/selfieVideoController';
+import { requireAuth } from '../../../middlewares/authMiddleware';
+import * as selfieVideoController from '../../../controllers/workflows/viraltrend/selfieVideoController';
 
 const router = Router();
 
