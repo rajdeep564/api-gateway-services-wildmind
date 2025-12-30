@@ -6,8 +6,10 @@ import { GenerationHistoryItem } from '../types/generate';
 
 async function listPublic(req: Request, res: Response, next: NextFunction) {
 	try {
+        console.log('[Feed][listPublic] Request params:', JSON.stringify(req.query));
 		const params = await generationFilterService.validateAndTransformParams(req.query);
 		const result = await generationFilterService.getPublicGenerations(params);
+        console.log('[Feed][listPublic] Result count:', result?.items?.length || 0);
 		try {
 			const sample = (result?.items && result.items[0]) || null;
 			if (sample) {
@@ -21,6 +23,7 @@ async function listPublic(req: Request, res: Response, next: NextFunction) {
 		} catch {}
 		return res.json(formatApiResponse('success', 'OK', result));
 	} catch (err) {
+        console.error('[Feed][listPublic] Error:', err);
 		return next(err);
 	}
 }

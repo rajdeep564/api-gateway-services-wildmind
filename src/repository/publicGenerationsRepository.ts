@@ -221,6 +221,7 @@ export async function listPublic(params: {
   
   // Execute high-scored query first - fetch more than needed to account for potential duplicates
   const snapHigh = await queryHigh.limit(params.limit * 2).get();
+  console.log('[publicGenerationsRepository] snapHigh docs count:', snapHigh.size);
   
   // Helper function to get aesthetic score (default to 0 if missing)
   const getAestheticScore = (item: GenerationHistoryItem, rawData?: any): number => {
@@ -364,6 +365,7 @@ export async function listPublic(params: {
     }
     
     const snapLow = await queryLow.limit(needed * 2).get();
+    console.log('[publicGenerationsRepository] snapLow docs count:', snapLow.size);
     // CRITICAL: Deduplicate by ID during mapping
     const lowScoredSeenIds = new Set<string>();
     lowScoredItemsWithData = snapLow.docs
