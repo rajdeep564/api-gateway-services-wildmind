@@ -37,18 +37,25 @@ export async function removeBackgroundController(req: Request, res: Response, ne
         const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'remove-bg');
 
         const responseData = {
-            requestId: result?.historyId || null,
-            historyId: result?.historyId || null,
+            images: [
+                {
+                    id: result.historyId || `replicate-${Date.now()}`,
+                    url: result.imageUrl,
+                    storagePath: result.storagePath,
+                    originalUrl: result.imageUrl // Or the original Replicate URL if available, but service returns resolved Zata URL
+                }
+            ],
+            historyId: result.historyId,
             model: '851-labs/background-remover',
-            status: 'succeeded',
-            expectedDebit: ctx.creditCost,
-            debitedCredits: debitOutcome === 'WRITTEN' ? ctx.creditCost : 0,
-            debitStatus: debitOutcome,
-            imageUrl: result.imageUrl,
-            storagePath: result.storagePath,
+            status: 'completed'
         };
 
-        res.json(formatApiResponse('success', 'Background removed successfully', responseData));
+        // Custom format to match user request exactly
+        res.json({
+            responseStatus: 'success',
+            message: 'OK',
+            data: responseData
+        });
     } catch (error) {
         next(error);
     }

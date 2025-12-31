@@ -151,6 +151,7 @@ export async function removeBackground(
     threshold?: number;
     background_type?: string;
     isPublic?: boolean;
+    prompt?: string;
   }
 ) {
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
@@ -238,6 +239,8 @@ export async function removeBackground(
       input.background_type = body.background_type || "rgba";
       if (typeof body.reverse === "boolean") input.reverse = body.reverse;
       if (typeof body.threshold === "number") input.threshold = body.threshold;
+      // Pass prompt if provided (required by some versions/wrappers)
+      if (body.prompt) input.prompt = body.prompt;
     }
   }
 
@@ -2685,13 +2688,13 @@ export async function qwenImageEditSubmit(
 
   const aspect = ((): string => {
     const a = String(body?.aspect_ratio ?? 'match_input_image');
-    const allowed = ['1:1','16:9','9:16','4:3','3:4','match_input_image'];
+    const allowed = ['1:1', '16:9', '9:16', '4:3', '3:4', 'match_input_image'];
     return allowed.includes(a) ? a : 'match_input_image';
   })();
 
   const outFormat = ((): string => {
     const f = String(body?.output_format ?? 'webp');
-    return ['webp','jpg','png'].includes(f) ? f : 'webp';
+    return ['webp', 'jpg', 'png'].includes(f) ? f : 'webp';
   })();
 
   const outputQuality = Number.isFinite(Number(body?.output_quality)) ? Number(body.output_quality) : 95;
@@ -4521,8 +4524,8 @@ export async function seedanceT2vSubmit(
     typeof body.generate_audio === "boolean"
       ? body.generate_audio
       : typeof body.generateAudio === "boolean"
-      ? body.generateAudio
-      : undefined;
+        ? body.generateAudio
+        : undefined;
 
   const createPayload: any = {
     prompt: body.prompt,
@@ -4792,8 +4795,8 @@ export async function seedanceI2vSubmit(
     typeof body.generate_audio === "boolean"
       ? body.generate_audio
       : typeof body.generateAudio === "boolean"
-      ? body.generateAudio
-      : undefined;
+        ? body.generateAudio
+        : undefined;
 
   const createPayloadImg: any = {
     prompt: body.prompt,
@@ -5695,3 +5698,4 @@ export async function pixverseI2vSubmit(
 Object.assign(replicateService, { pixverseT2vSubmit, pixverseI2vSubmit });
 
 
+// ... existing code ...

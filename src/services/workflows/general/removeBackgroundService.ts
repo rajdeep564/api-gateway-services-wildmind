@@ -81,9 +81,10 @@ export async function removeBackground(
     const replicatePayload: any = {
         model: '851-labs/background-remover',
         image: resolvedInput.url,
+        prompt: 'remove background', // Added prompt as required by model/service wrapper
         // format: 'png', // Model usually defaults to png for transparency
         storageKeyPrefixOverride: `users/${uid}/workflows/general/remove-bg`,
-        isPublic: false,
+        isPublic: true, // User requested isPublic: true
     };
 
     console.log('[removeBackgroundService] Submitting to Replicate:', {
@@ -92,7 +93,7 @@ export async function removeBackground(
     });
 
     try {
-        const result: any = await replicateService.generateImage(uid, replicatePayload);
+        const result: any = await replicateService.removeBackground(uid, replicatePayload);
 
         if (!result.images || result.images.length === 0) {
             throw new ApiError('No image generated from background remover service', 500);
