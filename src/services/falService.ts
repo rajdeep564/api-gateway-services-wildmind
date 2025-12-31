@@ -103,11 +103,22 @@ async function generate(
   const falKey = env.falKey as string;
   if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
 
-  // Check if this is a dialogue request (uses inputs array instead of prompt)
-  // Skip prompt validation for dialogue requests
+  // Check if this is an audio/speech request (uses text or inputs array instead of prompt)
   const hasDialogueInputs = Array.isArray((payload as any).inputs) && (payload as any).inputs.length > 0;
-  const isDialogueRequest = hasDialogueInputs || modelLower.includes('dialogue') || modelLower.includes('text-to-dialogue');
-  if (!isDialogueRequest && !prompt) throw new ApiError("Prompt is required", 400);
+  const hasTextInPayload = typeof (payload as any).text === 'string' && (payload as any).text.trim().length > 0;
+
+  const isAudioRequest = modelLower.includes('eleven') ||
+    modelLower.includes('maya') ||
+    modelLower.includes('chatterbox') ||
+    modelLower.includes('tts') ||
+    modelLower.includes('text-to-speech') ||
+    modelLower.includes('sfx') ||
+    modelLower.includes('dialogue') ||
+    modelLower.includes('text-to-dialogue');
+
+  const canSkipPrompt = isAudioRequest && (hasDialogueInputs || hasTextInPayload);
+
+  if (!canSkipPrompt && !prompt) throw new ApiError("Prompt is required (from falService)", 400);
 
   fal.config({ credentials: falKey });
 
@@ -738,6 +749,10 @@ async function generate(
         if ((payload as any).exaggeration != null) inputBody.exaggeration = Number((payload as any).exaggeration);
         if ((payload as any).temperature != null) inputBody.temperature = Number((payload as any).temperature);
         if ((payload as any).cfg_scale != null) inputBody.cfg_scale = Number((payload as any).cfg_scale);
+        if ((payload as any).stability != null) inputBody.stability = Number((payload as any).stability);
+        if ((payload as any).similarity_boost != null) inputBody.similarity_boost = Number((payload as any).similarity_boost);
+        if ((payload as any).style != null) inputBody.style = Number((payload as any).style);
+        if ((payload as any).speed != null) inputBody.speed = Number((payload as any).speed);
 
         console.log('[falService.generate] Calling ElevenLabs TTS model:', { ttsEndpoint, input: { ...inputBody, text: String(inputBody.text).slice(0, 120) + (String(inputBody.text).length > 120 ? '...' : '') } });
         const result = await fal.subscribe(ttsEndpoint as any, ({ input: inputBody, logs: true } as unknown) as any);

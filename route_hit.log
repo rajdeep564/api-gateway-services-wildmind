@@ -1,0 +1,9 @@
+[2025-12-31T07:06:19.474Z] /eleven/tts hit with body: {
+  "text": "I thought I had everything figured out, but life surprises me every day. Sometimes I feel lost, sometimes unstoppable. Yet I move forward, hoping each step leads me closer to who I want to be. I won’t quit now — not when dreams feel so close to touch.",
+  "voice": "Aria",
+  "model": "elevenlabs-tts-v3",
+  "stability": 0.5,
+  "similarity_boost": 0.75,
+  "style": 0,
+  "speed": 1
+}
