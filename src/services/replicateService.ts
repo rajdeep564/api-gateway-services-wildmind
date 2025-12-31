@@ -1598,7 +1598,7 @@ export async function generateImage(uid: string, body: any) {
         .filter((u: string) => u.length > 0)
         .slice(0, 8);
 
-      if (isQwenImageEdit && images.length === 0) {
+      if (isQwenImageEdit && images.length === 0 && !lowerModelBase.includes('2512')) {
         throw new ApiError('image is required for qwen-image-edit', 400);
       }
 
@@ -1664,7 +1664,7 @@ export async function generateImage(uid: string, body: any) {
         throw new ApiError(`Invalid image uri for qwen-image-edit: ${img}`, 400);
       }
 
-      if (isQwenImageEdit && resolvedImages.length === 0) {
+      if (isQwenImageEdit && resolvedImages.length === 0 && !lowerModelBase.includes('2512')) {
         throw new ApiError('image is required for qwen-image-edit', 400);
       }
 
