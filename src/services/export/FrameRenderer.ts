@@ -311,25 +311,40 @@ export class FrameRenderer {
             });
 
             ffmpeg.on('close', (code) => {
-                // Cleanup temp directory
-                try {
-                    if (fs.existsSync(tempFrameDir)) {
-                        fs.rmSync(tempFrameDir, { recursive: true, force: true });
-                    }
-                } catch (e) {
-                    console.warn('[FrameRenderer] Failed to cleanup temp frames dir:', e);
-                }
-
-                // Clear caches
-                this.clearVideoFrameCache();
-                imageCache.clear();
-
+                // Check exit code first - report completion before cleanup
                 if (code === 0) {
+                    // Report final completion IMMEDIATELY
+                    if (onProgress) {
+                        onProgress(100);
+                    }
                     console.log(`[FrameRenderer] ✅ Streaming export complete: ${outputPath}`);
                     resolve();
+
+                    // Now do cleanup in background (after resolving)
+                    console.log(`[FrameRenderer] 🧹 Running background cleanup...`);
+                    try {
+                        if (fs.existsSync(tempFrameDir)) {
+                            fs.rmSync(tempFrameDir, { recursive: true, force: true });
+                        }
+                    } catch (e) {
+                        console.warn('[FrameRenderer] Failed to cleanup temp frames dir:', e);
+                    }
+                    this.clearVideoFrameCache();
+                    imageCache.clear();
+                    console.log(`[FrameRenderer] 🧹 Background cleanup complete`);
                 } else {
                     console.error(`[FrameRenderer] FFmpeg exited with code ${code}`);
                     console.error(`[FrameRenderer] FFmpeg stderr: ${ffmpegError.slice(-500)}`);
+
+                    // Cleanup on error too
+                    try {
+                        if (fs.existsSync(tempFrameDir)) {
+                            fs.rmSync(tempFrameDir, { recursive: true, force: true });
+                        }
+                    } catch (e) { /* ignore */ }
+                    this.clearVideoFrameCache();
+                    imageCache.clear();
+
                     reject(new Error(`FFmpeg exited with code ${code}`));
                 }
             });

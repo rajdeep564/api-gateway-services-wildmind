@@ -1411,34 +1411,52 @@ export class PuppeteerFrameRenderer {
                 });
 
                 ffmpeg.on('close', async (code) => {
-                    // Cleanup
-                    try {
-                        if (this.tempFrameDir && fs.existsSync(this.tempFrameDir)) {
-                            fs.rmSync(this.tempFrameDir, { recursive: true, force: true });
-                        }
-                    } catch (e) {
-                        console.warn('[PuppeteerFrameRenderer] Cleanup warning:', e);
-                    }
-
-                    // Stop media server
-                    await this.stopMediaServer();
-
-                    // Close page and return browser to pool
-                    if (this.page) {
-                        await this.page.close();
-                        this.page = null;
-                    }
-                    if (this.browser) {
-                        await this.returnBrowser(this.browser);
-                        this.browser = null;
-                    }
-
+                    // Check exit code first - report completion before cleanup
                     if (code === 0) {
+                        // Report final completion IMMEDIATELY
+                        if (onProgress) {
+                            onProgress(100);
+                        }
                         console.log(`[PuppeteerFrameRenderer] ✅ Export complete: ${outputPath}`);
                         resolve();
+
+                        // Now do cleanup in background (after resolving)
+                        console.log(`[PuppeteerFrameRenderer] 🧹 Running background cleanup...`);
+                        try {
+                            if (this.tempFrameDir && fs.existsSync(this.tempFrameDir)) {
+                                fs.rmSync(this.tempFrameDir, { recursive: true, force: true });
+                            }
+                        } catch (e) {
+                            console.warn('[PuppeteerFrameRenderer] Cleanup warning:', e);
+                        }
+
+                        // Stop media server
+                        await this.stopMediaServer();
+
+                        // Close page and return browser to pool
+                        if (this.page) {
+                            await this.page.close();
+                            this.page = null;
+                        }
+                        if (this.browser) {
+                            await this.returnBrowser(this.browser);
+                            this.browser = null;
+                        }
+                        console.log(`[PuppeteerFrameRenderer] 🧹 Background cleanup complete`);
                     } else {
                         console.error(`[PuppeteerFrameRenderer] FFmpeg exited with code ${code}`);
                         console.error(`[PuppeteerFrameRenderer] FFmpeg stderr: ${ffmpegError.slice(-500)}`);
+
+                        // Cleanup on error too
+                        try {
+                            if (this.tempFrameDir && fs.existsSync(this.tempFrameDir)) {
+                                fs.rmSync(this.tempFrameDir, { recursive: true, force: true });
+                            }
+                        } catch (e) { /* ignore */ }
+                        await this.stopMediaServer();
+                        if (this.page) { await this.page.close(); this.page = null; }
+                        if (this.browser) { await this.returnBrowser(this.browser); this.browser = null; }
+
                         reject(new Error(`FFmpeg exited with code ${code}`));
                     }
                 });
