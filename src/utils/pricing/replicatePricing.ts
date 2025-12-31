@@ -192,11 +192,13 @@ export async function computeReplicateNextSceneCost(req: Request): Promise<{ cos
 
 export async function computeQwenImageEditCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   // Credit distribution uses the short model name (no replicate/ prefix)
-  const display = 'qwen-image-edit-2511';
+  const requested = String((req.body as any)?.model || '').toLowerCase();
+  const display = requested.includes('2512') ? 'qwen-image-2512' : 'qwen-image-edit-2511';
 
   const base = findCredits(display);
-  // Default to 80 credits if not found (matches current creditDistribution.ts)
-  const cost = base !== null ? Math.ceil(base) : 80;
+  // Default to 60 credits for 2512 and 80 for 2511 if not found
+  const fallback = display.includes('2512') ? 60 : 80;
+  const cost = base !== null ? Math.ceil(base) : fallback;
 
   return {
     cost,
