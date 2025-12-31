@@ -6,6 +6,7 @@ import photoToLineDrawingRoutes from './general/photoToLineDrawing';
 import lineDrawingToPhotoRoutes from './general/lineDrawingToPhoto';
 import removeElementRoutes from './general/removeElement';
 import removeWatermarkRoutes from './general/removeWatermark';
+import becomeCelebrityRoutes from './fun/becomeCelebrity';
 
 const router = Router();
 
@@ -25,5 +26,8 @@ router.use('/general/photo-to-line-drawing', photoToLineDrawingRoutes);
 router.use('/general/line-drawing-to-photo', lineDrawingToPhotoRoutes);
 router.use('/general/remove-element', removeElementRoutes);
 router.use('/general/remove-watermark', removeWatermarkRoutes);
+
+// Fun workflows
+router.use('/fun/become-celebrity', becomeCelebrityRoutes);
 
 export default router;

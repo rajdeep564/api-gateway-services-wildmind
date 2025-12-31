@@ -446,7 +446,15 @@ export function computeFalVeoCostFromModel(model: string, meta?: any): { cost: n
     const resIn = String(meta?.resolution || '1080p').toLowerCase();
     const res = resIn.includes('2160') ? '2160p' : resIn.includes('1440') ? '1440p' : '1080p';
     display = `LTX V2 Fast T2V/I2V ${dur}s ${res}`;
-  } else if (normalized === 'fal-ai/kling-video/o1/standard/image-to-video' || normalized === 'fal-ai/kling-video/o1/image-to-video') {
+  } else if (
+    normalized === 'fal-ai/kling-video/o1/standard/image-to-video' ||
+    normalized === 'fal-ai/kling-video/o1/image-to-video' ||
+    // reference-to-video and first-last endpoints should use the same Kling o1 SKUs
+    normalized === 'fal-ai/kling-video/o1/standard/reference-to-video' ||
+    normalized === 'fal-ai/kling-video/o1/reference-to-video' ||
+    normalized === 'fal-ai/kling-video/o1/standard/first-last-frame-to-video' ||
+    normalized === 'fal-ai/kling-video/o1/first-last-frame-to-video'
+  ) {
     const dur = String(meta?.duration ?? '5');
     display = dur.startsWith('10') ? 'Kling o1 10s' : 'Kling o1 5s';
   } else if (normalized === 'fal-ai/kling-video/v2.6/pro/text-to-video' || normalized === 'fal-ai/kling-video/v2.6/pro/image-to-video') {
