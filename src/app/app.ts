@@ -231,6 +231,27 @@ app.get('/health/auth', (_req, res) => {
   }
 });
 
+// Version health endpoint
+app.get('/health/version', (_req, res) => {
+  try {
+    // Try to require the buildInfo.json file
+    // Using require to allow it to be missing during dev if not built
+    let buildInfo;
+    try {
+      buildInfo = require('../config/buildInfo.json');
+    } catch {
+      buildInfo = {
+        commitHash: 'dev',
+        buildTime: new Date().toISOString(),
+        nodeEnv: process.env.NODE_ENV
+      };
+    }
+    return res.json(formatApiResponse('success', 'OK', buildInfo));
+  } catch (error) {
+    return res.json(formatApiResponse('error', 'Failed to get version info', null));
+  }
+});
+
 // Redis health (optional): reports if Redis cache is enabled and ping works
 app.get('/health/redis', async (_req, res) => {
   try {
