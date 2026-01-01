@@ -22,6 +22,7 @@ import {
   computeFalRecraftVectorizeCost,
   computeFalBriaGenfillCost,
   computeFalSeedVrUpscaleCost,
+  computeFalSeedVrUpscaleImageCost,
   computeFalTopazUpscaleImageCost,
   computeFalBirefnetVideoCost,
   computeFalElevenTtsCost,
@@ -65,6 +66,7 @@ import {
   validateFalRecraftVectorize,
   validateFalBriaGenfill,
   validateFalSeedvrUpscale,
+  validateFalSeedvrUpscaleImage,
   validateFalTopazUpscaleImage,
   validateFalBirefnetVideo,
   validateFalKlingO1FirstLastSubmit,
@@ -210,6 +212,17 @@ router.post(
     computeFalTopazUpscaleImageCost(req)
   ) as any,
   (falController as any).topazUpscaleImage
+);
+
+// SeedVR Image Upscaler (factor-only)
+router.post(
+  "/seedvr/upscale/image",
+  requireAuth as any,
+  validateFalSeedvrUpscaleImage as any,
+  makeCreditCost("fal", "seedvr_upscale_image", (req) =>
+    computeFalSeedVrUpscaleImageCost(req)
+  ) as any,
+  (falController as any).seedvrUpscaleImage
 );
 // SeedVR2 Video Upscaler
 router.post(

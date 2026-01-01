@@ -754,6 +754,69 @@ export async function computeFalTopazUpscaleImageCost(req: Request): Promise<{ c
   };
 }
 
+// SeedVR Image Upscaler (factor-only pricing)
+// Rule: 4 credits per output megapixel (width x height / 1e6), rounded up.
+// NOTE: target_resolution-based upscaling is explicitly forbidden for this integration.
+export async function computeFalSeedVrUpscaleImageCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const body: any = req.body || {};
+
+  // Enforce factor-only mode
+  const upscaleModeRaw = body.upscale_mode;
+  if (upscaleModeRaw != null && String(upscaleModeRaw).toLowerCase() !== 'factor') {
+    throw new Error('upscale_mode must be "factor"');
+  }
+  if (body.target_resolution != null) {
+    throw new Error('target_resolution is not supported for this endpoint');
+  }
+
+  let url: string | undefined = body.image_url;
+  // Allow data URI input (image); upload to Zata to obtain a public URL for probing
+  if (!url && typeof body.image === 'string' && body.image.startsWith('data:')) {
+    try {
+      const uid = (req as any)?.uid || 'anon';
+      const stored = await uploadDataUriToZata({
+        dataUri: body.image,
+        keyPrefix: `users/${uid}/pricing/seedvr-image/${Date.now()}`,
+        fileName: 'source',
+      });
+      url = stored.publicUrl;
+    } catch {
+      url = undefined;
+    }
+  }
+  if (!url) throw new Error('image_url is required');
+
+  const meta = (req as any).seedvrImageProbe || await probeImageMeta(url);
+  const inW = Number(meta?.width || 0);
+  const inH = Number(meta?.height || 0);
+  if (!isFinite(inW) || !isFinite(inH) || inW <= 0 || inH <= 0) {
+    throw new Error('Unable to compute image dimensions for pricing');
+  }
+
+  const factor = Math.max(1, Math.min(10, Number(body.upscale_factor ?? 2)));
+  const outW = Math.max(1, Math.round(inW * factor));
+  const outH = Math.max(1, Math.round(inH * factor));
+
+  const megapixels = (outW * outH) / 1_000_000;
+  const creditsPerMp = 4;
+  const credits = Math.max(1, Math.ceil(megapixels * creditsPerMp));
+
+  return {
+    cost: credits,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: 'fal-ai/seedvr/upscale/image',
+      input: { width: inW, height: inH },
+      output: { width: outW, height: outH },
+      pricing: { megapixels, creditsPerMp, credits },
+      upscale_mode: 'factor',
+      upscale_factor: factor,
+      noise_scale: body.noise_scale,
+      output_format: body.output_format,
+    },
+  };
+}
+
 // ElevenLabs TTS pricing based on character count
 export async function computeFalElevenTtsCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { text } = req.body || {};

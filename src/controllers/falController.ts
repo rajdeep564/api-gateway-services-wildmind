@@ -68,6 +68,15 @@ export const falController = {
       res.json(formatApiResponse('success', 'Upscaled', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
     } catch (err) { next(err); }
   },
+  async seedvrUpscaleImage(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await (falService as any).seedvrUpscaleImage(uid, req.body || {});
+      const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'seedvr.upscale.image');
+      res.json(formatApiResponse('success', 'Upscaled', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
+    } catch (err) { next(err); }
+  },
   async seedvrUpscale(req: Request, res: Response, next: NextFunction) {
     try {
       const uid = req.uid;

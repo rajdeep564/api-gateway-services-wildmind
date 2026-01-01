@@ -987,3 +987,54 @@ export const validateFalTopazUpscaleImage = [
   }
 ];
 
+// SeedVR Image Upscaler (fal-ai/seedvr/upscale/image) - factor-only
+export const validateFalSeedvrUpscaleImage = [
+  body('image_url').optional().isString().notEmpty(),
+  body('image').optional().isString().notEmpty(),
+  // Factor-only: allow client to pass, but must be 'factor' if present
+  body('upscale_mode').optional().isIn(['factor']).withMessage('upscale_mode must be factor'),
+  // Explicitly forbid target mode fields
+  body('target_resolution').not().exists().withMessage('target_resolution is not supported'),
+  body('upscale_factor').optional().isFloat({ gt: 0.1, lt: 10 }).withMessage('upscale_factor must be between 0.1 and 10'),
+  body('noise_scale').optional().isFloat({ min: 0, max: 2 }).withMessage('noise_scale must be between 0 and 2'),
+  body('output_format').optional().isIn(['jpg', 'png', 'webp']).withMessage('output_format must be jpg, png, or webp'),
+  body('seed').optional().isInt().withMessage('seed must be an integer'),
+  async (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+
+    const url: string | undefined = req.body?.image_url;
+    const dataImage: string | undefined = req.body?.image;
+
+    const hasUrl = typeof url === 'string' && url.length > 0;
+    const hasDataUri = typeof dataImage === 'string' && dataImage.startsWith('data:');
+
+    if (!hasUrl && !hasDataUri) {
+      return next(new ApiError('image_url or data URI image is required', 400));
+    }
+
+    // Force factor-only defaults
+    req.body.upscale_mode = 'factor';
+    if (req.body.upscale_factor == null) req.body.upscale_factor = 2;
+    if (req.body.noise_scale == null) req.body.noise_scale = 0.1;
+    if (req.body.output_format == null) req.body.output_format = 'jpg';
+
+    // If client provided a public URL, probe it for pricing. If data URI is provided, pricing can upload+probe later.
+    if (hasUrl) {
+      try {
+        const meta = await probeImageMeta(url as string);
+        const w = Number(meta?.width || 0);
+        const h = Number(meta?.height || 0);
+        if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0) {
+          return next(new ApiError('Unable to read image dimensions. Ensure the URL is public and accessible.', 400));
+        }
+        (req as any).seedvrImageProbe = { width: w, height: h };
+      } catch {
+        return next(new ApiError('Failed to validate image URL for SeedVR image upscale', 400));
+      }
+    }
+
+    next();
+  }
+];
+

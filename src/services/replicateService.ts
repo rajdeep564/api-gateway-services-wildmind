@@ -141,6 +141,38 @@ async function resolveOutputUrls(output: any): Promise<string[]> {
   }
 }
 
+/**
+ * Resolves a given URL (which might be a local proxy path or a data URI)
+ * to a public URL that Replicate can access.
+ */
+function resolveToPublicUrl(url: string | any): string {
+  if (typeof url !== 'string') return '';
+  if (!url) return '';
+
+  // Handled already-public URLs or data URIs
+  if (url.startsWith('http') || url.startsWith('data:')) return url;
+
+  if (url.includes('/api/proxy/resource/')) {
+    try {
+      const parts = url.split('/api/proxy/resource/');
+      const encodedPath = parts[parts.length - 1];
+      if (encodedPath) {
+        const decodedPath = decodeURIComponent(encodedPath);
+        // Correct implementation matching makeZataPublicUrl logic
+        const endpoint = (env.zataEndpoint || '').replace(/\/$/, '');
+        const bucket = env.zataBucket || '';
+        const key = decodedPath.replace(/^\//, '');
+        // encodeURI(key) to match zataClient.makeZataPublicUrl
+        return `${endpoint}/${bucket}/${encodeURI(key)}`;
+      }
+    } catch (e) {
+      console.warn('[replicateService] Failed to resolve proxy URL:', url, e);
+    }
+  }
+
+  return url;
+}
+
 export async function removeBackground(
   uid: string,
   body: {
@@ -1444,10 +1476,23 @@ export async function generateImage(uid: string, body: any) {
     if (
       lower === 'qwen-image-edit' ||
       lower === 'qwen-image-edit-2511' ||
+      lower === 'qwen-image-edit-2512' ||
       lower.includes('qwen-image-edit') || // Fallback for any qwen-image-edit variations
       lower === 'qwen/qwen-image-edit-2511' ||
-      lower === 'replicate/qwen/qwen-image-edit-2511'
+      lower === 'qwen/qwen-image-edit-2512' ||
+      lower === 'replicate/qwen/qwen-image-edit-2511' ||
+      lower === 'replicate/qwen/qwen-image-edit-2512' ||
+      // Also support the plain qwen image model (non-edit) variants
+      lower === 'qwen-image-2512' ||
+      lower === 'qwen-image-2511' ||
+      lower === 'qwen/qwen-image-2512' ||
+      lower === 'qwen/qwen-image-2511'
     ) {
+      // Prefer the newer 2512 model if the alias explicitly references it
+      if (lower.includes('2512')) {
+        return 'qwen/qwen-image-2512';
+      }
+      // Default to 2511 edit variant if nothing else
       return 'qwen/qwen-image-edit-2511';
     }
 
@@ -1463,9 +1508,12 @@ export async function generateImage(uid: string, body: any) {
     if (!base.includes('/')) {
       // Known aliases we intentionally support
       const lower = base.toLowerCase();
-      if (lower.includes('qwen-image-edit')) {
-        // Replicate documentation confirms model ID: qwen/qwen-image-edit-2511
-        // It does not require a version hash for this specific ID pattern
+      if (lower.includes('qwen-image-edit') || lower.includes('qwen-image-251')) {
+        // If the alias references the non-edit image 2512 model, map to that slug
+        if (lower.includes('2512') && lower.includes('qwen-image-251')) return 'qwen/qwen-image-2512';
+        // Prefer 2512 edit variant if explicitly requested, otherwise fall back to 2511
+        if (lower.includes('2512')) return 'qwen/qwen-image-edit-2512';
+        // Replicate documentation confirms model ID for 2511 pattern
         return 'qwen/qwen-image-edit-2511';
       }
       throw new ApiError(
@@ -1482,7 +1530,10 @@ export async function generateImage(uid: string, body: any) {
   const creator = await authRepository.getUserById(uid);
   const storageKeyPrefixOverride: string | undefined = (body as any)?.storageKeyPrefixOverride;
   const aspectRatio = body.aspect_ratio || body.frameSize || null;
-  const isQwenImageEdit = modelBase.toLowerCase().includes('qwen-image-edit');
+  const lowerModelBase = modelBase.toLowerCase();
+  const isQwenImageEdit = lowerModelBase.includes('qwen-image-edit');
+  // Treat any qwen image model (edit or non-edit, 2511/2512) as supporting an input image.
+  const isQwenImageModel = lowerModelBase.includes('qwen-image');
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
     model: modelBase,
@@ -1509,13 +1560,19 @@ export async function generateImage(uid: string, body: any) {
     const { model: _m, isPublic: _p, ...rest } = body || {};
     const input: any = { prompt: body.prompt };
 
-    // Qwen Image Edit (image-to-image)
-    // The frontend currently posts to /api/replicate/generate with model "qwen-image-edit".
-    // Replicate requires an owner/name slug, and Qwen requires an image input.
-    if (isQwenImageEdit) {
-      replicateModelBase = 'qwen/qwen-image-edit-2511';
+    // Qwen Image handling (image-to-image or image-edit). The frontend may send either
+    // the edit variant or the non-edit image variant; both can accept an input image.
+    if (isQwenImageModel) {
+      // Choose correct qwen model slug/version based on requested alias
+      if (lowerModelBase.includes('2512')) {
+        replicateModelBase = isQwenImageEdit ? 'qwen/qwen-image-edit-2512' : 'qwen/qwen-image-2512';
+      } else {
+        replicateModelBase = isQwenImageEdit ? 'qwen/qwen-image-edit-2511' : 'qwen/qwen-image-2511';
+      }
 
-      const candidateImages: string[] = Array.isArray(rest.image)
+      // Gather candidate images from multiple possible input fields and
+      // normalize entries (strings or objects) into an array of URI strings.
+      const rawCandidates: any[] = Array.isArray(rest.image)
         ? rest.image
         : (typeof rest.image === 'string' && rest.image.length > 5)
           ? [rest.image]
@@ -1525,12 +1582,23 @@ export async function generateImage(uid: string, body: any) {
               ? rest.image_input
               : [];
 
-      const images = candidateImages
-        .map((u: any) => (typeof u === 'string' ? u.trim() : ''))
+      const images = rawCandidates
+        .map((it: any) => {
+          if (!it) return '';
+          if (typeof it === 'string') return it.trim();
+          if (typeof it === 'object') {
+            // Support common object shapes coming from frontend: { url }, { originalUrl }, { src }
+            if (typeof it.url === 'string' && it.url.length > 0) return it.url.trim();
+            if (typeof it.originalUrl === 'string' && it.originalUrl.length > 0)
+              return it.originalUrl.trim();
+            if (typeof it.src === 'string' && it.src.length > 0) return it.src.trim();
+          }
+          return '';
+        })
         .filter((u: string) => u.length > 0)
         .slice(0, 8);
 
-      if (images.length === 0) {
+      if (isQwenImageEdit && images.length === 0 && !lowerModelBase.includes('2512')) {
         throw new ApiError('image is required for qwen-image-edit', 400);
       }
 
@@ -1596,16 +1664,18 @@ export async function generateImage(uid: string, body: any) {
         throw new ApiError(`Invalid image uri for qwen-image-edit: ${img}`, 400);
       }
 
-      if (resolvedImages.length === 0) {
+      if (isQwenImageEdit && resolvedImages.length === 0 && !lowerModelBase.includes('2512')) {
         throw new ApiError('image is required for qwen-image-edit', 400);
       }
 
-      // qwen/qwen-image-edit-2511 schema expects `image` as an array of URI strings.
-      // If the frontend sends multiple reference images, pass them through (capped above).
-      input.image = resolvedImages;
+      // Some Qwen variants accept a single image string while others accept an array.
+      // If only one image provided, pass it as a string; otherwise pass the array.
+      if (resolvedImages.length > 0) {
+        input.image = resolvedImages.length === 1 ? resolvedImages[0] : resolvedImages;
+      }
 
       // Prefer explicit aspect_ratio; fallback to frameSize mapping
-      const aspect = rest.aspect_ratio ?? aspectRatio ?? 'match_input_image';
+      const aspect = rest.aspect_ratio ?? aspectRatio ?? (isQwenImageEdit ? 'match_input_image' : '16:9');
       input.aspect_ratio = String(aspect);
 
       // Qwen schema uses output_format values: webp | jpg | png
@@ -1621,6 +1691,63 @@ export async function generateImage(uid: string, body: any) {
       if (typeof rest.go_fast === 'boolean') input.go_fast = rest.go_fast;
       if (typeof rest.disable_safety_checker === 'boolean') input.disable_safety_checker = rest.disable_safety_checker;
       if (rest.seed != null && Number.isInteger(Number(rest.seed))) input.seed = Number(rest.seed);
+      // Optional additional qwen parameters supported by 2512 schema
+      if (rest.guidance != null && Number.isFinite(Number(rest.guidance))) {
+        input.guidance = Number(rest.guidance);
+      }
+      if (rest.num_inference_steps != null && Number.isInteger(Number(rest.num_inference_steps))) {
+        input.num_inference_steps = Number(rest.num_inference_steps);
+      }
+      if (rest.strength != null && Number.isFinite(Number(rest.strength))) {
+        input.strength = Math.max(0, Math.min(1, Number(rest.strength)));
+      }
+      // Support frontend size presets (e.g. "1K", "2K") mapped to explicit width/height
+      // when an aspect ratio is selected. This ensures consistent output sizes
+      // across QWEN image models (including qwen-image-2512 which supports larger max dims).
+      const PRESET_DIMENSIONS: Record<string, Record<string, { w: number; h: number }>> = {
+        '1K': {
+          '1:1': { w: 1024, h: 1024 },
+          '16:9': { w: 1024, h: 576 },
+          '9:16': { w: 576, h: 1024 },
+          '4:3': { w: 1024, h: 768 },
+          '3:4': { w: 768, h: 1024 },
+          '3:2': { w: 1024, h: 683 },
+          '2:3': { w: 683, h: 1024 },
+        },
+        '2K': {
+          '1:1': { w: 2048, h: 2048 },
+          '16:9': { w: 2048, h: 1152 },
+          '9:16': { w: 1152, h: 2048 },
+          '4:3': { w: 2048, h: 1536 },
+          '3:4': { w: 1536, h: 2048 },
+          '3:2': { w: 2048, h: 1365 },
+          '2:3': { w: 1365, h: 2048 },
+        },
+      };
+      // Determine requested preset (accept rest.size, rest.resolution, or rest.preset)
+      const requestedPreset = (rest.size || rest.resolution || rest.preset || '').toString();
+      // Use aspect as determined earlier (explicit aspect_ratio or frameSize fallback)
+      const effectiveAspect = String(rest.aspect_ratio ?? aspectRatio ?? (isQwenImageEdit ? 'match_input_image' : '16:9'));
+      // Model-specific max dimension (qwen-image-2512 supports up to 2512)
+      const modelMax = replicateModelBase && String(replicateModelBase).includes('2512') ? 2512 : 2048;
+      if (requestedPreset && PRESET_DIMENSIONS[requestedPreset] && PRESET_DIMENSIONS[requestedPreset][effectiveAspect]) {
+        // Only set width/height from preset when frontend did not explicitly pass width/height
+        if (rest.width == null && rest.height == null) {
+          const dims = PRESET_DIMENSIONS[requestedPreset][effectiveAspect];
+          input.width = Math.max(256, Math.min(modelMax, dims.w));
+          input.height = Math.max(256, Math.min(modelMax, dims.h));
+          input.aspect_ratio = 'custom';
+        }
+      }
+      // Width/height only used when aspect_ratio='custom' (or when frontend passes explicit width/height)
+      if (rest.width != null && Number.isInteger(Number(rest.width))) {
+        // Clamp to model-supported bounds (256-2048 per schema)
+        input.width = Math.max(256, Math.min(replicateModelBase && String(replicateModelBase).includes('2512') ? 2512 : 2048, Number(rest.width)));
+        input.aspect_ratio = 'custom';
+      }
+      if (rest.height != null && Number.isInteger(Number(rest.height))) {
+        input.height = Math.max(256, Math.min(replicateModelBase && String(replicateModelBase).includes('2512') ? 2512 : 2048, Number(rest.height)));
+      }
     }
 
     // Seedream 4.5 mapping removed – model now handled via FAL.
@@ -2670,8 +2797,19 @@ export async function qwenImageEditSubmit(
   uid: string,
   body: any
 ): Promise<SubmitReturn> {
+  // Support both 'image' and 'uploadedImages' (array or string) from the frontend
+  let primaryImage = body?.image;
+  if (!primaryImage && Array.isArray(body?.uploadedImages) && body.uploadedImages.length > 0) {
+    primaryImage = body.uploadedImages[0];
+  } else if (!primaryImage && typeof body?.uploadedImages === 'string') {
+    primaryImage = body.uploadedImages;
+  }
+
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
-  if (!body?.image) throw new ApiError("image is required", 400);
+  if (!primaryImage) throw new ApiError("image is required", 400);
+
+  // Resolve proxy URLs to public ones
+  const resolvedImage = resolveToPublicUrl(primaryImage);
 
   const key = env.replicateApiKey as string;
   if (!key) {
@@ -2680,7 +2818,7 @@ export async function qwenImageEditSubmit(
   }
 
   const replicate = new Replicate({ auth: key });
-  const modelBase = 'qwen/qwen-image-edit-2511';
+  const modelBase = String(body?.model || '').toLowerCase().includes('2512') ? 'qwen/qwen-image-2512' : 'qwen/qwen-image-edit-2511';
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
@@ -2720,10 +2858,10 @@ export async function qwenImageEditSubmit(
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
     const urls: string[] = [];
-    if (Array.isArray(body.image)) {
-      for (const it of body.image.slice(0, 8)) if (typeof it === 'string' && it.length > 5) urls.push(it);
-    } else if (typeof body.image === 'string' && body.image.length > 5) {
-      urls.push(body.image);
+    if (Array.isArray(primaryImage)) {
+      for (const it of primaryImage.slice(0, 8)) if (typeof it === 'string' && it.length > 5) urls.push(it);
+    } else if (typeof primaryImage === 'string' && primaryImage.length > 5) {
+      urls.push(primaryImage);
     }
     const inputPersisted: any[] = [];
     let idx = 0;
@@ -2739,12 +2877,14 @@ export async function qwenImageEditSubmit(
   } catch { }
 
   // Build replicate input
+  const is2512 = modelBase.includes('2512');
   const input: any = {
     prompt: body.prompt,
-    // qwen/qwen-image-edit-2511 schema expects an array of image URIs.
-    image: Array.isArray(body.image)
-      ? (body.image as any[]).map((x: any) => String(x || '')).filter((s: string) => s.length > 0).slice(0, 8)
-      : [String(body.image || '')].filter((s: string) => s.length > 0),
+    // qwen/qwen-image-2512 expects a single string URI for the image field.
+    // qwen/qwen-image-edit-2511 schema prefers an array but may accept a string.
+    image: is2512 ? resolvedImage : [resolvedImage],
+    // Fallback image field for various qwen models
+    input_image: resolvedImage,
     aspect_ratio: aspect,
     output_format: outFormat,
     output_quality: outputQuality,
@@ -2752,15 +2892,62 @@ export async function qwenImageEditSubmit(
     disable_safety_checker: disableSafety,
   };
   if (body.seed != null && Number.isInteger(Number(body.seed))) input.seed = Number(body.seed);
+  // Additional fields supported by qwen-image-edit-2512
+  if (body.guidance != null && Number.isFinite(Number(body.guidance))) input.guidance = Number(body.guidance);
+  if (body.num_inference_steps != null && Number.isInteger(Number(body.num_inference_steps))) input.num_inference_steps = Number(body.num_inference_steps);
+  if (body.strength != null && Number.isFinite(Number(body.strength))) input.strength = Math.max(0, Math.min(1, Number(body.strength)));
+  if (body.width != null && Number.isInteger(Number(body.width))) input.width = Math.max(256, Math.min(2048, Number(body.width)));
+  if (body.height != null && Number.isInteger(Number(body.height))) input.height = Math.max(256, Math.min(2048, Number(body.height)));
 
   // Submit prediction to Replicate (queue-style)
   let predictionId = '';
+  // Ensure replicateModelBase variable exists in this function scope for fallback attempts
+  let replicateModelBase = modelBase;
   try {
-    let version: string | null = null;
-    try { version = await getLatestModelVersion(replicate, modelBase); } catch (vErr) { /* ignore */ }
-    const pred = await replicate.predictions.create(version ? { version, input } : { model: modelBase, input });
-    predictionId = (pred as any)?.id || '';
-    if (!predictionId) throw new Error('Missing prediction id');
+    // Try a sequence of candidate model identifiers in case the exact versioned id isn't available on Replicate
+    const candidates: string[] = [replicateModelBase];
+    const lower = String(replicateModelBase || '').toLowerCase();
+    if (lower.includes('qwen-image') || lower.includes('qwen/qwen-image')) {
+      // Include a variety of qwen slugs as fallbacks.
+      if (!candidates.includes('qwen/qwen-image-2512')) candidates.push('qwen/qwen-image-2512');
+      if (!candidates.includes('qwen/qwen-image-edit-2512')) candidates.push('qwen/qwen-image-edit-2512');
+      if (!candidates.includes('qwen/qwen-image-edit-2511')) candidates.push('qwen/qwen-image-edit-2511');
+      if (!candidates.includes('qwen/qwen-image-edit')) candidates.push('qwen/qwen-image-edit');
+    }
+
+    let lastErr: any = null;
+    for (const candidate of candidates) {
+      try {
+        let version: string | null = null;
+        try { version = await getLatestModelVersion(replicate, candidate); } catch (vErr) { /* ignore */ }
+        const pred = await replicate.predictions.create(version ? { version, input } : { model: candidate, input });
+        predictionId = (pred as any)?.id || '';
+        replicateModelBase = candidate; // record the successful candidate
+        if (!predictionId) throw new Error('Missing prediction id');
+        // success — break out of the retry loop
+        lastErr = null;
+        break;
+      } catch (innerErr: any) {
+        lastErr = innerErr;
+        // If 404 (model not found), continue to next candidate; otherwise stop trying further
+        const status = innerErr?.response?.status || innerErr?.status || innerErr?.statusCode;
+        const msg = String(innerErr?.message || innerErr || '');
+        const looksLikeNotFound = /\b404\b|not\s*found/i.test(msg) || (status && Number(status) === 404);
+        if (looksLikeNotFound) {
+          // try next candidate
+          continue;
+        }
+        // For other errors, stop trying further
+        break;
+      }
+    }
+
+    if (!predictionId) {
+      // All attempts failed — record last error
+      const errMsg = lastErr?.message || 'Replicate submit failed';
+      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: errMsg } as any);
+      throw new ApiError(`Failed to submit Qwen image edit job: ${errMsg}`, 502, lastErr);
+    }
   } catch (e: any) {
     await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: e?.message || 'Replicate submit failed' } as any);
     throw new ApiError(`Failed to submit Qwen image edit job: ${e?.message || e}`, 502, e);
