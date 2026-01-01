@@ -22,14 +22,22 @@ async function generateBuildInfo() {
   };
 
   try {
-    // Ensure directory exists
-    const dir = path.dirname(BUILD_INFO_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    // Write to src (for dev)
+    const srcDir = path.dirname(BUILD_INFO_PATH);
+    if (!fs.existsSync(srcDir)) {
+      fs.mkdirSync(srcDir, { recursive: true });
     }
-
     fs.writeFileSync(BUILD_INFO_PATH, JSON.stringify(buildInfo, null, 2));
-    console.log('[BuildInfo] Info generated successfully:', buildInfo);
+    
+    // Write to dist (for prod)
+    const distPath = path.join(__dirname, '../dist/config/buildInfo.json');
+    const distDir = path.dirname(distPath);
+    if (!fs.existsSync(distDir)) {
+      fs.mkdirSync(distDir, { recursive: true });
+    }
+    fs.writeFileSync(distPath, JSON.stringify(buildInfo, null, 2));
+
+    console.log('[BuildInfo] Info generated successfully in src and dist:', buildInfo);
   } catch (error) {
     console.error('[BuildInfo] Failed to write build info file:', error);
     process.exit(1);
