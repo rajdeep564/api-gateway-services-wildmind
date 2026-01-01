@@ -2997,6 +2997,98 @@ export const falService = {
       throw falError;
     }
   },
+  async seedvrUpscaleImage(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    if (!body?.image_url && !body?.image) throw new ApiError('image_url or image is required', 400);
+    fal.config({ credentials: falKey });
+
+    const model = 'fal-ai/seedvr/upscale/image';
+    const creator = await authRepository.getUserById(uid);
+    const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt: 'Upscale Image',
+      model,
+      generationType: 'image-upscale',
+      visibility: body.isPublic ? 'public' : 'private',
+      isPublic: body.isPublic === true,
+      createdBy,
+    });
+
+    try {
+      // Resolve input URL: allow direct URL or data URI via temporary upload
+      let resolvedUrl: string | undefined = typeof body.image_url === 'string' ? body.image_url : (typeof body.image === 'string' ? body.image : undefined);
+
+      if (resolvedUrl && /^data:/i.test(resolvedUrl)) {
+        try {
+          const stored = await uploadDataUriToZata({ dataUri: resolvedUrl, keyPrefix: `users/${(creator?.username || uid)}/input/${historyId}`, fileName: 'seedvr-image-source' });
+          resolvedUrl = stored.publicUrl;
+        } catch { }
+      } else if (resolvedUrl) {
+        // Ensure regular URLs are uploaded to Zata for reliable access
+        try {
+          const stored = await uploadFromUrlToZata({ sourceUrl: resolvedUrl, keyPrefix: `users/${(creator?.username || uid)}/input/${historyId}`, fileName: 'seedvr-image-source' });
+          resolvedUrl = stored.publicUrl;
+        } catch (err) {
+          console.warn('[seedvrUpscaleImage] Failed to upload input image to Zata, using original:', err);
+        }
+      }
+
+      if (!resolvedUrl) throw new ApiError('Unable to resolve image_url for SeedVR image upscale', 400);
+
+      // Enforce factor-only API usage (never target_resolution)
+      const input: any = {
+        image_url: resolvedUrl,
+        upscale_mode: 'factor',
+        upscale_factor: body.upscale_factor ?? 2,
+        noise_scale: body.noise_scale ?? 0.1,
+        output_format: body.output_format || 'jpg',
+      };
+      if (body.seed != null) input.seed = body.seed;
+
+      const result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
+      const imgUrl: string | undefined = (result as any)?.data?.image?.url;
+      if (!imgUrl) throw new ApiError('No image URL returned from FAL API', 502);
+
+      const username = creator?.username || uid;
+      const { key, publicUrl } = await uploadFromUrlToZata({ sourceUrl: imgUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'upscaled' });
+      const images: FalGeneratedImage[] = [{ id: (result as any).requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any];
+
+      // Score images
+      const scoredImages = await aestheticScoreService.scoreImages(images as any);
+      const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: scoredImages,
+        aestheticScore: highestScore,
+        updatedAt: new Date().toISOString(),
+      } as any);
+
+      // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+      markGenerationCompleted(uid, historyId, {
+        status: 'completed',
+        images: scoredImages as any,
+      }).catch(err => console.error('[FAL] Image optimization failed:', err));
+
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
+
+      return { images: scoredImages as any, historyId, model, status: 'completed' };
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to upscale image with FAL API',
+        context: 'falService.seedvrUpscaleImage',
+        toastTitle: 'Image upscale failed',
+      });
+      try {
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
+      } catch (mirrorErr) {
+        console.error('[seedvrUpscaleImage] Failed to mirror error state:', mirrorErr);
+      }
+      throw falError;
+    }
+  },
   async seedvrUpscale(uid: string, body: any): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!body?.video_url) throw new ApiError('video_url is required', 400);
