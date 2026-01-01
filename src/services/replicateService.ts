@@ -1748,6 +1748,18 @@ export async function generateImage(uid: string, body: any) {
       if (rest.height != null && Number.isInteger(Number(rest.height))) {
         input.height = Math.max(256, Math.min(replicateModelBase && String(replicateModelBase).includes('2512') ? 2512 : 2048, Number(rest.height)));
       }
+
+      // Support multiple outputs for Qwen models.
+      // Replicate Qwen image models typically return a single image per run, so we fan-out internally.
+      // Accept `num_images` (preferred) and also `n` (legacy UI field).
+      const requestedQwenCountRaw =
+        rest.num_images != null ? rest.num_images : rest.n != null ? rest.n : undefined;
+      if (requestedQwenCountRaw != null) {
+        const n = Number(requestedQwenCountRaw);
+        if (Number.isFinite(n)) {
+          (body as any).__num_images = Math.max(1, Math.min(4, Math.round(n)));
+        }
+      }
     }
 
     // Seedream 4.5 mapping removed – model now handled via FAL.
@@ -2478,7 +2490,7 @@ export async function generateImage(uid: string, body: any) {
       } catch { }
     }
     // Handle num_images fan-out for models that need parallel calls
-    // Supported: z-image-turbo, P-Image / P-Image-Edit, and GPT Image 1.5
+    // Supported: z-image-turbo, P-Image / P-Image-Edit, GPT Image 1.5, and Qwen image models.
     let output: any;
     const numImages = (body as any).__num_images || 1;
     const isZTurbo = (modelBase === "new-turbo-model" || modelBase === "placeholder-model-name");
@@ -2486,7 +2498,10 @@ export async function generateImage(uid: string, body: any) {
     const isPImageEdit = replicateModelBase === "prunaai/p-image-edit";
     const isGptImage15 = replicateModelBase === "openai/gpt-image-1.5";
 
-    if ((isZTurbo || isPImage || isPImageEdit || isGptImage15) && numImages > 1) {
+    const lowerReplicateModelBase = String(replicateModelBase || '').toLowerCase();
+    const isQwenImage = lowerReplicateModelBase.startsWith('qwen/qwen-image');
+
+    if ((isZTurbo || isPImage || isPImageEdit || isGptImage15 || isQwenImage) && numImages > 1) {
       // Make multiple parallel calls
       const outputPromises = Array.from({ length: numImages }, async () => {
         return await replicate.run(modelSpec as any, { input });
