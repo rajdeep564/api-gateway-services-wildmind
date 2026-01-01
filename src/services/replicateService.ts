@@ -2281,14 +2281,29 @@ export async function generateImage(uid: string, body: any) {
     }
     // GPT Image 1.5 mapping
     if (modelBase === "openai/gpt-image-1.5") {
+      const coerceGptImage15AspectRatio = (raw: unknown): '1:1' | '3:2' | '2:3' => {
+        const trimmed = String(raw ?? '').trim();
+        if (trimmed === '1:1' || trimmed === '3:2' || trimmed === '2:3') return trimmed;
+
+        const match = trimmed.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
+        if (!match) return '1:1';
+        const a = Number(match[1]);
+        const b = Number(match[2]);
+        if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return '1:1';
+        const ratio = a / b;
+        if (ratio > 1.05) return '3:2';
+        if (ratio < 0.95) return '2:3';
+        return '1:1';
+      };
+
       // Map all supported parameters from schema
       if (rest.quality && ['low', 'medium', 'high', 'auto'].includes(String(rest.quality))) {
         input.quality = String(rest.quality);
       } else {
         input.quality = 'low'; // Default to low quality
       }
-      // Always use 2:3 aspect ratio for gpt-image-1.5
-      input.aspect_ratio = '2:3';
+      // Respect requested aspect ratio (coerce to the only supported set: 1:1 | 3:2 | 2:3).
+      input.aspect_ratio = coerceGptImage15AspectRatio(rest.aspect_ratio ?? rest.frameSize);
       // The frontend commonly sends `n`; schema uses `number_of_images`.
       const requestedImagesRaw =
         rest.number_of_images != null ? rest.number_of_images : rest.n != null ? rest.n : undefined;

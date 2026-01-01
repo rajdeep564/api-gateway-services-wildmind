@@ -252,11 +252,31 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
     const allowedModeration = new Set(['auto', 'low']);
     const allowedOutputFormat = new Set(['png', 'jpeg', 'webp']);
 
+    const coerceAspectToSupported = (raw: string): '1:1' | '3:2' | '2:3' | null => {
+      const trimmed = String(raw).trim();
+      if (allowedAspect.has(trimmed)) return trimmed as any;
+      const match = trimmed.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
+      if (!match) return null;
+      const a = Number(match[1]);
+      const b = Number(match[2]);
+      if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return null;
+      const ratio = a / b;
+      if (ratio > 1.05) return '3:2';
+      if (ratio < 0.95) return '2:3';
+      return '1:1';
+    };
+
     if (req.body.quality != null && !allowedQuality.has(String(req.body.quality))) {
       return next(new ApiError('quality must be one of: low, medium, high, auto', 400));
     }
     if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio))) {
-      return next(new ApiError('aspect_ratio must be one of: 1:1, 3:2, 2:3', 400));
+      // Frontend may send wide ratios like 16:9; coerce to closest supported landscape (3:2).
+      const coerced = coerceAspectToSupported(String(aspect_ratio));
+      if (coerced) {
+        req.body.aspect_ratio = coerced;
+      } else {
+        return next(new ApiError('aspect_ratio must be one of: 1:1, 3:2, 2:3', 400));
+      }
     }
     if (req.body.background != null && !allowedBackground.has(String(req.body.background))) {
       return next(new ApiError('background must be one of: auto, transparent, opaque', 400));
