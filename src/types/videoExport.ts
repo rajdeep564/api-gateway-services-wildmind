@@ -76,6 +76,7 @@ export interface TimelineItemData {
     transition?: {
         type: string;
         duration: number;
+        speed?: number; // 0.1 (slow) to 2.0 (fast)
         direction?: 'left' | 'right' | 'up' | 'down';
         timing?: 'prefix' | 'postfix' | 'overlap';
     };

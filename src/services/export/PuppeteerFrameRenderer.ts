@@ -384,6 +384,15 @@ export class PuppeteerFrameRenderer {
             
             await Promise.allSettled(promises);
             console.log('Media preloaded:', mediaCache.size, 'items');
+            
+            // DEBUG: Log all transitions with their properties
+            for (const track of timeline.tracks) {
+                for (const item of track.items) {
+                    if (item.transition && item.transition.type !== 'none') {
+                        console.log('[Transition Data] Item:', item.name, 'Transition:', JSON.stringify(item.transition));
+                    }
+                }
+            }
         }
         
         // Get render items at a given time (matching Canvas.tsx logic)
@@ -432,7 +441,14 @@ export class PuppeteerFrameRenderer {
                         if (timeIntoClip >= transStart && timeIntoClip <= transStart + t.duration) {
                             isTransitioning = true;
                             transition = t;
-                            progress = (timeIntoClip - transStart) / t.duration;
+                            // Apply speed modifier: speed > 1 = faster animation, speed < 1 = slower
+                            const transSpeed = (t.speed !== undefined && t.speed !== null) ? t.speed : 1.0;
+                            const rawProgress = (timeIntoClip - transStart) / t.duration;
+                            progress = Math.min(1, Math.max(0, rawProgress * transSpeed));
+                            // Debug: Log at key moments (start, middle, end)
+                            if (rawProgress < 0.02 || (rawProgress > 0.48 && rawProgress < 0.52) || rawProgress > 0.98) {
+                                console.log('[Transition] t=' + currentTime.toFixed(2) + ' speed=' + transSpeed + ' raw=' + rawProgress.toFixed(2) + ' final=' + progress.toFixed(2) + ' type=' + t.type);
+                            }
                             incomingItem = mainItem;
                             if (mainItemIndex > 0) outgoingItem = sortedItems[mainItemIndex - 1];
                         }
@@ -453,7 +469,14 @@ export class PuppeteerFrameRenderer {
                             if (timeUntilNext <= transDurationBeforeStart) {
                                 isTransitioning = true;
                                 transition = t;
-                                progress = (transDurationBeforeStart - timeUntilNext) / t.duration;
+                                // Apply speed modifier: speed > 1 = faster animation, speed < 1 = slower
+                                const transSpeed = (t.speed !== undefined && t.speed !== null) ? t.speed : 1.0;
+                                const rawProgress = (transDurationBeforeStart - timeUntilNext) / t.duration;
+                                progress = Math.min(1, Math.max(0, rawProgress * transSpeed));
+                                // Debug: Log at key moments
+                                if (rawProgress < 0.02 || rawProgress > 0.98) {
+                                    console.log('[Transition-Pre] t=' + currentTime.toFixed(2) + ' speed=' + transSpeed + ' raw=' + rawProgress.toFixed(2) + ' final=' + progress.toFixed(2));
+                                }
                                 incomingItem = nextItem;
                                 if (nextItemIndex > 0) outgoingItem = sortedItems[nextItemIndex - 1];
                             }
@@ -1027,24 +1050,15 @@ export class PuppeteerFrameRenderer {
             
             const activeItems = getRenderItems(currentTime);
             
-            for (const { item, track } of activeItems) {
+            for (const activeItem of activeItems) {
+                const { item, role, transition, transitionProgress } = activeItem;
                 if (item.type === 'color') continue; // Already rendered
                 
-                // Check for transition
-                let transition = null;
-                let transitionProgress = 0;
-                let role = 'main';
+                // Use transition data from getRenderItems (which already has speed applied)
+                // Do NOT recalculate transitionProgress here!
+                const finalProgress = transitionProgress || 0;
                 
-                if (item.transition && item.transition.type !== 'none') {
-                    const t = item.transition;
-                    const timeIntoClip = currentTime - item.start;
-                    if (timeIntoClip >= 0 && timeIntoClip <= t.duration) {
-                        transition = t;
-                        transitionProgress = timeIntoClip / t.duration;
-                    }
-                }
-                
-                const transitionStyle = getTransitionStyle(item, currentTime, role, transition, transitionProgress);
+                const transitionStyle = getTransitionStyle(item, currentTime, role || 'main', transition, finalProgress);
                 const animationStyle = getAnimationStyle(item, currentTime);
                 
                 const div = document.createElement('div');
@@ -1314,7 +1328,8 @@ export class PuppeteerFrameRenderer {
             // Set up console logging from browser
             this.page.on('console', (msg) => {
                 const type = msg.type();
-                if (type === 'error' || type === 'warn') {
+                // Include 'log' for transition debugging
+                if (type === 'error' || type === 'warn' || type === 'log') {
                     console.log(`[PuppeteerFrameRenderer] Browser ${type}: ${msg.text()}`);
                 }
             });
@@ -1595,7 +1610,8 @@ export class PuppeteerFrameRenderer {
                                     // Set up error handlers
                                     this.page.on('console', (msg) => {
                                         const type = msg.type();
-                                        if (type === 'error' || type === 'warn') {
+                                        // Include 'log' for transition debugging
+                                        if (type === 'error' || type === 'warn' || type === 'log') {
                                             console.log(`[PuppeteerFrameRenderer] Browser ${type}: ${msg.text()}`);
                                         }
                                     });
