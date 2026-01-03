@@ -1692,6 +1692,16 @@ export async function generateImage(uid: string, body: any) {
       // Replicate's Qwen image models validate `input.image` as an array.
       if (resolvedImages.length > 0) {
         input.image = resolvedImages;
+
+        // Persist reference images so the frontend preview modal can show "Your Upload".
+        // (Many UI flows read entry.inputImages; without this, Qwen edits appear to have no upload.)
+        try {
+          const inputImages = resolvedImages.map((url, idx) => ({ id: `in-${idx + 1}`, url, originalUrl: url }));
+          await generationHistoryRepository.update(uid, historyId, { inputImages } as any);
+        } catch (e) {
+          // non-fatal
+          console.warn('[replicateService.generateImage][qwen] Failed to persist inputImages', e);
+        }
       }
 
       // Prefer explicit aspect_ratio; fallback to frameSize mapping
