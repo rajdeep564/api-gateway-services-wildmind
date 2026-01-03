@@ -5,7 +5,31 @@ import { requireAuth } from '../middlewares/authMiddleware';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { normalizeMode } from '../utils/modeTypeMap';
 
+import multer from 'multer';
+import os from 'os';
+import path from 'path';
+import * as mediaLibraryController from '../controllers/canvas/mediaLibraryController';
+
 const router = Router();
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, os.tmpdir()),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname || '').toLowerCase();
+      const safeExt = ext && ext.length <= 12 ? ext : '';
+      const name = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${safeExt}`;
+      cb(null, name);
+    },
+  }),
+  limits: {
+    fileSize: 200 * 1024 * 1024, // 200MB
+  },
+});
+
+// POST /api/uploads/upload-file
+// Uploads a local file (multipart/form-data) and stores it in storage.
+router.post('/upload-file', requireAuth, upload.single('file'), mediaLibraryController.uploadMediaFile);
 
 /**
  * GET /api/uploads

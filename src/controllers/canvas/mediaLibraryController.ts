@@ -2,7 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import { generationHistoryService } from '../../services/generationHistoryService';
 import { formatApiResponse } from '../../utils/formatApiResponse';
 import { ImageMedia, VideoMedia } from '../../types/generate';
-import { uploadDataUriToZata, uploadFromUrlToZata, uploadStreamToZata } from '../../utils/storage/zataUpload';
+import { uploadBufferToZata, uploadDataUriToZata, uploadFromUrlToZata } from '../../utils/storage/zataUpload';
+import { ApiError } from '../../utils/errorHandler';
 import { authRepository } from '../../repository/auth/authRepository';
 import { generationHistoryRepository } from '../../repository/generationHistoryRepository';
 import fs from 'fs';
@@ -391,7 +392,7 @@ export async function uploadMediaFile(req: Request, res: Response, next: NextFun
     // Create a generation history entry for the uploaded file
     const { historyId } = await generationHistoryService.startGeneration(uid, {
       prompt: 'Uploaded from device',
-      model: 'canvas-upload-file',
+      model: 'upload-file',
       generationType: type === 'image' ? 'text-to-image' : 'text-to-video',
       visibility: 'private',
     });
@@ -410,8 +411,23 @@ export async function uploadMediaFile(req: Request, res: Response, next: NextFun
     const key = `${keyPrefix}/${fileName}`;
 
     const contentType = file.mimetype || (type === 'video' ? 'video/mp4' : 'application/octet-stream');
-    const readStream = fs.createReadStream(file.path);
-    const stored = await uploadStreamToZata(key, readStream as any, contentType);
+    let stored: { key: string; publicUrl: string; etag?: string };
+    try {
+      // Buffer upload is more compatible with some S3-like providers than streaming,
+      // and avoids XAmzContentSHA256Mismatch errors.
+      const buffer = await fs.promises.readFile(file.path);
+      stored = await uploadBufferToZata(key, buffer, contentType);
+    } catch (e: any) {
+      const code = e?.name || e?.Code || e?.code;
+      throw new ApiError(
+        `Storage upload failed${code ? `: ${code}` : ''}`,
+        502,
+        {
+          code,
+          hint: 'Check ZATA_* environment variables and bucket permissions',
+        }
+      );
+    }
 
     // Match the structure expected by wild project (includes firebaseUrl for compatibility)
     const mediaItem = {

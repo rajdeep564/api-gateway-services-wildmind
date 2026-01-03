@@ -1689,6 +1689,34 @@ export async function generateImage(uid: string, body: any) {
 
       if (isQwenImageEdit && resolvedImages.length === 0) throw new ApiError('image is required for qwen-image-edit', 400);
 
+      // Persist input images to history so the frontend preview modal can display "Your Upload".
+      // Normalize to the same structure used elsewhere in the app (id/url/storagePath/originalUrl).
+      if (resolvedImages.length > 0) {
+        const inputPersisted = resolvedImages.map((u, i) => {
+          const url = String(u || '').trim();
+          let storagePath = '';
+          try {
+            if (env.zataPrefix) {
+              const prefix = env.zataPrefix.replace(/\/+$/, '') + '/';
+              if (url.startsWith(prefix)) storagePath = url.substring(prefix.length);
+            }
+            if (!storagePath && /^users\//i.test(url)) storagePath = url;
+          } catch { }
+          return {
+            id: `in-${i + 1}`,
+            url,
+            firebaseUrl: url,
+            storagePath: storagePath || undefined,
+            originalUrl: url,
+          };
+        });
+        try {
+          await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+        } catch (e) {
+          console.warn('[replicateService.generateImage][qwen] Failed to persist inputImages', e);
+        }
+      }
+
       // Replicate's Qwen image models validate `input.image` as an array.
       if (resolvedImages.length > 0) {
         input.image = resolvedImages;
