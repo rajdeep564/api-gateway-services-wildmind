@@ -15,6 +15,7 @@ import {
 } from "../utils/storage/zataUpload";
 import { replicateRepository } from "../repository/replicateRepository";
 import { creditsRepository } from "../repository/creditsRepository";
+import { creditsService } from "./creditsService";
 import { computeWanVideoCost } from "../utils/pricing/wanPricing";
 import { syncToMirror, updateMirror } from "../utils/mirrorHelper";
 import { aestheticScoreService } from "./aestheticScoreService";
@@ -152,21 +153,40 @@ function resolveToPublicUrl(url: string | any): string {
   // Handled already-public URLs or data URIs
   if (url.startsWith('http') || url.startsWith('data:')) return url;
 
+  const toZataPrefixUrl = (decodedPath: string): string => {
+    const key = decodedPath.replace(/^\//, '');
+    const prefix = (env.zataPrefix || '').replace(/\/$/, '');
+    if (prefix) return `${prefix}/${key}`;
+
+    const endpoint = (env.zataEndpoint || '').replace(/\/$/, '');
+    const bucket = env.zataBucket || '';
+    if (endpoint && bucket) return `${endpoint}/${bucket}/${encodeURI(key)}`;
+    return decodedPath;
+  };
+
   if (url.includes('/api/proxy/resource/')) {
     try {
       const parts = url.split('/api/proxy/resource/');
       const encodedPath = parts[parts.length - 1];
       if (encodedPath) {
         const decodedPath = decodeURIComponent(encodedPath);
-        // Correct implementation matching makeZataPublicUrl logic
-        const endpoint = (env.zataEndpoint || '').replace(/\/$/, '');
-        const bucket = env.zataBucket || '';
-        const key = decodedPath.replace(/^\//, '');
-        // encodeURI(key) to match zataClient.makeZataPublicUrl
-        return `${endpoint}/${bucket}/${encodeURI(key)}`;
+        return toZataPrefixUrl(decodedPath);
       }
     } catch (e) {
       console.warn('[replicateService] Failed to resolve proxy URL:', url, e);
+    }
+  }
+
+  if (url.includes('/api/proxy/media/')) {
+    try {
+      const parts = url.split('/api/proxy/media/');
+      const encodedPath = parts[parts.length - 1];
+      if (encodedPath) {
+        const decodedPath = decodeURIComponent(encodedPath);
+        return toZataPrefixUrl(decodedPath);
+      }
+    } catch (e) {
+      console.warn('[replicateService] Failed to resolve proxy media URL:', url, e);
     }
   }
 
@@ -1470,33 +1490,39 @@ export async function generateImage(uid: string, body: any) {
 
   const normalizeModelAlias = (raw: string): string => {
     const s = String(raw || '').trim();
-    const lower = s.toLowerCase();
+    const trimmed = String(s || '').trim();
+    const lower = trimmed.toLowerCase();
 
-    // Frontend sometimes sends short aliases; Replicate expects owner/name or owner/name:version
-    if (
-      lower === 'qwen-image-edit' ||
-      lower === 'qwen-image-edit-2511' ||
-      lower === 'qwen-image-edit-2512' ||
-      lower.includes('qwen-image-edit') || // Fallback for any qwen-image-edit variations
-      lower === 'qwen/qwen-image-edit-2511' ||
-      lower === 'qwen/qwen-image-edit-2512' ||
-      lower === 'replicate/qwen/qwen-image-edit-2511' ||
-      lower === 'replicate/qwen/qwen-image-edit-2512' ||
-      // Also support the plain qwen image model (non-edit) variants
-      lower === 'qwen-image-2512' ||
-      lower === 'qwen-image-2511' ||
-      lower === 'qwen/qwen-image-2512' ||
-      lower === 'qwen/qwen-image-2511'
-    ) {
-      // Prefer the newer 2512 model if the alias explicitly references it
-      if (lower.includes('2512')) {
-        return 'qwen/qwen-image-2512';
-      }
-      // Default to 2511 edit variant if nothing else
+    // Strip an optional "replicate/" prefix used by some frontend mappings.
+    const withoutReplicatePrefix = lower.startsWith('replicate/')
+      ? trimmed.substring('replicate/'.length)
+      : trimmed;
+    const lr = withoutReplicatePrefix.toLowerCase();
+
+    // If it's already a valid owner/name reference, keep it (minus replicate/ prefix).
+    if (lr.startsWith('qwen/')) return withoutReplicatePrefix;
+
+    // Qwen Image Edit
+    if (lr === 'qwen-image-edit' || lr === 'qwen-image-edit-2511' || lr.includes('qwen-image-edit-2511')) {
       return 'qwen/qwen-image-edit-2511';
     }
+    if (lr === 'qwen-image-edit-2512' || lr.includes('qwen-image-edit-2512')) {
+      return 'qwen/qwen-image-edit-2512';
+    }
+    if (lr.includes('qwen-image-edit')) {
+      // Unknown edit variant: default to 2511 to be safe.
+      return lr.includes('2512') ? 'qwen/qwen-image-edit-2512' : 'qwen/qwen-image-edit-2511';
+    }
 
-    return s;
+    // Qwen Image (non-edit)
+    if (lr === 'qwen-image-2511' || lr.includes('qwen-image-2511')) return 'qwen/qwen-image-2511';
+    if (lr === 'qwen-image-2512' || lr.includes('qwen-image-2512')) return 'qwen/qwen-image-2512';
+    if (lr.includes('qwen-image-251')) {
+      // Generic fallback: keep the 2511 base unless 2512 is explicitly mentioned.
+      return lr.includes('2512') ? 'qwen/qwen-image-2512' : 'qwen/qwen-image-2511';
+    }
+
+    return trimmed;
   };
 
   const ensureValidReplicateModelRef = (raw: string): string => {
@@ -1508,14 +1534,12 @@ export async function generateImage(uid: string, body: any) {
     if (!base.includes('/')) {
       // Known aliases we intentionally support
       const lower = base.toLowerCase();
-      if (lower.includes('qwen-image-edit') || lower.includes('qwen-image-251')) {
-        // If the alias references the non-edit image 2512 model, map to that slug
-        if (lower.includes('2512') && lower.includes('qwen-image-251')) return 'qwen/qwen-image-2512';
-        // Prefer 2512 edit variant if explicitly requested, otherwise fall back to 2511
+      if (lower.includes('qwen-image-edit')) {
         if (lower.includes('2512')) return 'qwen/qwen-image-edit-2512';
-        // Replicate documentation confirms model ID for 2511 pattern
         return 'qwen/qwen-image-edit-2511';
       }
+      if (lower.includes('qwen-image-2512')) return 'qwen/qwen-image-2512';
+      if (lower.includes('qwen-image-2511')) return 'qwen/qwen-image-2511';
       throw new ApiError(
         `Invalid replicate model reference: ${trimmed}. Expected owner/name or owner/name:version`,
         400
@@ -1534,10 +1558,11 @@ export async function generateImage(uid: string, body: any) {
   const isQwenImageEdit = lowerModelBase.includes('qwen-image-edit');
   // Treat any qwen image model (edit or non-edit, 2511/2512) as supporting an input image.
   const isQwenImageModel = lowerModelBase.includes('qwen-image');
+  const hasUploadedImages = Array.isArray((body as any)?.uploadedImages) && (body as any).uploadedImages.length > 0;
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
     model: modelBase,
-    generationType: isQwenImageEdit ? 'image-to-image' : "text-to-image",
+    generationType: (isQwenImageModel && hasUploadedImages) || isQwenImageEdit ? 'image-to-image' : "text-to-image",
     visibility: body.isPublic ? "public" : "private",
     isPublic: body.isPublic ?? false,
     frameSize: aspectRatio,
@@ -1598,9 +1623,7 @@ export async function generateImage(uid: string, body: any) {
         .filter((u: string) => u.length > 0)
         .slice(0, 8);
 
-      if (isQwenImageEdit && images.length === 0 && !lowerModelBase.includes('2512')) {
-        throw new ApiError('image is required for qwen-image-edit', 400);
-      }
+      if (isQwenImageEdit && images.length === 0) throw new ApiError('image is required for qwen-image-edit', 400);
 
       // Replicate validates image inputs as "uri" (must be data: or http(s) or other valid URI).
       // The frontend often supplies internal proxy URLs like "/api/proxy/resource/<encodedStoragePath>".
@@ -1664,14 +1687,11 @@ export async function generateImage(uid: string, body: any) {
         throw new ApiError(`Invalid image uri for qwen-image-edit: ${img}`, 400);
       }
 
-      if (isQwenImageEdit && resolvedImages.length === 0 && !lowerModelBase.includes('2512')) {
-        throw new ApiError('image is required for qwen-image-edit', 400);
-      }
+      if (isQwenImageEdit && resolvedImages.length === 0) throw new ApiError('image is required for qwen-image-edit', 400);
 
-      // Some Qwen variants accept a single image string while others accept an array.
-      // If only one image provided, pass it as a string; otherwise pass the array.
+      // Replicate's Qwen image models validate `input.image` as an array.
       if (resolvedImages.length > 0) {
-        input.image = resolvedImages.length === 1 ? resolvedImages[0] : resolvedImages;
+        input.image = resolvedImages;
       }
 
       // Prefer explicit aspect_ratio; fallback to frameSize mapping
@@ -3964,19 +3984,50 @@ export async function replicateQueueResult(
         debitedCredits = cost;
         debitStatus = status;
       } else if (model.includes("wan-2.2-animate-replace")) {
-        const { computeWanAnimateReplaceCost } = await import(
-          "../utils/pricing/wanAnimatePricing"
-        );
-        // Estimate runtime from video duration if available, otherwise use default
-        const estimatedRuntime = (fresh as any)?.video_duration || (fresh as any)?.duration || 5;
-        const fakeReq = {
-          body: {
-            estimated_runtime: estimatedRuntime,
-            runtime: estimatedRuntime,
-            video_duration: estimatedRuntime,
+        const nowMs = Date.now();
+        const parseMs = (v: any): number => {
+          const t = Date.parse(String(v || ''));
+          return Number.isFinite(t) ? t : NaN;
+        };
+
+        const startFromPrediction =
+          parseMs((result as any)?.started_at) || parseMs((result as any)?.created_at);
+        const startFromHistory =
+          (typeof (fresh as any)?.providerRequestStartMs === 'number'
+            ? (fresh as any).providerRequestStartMs
+            : Number((fresh as any)?.providerRequestStartMs)) ||
+          parseMs((fresh as any)?.providerRequestStartAt);
+
+        const startMs = Number.isFinite(startFromPrediction)
+          ? startFromPrediction
+          : Number.isFinite(startFromHistory)
+            ? startFromHistory
+            : nowMs;
+
+        const endFromPrediction =
+          parseMs((result as any)?.completed_at) ||
+          parseMs((result as any)?.completedAt) ||
+          parseMs((result as any)?.ended_at);
+        const endMs = Number.isFinite(endFromPrediction) ? endFromPrediction : nowMs;
+
+        const elapsedSeconds = Math.max(0, Math.ceil((endMs - startMs) / 1000));
+        const cost = elapsedSeconds * 8;
+        const pricingVersion = 'wan2.2.time.v1';
+        const meta = {
+          elapsedSeconds,
+          creditsPerSecond: 8,
+          startMs,
+          endMs,
+          timingSource: {
+            start: Number.isFinite(startFromPrediction)
+              ? 'prediction.started_at|created_at'
+              : Number.isFinite(startFromHistory)
+                ? 'history.providerRequestStart*'
+                : 'now',
+            end: Number.isFinite(endFromPrediction) ? 'prediction.completed_at' : 'now',
           },
-        } as any;
-        const { cost, pricingVersion, meta } = await computeWanAnimateReplaceCost(fakeReq as any);
+        };
+
         const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
@@ -3987,19 +4038,50 @@ export async function replicateQueueResult(
         debitedCredits = cost;
         debitStatus = status;
       } else if (model.includes("wan-2.2-animate-animation")) {
-        const { computeWanAnimateAnimationCost } = await import(
-          "../utils/pricing/wanAnimateAnimationPricing"
-        );
-        // Estimate runtime from video duration if available, otherwise use default
-        const estimatedRuntime = (fresh as any)?.video_duration || (fresh as any)?.duration || 5;
-        const fakeReq = {
-          body: {
-            estimated_runtime: estimatedRuntime,
-            runtime: estimatedRuntime,
-            video_duration: estimatedRuntime,
+        const nowMs = Date.now();
+        const parseMs = (v: any): number => {
+          const t = Date.parse(String(v || ''));
+          return Number.isFinite(t) ? t : NaN;
+        };
+
+        const startFromPrediction =
+          parseMs((result as any)?.started_at) || parseMs((result as any)?.created_at);
+        const startFromHistory =
+          (typeof (fresh as any)?.providerRequestStartMs === 'number'
+            ? (fresh as any).providerRequestStartMs
+            : Number((fresh as any)?.providerRequestStartMs)) ||
+          parseMs((fresh as any)?.providerRequestStartAt);
+
+        const startMs = Number.isFinite(startFromPrediction)
+          ? startFromPrediction
+          : Number.isFinite(startFromHistory)
+            ? startFromHistory
+            : nowMs;
+
+        const endFromPrediction =
+          parseMs((result as any)?.completed_at) ||
+          parseMs((result as any)?.completedAt) ||
+          parseMs((result as any)?.ended_at);
+        const endMs = Number.isFinite(endFromPrediction) ? endFromPrediction : nowMs;
+
+        const elapsedSeconds = Math.max(0, Math.ceil((endMs - startMs) / 1000));
+        const cost = elapsedSeconds * 8;
+        const pricingVersion = 'wan2.2.time.v1';
+        const meta = {
+          elapsedSeconds,
+          creditsPerSecond: 8,
+          startMs,
+          endMs,
+          timingSource: {
+            start: Number.isFinite(startFromPrediction)
+              ? 'prediction.started_at|created_at'
+              : Number.isFinite(startFromHistory)
+                ? 'history.providerRequestStart*'
+                : 'now',
+            end: Number.isFinite(endFromPrediction) ? 'prediction.completed_at' : 'now',
           },
-        } as any;
-        const { cost, pricingVersion, meta } = await computeWanAnimateAnimationCost(fakeReq as any);
+        };
+
         const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
@@ -4445,6 +4527,11 @@ export async function wanAnimateReplaceSubmit(
   uid: string,
   body: any
 ): Promise<SubmitReturn> {
+  // Time-based billing for WAN 2.2 Animate happens post-success;
+  // still ensure user credits doc exists upfront.
+  await creditsService.ensureUserInit(uid);
+  await creditsService.ensureLaunchDailyReset(uid);
+
   if (!body?.video) {
     throw new ApiError("video is required", 400);
   }
@@ -4471,6 +4558,7 @@ export async function wanAnimateReplaceSubmit(
     isPublic: body.isPublic ?? false,
     createdBy,
     originalPrompt: body.prompt || "",
+    duration: body?.video_duration,
   } as any);
 
   // Persist input video and character image to history
@@ -4498,8 +4586,8 @@ export async function wanAnimateReplaceSubmit(
   } catch { }
 
   const input: any = {
-    video: String(body.video),
-    character_image: String(body.character_image),
+    video: resolveToPublicUrl(String(body.video)),
+    character_image: resolveToPublicUrl(String(body.character_image)),
   };
 
   // Optional parameters
@@ -4539,6 +4627,15 @@ export async function wanAnimateReplaceSubmit(
 
   let predictionId = "";
   try {
+    // Start timer when request is sent to provider
+    const requestStartMs = Date.now();
+    try {
+      await generationHistoryRepository.update(uid, historyId, {
+        providerRequestStartMs: requestStartMs,
+        providerRequestStartAt: new Date(requestStartMs).toISOString(),
+      } as any);
+    } catch { }
+
     const version = await getLatestModelVersion(replicate, modelBase);
     const pred = await replicate.predictions.create(
       version ? { version, input } : { model: modelBase, input }
@@ -4546,9 +4643,15 @@ export async function wanAnimateReplaceSubmit(
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
   } catch (e: any) {
+    const upstreamMsg =
+      e?.response?.data?.detail ||
+      e?.response?.data?.error ||
+      e?.response?.data?.message ||
+      e?.message ||
+      'Replicate submit failed';
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
-      error: e?.message || "Replicate submit failed",
+      error: String(upstreamMsg),
     } as any);
     throw new ApiError("Failed to submit WAN Animate Replace job", 502, e);
   }
@@ -4574,6 +4677,11 @@ export async function wanAnimateAnimationSubmit(
   uid: string,
   body: any
 ): Promise<SubmitReturn> {
+  // Time-based billing for WAN 2.2 Animate happens post-success;
+  // still ensure user credits doc exists upfront.
+  await creditsService.ensureUserInit(uid);
+  await creditsService.ensureLaunchDailyReset(uid);
+
   if (!body?.video) {
     throw new ApiError("video is required", 400);
   }
@@ -4600,6 +4708,7 @@ export async function wanAnimateAnimationSubmit(
     isPublic: body.isPublic ?? false,
     createdBy,
     originalPrompt: body.prompt || "",
+    duration: body?.video_duration,
   } as any);
 
   // Persist input video and character image to history
@@ -4627,8 +4736,8 @@ export async function wanAnimateAnimationSubmit(
   } catch { }
 
   const input: any = {
-    video: String(body.video),
-    character_image: String(body.character_image),
+    video: resolveToPublicUrl(String(body.video)),
+    character_image: resolveToPublicUrl(String(body.character_image)),
   };
 
   // Optional parameters
@@ -4668,6 +4777,15 @@ export async function wanAnimateAnimationSubmit(
 
   let predictionId = "";
   try {
+    // Start timer when request is sent to provider
+    const requestStartMs = Date.now();
+    try {
+      await generationHistoryRepository.update(uid, historyId, {
+        providerRequestStartMs: requestStartMs,
+        providerRequestStartAt: new Date(requestStartMs).toISOString(),
+      } as any);
+    } catch { }
+
     const version = await getLatestModelVersion(replicate, modelBase);
     const pred = await replicate.predictions.create(
       version ? { version, input } : { model: modelBase, input }
@@ -4675,9 +4793,15 @@ export async function wanAnimateAnimationSubmit(
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
   } catch (e: any) {
+    const upstreamMsg =
+      e?.response?.data?.detail ||
+      e?.response?.data?.error ||
+      e?.response?.data?.message ||
+      e?.message ||
+      'Replicate submit failed';
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
-      error: e?.message || "Replicate submit failed",
+      error: String(upstreamMsg),
     } as any);
     throw new ApiError("Failed to submit WAN Animate Animation job", 502, e);
   }

@@ -23,9 +23,7 @@ import { validateSeedanceProFastT2V } from '../middlewares/validators/replicate/
 import { validateSeedanceProFastI2V } from '../middlewares/validators/replicate/validateSeedanceProFastI2V';
 import { validatePixverseT2V } from '../middlewares/validators/replicate/validatePixverseT2V';
 import { validatePixverseI2V } from '../middlewares/validators/replicate/validatePixverseI2V';
-import { computeWanAnimateReplaceCost } from '../utils/pricing/wanAnimatePricing';
 import { validateWanAnimateReplace } from '../middlewares/validators/replicate/validateWanAnimateReplace';
-import { computeWanAnimateAnimationCost } from '../utils/pricing/wanAnimateAnimationPricing';
 import { validateWanAnimateAnimation } from '../middlewares/validators/replicate/validateWanAnimateAnimation';
 
 console.log('[ReplicateRoutes] Reloading routes...'); // Force refresh log
@@ -157,7 +155,6 @@ router.post(
   '/wan-2-2-animate-replace/submit',
   requireAuth,
   validateWanAnimateReplace,
-  makeCreditCost('replicate', 'wan-animate-replace', computeWanAnimateReplaceCost),
   (replicateController as any).wanAnimateReplaceSubmit
 );
 
@@ -166,7 +163,6 @@ router.post(
   '/wan-2-2-animate-animation/submit',
   requireAuth,
   validateWanAnimateAnimation,
-  makeCreditCost('replicate', 'wan-animate-animation', computeWanAnimateAnimationCost),
   (replicateController as any).wanAnimateAnimationSubmit
 );
 

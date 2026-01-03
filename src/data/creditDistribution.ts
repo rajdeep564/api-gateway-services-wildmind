@@ -4068,7 +4068,39 @@ export const creditDistributionData: ModelCreditInfo[] = [
     planD: 49440,
     free: 500
   },
+},
+
+{
+  srNo: 215,
+  modelName: "wan2.2 animate-animate 1s",
+  priceToPay: 0.003,
+  overCharge: 0.001,
+  userCost: 0.004,
+  creditsPerGeneration: 8,
+  plans: {
+    planA: 1545,
+    planB: 3090,
+    planC: 7725,
+    planD: 24720,
+    free: 250
+  },
+},
+{
+  srNo: 215,
+  modelName: "wan2.2 animate-replace 1s",
+  priceToPay: 0.003,
+  overCharge: 0.001,
+  userCost: 0.004,
+  creditsPerGeneration: 8,
+  plans: {
+    planA: 1545,
+    planB: 3090,
+    planC: 7725,
+    planD: 24720,
+    free: 250
+  },
 }
+
 
 
 

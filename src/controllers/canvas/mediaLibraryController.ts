@@ -2,9 +2,11 @@ import { Request, Response, NextFunction } from 'express';
 import { generationHistoryService } from '../../services/generationHistoryService';
 import { formatApiResponse } from '../../utils/formatApiResponse';
 import { ImageMedia, VideoMedia } from '../../types/generate';
-import { uploadDataUriToZata, uploadFromUrlToZata } from '../../utils/storage/zataUpload';
+import { uploadDataUriToZata, uploadFromUrlToZata, uploadStreamToZata } from '../../utils/storage/zataUpload';
 import { authRepository } from '../../repository/auth/authRepository';
 import { generationHistoryRepository } from '../../repository/generationHistoryRepository';
+import fs from 'fs';
+import path from 'path';
 
 /**
  * Get user's media library (generated images, videos, music, and uploaded media)
@@ -347,6 +349,104 @@ export async function saveUploadedMedia(req: Request, res: Response, next: NextF
   } catch (err) {
     console.error('[saveUploadedMedia] Error:', err);
     return next(err);
+  }
+}
+
+/**
+ * Upload a local file (multipart/form-data) and store it in Zata.
+ * This is used to avoid direct browser->Firebase uploads which can fail with CORS/preflight.
+ */
+export async function uploadMediaFile(req: Request, res: Response, next: NextFunction) {
+  let tmpPath: string | undefined;
+  try {
+    const uid = (req as any).uid;
+    if (!uid) {
+      return res.status(401).json(
+        formatApiResponse('error', 'Unauthorized', null)
+      );
+    }
+
+    const type = (req.body?.type as string) || 'video';
+    const projectId = req.body?.projectId as string | undefined;
+    if (type !== 'image' && type !== 'video') {
+      return res.status(400).json(
+        formatApiResponse('error', 'type must be "image" or "video"', null)
+      );
+    }
+
+    const file = (req as any).file as
+      | { path?: string; originalname?: string; mimetype?: string; filename?: string }
+      | undefined;
+    if (!file || !file.path) {
+      return res.status(400).json(
+        formatApiResponse('error', 'file is required', null)
+      );
+    }
+    tmpPath = file.path;
+
+    // Get user info
+    const creator = await authRepository.getUserById(uid);
+    const username = creator?.username || uid;
+
+    // Create a generation history entry for the uploaded file
+    const { historyId } = await generationHistoryService.startGeneration(uid, {
+      prompt: 'Uploaded from device',
+      model: 'canvas-upload-file',
+      generationType: type === 'image' ? 'text-to-image' : 'text-to-video',
+      visibility: 'private',
+    });
+
+    const keyPrefix = `users/${username}/input/${historyId}`;
+
+    const originalName = (file.originalname || file.filename || 'upload').toString();
+    const extFromName = path.extname(originalName).toLowerCase();
+    const safeBase = (path
+      .basename(originalName, extFromName)
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .slice(0, 80) || 'upload');
+
+    const ext = extFromName || (type === 'video' ? '.mp4' : '.png');
+    const fileName = `${safeBase}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+    const key = `${keyPrefix}/${fileName}`;
+
+    const contentType = file.mimetype || (type === 'video' ? 'video/mp4' : 'application/octet-stream');
+    const readStream = fs.createReadStream(file.path);
+    const stored = await uploadStreamToZata(key, readStream as any, contentType);
+
+    // Match the structure expected by wild project (includes firebaseUrl for compatibility)
+    const mediaItem = {
+      id: `upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      url: stored.publicUrl,
+      firebaseUrl: stored.publicUrl,
+      storagePath: stored.key,
+      originalUrl: stored.publicUrl,
+    };
+
+    const updateData: any = { status: 'completed' };
+    if (type === 'image') updateData.inputImages = [mediaItem];
+    else updateData.inputVideos = [mediaItem];
+    if (projectId) updateData.canvasProjectId = projectId;
+
+    // Persist inputVideos/inputImages
+    await generationHistoryRepository.update(uid, historyId, updateData);
+    await generationHistoryService.markGenerationCompleted(uid, historyId, { status: 'completed' });
+
+    return res.json(
+      formatApiResponse('success', 'Uploaded media saved', {
+        id: mediaItem.id,
+        url: stored.publicUrl,
+        type,
+        storagePath: stored.key,
+        historyId,
+      })
+    );
+  } catch (err) {
+    console.error('[uploadMediaFile] Error:', err);
+    return next(err);
+  } finally {
+    if (tmpPath) {
+      try { await fs.promises.unlink(tmpPath); } catch {}
+    }
   }
 }
 

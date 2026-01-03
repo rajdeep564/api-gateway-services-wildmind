@@ -37,6 +37,22 @@ export async function uploadBufferToZata(
   return { key, publicUrl, etag: (out as any)?.ETag };
 }
 
+export async function uploadStreamToZata(
+  key: string,
+  body: any,
+  contentType: string
+): Promise<{ key: string; publicUrl: string; etag?: string }> {
+  const cmd = new PutObjectCommand({
+    Bucket: ZATA_BUCKET,
+    Key: key,
+    ContentType: contentType || 'application/octet-stream',
+    Body: body,
+  } as any);
+  const out = await (s3 as any).send(cmd as any);
+  const publicUrl = makeZataPublicUrl(key);
+  return { key, publicUrl, etag: (out as any)?.ETag };
+}
+
 /**
  * Extract storage key from Zata URL
  */
