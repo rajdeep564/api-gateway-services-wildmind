@@ -1559,10 +1559,21 @@ export async function generateImage(uid: string, body: any) {
   // Treat any qwen image model (edit or non-edit, 2511/2512) as supporting an input image.
   const isQwenImageModel = lowerModelBase.includes('qwen-image');
   const hasUploadedImages = Array.isArray((body as any)?.uploadedImages) && (body as any).uploadedImages.length > 0;
+
+  const rawGenerationType = typeof (body as any)?.generationType === 'string'
+    ? String((body as any).generationType).trim().toLowerCase()
+    : '';
+  const normalizedGenerationType = rawGenerationType === 'text-to-image' || rawGenerationType === 'image-to-image'
+    ? rawGenerationType
+    : '';
+  // IMPORTANT: Do not force image-to-image just because the model alias contains "qwen-image-edit".
+  // Respect an explicit generationType from the client; otherwise infer it from whether images were provided.
+  const effectiveGenerationType = normalizedGenerationType || ((isQwenImageModel && hasUploadedImages) ? 'image-to-image' : 'text-to-image');
+
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
     model: modelBase,
-    generationType: (isQwenImageModel && hasUploadedImages) || isQwenImageEdit ? 'image-to-image' : "text-to-image",
+    generationType: effectiveGenerationType,
     visibility: body.isPublic ? "public" : "private",
     isPublic: body.isPublic ?? false,
     frameSize: aspectRatio,
@@ -1589,9 +1600,13 @@ export async function generateImage(uid: string, body: any) {
     // the edit variant or the non-edit image variant; both can accept an input image.
     if (isQwenImageModel) {
       // Choose correct qwen model slug/version based on requested alias
+      const isTextToImage = effectiveGenerationType === 'text-to-image';
       if (lowerModelBase.includes('2512')) {
-        replicateModelBase = isQwenImageEdit ? 'qwen/qwen-image-edit-2512' : 'qwen/qwen-image-2512';
+        // If the user selected an "edit" alias but is doing text-to-image, route to the non-edit T2I model.
+        replicateModelBase = (!isTextToImage && isQwenImageEdit) ? 'qwen/qwen-image-edit-2512' : 'qwen/qwen-image-2512';
       } else {
+        // IMPORTANT: Replicate does not expose a working "qwen/qwen-image-2511" in our usage;
+        // qwen-image-edit-2511 should always route to the edit model to avoid 404s.
         replicateModelBase = isQwenImageEdit ? 'qwen/qwen-image-edit-2511' : 'qwen/qwen-image-2511';
       }
 
@@ -1623,7 +1638,11 @@ export async function generateImage(uid: string, body: any) {
         .filter((u: string) => u.length > 0)
         .slice(0, 8);
 
-      if (isQwenImageEdit && images.length === 0) throw new ApiError('image is required for qwen-image-edit', 400);
+      // Only require an image when the request is image-to-image.
+      // (Selecting a qwen "edit" alias should NOT force image-to-image when the client requested text-to-image.)
+      if (effectiveGenerationType === 'image-to-image' && images.length === 0) {
+        throw new ApiError('image is required for image-to-image', 400);
+      }
 
       // Replicate validates image inputs as "uri" (must be data: or http(s) or other valid URI).
       // The frontend often supplies internal proxy URLs like "/api/proxy/resource/<encodedStoragePath>".
@@ -1687,7 +1706,9 @@ export async function generateImage(uid: string, body: any) {
         throw new ApiError(`Invalid image uri for qwen-image-edit: ${img}`, 400);
       }
 
-      if (isQwenImageEdit && resolvedImages.length === 0) throw new ApiError('image is required for qwen-image-edit', 400);
+      if (effectiveGenerationType === 'image-to-image' && resolvedImages.length === 0) {
+        throw new ApiError('image is required for image-to-image', 400);
+      }
 
       // Persist input images to history so the frontend preview modal can display "Your Upload".
       // Normalize to the same structure used elsewhere in the app (id/url/storagePath/originalUrl).
@@ -1733,7 +1754,7 @@ export async function generateImage(uid: string, body: any) {
       }
 
       // Prefer explicit aspect_ratio; fallback to frameSize mapping
-      const aspect = rest.aspect_ratio ?? aspectRatio ?? (isQwenImageEdit ? 'match_input_image' : '16:9');
+      const aspect = rest.aspect_ratio ?? aspectRatio ?? ((!isTextToImage && isQwenImageEdit) ? 'match_input_image' : '16:9');
       input.aspect_ratio = String(aspect);
 
       // Qwen schema uses output_format values: webp | jpg | png
@@ -1785,7 +1806,7 @@ export async function generateImage(uid: string, body: any) {
       // Determine requested preset (accept rest.size, rest.resolution, or rest.preset)
       const requestedPreset = (rest.size || rest.resolution || rest.preset || '').toString();
       // Use aspect as determined earlier (explicit aspect_ratio or frameSize fallback)
-      const effectiveAspect = String(rest.aspect_ratio ?? aspectRatio ?? (isQwenImageEdit ? 'match_input_image' : '16:9'));
+      const effectiveAspect = String(rest.aspect_ratio ?? aspectRatio ?? ((!isTextToImage && isQwenImageEdit) ? 'match_input_image' : '16:9'));
       // Model-specific max dimension (qwen-image-2512 supports up to 2512)
       const modelMax = replicateModelBase && String(replicateModelBase).includes('2512') ? 2512 : 2048;
       if (requestedPreset && PRESET_DIMENSIONS[requestedPreset] && PRESET_DIMENSIONS[requestedPreset][effectiveAspect]) {

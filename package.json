@@ -15,6 +15,7 @@
     "migrate:aesthetic-scores": "ts-node scripts/migrateAestheticScores.ts",
     "migrate:normalize-images": "ts-node scripts/normalizeLegacyImages.ts",
     "migrate:feed-scores": "ts-node scripts/migrateFeedRankingScores.ts",
+    "migrate:firestore-to-postgres": "ts-node scripts/migrateFirestoreToPostgres.ts",
     "mirror:worker": "ts-node src/workers/mirrorQueueWorker.ts"
   },
   "dependencies": {
@@ -46,6 +47,7 @@
     "openai": "^6.1.0",
     "pino": "^9.10.0",
     "pino-http": "^10.5.0",
+    "pg": "^8.12.0",
     "probe-image-size": "^7.2.3",
     "rate-limit-redis": "^4.3.1",
     "redis": "^4.6.13",
@@ -68,6 +70,7 @@
     "@types/hpp": "^0.2.6",
     "@types/node-fetch": "^2.6.4",
     "@types/nodemailer": "^7.0.1",
+    "@types/pg": "^8.11.10",
     "@types/probe-image-size": "^7.2.5",
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.5.10",
