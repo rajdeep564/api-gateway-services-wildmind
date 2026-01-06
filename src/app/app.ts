@@ -27,6 +27,12 @@ app.use(requestId);
 app.use(securityHeaders);
 // CORS for frontend with credentials (dev + prod)
 const isProdEnv = env.nodeEnv === 'production';
+let wildmindImageOrigin: string | undefined;
+try {
+  wildmindImageOrigin = env.wildmindImageServiceUrl ? new URL(env.wildmindImageServiceUrl).origin : undefined;
+} catch {
+  wildmindImageOrigin = undefined;
+}
 // Always include production origins (even if NODE_ENV isn't set, Render.com is production)
 const allowedOrigins = [
   // Production hosts (always include these for live site)
@@ -41,6 +47,8 @@ const allowedOrigins = [
     'http://localhost:3001',
     'http://127.0.0.1:3000',
     'http://127.0.0.1:3001',
+    // Optional: allow local browser testing against the ngrok WILDMINDIMAGE service in dev only
+    wildmindImageOrigin,
   ] : []),
   ...env.frontendOrigins,
   ...env.allowedOrigins

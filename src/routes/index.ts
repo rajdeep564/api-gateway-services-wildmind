@@ -19,6 +19,7 @@ import reimagineRoutes from './reimagine';
 import libraryRoutes from './library';
 import uploadsRoutes from './uploads';
 import wildmindRoutes from './wildmind';
+import wildmindImageRoutes from './wildmindimage';
 import chatCompanionRoutes from './chatCompanion';
 import workflowsRoutes from './workflows';
 import { contentModerationMiddleware } from '../middlewares/contentModeration';
@@ -38,6 +39,7 @@ router.use(
     '/replace',
     '/reimagine',
     '/wildmind',
+    '/wildmindimage',
   ],
   contentModerationMiddleware
 );
@@ -60,6 +62,7 @@ router.use('/prompt-enhancer', promptEnhancerRoutes);
 router.use('/replace', replaceRoutes);
 router.use('/reimagine', reimagineRoutes);
 router.use('/wildmind', wildmindRoutes);
+router.use('/wildmindimage', wildmindImageRoutes);
 router.use('/chat', chatCompanionRoutes);
 router.use('/workflows', workflowsRoutes);
 
