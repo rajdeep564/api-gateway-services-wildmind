@@ -64,7 +64,7 @@ function extractKeyFromZataUrl(url: string): string | null {
       // Or: https://endpoint/bucket/users/username/path/to/file.jpg
       const urlObj = new URL(url);
       const pathParts = urlObj.pathname.split('/').filter(p => p);
-      
+
       // Prefer extracting from the actual object key root (typically starts at 'users/...').
       // NOTE: Many public URLs include a prefix segment like 'devstoragev1' which is NOT part of the S3 key.
       const usersIndex = pathParts.indexOf('users');
@@ -78,7 +78,7 @@ function extractKeyFromZataUrl(url: string): string | null {
         const afterPrefix = pathParts.slice(storagePrefixIndex + 1);
         return afterPrefix.length > 0 ? afterPrefix.join('/') : null;
       }
-      
+
       // Fallback: try to extract from pathname (skip bucket name if present)
       // Pattern: /bucket/key or /key
       if (pathParts.length > 1 && pathParts[0] === ZATA_BUCKET) {
@@ -87,13 +87,13 @@ function extractKeyFromZataUrl(url: string): string | null {
         return pathParts.join('/');
       }
     }
-    
+
     // Try using zataPrefix if available
     const ZATA_PREFIX = (env as any).zataPrefix;
     if (ZATA_PREFIX && url.startsWith(ZATA_PREFIX)) {
       return url.substring(ZATA_PREFIX.length);
     }
-    
+
     return null;
   } catch {
     return null;
@@ -106,12 +106,12 @@ export async function uploadFromUrlToZata(params: {
   fileName?: string;
 }): Promise<{ key: string; publicUrl: string; etag?: string; originalUrl: string; contentType?: string }> {
   const { sourceUrl, keyPrefix, fileName } = params;
-  
+
   // Check if sourceUrl is a Zata URL - if so, download directly from S3
   const zataKey = extractKeyFromZataUrl(sourceUrl);
   let buffer: Buffer;
   let contentType: string | undefined;
-  
+
   if (zataKey) {
     // Download directly from S3 using credentials (more reliable than HTTP)
     try {
@@ -122,7 +122,7 @@ export async function uploadFromUrlToZata(params: {
       });
       const response = await s3.send(getCmd);
       const chunks: Uint8Array[] = [];
-      
+
       // Stream the response body
       if (response.Body) {
         for await (const chunk of response.Body as any) {
@@ -159,7 +159,7 @@ export async function uploadFromUrlToZata(params: {
     buffer = Buffer.from(resp.data as any);
     contentType = (resp.headers['content-type'] as string) || undefined;
   }
-  
+
   const extFromUrl = (() => {
     try {
       const u = new URL(sourceUrl);

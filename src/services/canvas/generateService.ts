@@ -167,6 +167,11 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
     return { service: 'replicate', backendModel: 'qwen/qwen-image-edit-2511' };
   }
 
+  // ChatGPT 1.5 - Replicate model (openai/gpt-image-1.5)
+  if (modelLower.includes('chatgpt 1.5') || modelLower.includes('chat-gpt-1.5') || modelLower === 'openai/gpt-image-1.5') {
+    return { service: 'replicate', backendModel: 'openai/gpt-image-1.5' };
+  }
+
   // Explicit mapping for Flux 2 Pro to FAL as requested by user
   if (modelLower.includes('flux 2 pro') || modelLower.includes('flux-2-pro')) {
     return { service: 'fal', backendModel: 'fal-ai/flux-2-pro', resolution };
@@ -386,19 +391,30 @@ export async function generateForCanvas(
 
       const replicatePayload: any = {
         prompt: request.prompt,
-        model: backendModel, // Use mapped backend model name: 'bytedance/seedream-4', 'z-image-turbo', 'prunaai/p-image'
+        model: backendModel,
         aspect_ratio: aspectRatio,
         storageKeyPrefixOverride: canvasKeyPrefix,
         ...(request.width && request.height && {
           width: request.width,
           height: request.height,
         }),
+        // Merge GPT-specific options or other custom parameters
+        ...(request.options || {}),
       };
 
-      // Add num_images for models that support multiple images (z-image-turbo, p-image)
+      // Enforce 90% compression for ChatGPT 1.5 as per user requirement
+      if (backendModel === 'openai/gpt-image-1.5') {
+        replicatePayload.output_compression = 90;
+        console.log('[generateForCanvas] Enforcing 90% compression for ChatGPT 1.5');
+      }
+
+      // Add num_images for models that support multiple images (z-image-turbo, p-image, gpt-image-1.5, qwen)
       const isZTurbo = backendModel === 'z-image-turbo' || backendModel === 'new-turbo-model';
       const isPImage = backendModel === 'prunaai/p-image' || backendModel === 'p-image';
-      if ((isZTurbo || isPImage) && clampedImageCount > 1) {
+      const isGptImage15 = backendModel === 'openai/gpt-image-1.5';
+      const isQwen = backendModel.startsWith('qwen/');
+
+      if ((isZTurbo || isPImage || isGptImage15 || isQwen) && clampedImageCount > 1) {
         (replicatePayload as any).__num_images = clampedImageCount;
       }
 
@@ -447,9 +463,57 @@ export async function generateForCanvas(
 
       const result = await replicateService.generateImage(uid, replicatePayload);
 
-      imageUrl = (result as any)?.images?.[0]?.url || (result as any)?.images?.[0]?.originalUrl || '';
-      imageStoragePath = (result as any)?.images?.[0]?.storagePath;
-      generationId = result.data?.historyId;
+      // Handle multiple images from Replicate
+      if (clampedImageCount > 1 && result.images && result.images.length > 0) {
+        // Process all generated images
+        for (const img of result.images) {
+          const imgUrl = img.url || img.originalUrl || '';
+          const imgStoragePath = (img as any).storagePath;
+
+          // Ensure we have a Zata-stored URL
+          let finalUrl = imgUrl;
+          let finalKey = imgStoragePath || '';
+          if (!finalKey || !(finalUrl || '').includes('/users/')) {
+            const zataResult = await uploadFromUrlToZata({
+              sourceUrl: imgUrl,
+              keyPrefix: canvasKeyPrefix,
+              fileName: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            });
+            finalUrl = zataResult.publicUrl;
+            finalKey = zataResult.key;
+          }
+
+          // Create media record for each image
+          const media = await mediaRepository.createMedia({
+            url: finalUrl,
+            storagePath: finalKey,
+            origin: 'canvas',
+            projectId: request.meta.projectId,
+            referencedByCount: 0,
+            metadata: {
+              width: request.width,
+              height: request.height,
+              format: 'jpg',
+            },
+          });
+
+          allImages.push({
+            mediaId: media.id,
+            url: finalUrl,
+            storagePath: finalKey,
+          });
+        }
+
+        // Return first image for backward compatibility, plus all images are in allImages
+        imageUrl = allImages[0]?.url || '';
+        imageStoragePath = allImages[0]?.storagePath;
+      } else {
+        // Single image (backward compatible)
+        imageUrl = (result as any)?.images?.[0]?.url || (result as any)?.images?.[0]?.originalUrl || '';
+        imageStoragePath = (result as any)?.images?.[0]?.storagePath;
+      }
+
+      generationId = result.historyId || (result as any).data?.historyId;
     } else if (service === 'runway') {
       // Use Runway service for Gen4 Image models
       // Convert aspect ratio from "16:9" to Runway format (e.g., "1920:1080")
@@ -1270,6 +1334,14 @@ export async function generateVideoForCanvas(
         replicatePayload.speed = 'fast';
       }
 
+      // Forward first/last frame URLs for Seedance and potentially other Replicate models
+      if (request.firstFrameUrl) {
+        replicatePayload.image = request.firstFrameUrl;
+      }
+      if (request.lastFrameUrl) {
+        replicatePayload.last_frame_image = request.lastFrameUrl;
+      }
+
       result = await method(uid, replicatePayload);
 
     } else if (modelConfig.service === 'minimax') {
@@ -1849,7 +1921,7 @@ async function eraseForCanvasCropEditComposite(
     console.log('[eraseForCanvasCropEditComposite] ========== CROP-EDIT-COMPOSITE APPROACH ==========');
     console.log('[eraseForCanvasCropEditComposite] Selection:', request.selectionCoords);
     console.log('[eraseForCanvasCropEditComposite] User Prompt:', request.prompt || '(none)');
-
+ 
     // Step 1: Download and load original image
     let originalImageBuffer: Buffer;
     try {
@@ -1864,24 +1936,24 @@ async function eraseForCanvasCropEditComposite(
     } catch (error: any) {
       throw new ApiError(`Failed to download original image: ${error.message}`, 400);
     }
-
+ 
     const originalImage = sharp(originalImageBuffer);
     const originalMetadata = await originalImage.metadata();
     const originalWidth = originalMetadata.width || 1024;
     const originalHeight = originalMetadata.height || 1024;
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Original image:', {
       width: originalWidth,
       height: originalHeight,
       format: originalMetadata.format
     });
-
+ 
     // Validate selection coordinates
     const { x, y, width, height } = request.selectionCoords;
     if (x < 0 || y < 0 || x + width > originalWidth || y + height > originalHeight) {
       throw new ApiError(`Selection coordinates out of bounds. Image: ${originalWidth}x${originalHeight}, Selection: x=${x}, y=${y}, w=${width}, h=${height}`, 400);
     }
-
+ 
     // Step 2: Crop the selected region (create a clone to avoid mutating originalImage)
     const croppedRegionBuffer = await sharp(originalImageBuffer)
       .extract({
@@ -1892,10 +1964,10 @@ async function eraseForCanvasCropEditComposite(
       })
       .png()
       .toBuffer();
-
+ 
     const croppedRegionBase64 = croppedRegionBuffer.toString('base64');
     const croppedRegionDataUrl = `data:image/png;base64,${croppedRegionBase64}`;
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Cropped region:', {
       x: Math.round(x),
       y: Math.round(y),
@@ -1903,7 +1975,7 @@ async function eraseForCanvasCropEditComposite(
       height: Math.round(height),
       croppedSize: croppedRegionBuffer.length
     });
-
+ 
     // Step 3: Upload cropped region to storage for Runway
     const croppedRegionResult = await uploadBufferToZata(
       `users/${uid}/canvas/${request.projectId}/erase_crop_${Date.now()}.png`,
@@ -1911,9 +1983,9 @@ async function eraseForCanvasCropEditComposite(
       'image/png'
     );
     const croppedRegionUrl = croppedRegionResult.publicUrl;
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Cropped region uploaded:', croppedRegionUrl);
-
+ 
     // Step 4: Calculate aspect ratio for cropped region
     // Runway requires: ratio >= 0.5 (width/height) and must be one of the allowed ratios
     const croppedRatio = width / height;
@@ -2214,15 +2286,15 @@ async function eraseForCanvasCropEditComposite(
         aspectRatio = r.value;
       }
     }
-
+ 
     // Step 5: Create prompt for erasing the cropped region
     const basePrompt = request.prompt && request.prompt.trim()
       ? `${request.prompt.trim()}. Remove the object and fill with natural background that matches the surrounding area.`
       : 'Remove the object and fill with natural background that seamlessly matches the surrounding area, maintaining the same lighting, colors, and textures.';
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Prompt for cropped region:', basePrompt);
     console.log('[eraseForCanvasCropEditComposite] Aspect ratio:', aspectRatio);
-
+ 
     // Step 6: Send cropped region to Runway image-to-image (no mask, just the cropped image)
     const runwayPayload: any = {
       promptText: basePrompt,
@@ -2233,25 +2305,25 @@ async function eraseForCanvasCropEditComposite(
         { uri: croppedRegionUrl } // Only the cropped region, no mask
       ],
     };
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Sending cropped region to Runway...');
     const taskResult = await runwayService.textToImage(uid, runwayPayload);
-
+ 
     if (!taskResult.taskId) {
       throw new ApiError('Runway image generation failed: no taskId returned', 500);
     }
-
+ 
     if (!taskResult.historyId) {
       throw new ApiError('Runway image generation failed: no historyId returned', 500);
     }
-
+ 
     // Step 7: Poll for completion
     const maxWaitTime = 5 * 60 * 1000; // 5 minutes
     const pollInterval = 2000; // 2 seconds
     const startTime = Date.now();
     let completed = false;
     let finalHistory: any = null;
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Polling for Runway completion...');
     while (!completed && (Date.now() - startTime) < maxWaitTime) {
       await new Promise(resolve => setTimeout(resolve, pollInterval));
@@ -2269,23 +2341,23 @@ async function eraseForCanvasCropEditComposite(
         console.warn('[eraseForCanvasCropEditComposite] Poll error:', pollError);
       }
     }
-
+ 
     if (!completed || !finalHistory || !finalHistory.images || finalHistory.images.length === 0) {
       throw new ApiError('Image erase timed out or failed', 500);
     }
-
+ 
     const firstImageNormal = finalHistory.images[0];
     if (!firstImageNormal || !firstImageNormal.url) {
       throw new ApiError('Runway image generation completed but no image URL was returned', 500);
     }
-
+ 
     const editedRegionUrl = firstImageNormal.url;
     console.log('[eraseForCanvasCropEditComposite] Edited region received:', {
       url: editedRegionUrl,
       hasUrl: !!editedRegionUrl,
       imageObject: firstImageNormal
     });
-
+ 
     // Step 8: Download edited region
     let editedRegionBuffer: Buffer;
     try {
@@ -2300,7 +2372,7 @@ async function eraseForCanvasCropEditComposite(
     } catch (error: any) {
       throw new ApiError(`Failed to download edited region: ${error.message}`, 400);
     }
-
+ 
     // Step 9: Resize edited region to match original selection size (in case Runway changed dimensions)
     const editedRegionResized = await sharp(editedRegionBuffer)
       .resize(Math.round(width), Math.round(height), {
@@ -2308,12 +2380,12 @@ async function eraseForCanvasCropEditComposite(
       })
       .png()
       .toBuffer();
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Edited region resized to match selection:', {
       width: Math.round(width),
       height: Math.round(height)
     });
-
+ 
     // Step 10: Composite edited region back into original image
     // Create a fresh instance of the original image for compositing
     const finalComposite = await sharp(originalImageBuffer)
@@ -2326,22 +2398,22 @@ async function eraseForCanvasCropEditComposite(
       ])
       .png()
       .toBuffer();
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Final composite created');
-
+ 
     // Step 11: Upload final composite to storage
     const finalResult = await uploadBufferToZata(
       `users/${uid}/canvas/${request.projectId}/erase_result_${Date.now()}.png`,
       finalComposite,
       'image/png'
     );
-
+ 
     const finalUrl = finalResult.publicUrl;
     const storagePath = finalResult.key;
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Final composite uploaded:', finalUrl);
     console.log('[eraseForCanvasCropEditComposite] =========================================');
-
+ 
     return {
       url: finalUrl,
       storagePath,
@@ -2352,9 +2424,9 @@ async function eraseForCanvasCropEditComposite(
     throw error;
   }
 }
-
-
-
+ 
+ 
+ 
 /**
  * Erase objects from image using Google Nano Banana edit model
  * Uses mask-based editing where white areas = erase, black areas = keep
@@ -2828,11 +2900,11 @@ try {
     selectionCoords: request.selectionCoords,
     projectId: request.projectId,
   });
-
+ 
   if (!request.image) {
     throw new ApiError('Image is required', 400);
   }
-
+ 
   // Use new crop-edit-composite approach if selectionCoords provided
   if (request.selectionCoords) {
     return await eraseForCanvasCropEditComposite(uid, {
@@ -2843,12 +2915,12 @@ try {
       prompt: request.prompt
     });
   }
-
+ 
   // Fall back to mask-based approach for backward compatibility
   if (!request.mask) {
     throw new ApiError('Either mask or selectionCoords is required', 400);
   }
-
+ 
   // Calculate aspect ratio from image dimensions
   let aspectRatio = '1024:1024'; // Default
   
@@ -2895,7 +2967,7 @@ try {
   } catch (e) {
     console.warn('[eraseForCanvas] Could not determine aspect ratio, using default:', e);
   }
-
+ 
   // Analyze mask to provide debug info
   let maskAnalysis: any = {};
   try {
@@ -2920,7 +2992,7 @@ try {
   } catch (e) {
     maskAnalysis = { error: 'Could not analyze mask', errorMessage: (e as Error).message };
   }
-
+ 
   console.log('[eraseForCanvas] ========== ERASE PROCESS DEBUG ==========');
   console.log('[eraseForCanvas] Received Request:', {
     hasImage: !!request.image,
@@ -2932,7 +3004,7 @@ try {
     projectId: request.projectId,
     aspectRatio
   });
-
+ 
   // Use Runway Gen4 Image Turbo for erase/inpainting
   // The mask (white areas) tells Runway what to remove
   // CRITICAL: Prompt must be mask-pixel-specific, not object-specific
@@ -2969,7 +3041,7 @@ try {
       { uri: request.mask, tag: 'mask' }
     ],
   };
-
+ 
   console.log('[eraseForCanvas] Runway Payload:', {
     model: runwayPayload.model,
     ratio: runwayPayload.ratio,
@@ -2982,20 +3054,20 @@ try {
     maskUriPreview: runwayPayload.referenceImages?.[1]?.uri ? runwayPayload.referenceImages[1].uri.substring(0, 100) + '...' : 'null'
   });
   console.log('[eraseForCanvas] =========================================');
-
+ 
   // Runway textToImage returns a taskId and status "pending"
   // Note: Runway SDK may not support negative prompts directly, but we include it in the prompt text
   // The negative prompt concepts are incorporated into the main prompt for maximum effect
   const taskResult = await runwayService.textToImage(uid, runwayPayload);
-
+ 
   if (!taskResult.taskId) {
     throw new ApiError('Runway image generation failed: no taskId returned', 500);
   }
-
+ 
   if (!taskResult.historyId) {
     throw new ApiError('Runway image generation failed: no historyId returned', 500);
   }
-
+ 
   // Poll for completion (max 5 minutes, check every 2 seconds)
   // Call getStatus to trigger history updates when Runway completes
   const maxWaitTime = 5 * 60 * 1000; // 5 minutes
@@ -3003,7 +3075,7 @@ try {
   const startTime = Date.now();
   let completed = false;
   let finalHistory: any = null;
-
+ 
   while (!completed && (Date.now() - startTime) < maxWaitTime) {
     await new Promise(resolve => setTimeout(resolve, pollInterval));
     
@@ -3039,19 +3111,19 @@ try {
       // Continue polling
     }
   }
-
+ 
   if (!completed || !finalHistory) {
     throw new ApiError('Image erase timed out or failed', 500);
   }
-
+ 
   const firstImage = finalHistory.images && Array.isArray(finalHistory.images) && finalHistory.images.length > 0
     ? finalHistory.images[0]
     : null;
-
+ 
   if (!firstImage || !firstImage.url) {
     throw new ApiError('No image returned from erase operation', 500);
   }
-
+ 
   // Attach canvas project linkage
   try {
     if (taskResult.historyId && request.projectId) {
@@ -3062,12 +3134,12 @@ try {
   } catch (e) {
     console.warn('[eraseForCanvas] Failed to tag history with canvasProjectId', e);
   }
-
+ 
   console.log('[eraseForCanvas] Erase completed:', {
     hasUrl: !!firstImage.url,
     hasStoragePath: !!firstImage.storagePath,
   });
-
+ 
   return {
     url: firstImage.url,
     storagePath: (firstImage as any).storagePath || firstImage.originalUrl || firstImage.url,
