@@ -108,7 +108,7 @@ function parseList(value: string | undefined): string[] {
 
 export const env: EnvConfig = {
   nodeEnv: process.env.NODE_ENV || 'development',
-  port: Number(process.env.PORT || 5000),
+  port: Number(process.env.PORT || 5001),
   firebaseApiKey: process.env.FIREBASE_API_KEY,
   firebaseAuthDomain: process.env.FIREBASE_AUTH_DOMAIN,
   firebaseProjectId: process.env.FIREBASE_PROJECT_ID,

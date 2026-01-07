@@ -169,6 +169,7 @@ export async function setCurrentSnapshot(req: Request, res: Response) {
     const existingMetadata = (existingSnapshot?.metadata || {}) as Record<string, any>;
 
     // Log what we're receiving
+    console.log('[SNAPSHOT RECEIVED]', Object.keys(elements).length, 'metadata:', Object.keys(incomingMetadata));
 
 
     // Merge incoming metadata with existing metadata, preserving all fields
@@ -296,7 +297,32 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
       throw new ApiError('Access denied', 403);
     }
 
-    const snapshot = await projectRepository.getCurrentSnapshot(projectId);
+    // 1. Get the base snapshot (metadata + viewport)
+    let snapshot = await projectRepository.getCurrentSnapshot(projectId);
+
+    // 2. Get the AUTHORITATIVE elements from the collection (updated by realtimeServer)
+    const elementsList = await elementRepository.listAllElements(projectId);
+
+    // 3. Construct/Merge Snapshot
+    if (!snapshot) {
+      // If no current snapshot doc exists yet, create a scaffold
+      snapshot = {
+        projectId,
+        snapshotOpIndex: -1,
+        elements: {},
+        metadata: {
+          version: '1.0',
+          createdAt: admin.firestore.Timestamp.now(),
+        }
+      };
+    }
+
+    // 4. Overwrite elements with the fresh DB state
+    snapshot.elements = {};
+    for (const el of elementsList) {
+      snapshot.elements[el.id] = el;
+    }
+
     res.json(formatApiResponse('success', 'Current snapshot retrieved', { snapshot }));
   } catch (error: any) {
     res.status(error.statusCode || 500).json(
