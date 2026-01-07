@@ -169,6 +169,7 @@ export async function setCurrentSnapshot(req: Request, res: Response) {
     const existingMetadata = (existingSnapshot?.metadata || {}) as Record<string, any>;
 
     // Log what we're receiving
+    console.log('[SNAPSHOT RECEIVED]', Object.keys(elements).length, 'metadata:', Object.keys(incomingMetadata));
 
 
     // Merge incoming metadata with existing metadata, preserving all fields

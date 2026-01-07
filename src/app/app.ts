@@ -62,6 +62,15 @@ const corsOptions: any = {
     // Allow server-to-server (no Origin header) and health checks
 
     if (!origin) return callback(null, true);
+
+    // Explicitly allow known production domains (Hardcoded safeguard)
+    const hardcodedAllowed = [
+      'https://studio.wildmindai.com',
+      'https://www.wildmindai.com',
+      'https://wildmindai.com'
+    ];
+    if (hardcodedAllowed.includes(origin)) return callback(null, true);
+
     try {
       if (allowedOrigins.includes(origin)) return callback(null, true);
 
