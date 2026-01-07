@@ -31,6 +31,9 @@ export async function uploadBufferToZata(
     Key: key,
     ContentType: contentType || 'application/octet-stream',
     Body: buffer,
+    Metadata: {
+      'cross-origin-resource-policy': 'cross-origin',
+    },
   } as any);
   const out = await (s3 as any).send(cmd as any);
   const publicUrl = makeZataPublicUrl(key);
@@ -47,6 +50,9 @@ export async function uploadStreamToZata(
     Key: key,
     ContentType: contentType || 'application/octet-stream',
     Body: body,
+    Metadata: {
+      'cross-origin-resource-policy': 'cross-origin',
+    },
   } as any);
   const out = await (s3 as any).send(cmd as any);
   const publicUrl = makeZataPublicUrl(key);
