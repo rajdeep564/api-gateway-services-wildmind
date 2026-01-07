@@ -234,6 +234,22 @@ export function startRealtimeServer(server: HttpServer) {
     }
   }
 
+  // Helper to remove undefined values recursively
+  function sanitizeData(obj: any): any {
+    if (obj === null || obj === undefined) return null;
+    if (typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) return obj.map(sanitizeData);
+
+    const result: any = {};
+    for (const key in obj) {
+      const val = obj[key];
+      if (val !== undefined) {
+        result[key] = sanitizeData(val);
+      }
+    }
+    return result;
+  }
+
   // Helper to persist operations to Firestore (Ops + Element State)
   async function persistOp(projectId: string, op: CanvasOp, state: ProjectState) {
     try {
@@ -241,7 +257,7 @@ export function startRealtimeServer(server: HttpServer) {
       await opRepository.appendOp(projectId, {
         projectId,
         type: op.type as any,
-        data: op.data,
+        data: sanitizeData(op.data),
         inverse: op.inverse as any,
         elementIds: op.elementIds,
         elementId: op.elementId, // Deprecated but kept for compat
@@ -257,7 +273,12 @@ export function startRealtimeServer(server: HttpServer) {
         op.type === 'image-generator' || op.type === 'video-generator' || op.type === 'music-generator' || op.type === 'text-generator') {
         const el = op.data?.element || op.data?.media || op.data;
         if (el && el.id) {
-          await elementRepository.upsertElement(projectId, el);
+          try {
+            const cleanEl = sanitizeData(el);
+            await elementRepository.upsertElement(projectId, cleanEl);
+          } catch (writeErr) {
+            console.error('[Realtime] Failed to persist create/update element:', writeErr, el);
+          }
         }
       }
 
@@ -278,7 +299,12 @@ export function startRealtimeServer(server: HttpServer) {
           // Let's rely on in-memory state to get the FULL object to be safe.
           const fullEl = state.overlays.get(id) || state.media.get(id);
           if (fullEl) {
-            await elementRepository.upsertElement(projectId, fullEl as any);
+            try {
+              const cleanEl = sanitizeData(fullEl);
+              await elementRepository.upsertElement(projectId, cleanEl as any);
+            } catch (writeErr) {
+              console.error('[Realtime] Failed to persist element update:', writeErr, fullEl);
+            }
           }
         }
       }
