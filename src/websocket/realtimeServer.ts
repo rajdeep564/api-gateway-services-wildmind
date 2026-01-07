@@ -253,7 +253,8 @@ export function startRealtimeServer(server: HttpServer) {
       // But for simplicity/robustness, we re-parse the op here since state maps are broad.
 
       // Handle 'create'
-      if (op.type === 'create' || op.type === 'generator.create' || op.type === 'media.create') {
+      if (op.type === 'create' || op.type === 'generator.create' || op.type === 'media.create' ||
+        op.type === 'image-generator' || op.type === 'video-generator' || op.type === 'music-generator' || op.type === 'text-generator') {
         const el = op.data?.element || op.data?.media || op.data;
         if (el && el.id) {
           await elementRepository.upsertElement(projectId, el);
