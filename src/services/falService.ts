@@ -11,6 +11,7 @@ import { authRepository } from "../repository/auth/authRepository";
 import { GenerationHistoryItem, GenerationType, VideoMedia } from "../types/generate";
 import { env } from "../config/env";
 import { uploadFromUrlToZata, uploadDataUriToZata, uploadBufferToZata } from "../utils/storage/zataUpload";
+import { makeZataPublicUrl } from "../utils/storage/zataClient";
 import { falRepository } from "../repository/falRepository";
 import { creditsRepository } from "../repository/creditsRepository";
 import { computeFalVeoCostFromModel } from "../utils/pricing/falPricing";
@@ -28,6 +29,49 @@ const buildGenerationImageFileName = (historyId?: string, index: number = 0) => 
   }
   return `image-${Date.now()}-${index + 1}-${Math.random().toString(36).slice(2, 6)}`;
 };
+
+function isPublicHttpUrl(url: unknown): url is string {
+  return typeof url === 'string' && /^https?:\/\//i.test(url);
+}
+
+function pickPublicImageUrls(...candidates: Array<unknown>): string[] {
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    const urls = (candidate as unknown[]).filter(isPublicHttpUrl);
+    if (urls.length > 0) return urls;
+  }
+  return [];
+}
+
+function tryConvertProxyResourceToZataUrl(src: string): { key: string; publicUrl: string } | null {
+  try {
+    if (!src) return null;
+
+    // Handle both relative and absolute URLs.
+    const pathWithQuery = (() => {
+      if (/^https?:\/\//i.test(src)) {
+        const u = new URL(src);
+        return u.pathname; // ignore query
+      }
+      return src.split('?')[0];
+    })();
+
+    const marker = '/api/proxy/resource/';
+    const idx = pathWithQuery.toLowerCase().indexOf(marker);
+    if (idx < 0) return null;
+
+    const encodedKey = pathWithQuery.substring(idx + marker.length);
+    if (!encodedKey) return null;
+
+    const key = decodeURIComponent(encodedKey);
+    // Proxy route also supports external URLs; don't treat those as Zata keys.
+    if (/^https?:\/\//i.test(key)) return null;
+
+    return { key, publicUrl: makeZataPublicUrl(key) };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Resize image to 1MP (1,000,000 pixels) while maintaining aspect ratio
@@ -166,6 +210,17 @@ async function generate(
       if (!src || typeof src !== 'string') continue;
       try {
         let stored: any;
+
+        // Fast-path: frontend sometimes sends internal proxy URLs that reference Zata keys.
+        // Convert them into direct, public Zata URLs so FAL can fetch them.
+        const proxyAsZata = tryConvertProxyResourceToZataUrl(src);
+        if (proxyAsZata) {
+          stored = { publicUrl: proxyAsZata.publicUrl, key: proxyAsZata.key, originalUrl: src };
+          inputPersisted.push({ id: `in-${++idx}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: stored.originalUrl });
+          publicImageUrls.push(stored.publicUrl);
+          continue;
+        }
+
         if (isFlux2Pro) {
           // For Flux 2 Pro, resize images to 1MP before uploading
           let imageBuffer: Buffer;
@@ -294,6 +349,11 @@ async function generate(
           let stored: any;
           const isDataUri = /^data:/i.test(src);
           const isBlobUrl = src.startsWith('blob:');
+
+          const proxyAsZata = tryConvertProxyResourceToZataUrl(src);
+          if (proxyAsZata) {
+            stored = { publicUrl: proxyAsZata.publicUrl, key: proxyAsZata.key, originalUrl: src };
+          } else
 
           if (isDataUri) {
             const base64Match = /^data:([^;]+);base64,(.+)$/.exec(src);
@@ -1140,12 +1200,16 @@ async function generate(
     const isI2IMode = modelEndpoint.includes('/edit');
     if (isI2IMode) {
       const payloadImageUrls = Array.isArray((payload as any).image_urls) ? (payload as any).image_urls : [];
-      const refs = payloadImageUrls.length > 0 ? payloadImageUrls : (publicImageUrls.length > 0 ? publicImageUrls : uploadedImages);
-      if (Array.isArray(refs) && refs.length > 0) {
-        inputBody.image_urls = refs;
-      } else {
-        throw new ApiError('Image-to-image mode requires at least one input image', 400);
+      // Only send public URLs to FAL. Internal /api/proxy/... links are not fetchable by FAL.
+      const refs = pickPublicImageUrls(publicImageUrls, payloadImageUrls, uploadedImages);
+      if (refs.length === 0) {
+        throw new ApiError(
+          'Image-to-image mode requires at least one public input image URL (https://...). If you are using /api/proxy/resource/... links, configure API_GATEWAY_URL so the server can re-upload them to public storage first.',
+          400,
+          { error: 'image_not_public' }
+        );
       }
+      inputBody.image_urls = refs;
     }
 
     try {
@@ -1496,12 +1560,15 @@ async function generate(
         if (isI2IMode) {
           // Check payload.image_urls first (direct from frontend), then fallback to publicImageUrls/uploadedImages
           const payloadImageUrls = Array.isArray((payload as any).image_urls) ? (payload as any).image_urls : [];
-          const refs = payloadImageUrls.length > 0 ? payloadImageUrls : (publicImageUrls.length > 0 ? publicImageUrls : uploadedImages);
-          if (Array.isArray(refs) && refs.length > 0) {
+            const refs = pickPublicImageUrls(publicImageUrls, payloadImageUrls, uploadedImages);
+            if (refs.length === 0) {
+              throw new ApiError(
+                'Image-to-image mode requires at least one public input image URL (https://...). If you are using /api/proxy/resource/... links, configure API_GATEWAY_URL so the server can re-upload them to public storage first.',
+                400,
+                { error: 'image_not_public' }
+              );
+            }
             input.image_urls = refs;
-          } else {
-            throw new ApiError('Image-to-image mode requires at least one input image in image_urls', 400);
-          }
         }
         // For T2I (base endpoint), don't include image_urls
       } else if (resolvedAspect) {
@@ -1515,7 +1582,14 @@ async function generate(
       }
       if (modelEndpoint.endsWith("/edit") && !modelEndpoint.includes('nano-banana-pro')) {
         // Use public URLs for edit endpoint; allow up to 10 reference images for Nano Banana I2I
-        const refs = publicImageUrls.length > 0 ? publicImageUrls : uploadedImages;
+        const refs = pickPublicImageUrls(publicImageUrls, uploadedImages);
+        if (refs.length === 0) {
+          throw new ApiError(
+            'Image-to-image mode requires at least one public input image URL (https://...). If you are using /api/proxy/resource/... links, configure API_GATEWAY_URL so the server can re-upload them to public storage first.',
+            400,
+            { error: 'image_not_public' }
+          );
+        }
         // Images are already ordered by frontend to match @references in prompt
         // @Rajdeep -> image[0], @Aryan -> image[1], etc.
         input.image_urls = Array.isArray(refs) ? refs.slice(0, 10) : [];
@@ -1988,8 +2062,9 @@ async function generate(
 
       return { images: scoredImages as any, historyId, model, status: 'completed' };
     } else {
-      // For canvas flows, force synchronous upload using override (so we have storagePath immediately)
-      if ((payload as any)?.forceSyncUpload === true || (payload as any)?.storageKeyPrefixOverride) {
+      // For canvas flows and live-chat edits, force synchronous upload (so we have storagePath immediately)
+      // Live-chat UX expects a stable Zata URL in the response (not a transient provider URL).
+      if ((payload as any)?.forceSyncUpload === true || (payload as any)?.storageKeyPrefixOverride || generationType === 'live-chat') {
         const storedImages = await Promise.all(
           images.map(async (img, index) => {
             try {

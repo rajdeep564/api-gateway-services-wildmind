@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { projectRepository } from '../../repository/canvas/projectRepository';
 import { opRepository } from '../../repository/canvas/opRepository';
-import { elementRepository } from '../../repository/canvas/elementRepository';
+import { listAllElements } from '../../repository/canvas/elementRepository';
 import { formatApiResponse } from '../../utils/formatApiResponse';
 import { ApiError } from '../../utils/errorHandler';
 import { CanvasSnapshot } from '../../types/canvas';
@@ -301,7 +301,7 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
     let snapshot = await projectRepository.getCurrentSnapshot(projectId);
 
     // 2. Get the AUTHORITATIVE elements from the collection (updated by realtimeServer)
-    const elementsList = await elementRepository.listAllElements(projectId);
+    const elementsList = await listAllElements(projectId);
 
     // 3. Construct/Merge Snapshot
     if (!snapshot) {
