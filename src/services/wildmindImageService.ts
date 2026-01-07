@@ -133,10 +133,21 @@ export async function generateWildmindImage(uid: string, body: WildmindImageGene
 
     return { historyId, images: responseImages };
   } catch (err: any) {
+    const upstreamStatus: number | undefined = err?.response?.status;
+    const upstreamBody: any = err?.response?.data;
+
     const message =
-      err?.response?.data?.message ||
-      err?.response?.data?.error ||
-      (err instanceof Error ? err.message : 'Failed to generate WILDMINDIMAGE');
+      upstreamBody?.message ||
+      upstreamBody?.error ||
+      err?.message ||
+      'Failed to generate WILDMINDIMAGE';
+
+    // Preserve explicit upstream client errors (e.g., NSFW prompt) rather than mapping to 502.
+    const isClientError = typeof upstreamStatus === 'number' && upstreamStatus >= 400 && upstreamStatus < 500;
+    const passthroughData =
+      upstreamBody && typeof upstreamBody === 'object'
+        ? upstreamBody
+        : (isClientError ? { error: 'upstream_client_error' } : undefined);
 
     try {
       await markGenerationFailed(uid, historyId, { status: 'failed', error: message } as any);
@@ -145,6 +156,9 @@ export async function generateWildmindImage(uid: string, body: WildmindImageGene
     }
 
     if (err instanceof ApiError) throw err;
-    throw new ApiError(message, 502);
+    if (isClientError) {
+      throw new ApiError(message, upstreamStatus!, passthroughData);
+    }
+    throw new ApiError(message, 502, passthroughData);
   }
 }
