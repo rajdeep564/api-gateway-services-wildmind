@@ -1,9 +1,10 @@
-
 import { WebSocket, WebSocketServer, RawData } from 'ws';
 import { IncomingMessage } from 'http';
 import { Server as HttpServer } from 'http';
 import { logger } from '../utils/logger';
 import { URL } from 'url';
+import { opRepository } from '../repository/canvas/opRepository';
+import { elementRepository } from '../repository/canvas/elementRepository';
 
 // --- TYPES ---
 export type GeneratorOverlay = {
@@ -233,6 +234,74 @@ export function startRealtimeServer(server: HttpServer) {
     }
   }
 
+  // Helper to persist operations to Firestore (Ops + Element State)
+  async function persistOp(projectId: string, op: CanvasOp, state: ProjectState) {
+    try {
+      // 1. Append Op to History (Ops Collection & Increment Counter)
+      await opRepository.appendOp(projectId, {
+        projectId,
+        type: op.type as any,
+        data: op.data,
+        inverse: op.inverse as any,
+        elementIds: op.elementIds,
+        elementId: op.elementId, // Deprecated but kept for compat
+        actorUid: op.authorId,
+      });
+
+      // 2. Update Element State (Elements Collection) - Snapshot Source
+      // We rely on the normalized state we just computed in-memory to know what to save
+      // But for simplicity/robustness, we re-parse the op here since state maps are broad.
+
+      // Handle 'create'
+      if (op.type === 'create' || op.type === 'generator.create' || op.type === 'media.create') {
+        const el = op.data?.element || op.data?.media || op.data;
+        if (el && el.id) {
+          await elementRepository.upsertElement(projectId, el);
+        }
+      }
+
+      // Handle 'update'
+      if (op.type === 'update' || op.type === 'generator.update' || op.type === 'media.update') {
+        const id = op.id || (op as any).elementId;
+        const updates = op.data?.updates || op.data;
+        if (id && updates) {
+          // We need to merge with existing because `upsertElement` overwrites if not careful,
+          // but our repository `upsertElement` does a merge if exists, effectively.
+          // However, it expects a full object or at least the ID.
+          // Ideally we fetch current from memory to ensure full object is compliant,
+          // but updating just fields is better.
+          // The repository `upsertElement` implementation does a merge:
+          // existing.exists ? update({...element}) : set({...element})
+          // So passing just ID and updates matches `update` behavior usually,
+          // BUT `upsertElement` signature expects `Omit<CanvasElement...>`, so we might need full flags.
+          // Let's rely on in-memory state to get the FULL object to be safe.
+          const fullEl = state.overlays.get(id) || state.media.get(id);
+          if (fullEl) {
+            await elementRepository.upsertElement(projectId, fullEl as any);
+          }
+        }
+      }
+
+      // Handle 'delete'
+      if (op.type === 'delete' || op.type === 'generator.delete' || op.type === 'media.delete') {
+        const anyOp = op as any;
+        let ids: string[] = anyOp.elementIds || (anyOp.elementId ? [anyOp.elementId] : []) || (anyOp.id ? [anyOp.id] : []);
+
+        for (const id of ids) {
+          await elementRepository.deleteElement(projectId, id);
+        }
+      }
+
+      // Handle 'bulk-create'
+      if (op.type === 'bulk-create' && op.data?.elements && Array.isArray(op.data.elements)) {
+        await elementRepository.batchUpsertElements(projectId, op.data.elements);
+      }
+
+    } catch (err) {
+      logger.error({ projectId, opId: op.id, err }, 'Failed to persist OP to DB');
+    }
+  }
+
   // Basic Validation
   function validateOp(op: any): boolean {
     if (!op || typeof op !== 'object') return false;
@@ -330,6 +399,9 @@ export function startRealtimeServer(server: HttpServer) {
         // 4. APPLY TO SERVER STATE (Persistence)
         applyOpToProject(state, op);
 
+        // Fire-and-forget persistence to DB (don't block broadcast)
+        persistOp(projectId, op, state).catch(e => console.error('Persistence failed', e));
+
         logger.info({ projectId, version: state.version, type: op.type }, 'History push (Strict)');
 
         // 5. Broadcast OP to ALL (including sender)
@@ -359,6 +431,13 @@ export function startRealtimeServer(server: HttpServer) {
         // APPLY INVERSE TO STATE
         applyOpToProject(state, item.inverse);
 
+        // Fire-and-forget persistence of the INVERSE op (effectively a new op)
+        // Note: 'undo' pushes the INVERSE as a new op in `opRepository` usually via `appendOp`?
+        // Actually, strictly speaking, we should record the UNDO event itself or the inverse op.
+        // Our `appendOp` in repo adds a new doc.
+        // Let's persist the INVERSE as a new op so the sequence is linear in DB.
+        persistOp(projectId, item.inverse, state).catch(e => console.error('Undo Persistence failed', e));
+
         logger.info({ projectId, version: state.version, undoing: item.type }, 'History undo (Strict)');
 
         broadcast(projectId, {
@@ -383,6 +462,9 @@ export function startRealtimeServer(server: HttpServer) {
         // APPLY ORIGINAL OP TO STATE
         // Ensure we pass elementIds if they were missing in the item (fallback to item which hopefully has them now)
         applyOpToProject(state, item);
+
+        // Fire-and-forget persistence
+        persistOp(projectId, item, state).catch(e => console.error('Redo Persistence failed', e));
 
         logger.info({ projectId, version: state.version, redoing: item.type }, 'History redo (Strict)');
 
