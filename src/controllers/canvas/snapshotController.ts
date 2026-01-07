@@ -300,9 +300,7 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
     let snapshot = await projectRepository.getCurrentSnapshot(projectId);
 
     // 2. Get the AUTHORITATIVE elements from the collection (updated by realtimeServer)
-    const elementsList = await elementRepository.queryElementsInRegion(projectId, {
-      x: -Infinity, y: -Infinity, width: Infinity, height: Infinity
-    });
+    const elementsList = await elementRepository.listAllElements(projectId);
 
     // 3. Construct/Merge Snapshot
     if (!snapshot) {

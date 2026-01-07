@@ -10,10 +10,10 @@ export async function upsertElement(
     .doc(projectId)
     .collection('elements')
     .doc(element.id);
-  
+
   const now = admin.firestore.FieldValue.serverTimestamp();
   const existing = await elementRef.get();
-  
+
   if (existing.exists) {
     await elementRef.update({
       ...element,
@@ -41,10 +41,10 @@ export async function getElement(
     .doc(projectId)
     .collection('elements')
     .doc(elementId);
-  
+
   const snap = await elementRef.get();
   if (!snap.exists) return null;
-  
+
   return { id: snap.id, ...snap.data() } as CanvasElement;
 }
 
@@ -57,7 +57,7 @@ export async function deleteElement(
     .doc(projectId)
     .collection('elements')
     .doc(elementId);
-  
+
   await elementRef.delete();
 }
 
@@ -71,10 +71,10 @@ export async function queryElementsInRegion(
     .collection('canvasProjects')
     .doc(projectId)
     .collection('elements');
-  
+
   const snap = await elementsRef.get();
   const elements = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CanvasElement));
-  
+
   // Filter elements that intersect with region
   return elements.filter(el => {
     if (!el.width || !el.height) return false;
@@ -96,12 +96,12 @@ export async function queryElementsByAnchors(
     .collection('canvasProjects')
     .doc(projectId)
     .collection('elements');
-  
+
   const snap = await elementsRef.get();
   const elements = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CanvasElement));
-  
+
   const results: Array<{ element: CanvasElement; anchor: { id: string; x: number; y: number } }> = [];
-  
+
   for (const element of elements) {
     if (element.meta?.anchors) {
       for (const anchor of element.meta.anchors) {
@@ -110,14 +110,14 @@ export async function queryElementsByAnchors(
         const distance = Math.sqrt(
           Math.pow(anchorX - point.x, 2) + Math.pow(anchorY - point.y, 2)
         );
-        
+
         if (distance <= tolerance) {
           results.push({ element, anchor });
         }
       }
     }
   }
-  
+
   return results;
 }
 
@@ -127,14 +127,14 @@ export async function batchUpsertElements(
 ): Promise<void> {
   const batch = adminDb.batch();
   const now = admin.firestore.FieldValue.serverTimestamp();
-  
+
   for (const element of elements) {
     const elementRef = adminDb
       .collection('canvasProjects')
       .doc(projectId)
       .collection('elements')
       .doc(element.id);
-    
+
     const existing = await elementRef.get();
     if (existing.exists) {
       batch.update(elementRef, {
@@ -150,8 +150,18 @@ export async function batchUpsertElements(
       });
     }
   }
-  
+
   await batch.commit();
+}
+
+export async function listAllElements(projectId: string): Promise<CanvasElement[]> {
+  const elementsRef = adminDb
+    .collection('canvasProjects')
+    .doc(projectId)
+    .collection('elements');
+
+  const snap = await elementsRef.get();
+  return snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CanvasElement));
 }
 
 export const elementRepository = {
@@ -161,5 +171,6 @@ export const elementRepository = {
   queryElementsInRegion,
   queryElementsByAnchors,
   batchUpsertElements,
+  listAllElements,
 };
 
