@@ -60,6 +60,7 @@ export interface EnvConfig {
   // Local services
   scoreLocal?: string; // base URL for aesthetic scoring service
   promptEnhancerUrl?: string; // base URL for prompt enhancer service (Python FastAPI)
+  wildmindImageServiceUrl?: string; // base URL for WILDMINDIMAGE Python service (ngrok)
   // API Base URLs
   minimaxApiBase?: string; // MiniMax API base URL
   resendApiBase?: string; // Resend API base URL
@@ -159,6 +160,7 @@ export const env: EnvConfig = {
   // Local services
   scoreLocal: (process.env.SCORE_LOCAL ? String(process.env.SCORE_LOCAL).trim() : undefined)?.replace(/\/$/, ''),
   promptEnhancerUrl: (process.env.PROMPT_ENHANCER_URL || process.env.NGROK_LANGUAGE)?.replace(/\/$/, ''),
+  wildmindImageServiceUrl: (process.env.WILDMINDIMAGE_URL || 'https://ae829ba9e4b4.ngrok-free.app')?.replace(/\/$/, ''),
   // API Base URLs
   minimaxApiBase: process.env.MINIMAX_API_BASE || 'https://api.minimax.io/v1',
   resendApiBase: process.env.RESEND_API_BASE || 'https://api.resend.com',
