@@ -53,15 +53,25 @@ const storage = multer.diskStorage({
 
         const nameWithoutExt = path.basename(file.originalname, path.extname(file.originalname));
 
+        // IMPORTANT: The client uploads files as "{id}-{name}" format
+        // We need to preserve the ID prefix for correct matching later
+        // Format: {timestamp}_{originalFilename}{ext}
+        // This ensures:
+        //   1. Unique filenames (timestamp prefix)
+        //   2. Item ID is preserved (from original filename)
+        //   3. Item name is preserved (from original filename)
+
         // Sanitize filename - remove Windows-invalid characters: \ / : * ? " < > |
         const sanitizedName = nameWithoutExt
             .replace(/[\\/:*?"<>|]/g, '_')  // Replace invalid chars with underscore
             .replace(/\s+/g, '_')           // Replace spaces with underscore
             .replace(/_+/g, '_')            // Collapse multiple underscores
             .replace(/\.+$/, '')            // Remove trailing dots
-            .substring(0, 80);              // Limit base name to 80 chars (leaving room for timestamp + ext)
+            .substring(0, 100);             // Limit base name to 100 chars
 
-        const uniqueName = `${Date.now()}-${sanitizedName}${ext}`;
+        // Use underscore separator instead of dash to avoid confusion with IDs
+        const uniqueName = `${Date.now()}_${sanitizedName}${ext}`;
+        console.log(`[Upload] Saving file: ${file.originalname} -> ${uniqueName}`);
         cb(null, uniqueName);
     }
 });
@@ -221,8 +231,14 @@ router.post('/process/:jobId', async (req: Request, res: Response) => {
         const files = fs.readdirSync(jobDir);
 
         // Map uploaded files to timeline items
+        // The client uploads files as "{id}-{name}.ext" which becomes "{timestamp}_{id}_{name}.ext" on server
         for (const track of timeline.tracks) {
             for (const item of track.items) {
+                // Skip items without media (text, color, etc.)
+                if (item.type !== 'video' && item.type !== 'image' && item.type !== 'audio') {
+                    continue;
+                }
+
                 // Sanitize item name the same way as when uploaded
                 const sanitizedItemName = item.name
                     .replace(/[\\/:*?"<>|]/g, '_')
@@ -230,12 +246,20 @@ router.post('/process/:jobId', async (req: Request, res: Response) => {
                     .replace(/_+/g, '_')
                     .substring(0, 100);
 
-                // Find matching uploaded file
-                const matchingFile = files.find(f =>
-                    f.includes(item.id) || f.includes(sanitizedItemName)
-                );
+                // Find matching uploaded file - PRIORITIZE exact ID match
+                // The file format is: {timestamp}_{id}-{name}.ext
+                let matchingFile = files.find(f => f.includes(item.id));
+
+                // Fallback to name match only if ID match fails
+                if (!matchingFile) {
+                    matchingFile = files.find(f => f.includes(sanitizedItemName));
+                }
+
                 if (matchingFile) {
                     item.localPath = path.join(jobDir, matchingFile);
+                    console.log(`[VideoExport] Matched item "${item.name}" (${item.id}) -> ${matchingFile}`);
+                } else {
+                    console.warn(`[VideoExport] No file found for item "${item.name}" (${item.id})`);
                 }
             }
         }

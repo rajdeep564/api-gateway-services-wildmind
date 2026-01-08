@@ -1113,9 +1113,17 @@ export class PuppeteerFrameRenderer {
                             div.style.top = (50 + (item.y || 0)) + '%';
                         }
                     } else {
-                        // Non-text items: standard center positioning
+                        // Non-text items (overlay images/videos): use percentage-based width/height like Canvas.tsx
+                        // Canvas.tsx line 1829-1830: width = item.width + '%', height = item.height + '%'
                         div.style.left = (50 + (item.x || 0)) + '%';
                         div.style.top = (50 + (item.y || 0)) + '%';
+                        // Set width and height from item properties - these are percentage values
+                        if (item.width) {
+                            div.style.width = item.width + '%';
+                        }
+                        if (item.height) {
+                            div.style.height = item.height + '%';
+                        }
                     }
                 }
                 
@@ -1161,45 +1169,85 @@ export class PuppeteerFrameRenderer {
                     
                     if (mediaEl) {
                         if (item.type === 'video') {
-                            // For video: seek to target time and capture frame to canvas
+                            // For video: seek to target time and display directly
                             const videoTime = (item.offset || 0) + (currentTime - item.start) * (item.speed || 1);
                             const targetTime = Math.max(0, Math.min(videoTime, mediaEl.duration || 999));
                             
-                            // Only seek if needed
-                            if (Math.abs(mediaEl.currentTime - targetTime) > 0.01) {
+                            // Seek to exact time
+                            if (Math.abs(mediaEl.currentTime - targetTime) > 0.001) {
                                 mediaEl.currentTime = targetTime;
+                                
                                 // Wait for seeked event
                                 await new Promise((resolve) => {
+                                    let resolved = false;
                                     const onSeeked = () => {
+                                        if (resolved) return;
+                                        resolved = true;
                                         mediaEl.removeEventListener('seeked', onSeeked);
                                         resolve();
                                     };
                                     mediaEl.addEventListener('seeked', onSeeked);
-                                    // Timeout fallback - increased for reliable seeking
-                                    setTimeout(resolve, 300);
+                                    // Shorter timeout since we're not doing canvas ops
+                                    setTimeout(() => {
+                                        if (!resolved) {
+                                            resolved = true;
+                                            mediaEl.removeEventListener('seeked', onSeeked);
+                                            resolve();
+                                        }
+                                    }, 500); // Increased to 500ms for reliable high-res video seeking
                                 });
                             }
                             
-                            // Draw video frame to canvas
-                            const canvas = document.createElement('canvas');
-                            canvas.width = mediaEl.videoWidth || 1920;
-                            canvas.height = mediaEl.videoHeight || 1080;
-                            const ctx = canvas.getContext('2d');
-                            ctx.drawImage(mediaEl, 0, 0, canvas.width, canvas.height);
+                            // Wait for video frame to be decoded and ready to paint
+                            // Use requestVideoFrameCallback for accurate frame timing
+                            await new Promise((resolveFrame) => {
+                                let resolved = false;
+                                const done = () => {
+                                    if (resolved) return;
+                                    resolved = true;
+                                    resolveFrame();
+                                };
+                                
+                                if ('requestVideoFrameCallback' in mediaEl) {
+                                    // Best method: waits for actual video frame
+                                    mediaEl.requestVideoFrameCallback(done);
+                                } else {
+                                    // Fallback: double rAF
+                                    requestAnimationFrame(() => requestAnimationFrame(done));
+                                }
+                                // Shorter timeout
+                                setTimeout(done, 50);
+                            });
                             
-                            // Use canvas as image
-                            const img = document.createElement('img');
-                            img.src = canvas.toDataURL('image/jpeg', 0.9);
-                            img.style.width = '100%';
-                            img.style.height = '100%';
-                            img.style.objectFit = item.fit || 'cover';
-                            div.appendChild(img);
+                            // OPTIMIZED: Draw video frame directly to a canvas element
+                            // This is faster than toDataURL + img because:
+                            // 1. No JPEG encoding
+                            // 2. No data URL parsing
+                            // 3. Canvas can be rendered directly by Puppeteer
+
+                            // Get or create a canvas for this video
+                            let videoCanvas = document.getElementById('video-canvas-' + item.id);
+                            if (!videoCanvas) {
+                                videoCanvas = document.createElement('canvas');
+                                videoCanvas.id = 'video-canvas-' + item.id;
+                                videoCanvas.width = mediaEl.videoWidth || 1920;
+                                videoCanvas.height = mediaEl.videoHeight || 1080;
+                            }
+                            const vctx = videoCanvas.getContext('2d');
+                            vctx.drawImage(mediaEl, 0, 0, videoCanvas.width, videoCanvas.height);
+                            
+                            // Style and append the canvas
+                            videoCanvas.style.width = '100%';
+                            videoCanvas.style.height = '100%';
+                            videoCanvas.style.objectFit = item.isBackground ? (item.fit || 'cover') : 'contain';
+                            div.appendChild(videoCanvas);
                         } else {
                             // For images: just clone
                             const clone = mediaEl.cloneNode(true);
                             clone.style.width = '100%';
                             clone.style.height = '100%';
-                            clone.style.objectFit = item.fit || 'cover';
+                            // Canvas.tsx line 1922: objectFit: item.isBackground ? (item.fit || 'cover') : 'contain'
+                            clone.style.objectFit = item.isBackground ? (item.fit || 'cover') : 'contain';
                             div.appendChild(clone);
                         }
                     }
@@ -1398,15 +1446,18 @@ export class PuppeteerFrameRenderer {
                     );
                 }
 
-                // Video encoding - optimized for speed
-                const preset = isHighRes ? 'ultrafast' : 'veryfast';
+                // Video encoding - OPTIMIZED for speed with multi-threading
+                // Using ultrafast preset always for fast export, quality maintained via CRF
+                const preset = 'ultrafast';
                 const crf = settings.quality === 'high' ? 18 : settings.quality === 'medium' ? 23 : 28;
 
                 args.push(
                     '-c:v', 'libx264',
                     '-preset', preset,
+                    '-tune', 'fastdecode', // Optimize for fast decode (smooth playback)
                     '-crf', String(crf),
                     '-pix_fmt', 'yuv420p',
+                    '-threads', '0', // Auto-detect number of threads
                     '-movflags', '+faststart',
                     outputPath
                 );
@@ -1488,13 +1539,14 @@ export class PuppeteerFrameRenderer {
                         const is1080p = resolutionArea >= 2073600; // 1920x1080
 
                         // Cleanup interval: More aggressive for 4K (every 10 frames = ~0.3s at 30fps)
-                        const cleanupInterval = is4K ? 10 : is1080p ? 30 : 60;
+                        const cleanupInterval = is4K ? 15 : is1080p ? 45 : 90;
 
-                        // GC interval: Force garbage collection periodically
-                        const gcInterval = is4K ? 150 : is1080p ? 300 : 600; // 5s/10s/20s at 30fps
+                        // GC interval: Force garbage collection periodically (less frequent to reduce overhead)
+                        const gcInterval = is4K ? 300 : is1080p ? 600 : 900; // 10s/20s/30s at 30fps
 
-                        // Page refresh interval: Completely refresh page to clear accumulated memory
-                        const pageRefreshInterval = is4K ? 3000 : is1080p ? 6000 : 9000; // 100s/200s/300s at 30fps
+                        // Page refresh interval: INCREASED to reduce overhead (refresh is expensive)
+                        // Only refresh for very long exports to avoid memory issues
+                        const pageRefreshInterval = is4K ? 9000 : is1080p ? 18000 : 27000; // 5min/10min/15min at 30fps
 
                         // Screenshot quality: Lower for 4K to reduce memory pressure
                         const screenshotQuality = is4K ? 80 : 90;
@@ -1512,6 +1564,24 @@ export class PuppeteerFrameRenderer {
                         // Check if timeline has videos (need extra wait for seeking)
                         const hasVideos = timeline.tracks.some(t => t.items.some(i => i.type === 'video'));
 
+                        // Pre-calculate transition times for smart waiting
+                        // We only need extra wait during transitions (when video seeking is critical)
+                        const transitionTimes: Array<{ start: number, end: number }> = [];
+                        for (const track of timeline.tracks) {
+                            for (const item of track.items) {
+                                if (item.transition && item.transition.type !== 'none') {
+                                    const transDuration = item.transition.duration || 1;
+                                    transitionTimes.push({
+                                        start: item.start - transDuration,
+                                        end: item.start + transDuration
+                                    });
+                                }
+                            }
+                        }
+
+                        // Track last video seek time for optimization
+                        let lastSeekTime = -999;
+
                         for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
                             const currentTime = frameIndex / fps;
 
@@ -1519,19 +1589,30 @@ export class PuppeteerFrameRenderer {
                                 // Render frame in Puppeteer
                                 await this.page!.evaluate((time) => window.renderFrame(time), currentTime);
 
-                                // Wait for video frames to fully decode after seeking
-                                // Increased from 5ms to 50ms to prevent laggy/blurry frames in export
-                                if (hasVideos) {
-                                    await new Promise(resolve => setTimeout(resolve, 50));
-                                }
+                                // Wait for DOM to be fully painted before taking screenshot
+                                // The renderFrame already waits for video frame inside, so we just need paint sync
+                                await this.page!.evaluate(() => {
+                                    return new Promise(resolve => {
+                                        // Double rAF ensures paint is complete
+                                        requestAnimationFrame(() => {
+                                            requestAnimationFrame(() => {
+                                                resolve(undefined);
+                                            });
+                                        });
+                                    });
+                                });
 
-                                // Take screenshot - optimized settings for speed and reliability
+                                // Post-render wait: Give video decoder more time to finish decoding
+                                // Increased to 100ms for reliable frame capture
+                                await new Promise(resolve => setTimeout(resolve, 100));
+
+                                // Take screenshot - using PNG for lossless quality
+                                // PNG is better for frame accuracy than JPEG
                                 const screenshot = await this.page!.screenshot({
-                                    type: 'jpeg',
-                                    quality: screenshotQuality,
+                                    type: 'png',
                                     encoding: 'binary',
-                                    captureBeyondViewport: false, // Only capture viewport (faster)
-                                    fromSurface: true, // Capture from surface (GPU accelerated)
+                                    captureBeyondViewport: false,
+                                    fromSurface: true,
                                 });
 
                                 // Write to FFmpeg with backpressure handling
