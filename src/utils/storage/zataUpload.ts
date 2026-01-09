@@ -6,6 +6,35 @@ import { s3, ZATA_BUCKET, makeZataPublicUrl } from './zataClient';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '../../config/env';
 
+function getInternalGatewayBaseUrl(): string | undefined {
+  if (env.apiGatewayUrl) return String(env.apiGatewayUrl).replace(/\/$/, '');
+  if (env.devBackendUrl) return String(env.devBackendUrl).replace(/\/$/, '');
+  // Production fallback: https://wildmindai.com -> https://api.wildmindai.com
+  if (env.productionDomain) {
+    return String(env.productionDomain)
+      .replace(/^https?:\/\/(?:www\.)?/, 'https://api.')
+      .replace(/\/$/, '');
+  }
+  return undefined;
+}
+
+function resolveToAbsoluteUrlIfNeeded(sourceUrl: string): string {
+  // Only normalize relative URLs. Absolute http(s) URLs are left untouched.
+  if (/^https?:\/\//i.test(sourceUrl)) return sourceUrl;
+  // Allow other schemes (e.g. data:) to pass through unchanged; callers should validate.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(sourceUrl)) return sourceUrl;
+
+  const base = getInternalGatewayBaseUrl();
+  if (!base) {
+    throw new Error(
+      'Cannot resolve relative URL without API gateway base URL. Set API_GATEWAY_URL (or DEV_BACKEND_URL) so the server can fetch /api/... resources.'
+    );
+  }
+
+  if (sourceUrl.startsWith('/')) return `${base}${sourceUrl}`;
+  return `${base}/${sourceUrl}`;
+}
+
 function guessExtensionFromContentType(contentType: string | undefined, fallback: string = 'bin'): string {
   if (!contentType) return fallback;
   if (contentType.includes('jpeg')) return 'jpg';
@@ -113,15 +142,19 @@ export async function uploadFromUrlToZata(params: {
 }): Promise<{ key: string; publicUrl: string; etag?: string; originalUrl: string; contentType?: string }> {
   const { sourceUrl, keyPrefix, fileName } = params;
 
+  // Support internal relative URLs (e.g. /api/proxy/resource/...) by resolving them
+  // against the gateway's base URL so we can download and re-upload to Zata.
+  const resolvedSourceUrl = resolveToAbsoluteUrlIfNeeded(sourceUrl);
+
   // Check if sourceUrl is a Zata URL - if so, download directly from S3
-  const zataKey = extractKeyFromZataUrl(sourceUrl);
+  const zataKey = extractKeyFromZataUrl(resolvedSourceUrl);
   let buffer: Buffer;
   let contentType: string | undefined;
 
   if (zataKey) {
     // Download directly from S3 using credentials (more reliable than HTTP)
     try {
-      console.log('[uploadFromUrlToZata] Downloading from Zata using S3:', { zataKey, sourceUrl: sourceUrl.substring(0, 100) });
+      console.log('[uploadFromUrlToZata] Downloading from Zata using S3:', { zataKey, sourceUrl: resolvedSourceUrl.substring(0, 100) });
       const getCmd = new GetObjectCommand({
         Bucket: ZATA_BUCKET,
         Key: zataKey,
@@ -143,24 +176,24 @@ export async function uploadFromUrlToZata(params: {
     } catch (s3Error: any) {
       console.warn('[uploadFromUrlToZata] Failed to download from Zata via S3, trying HTTP fallback:', s3Error?.message);
       // Fallback to HTTP download
-      const resp = await axios.get<ArrayBuffer>(sourceUrl, {
+      const resp = await axios.get<ArrayBuffer>(resolvedSourceUrl, {
         responseType: 'arraybuffer',
         validateStatus: () => true,
       });
       if (resp.status < 200 || resp.status >= 300) {
-        throw new Error(`Download failed (${resp.status}) for ${sourceUrl}`);
+        throw new Error(`Download failed (${resp.status}) for ${resolvedSourceUrl}`);
       }
       buffer = Buffer.from(resp.data as any);
       contentType = (resp.headers['content-type'] as string) || undefined;
     }
   } else {
     // Regular HTTP download for non-Zata URLs
-    const resp = await axios.get<ArrayBuffer>(sourceUrl, {
+    const resp = await axios.get<ArrayBuffer>(resolvedSourceUrl, {
       responseType: 'arraybuffer',
       validateStatus: () => true,
     });
     if (resp.status < 200 || resp.status >= 300) {
-      throw new Error(`Download failed (${resp.status}) for ${sourceUrl}`);
+      throw new Error(`Download failed (${resp.status}) for ${resolvedSourceUrl}`);
     }
     buffer = Buffer.from(resp.data as any);
     contentType = (resp.headers['content-type'] as string) || undefined;
@@ -168,7 +201,7 @@ export async function uploadFromUrlToZata(params: {
 
   const extFromUrl = (() => {
     try {
-      const u = new URL(sourceUrl);
+      const u = new URL(resolvedSourceUrl);
       const path = u.pathname;
       const idx = path.lastIndexOf('.');
       return idx >= 0 ? path.substring(idx + 1).toLowerCase() : undefined;

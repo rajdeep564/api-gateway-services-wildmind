@@ -1755,7 +1755,11 @@ export async function generateImage(uid: string, body: any) {
 
       // Prefer explicit aspect_ratio; fallback to frameSize mapping
       const aspect = rest.aspect_ratio ?? aspectRatio ?? ((!isTextToImage && isQwenImageEdit) ? 'match_input_image' : '16:9');
-      input.aspect_ratio = String(aspect);
+      const requestedAspect = String(aspect || '').trim();
+      const allowedQwenAspect = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', 'match_input_image']);
+      input.aspect_ratio = allowedQwenAspect.has(requestedAspect)
+        ? requestedAspect
+        : ((!isTextToImage && isQwenImageEdit) ? 'match_input_image' : '16:9');
 
       // Qwen schema uses output_format values: webp | jpg | png
       if (rest.output_format != null) {
@@ -1815,14 +1819,16 @@ export async function generateImage(uid: string, body: any) {
           const dims = PRESET_DIMENSIONS[requestedPreset][effectiveAspect];
           input.width = Math.max(256, Math.min(modelMax, dims.w));
           input.height = Math.max(256, Math.min(modelMax, dims.h));
-          input.aspect_ratio = 'custom';
+          // IMPORTANT: Qwen Image Edit models do not support aspect_ratio='custom'.
+          // Keep the explicit aspect ratio (e.g. 1:1, 16:9, match_input_image) and
+          // only use width/height as an optional hint.
         }
       }
       // Width/height only used when aspect_ratio='custom' (or when frontend passes explicit width/height)
       if (rest.width != null && Number.isInteger(Number(rest.width))) {
         // Clamp to model-supported bounds (256-2048 per schema)
         input.width = Math.max(256, Math.min(replicateModelBase && String(replicateModelBase).includes('2512') ? 2512 : 2048, Number(rest.width)));
-        input.aspect_ratio = 'custom';
+        // IMPORTANT: Do not force aspect_ratio='custom' for Qwen models.
       }
       if (rest.height != null && Number.isInteger(Number(rest.height))) {
         input.height = Math.max(256, Math.min(replicateModelBase && String(replicateModelBase).includes('2512') ? 2512 : 2048, Number(rest.height)));

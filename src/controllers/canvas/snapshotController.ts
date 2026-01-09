@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { projectRepository } from '../../repository/canvas/projectRepository';
 import { opRepository } from '../../repository/canvas/opRepository';
-import { elementRepository } from '../../repository/canvas/elementRepository';
+import { listAllElements } from '../../repository/canvas/elementRepository';
 import { formatApiResponse } from '../../utils/formatApiResponse';
 import { ApiError } from '../../utils/errorHandler';
 import { CanvasSnapshot } from '../../types/canvas';
