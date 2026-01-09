@@ -300,8 +300,9 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
     // 1. Get the base snapshot (metadata + viewport)
     let snapshot = await projectRepository.getCurrentSnapshot(projectId);
 
-    // 2. Get the AUTHORITATIVE elements from the collection (updated by realtimeServer)
-    const elementsList = await elementRepository.listAllElements(projectId);
+    // 2. (Legacy) Elements were previously authoritative from collection. 
+    // Now Snapshot Document is SSoT.
+    // const elementsList = await elementRepository.listAllElements(projectId);
 
     // 3. Construct/Merge Snapshot
     if (!snapshot) {
@@ -317,11 +318,11 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
       };
     }
 
-    // 4. Overwrite elements with the fresh DB state
-    snapshot.elements = {};
-    for (const el of elementsList) {
-      snapshot.elements[el.id] = el;
-    }
+    // 4. (Legacy) Overwrite removed.
+    // snapshot.elements = {};
+    // for (const el of elementsList) {
+    //   snapshot.elements[el.id] = el;
+    // }
 
     res.json(formatApiResponse('success', 'Current snapshot retrieved', { snapshot }));
   } catch (error: any) {
