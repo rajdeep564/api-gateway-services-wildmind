@@ -5,13 +5,100 @@
 // ============================================
 
 import puppeteer, { Browser, Page } from 'puppeteer';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as http from 'http';
 import express from 'express';
-import ffmpegPath from 'ffmpeg-static';
+import ffmpegStaticPath from 'ffmpeg-static';
 import type { TimelineData, ExportSettings, TimelineItemData } from '../../types/videoExport';
+
+// Try to find system FFmpeg with NVENC support, fallback to ffmpeg-static
+function getFFmpegPath(): string {
+    // Winget installed FFmpeg location (Gyan.FFmpeg)
+    const wingetPath = path.join(
+        process.env.LOCALAPPDATA || '',
+        'Microsoft', 'WinGet', 'Packages',
+        'Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe',
+        'ffmpeg-8.0.1-full_build', 'bin', 'ffmpeg.exe'
+    );
+
+    if (fs.existsSync(wingetPath)) {
+        console.log('[PuppeteerFrameRenderer] ✅ Using system FFmpeg (with NVENC support)');
+        return wingetPath;
+    }
+
+    // Try common system paths
+    const systemPaths = [
+        'C:\\ffmpeg\\bin\\ffmpeg.exe',
+        'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe',
+        '/usr/bin/ffmpeg',
+        '/usr/local/bin/ffmpeg',
+    ];
+
+    for (const p of systemPaths) {
+        if (fs.existsSync(p)) {
+            console.log(`[PuppeteerFrameRenderer] ✅ Using system FFmpeg from ${p}`);
+            return p;
+        }
+    }
+
+    // Fallback to ffmpeg-static (no NVENC support)
+    console.log('[PuppeteerFrameRenderer] ⚠️ Using ffmpeg-static (no NVENC support)');
+    return ffmpegStaticPath || 'ffmpeg';
+}
+
+const ffmpegPath = getFFmpegPath();
+
+// NVENC availability cache (check once per process)
+let nvencAvailable: boolean | null = null;
+
+/**
+ * Check if NVENC hardware encoder actually works (not just listed)
+ * ffmpeg-static lists h264_nvenc but cannot use it - we need a real test
+ * Caches result for performance
+ */
+function checkNVENCAvailable(): boolean {
+    if (nvencAvailable !== null) {
+        return nvencAvailable;
+    }
+
+    try {
+        if (!ffmpegPath) {
+            nvencAvailable = false;
+            return false;
+        }
+
+        // First check if encoder is listed
+        const output = execSync(`"${ffmpegPath}" -hide_banner -encoders 2>&1`, { encoding: 'utf-8' });
+        if (!output.includes('h264_nvenc')) {
+            console.log('[PuppeteerFrameRenderer] ⚠️ NVENC not listed in FFmpeg encoders');
+            nvencAvailable = false;
+            return false;
+        }
+
+        // Actually try to encode a test frame to verify NVENC works
+        // NVENC requires minimum frame size (146x50 for h264), so we use 256x256
+        try {
+            execSync(
+                `"${ffmpegPath}" -f lavfi -i "color=c=black:s=256x256:d=0.1:r=30" -c:v h264_nvenc -f null - 2>&1`,
+                { encoding: 'utf-8', timeout: 10000 }
+            );
+            console.log('[PuppeteerFrameRenderer] ✅ NVENC hardware encoder VERIFIED WORKING');
+            nvencAvailable = true;
+        } catch (testError) {
+            console.log('[PuppeteerFrameRenderer] ⚠️ NVENC listed but NOT working (ffmpeg-static limitation)');
+            console.log('[PuppeteerFrameRenderer] 💡 For NVENC support, install system FFmpeg with NVIDIA SDK');
+            nvencAvailable = false;
+        }
+
+        return nvencAvailable;
+    } catch (error) {
+        console.log('[PuppeteerFrameRenderer] ⚠️ Could not detect NVENC, defaulting to libx264');
+        nvencAvailable = false;
+        return false;
+    }
+}
 
 // Browser pool for reuse
 let browserPool: Browser[] = [];
@@ -1410,10 +1497,11 @@ export class PuppeteerFrameRenderer {
                     return reject(new Error('FFmpeg binary not found'));
                 }
 
-                // Build FFmpeg args
+                // Build FFmpeg args - using MJPEG input for JPEG screenshots
                 const args: string[] = [
                     '-y',
                     '-f', 'image2pipe',
+                    '-c:v', 'mjpeg',           // Explicit JPEG input codec
                     '-framerate', String(fps),
                     '-i', 'pipe:0',
                 ];
@@ -1446,21 +1534,48 @@ export class PuppeteerFrameRenderer {
                     );
                 }
 
-                // Video encoding - OPTIMIZED for speed with multi-threading
-                // Using ultrafast preset always for fast export, quality maintained via CRF
-                const preset = 'ultrafast';
+                // Video encoding - Use NVENC hardware encoder if available, fallback to libx264
+                const useNVENC = checkNVENCAvailable();
                 const crf = settings.quality === 'high' ? 18 : settings.quality === 'medium' ? 23 : 28;
 
-                args.push(
-                    '-c:v', 'libx264',
-                    '-preset', preset,
-                    '-tune', 'fastdecode', // Optimize for fast decode (smooth playback)
-                    '-crf', String(crf),
-                    '-pix_fmt', 'yuv420p',
-                    '-threads', '0', // Auto-detect number of threads
-                    '-movflags', '+faststart',
-                    outputPath
-                );
+                if (useNVENC) {
+                    // NVENC hardware encoding (10-50x faster than CPU)
+                    console.log('[PuppeteerFrameRenderer] 🚀 Using NVENC hardware encoder');
+                    args.push(
+                        '-c:v', 'h264_nvenc',
+                        '-preset', 'p4',           // p1=fastest, p7=quality, p4=balanced
+                        '-tune', 'hq',             // High quality tuning
+                        '-rc', 'vbr',              // Variable bitrate for quality
+                        '-cq', String(crf),        // Constant quality level (like CRF)
+                        '-b:v', '0',               // Let CQ control bitrate
+                        '-gpu', '0',               // Use first GPU
+                        '-pix_fmt', 'yuv420p',
+                        '-movflags', '+faststart',
+                        outputPath
+                    );
+                } else {
+                    // CPU encoding (libx264) - optimized for quality and smooth playback
+                    console.log('[PuppeteerFrameRenderer] 💻 Using libx264 CPU encoder (optimized quality)');
+
+                    // Use 'veryfast' for balance of speed and quality
+                    // Lower CRF = higher quality (18 is visually lossless)
+                    const qualityCrf = settings.quality === 'high' ? 18 : settings.quality === 'medium' ? 21 : 24;
+
+                    args.push(
+                        '-c:v', 'libx264',
+                        '-preset', 'veryfast',     // Better quality than ultrafast
+                        '-tune', 'film',           // Optimize for high quality film content
+                        '-crf', String(qualityCrf),
+                        '-profile:v', 'high',      // High profile for maximum compatibility
+                        '-level', '4.1',           // Good for 1080p
+                        '-pix_fmt', 'yuv420p',
+                        '-threads', '0',           // Auto-detect number of threads
+                        '-movflags', '+faststart', // Web-optimized (moov atom at start)
+                        '-bf', '2',                // B-frames for better compression
+                        '-g', String(fps * 2),     // GOP size = 2 seconds
+                        outputPath
+                    );
+                }
 
                 console.log(`[PuppeteerFrameRenderer] 📝 FFmpeg command: ffmpeg ${args.join(' ')}`);
 
@@ -1602,14 +1717,11 @@ export class PuppeteerFrameRenderer {
                                     });
                                 });
 
-                                // Post-render wait: Give video decoder more time to finish decoding
-                                // Increased to 100ms for reliable frame capture
-                                await new Promise(resolve => setTimeout(resolve, 100));
-
-                                // Take screenshot - using PNG for lossless quality
-                                // PNG is better for frame accuracy than JPEG
+                                // Take screenshot immediately after paint sync
+                                // JPEG 98% quality for minimal artifacts in final video
                                 const screenshot = await this.page!.screenshot({
-                                    type: 'png',
+                                    type: 'jpeg',
+                                    quality: 98,  // High quality to prevent artifacts
                                     encoding: 'binary',
                                     captureBeyondViewport: false,
                                     fromSurface: true,
