@@ -160,7 +160,7 @@ export const env: EnvConfig = {
   // Local services
   scoreLocal: (process.env.SCORE_LOCAL ? String(process.env.SCORE_LOCAL).trim() : undefined)?.replace(/\/$/, ''),
   promptEnhancerUrl: (process.env.PROMPT_ENHANCER_URL || process.env.NGROK_LANGUAGE)?.replace(/\/$/, ''),
-  wildmindImageServiceUrl: (process.env.WILDMINDIMAGE_URL || 'https://ae829ba9e4b4.ngrok-free.app')?.replace(/\/$/, ''),
+  wildmindImageServiceUrl: (process.env.WILDMINDIMAGE_URL || 'https://ac38194cdfc0.ngrok-free.app')?.replace(/\/$/, ''),
   // API Base URLs
   minimaxApiBase: process.env.MINIMAX_API_BASE || 'https://api.minimax.io/v1',
   resendApiBase: process.env.RESEND_API_BASE || 'https://api.resend.com',
@@ -190,5 +190,7 @@ export const env: EnvConfig = {
   // Media Processing
   ffmpegMaxConcurrency: process.env.FFMPEG_MAX_CONCURRENCY ? parseInt(process.env.FFMPEG_MAX_CONCURRENCY, 10) : undefined,
 };
+
+
 
 

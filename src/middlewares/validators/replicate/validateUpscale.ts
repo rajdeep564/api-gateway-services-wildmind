@@ -2,10 +2,19 @@ import { Request, Response, NextFunction } from 'express';
 import { ApiError } from '../../../utils/errorHandler';
 
 export function validateUpscale(req: Request, _res: Response, next: NextFunction) {
-  const { image, model, scale, face_enhance, task } = req.body || {};
+  const { image, model, scale, face_enhance, task, width, height, scale_factor } = req.body || {};
   if (!image || typeof image !== 'string') return next(new ApiError('image is required (url)', 400));
   if (model && typeof model !== 'string') return next(new ApiError('model must be string', 400));
   if (scale != null && (typeof scale !== 'number' || scale < 0 || scale > 10)) return next(new ApiError('scale must be 0-10', 400));
+  if (scale_factor != null && (typeof scale_factor !== 'number' || scale_factor <= 0 || scale_factor > 10)) {
+    return next(new ApiError('scale_factor must be 0-10', 400));
+  }
+  if (width != null && (typeof width !== 'number' || width <= 0 || width > 100000)) {
+    return next(new ApiError('width must be a positive number', 400));
+  }
+  if (height != null && (typeof height !== 'number' || height <= 0 || height > 100000)) {
+    return next(new ApiError('height must be a positive number', 400));
+  }
   if (face_enhance != null && typeof face_enhance !== 'boolean') return next(new ApiError('face_enhance must be boolean', 400));
   if (task != null) {
     if (typeof task !== 'string') return next(new ApiError('task must be string', 400));
