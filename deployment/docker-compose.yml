@@ -71,6 +71,27 @@ services:
       - wildmind-network
     restart: unless-stopped
 
+  # --- Worker: Mirror Queue ---
+  mirror-worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: mirror-worker
+    command: npm run mirror:worker
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://wildmind-redis:6379
+      # Worker likely needs same env vars as API
+      - CREDIT_SERVICE_URL=http://credit-service:3000
+    env_file:
+      - .env.production
+    depends_on:
+      - redis
+      - api-gateway
+    networks:
+      - wildmind-network
+    restart: unless-stopped
+
   # --- Microservice: Credit Service ---
   credit-service:
     build:
@@ -81,6 +102,8 @@ services:
       - PORT=3000
       - DATABASE_URL=postgresql://postgres:postgres@credit-postgres:5432/credit_service
       - REDIS_URL=redis://credit-redis:6379
+    env_file:
+      - .env.production
     expose:
       - "3000"
     depends_on:
