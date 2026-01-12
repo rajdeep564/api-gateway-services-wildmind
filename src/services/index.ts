@@ -29,11 +29,11 @@ export * from './redeemCodeService';
 export * from './promptEnhancerService';
 export * from './reimagineService';
 export * from './replaceService';
-export * from './openai';
+// export * from './openai'; // Empty file
 
-// GenAI Services
-export * from './genai/geminiTextService';
-export * from './genai/replicateTextService';
+// GenAI Services - Explicit exports to avoid 'generateScenesFromStory' conflict
+export { generateGeminiTextResponse } from './genai/geminiTextService';
+export { generateReplicateTextResponse } from './genai/replicateTextService';
 
 // Utility Services
 export * from './aestheticScoreService';
