@@ -25,7 +25,7 @@ export async function removeWatermarkController(req: Request, res: Response, nex
         const result = await removeWatermark(uid, requestPayload);
 
         // Credit deduction logic (80 credits)
-        const CREDIT_COST = 80;
+        const CREDIT_COST = 90;
         const ctx: any = { creditCost: CREDIT_COST };
 
         await postSuccessDebit(uid, result, ctx, 'replicate', 'remove-watermark');

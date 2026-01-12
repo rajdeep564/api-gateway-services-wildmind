@@ -29,7 +29,7 @@ export async function removeElementController(req: Request, res: Response, next:
         const result = await removeElement(uid, requestPayload);
 
         // Credit deduction logic (80 credits)
-        const CREDIT_COST = 80;
+        const CREDIT_COST = 90;
         const ctx: any = { creditCost: CREDIT_COST };
 
         await postSuccessDebit(uid, result, ctx, 'replicate', 'remove-element');

@@ -9,11 +9,31 @@ import removeWatermarkRoutes from './general/removeWatermark';
 import creativelyUpscaleRoutes from './general/creativelyUpscale';
 import becomeCelebrityRoutes from './fun/becomeCelebrity';
 import replaceElementRoutes from './general/replaceElement';
+import expressionSheetRoutes from './photography/expressionSheet';
+import poseControlRoutes from './photography/poseControl';
+import characterSheetRoutes from './photography/characterSheet';
+import productPhotographyRoutes from './photography/productPhotography';
+import reimagineProductRoutes from './photography/reimagineProduct';
+import createLogoRoutes from './branding/createLogo';
+import mockupGenerationRoutes from './branding/mockupGeneration';
+import logoVariationsRoutes from './branding/logoVariations';
 
 const router = Router();
 
 // Selfie Video workflow
 router.use('/selfie-video', selfieVideoRoutes);
+
+// Photography workflows
+router.use('/photography/expression-sheet', expressionSheetRoutes);
+router.use('/photography/character-sheet', characterSheetRoutes);
+router.use('/photography/product-photography', productPhotographyRoutes);
+router.use('/photography/reimagine-product', reimagineProductRoutes);
+router.use('/photography/pose-control', poseControlRoutes);
+
+// Branding workflows
+router.use('/branding/create-logo', createLogoRoutes);
+router.use('/branding/mockup-generation', mockupGenerationRoutes);
+router.use('/branding/logo-variations', logoVariationsRoutes);
 
 // General workflows
 // removeBackgroundRoutes defines: router.post('/remove-background', ...)

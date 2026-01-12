@@ -25,7 +25,7 @@ export async function photoToLineDrawingController(req: Request, res: Response, 
         const result = await photoToLineDrawing(uid, requestPayload);
 
         // Credit deduction logic (Same as Restore Old Photo: 80 credits)
-        const CREDIT_COST = 80;
+        const CREDIT_COST = 90;
         const ctx: any = { creditCost: CREDIT_COST };
 
         await postSuccessDebit(uid, result, ctx, 'replicate', 'photo-to-line-drawing');
