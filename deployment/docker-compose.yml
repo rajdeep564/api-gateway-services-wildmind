@@ -42,6 +42,8 @@ services:
       context: ../../wildmindcanvas
       dockerfile: Dockerfile
     container_name: wildmindcanvas
+    environment:
+      - NEXT_PUBLIC_API_URL=https://dev-api.wildmindai.com
     expose:
       - "3000"
     networks:
@@ -63,7 +65,7 @@ services:
     env_file:
       - .env.production
     expose:
-      - "4000"
+      - "5000"
     depends_on:
       - redis
       - credit-service
