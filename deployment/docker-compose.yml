@@ -55,7 +55,7 @@ services:
       dockerfile: Dockerfile
     container_name: api-gateway
     environment:
-      - PORT=4000
+      - PORT=5000
       - NODE_ENV=production
       - CREDIT_SERVICE_URL=http://credit-service:3000
       - REDIS_URL=redis://wildmind-redis:6379
