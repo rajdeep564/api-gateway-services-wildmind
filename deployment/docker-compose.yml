@@ -1,0 +1,138 @@
+
+version: '3.8'
+
+services:
+  # --- Reverse Proxy ---
+  nginx:
+    image: nginx:stable-alpine
+    container_name: wildmind-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+      # Certbot/SSL certificates would replace these dummy paths in real prod setup
+      # - ./certbot/conf:/etc/letsencrypt
+      # - ./certbot/www:/var/www/certbot
+    depends_on:
+      - wild
+      - wildmindcanvas
+      - api-gateway
+    networks:
+      - wildmind-network
+    restart: always
+
+  # --- Frontend 1: Wild ---
+  wild:
+    build:
+      context: ../../wild
+      dockerfile: Dockerfile
+    container_name: wild
+    environment:
+      - NEXT_PUBLIC_API_URL=https://dev-api.wildmindai.com
+    expose:
+      - "3000"
+    networks:
+      - wildmind-network
+    restart: unless-stopped
+
+  # --- Frontend 2: Studios ---
+  wildmindcanvas:
+    build:
+      context: ../../wildmindcanvas
+      dockerfile: Dockerfile
+    container_name: wildmindcanvas
+    expose:
+      - "3000"
+    networks:
+      - wildmind-network
+    restart: unless-stopped
+
+  # --- Backend: API Gateway ---
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    environment:
+      - PORT=4000
+      - NODE_ENV=production
+      - CREDIT_SERVICE_URL=http://credit-service:3000
+      - REDIS_URL=redis://wildmind-redis:6379
+      # Add other secrets via .env file on server
+    env_file:
+      - .env.production
+    expose:
+      - "4000"
+    depends_on:
+      - redis
+      - credit-service
+    networks:
+      - wildmind-network
+    restart: unless-stopped
+
+  # --- Microservice: Credit Service ---
+  credit-service:
+    build:
+      context: ../../credit-service
+      dockerfile: Dockerfile
+    container_name: credit-service
+    environment:
+      - PORT=3000
+      - DATABASE_URL=postgresql://postgres:postgres@credit-postgres:5432/credit_service
+      - REDIS_URL=redis://credit-redis:6379
+    expose:
+      - "3000"
+    depends_on:
+      - credit-postgres
+      - credit-redis
+    networks:
+      - wildmind-network
+    restart: unless-stopped
+
+  # --- Databases ---
+  redis:
+    image: redis:7-alpine
+    container_name: wildmind-redis
+    expose:
+      - "6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - wildmind-network
+    restart: always
+
+  credit-redis:
+    image: redis:7-alpine
+    container_name: credit-service-redis
+    expose:
+      - "6379"
+    volumes:
+      - credit-redis-data:/data
+    networks:
+      - wildmind-network
+    restart: always
+
+  credit-postgres:
+    image: postgres:15-alpine
+    container_name: credit-service-postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=credit_service
+    expose:
+      - "5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - wildmind-network
+    restart: always
+
+networks:
+  wildmind-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+  credit-redis-data:
+  postgres-data:

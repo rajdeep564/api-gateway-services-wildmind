@@ -1,33 +1,34 @@
+
+# 1. Base Image
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Install build dependencies for native modules (sharp, etc)
-RUN apk add --no-cache python3 make g++
-
+# 2. Dependencies
 COPY package*.json ./
-RUN npm ci
+# Use ci if package-lock exists, otherwise install.
+RUN npm ci || npm install
 
+# 3. Source Code
 COPY . .
+
+# 4. Build
 RUN npm run build
 
-# Production image
-FROM node:20-alpine
+# --- Production Stage ---
+FROM node:20-alpine AS runner
 
 WORKDIR /app
 
-# Install runtime dependencies if needed
-# ffmpeg-static brings its own binary, but sometimes shared libs are needed
-RUN apk add --no-cache \
-    vips-dev \
-    ffprobe \
-    ffmpeg
+ENV NODE_ENV=production
 
-COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/node_modules ./node_modules
+# Copy built artifacts and dependencies
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+# Copy scripts folder if needed for migrations
+COPY --from=builder /app/scripts ./scripts 
 
 EXPOSE 4000
 
-CMD ["npm", "start"]
+CMD ["npm", "run", "start"]
