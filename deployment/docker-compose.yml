@@ -100,8 +100,8 @@ services:
     container_name: credit-service
     environment:
       - PORT=3000
-      - DATABASE_URL=postgresql://postgres:postgres@credit-postgres:5432/credit_service
-      - REDIS_URL=redis://credit-redis:6379
+      - DATABASE_URL=postgresql://postgres:wildmind@credit-service-postgres:5432/credit_service
+      - REDIS_URL=redis://credit-service-redis:6379
     env_file:
       - .env.production
     expose:
@@ -141,7 +141,7 @@ services:
     container_name: credit-service-postgres
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_PASSWORD=wildmind
       - POSTGRES_DB=credit_service
     expose:
       - "5432"
