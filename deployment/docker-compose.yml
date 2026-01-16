@@ -1,5 +1,5 @@
 
-version: '3.8' # Fixed args indentation
+version: '3.8' # Forced Update for Staging
 
 services:
   # --- Reverse Proxy ---
