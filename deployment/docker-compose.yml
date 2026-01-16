@@ -26,6 +26,9 @@ services:
     build:
       context: ../../wild
       dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_CANVAS_URL=https://onstaging-studios.wildmindai.com
+        - NEXT_PUBLIC_API_BASE_URL=https://dev-api.wildmindai.com
     container_name: wild
     environment:
       - NEXT_PUBLIC_API_BASE_URL=https://dev-api.wildmindai.com
