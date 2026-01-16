@@ -9,6 +9,7 @@ import removeWatermarkRoutes from './general/removeWatermark';
 import creativelyUpscaleRoutes from './general/creativelyUpscale';
 import becomeCelebrityRoutes from './fun/becomeCelebrity';
 import replaceElementRoutes from './general/replaceElement';
+import photographyRoutes from './photography';
 
 const router = Router();
 
@@ -33,5 +34,8 @@ router.use('/general/replace-element', replaceElementRoutes);
 
 // Fun workflows
 router.use('/fun/become-celebrity', becomeCelebrityRoutes);
+
+// Photography workflows
+router.use('/photography', photographyRoutes);
 
 export default router;
