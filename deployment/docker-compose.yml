@@ -44,8 +44,8 @@ services:
     build:
       context: ../../wildmindcanvas
       dockerfile: Dockerfile
-    args:
-      - NEXT_PUBLIC_API_URL=https://dev-api.wildmindai.com
+      args:
+        - NEXT_PUBLIC_API_URL=https://dev-api.wildmindai.com
     container_name: wildmindcanvas
     environment:
       - NEXT_PUBLIC_API_URL=https://dev-api.wildmindai.com
