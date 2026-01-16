@@ -21,6 +21,8 @@ jobs:
             
             # Update source code (gateway is in the parent of deployment)
             cd ..
+            git fetch origin staging
+            git reset --hard origin/staging
             git pull origin staging
             
             # Redeploy
