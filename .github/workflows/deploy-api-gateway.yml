@@ -1,0 +1,28 @@
+name: Deploy API Gateway
+
+on:
+  push:
+    branches:
+      - staging
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Deployment
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.CONTABO_HOST }}
+          username: ${{ secrets.CONTABO_USER }}
+          key: ${{ secrets.CONTABO_SSH_KEY }}
+          port: 22
+          script: |
+            cd wildmind-staging/api-gateway-services-wildmind/deployment || exit 1
+            
+            # Update source code (gateway is in the parent of deployment)
+            cd ..
+            git pull origin staging
+            
+            # Redeploy
+            cd deployment
+            ./deploy.sh api-gateway
