@@ -25,4 +25,5 @@ jobs:
             
             # Redeploy
             cd deployment
+            chmod +x deploy.sh
             ./deploy.sh api-gateway
