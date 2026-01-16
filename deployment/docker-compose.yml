@@ -84,7 +84,7 @@ services:
       context: ..
       dockerfile: Dockerfile
     container_name: mirror-worker
-    command: npm run mirror:worker
+    command: npm run mirror:worker:prod
     environment:
       - NODE_ENV=production
       - REDIS_URL=redis://wildmind-redis:6379

@@ -14,7 +14,8 @@
     "migrate:aesthetic-scores": "ts-node scripts/migrateAestheticScores.ts",
     "migrate:normalize-images": "ts-node scripts/normalizeLegacyImages.ts",
     "migrate:feed-scores": "ts-node scripts/migrateFeedRankingScores.ts",
-    "mirror:worker": "ts-node src/workers/mirrorQueueWorker.ts"
+    "mirror:worker": "ts-node src/workers/mirrorQueueWorker.ts",
+    "mirror:worker:prod": "node dist/workers/mirrorQueueWorker.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.893.0",
