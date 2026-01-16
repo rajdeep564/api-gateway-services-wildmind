@@ -7,9 +7,16 @@
 set -e
 
 SERVICE=$1
-# We assume this script is running from wildmind-staging/api-gateway-services-wildmind/deployment
-# So the root of the "wildmind-staging" folder is two levels up: ../../
-ROOT_DIR="../../"
+
+# Resolve the directory where this script resides (deployment/)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Resolve the Project Root (wildmind-staging/) which is two levels up
+# api-gateway-services-wildmind/deployment/ -> api-gateway-services-wildmind/ -> wildmind-staging/
+PROJ_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+echo "📂 Project Root: $PROJ_ROOT"
+echo "📂 Script Dir: $SCRIPT_DIR"
 
 if [ -z "$SERVICE" ]; then
     echo "Usage: ./deploy.sh [service_name]"
@@ -17,18 +24,34 @@ if [ -z "$SERVICE" ]; then
     exit 1
 fi
 
+# Detect Docker Compose command
+if command -v docker-compose &> /dev/null; then
+    COMPOSE_CMD="docker-compose"
+else
+    COMPOSE_CMD="docker compose"
+fi
+echo "🐳 Using Compose Command: $COMPOSE_CMD"
+
 echo "🚀 Starting deployment for service: $SERVICE"
 
 # Function to pull a repo if it exists
 pull_repo() {
     local repo_dir=$1
-    if [ -d "$ROOT_DIR/$repo_dir/.git" ]; then
+    local full_path="$PROJ_ROOT/$repo_dir"
+    
+    if [ -d "$full_path/.git" ]; then
         echo "📥 Pulling latest code for $repo_dir..."
-        cd "$ROOT_DIR/$repo_dir"
+        cd "$full_path"
+        
+        # Stash changes if any (to avoid conflict errors on server)
+        if [[ -n $(git status -s) ]]; then
+            echo "   ⚠️  Stashing local changes in $repo_dir..."
+            git stash
+        fi
+        
         git pull origin staging
-        cd - > /dev/null
     else
-        echo "⚠️  Repo $repo_dir not found or not a git repo. Skipping pull."
+        echo "⚠️  Repo directory $full_path not found or not a git repo. Skipping pull."
     fi
 }
 
@@ -51,30 +74,26 @@ fi
 # 3. Deploy logic
 echo "🔄 Rebuilding $SERVICE..."
 
-# Ensure we are in the deployment directory
-cd "$(dirname "$0")"
+# Always run compose from the deployment directory where docker-compose.yml is
+cd "$SCRIPT_DIR"
 
 if [ "$SERVICE" == "all" ]; then
-    docker-compose up -d --build --remove-orphans
+    $COMPOSE_CMD up -d --build --remove-orphans
     
 elif [ "$SERVICE" == "nginx" ]; then
-    if docker-compose up -d --build nginx; then
+    if $COMPOSE_CMD up -d --build nginx; then
         echo "✅ Nginx container updated."
     fi
-    docker exec wildmind-nginx nginx -s reload || echo "⚠️ Nginx reload warning"
+    # Try different reload commands depending on container presence
+    docker exec wildmind-nginx nginx -s reload || echo "⚠️ Nginx reload warning (container might be restarting)"
 
 else
-    # Build with --no-cache to ensure ARGs are picked up if they changed
-    # We only do --no-cache if we suspect build args issues, but for standard usage:
-    # docker-compose build $SERVICE
-    
-    # Actually, let's use standard build first. If args in compose changed, it should pick up.
-    docker-compose build $SERVICE
-    docker-compose up -d --no-deps $SERVICE
+    # Standard build and recreate
+    $COMPOSE_CMD up -d --build --force-recreate --no-deps $SERVICE
 fi
 
 # 4. Cleanup
 echo "🧹 Pruning unused images..."
-docker image prune -f
+docker image prune -f || true
 
 echo "✅ Deployment of $SERVICE complete!"
