@@ -88,6 +88,8 @@ export interface EnvConfig {
   mirrorQueueBatchLimit?: number; // Mirror queue batch size limit
   // Media Processing
   ffmpegMaxConcurrency?: number; // FFmpeg max concurrent operations
+  // Microservices
+  creditServiceUrl: string;
 }
 
 function normalizeBoolean(value: string | undefined, defaultTrue: boolean): boolean {
@@ -182,6 +184,8 @@ export const env: EnvConfig = {
   mirrorQueueBatchLimit: process.env.MIRROR_QUEUE_BATCH_LIMIT ? parseInt(process.env.MIRROR_QUEUE_BATCH_LIMIT, 10) : undefined,
   // Media Processing
   ffmpegMaxConcurrency: process.env.FFMPEG_MAX_CONCURRENCY ? parseInt(process.env.FFMPEG_MAX_CONCURRENCY, 10) : undefined,
+  // Microservices
+  creditServiceUrl: process.env.CREDIT_SERVICE_URL || 'http://credit-service:3000',
 };
 
 
