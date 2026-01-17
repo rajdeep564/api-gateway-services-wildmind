@@ -107,14 +107,13 @@ services:
     container_name: credit-service
     environment:
       - PORT=3000
-      - DATABASE_URL=postgresql://postgres:wildmind@credit-service-postgres:5432/credit_service
-      - REDIS_URL=redis://credit-service-redis:6379
+      - NODE_ENV=production
+      # DATABASE_URL and REDIS_URL loaded from .env.production
     env_file:
       - .env.production
     expose:
       - "3000"
     depends_on:
-      - credit-postgres
       - credit-redis
     networks:
       - wildmind-network
