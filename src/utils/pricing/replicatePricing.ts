@@ -235,7 +235,7 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   // Lookup base cost (per image)
   let baseCost = 0;
 
-  // Handle Z-Image Turbo explicit override (Free)
+  // Handle Z-Image Turbo mapping
   if (
     normalized.includes('z-image-turbo') ||
     normalized.includes('zimage-turbo') ||
@@ -243,12 +243,12 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
     normalized.includes('new-turbo-model') ||
     normalized.includes('placeholder-model-name')
   ) {
-    baseCost = 0;
-  } else {
-    const base = findCredits(display);
-    if (base == null) throw new Error(`Unsupported Replicate Image model: ${display}`);
-    baseCost = Math.ceil(base);
+    display = 'z-image-turbo';
   }
+
+  const base = findCredits(display);
+  if (base == null) throw new Error(`Unsupported Replicate Image model: ${display}`);
+  baseCost = Math.ceil(base);
 
   const cost = Math.ceil(baseCost * count);
   return {
