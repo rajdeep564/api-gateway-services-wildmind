@@ -187,7 +187,7 @@ async function me(req: Request, res: Response, next: NextFunction) {
     // Get storage info from credit-service
     let storageInfo: any = {};
     try {
-      const storageData = await creditsRepository.readUserInfo(uid);
+      const storageData = await creditsRepository.readUserInfo(uid) as any;
       if (storageData) {
         storageInfo = {
           storageUsedBytes: storageData.storageUsedBytes?.toString() || '0',
