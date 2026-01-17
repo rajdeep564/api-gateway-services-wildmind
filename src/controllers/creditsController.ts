@@ -184,6 +184,21 @@ async function me(req: Request, res: Response, next: NextFunction) {
     const userSnap = await userRef.get();
     const userData = userSnap.data() as any;
 
+    // Get storage info from credit-service
+    let storageInfo: any = {};
+    try {
+      const storageData = await creditsRepository.readUserInfo(uid);
+      if (storageData) {
+        storageInfo = {
+          storageUsedBytes: storageData.storageUsedBytes?.toString() || '0',
+          storageQuotaBytes: storageData.storageQuotaBytes?.toString() || '0',
+          username: storageData.username || null
+        };
+      }
+    } catch (storageError: any) {
+      logger.error({ uid, error: storageError?.message }, '[CREDITS_CONTROLLER] Failed to fetch storage info');
+    }
+
     const finalBalance = info?.creditBalance || 0;
     const responseTime = Date.now() - startTime;
 
@@ -202,6 +217,7 @@ async function me(req: Request, res: Response, next: NextFunction) {
         launchTrialStartDate: userData?.launchTrialStartDate || null,
         recentLedgers,
         autoReconciled,
+        ...storageInfo // Add storage info to response
       })
     );
   } catch (err: any) {
