@@ -2,6 +2,8 @@ import Replicate from 'replicate';
 import { env } from '../../config/env';
 import { PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION, STORYBOARD_SYSTEM_INSTRUCTION } from './geminiTextService';
 
+// Replicate model identifier for GPT-4o
+// According to Replicate docs: https://replicate.com/openai/gpt-4o
 const REPLICATE_MODEL = 'openai/gpt-4o';
 
 let cachedReplicate: Replicate | null = null;
@@ -46,26 +48,159 @@ export async function generateReplicateTextResponse(
         maxOutputTokens: options?.maxOutputTokens,
     });
 
+    // According to Replicate docs: https://replicate.com/openai/gpt-4o
+    // Input format: { prompt: string, system_prompt: string }
+    // Note: Do NOT include max_tokens - it's not in the official docs and may cause E001 errors
     const input = {
         prompt: prompt.trim(),
         system_prompt: systemPrompt,
-        max_tokens: options?.maxOutputTokens || 1024,
     };
 
     try {
-        const output = await replicate.run(REPLICATE_MODEL, { input });
+        console.log('[ReplicateTextService] Calling GPT-4o via Replicate (exact format from docs):', {
+            model: REPLICATE_MODEL,
+            promptLength: prompt.trim().length,
+            systemPromptLength: systemPrompt.length,
+            inputKeys: Object.keys(input),
+        });
+        
+        // Use predictions.create() to get more detailed error information if run() fails
+        let output: any;
+        try {
+            output = await replicate.run(REPLICATE_MODEL, { input });
+        } catch (runError: any) {
+            // If run() fails, try using predictions.create() to get more details
+            console.warn('[ReplicateTextService] replicate.run() failed, trying predictions.create() for more details...');
+            try {
+                const prediction = await replicate.predictions.create({
+                    model: REPLICATE_MODEL,
+                    input,
+                });
+                
+                // Wait for completion and get logs
+                let finalPrediction = prediction;
+                const maxWaitTime = 60000; // 60 seconds
+                const startTime = Date.now();
+                
+                while (finalPrediction.status === 'starting' || finalPrediction.status === 'processing') {
+                    if (Date.now() - startTime > maxWaitTime) {
+                        throw new Error('Prediction timeout - took longer than 60 seconds');
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    finalPrediction = await replicate.predictions.get(prediction.id);
+                    
+                    // Log any error details
+                    if (finalPrediction.error) {
+                        console.error('[ReplicateTextService] Prediction error details:', finalPrediction.error);
+                    }
+                    if (finalPrediction.logs) {
+                        console.log('[ReplicateTextService] Prediction logs:', finalPrediction.logs);
+                    }
+                }
+                
+                if (finalPrediction.status === 'succeeded' && finalPrediction.output) {
+                    output = finalPrediction.output;
+                } else if (finalPrediction.status === 'failed') {
+                    const errorDetails = finalPrediction.error || 'Unknown error';
+                    const logs = finalPrediction.logs || '';
+                    throw new Error(`Prediction failed: ${JSON.stringify(errorDetails)}. Logs: ${logs}`);
+                } else {
+                    throw new Error(`Prediction ended with status: ${finalPrediction.status}`);
+                }
+            } catch (predError: any) {
+                // If predictions.create() also fails, use the original error but with more details
+                console.error('[ReplicateTextService] Both run() and predictions.create() failed:', {
+                    runError: runError?.message,
+                    predError: predError?.message,
+                    predictionStatus: predError?.status,
+                });
+                throw runError; // Throw the original run() error
+            }
+        }
 
         // Replicate returns an array of strings for streaming models, or a string
         const responseText = Array.isArray(output) ? output.join('') : String(output);
 
-        console.log('[ReplicateTextService] Completed text generation', {
+        console.log('[ReplicateTextService] ✅ GPT-4o response received:', {
             totalLength: responseText.length,
         });
 
         return responseText;
     } catch (error: any) {
-        console.error('[ReplicateTextService] Error generating text:', error);
-        throw new Error(`Replicate text generation failed: ${error.message || 'Unknown error'}`);
+        // Extract detailed error information
+        const errorDetails: any = {
+            message: error?.message,
+            status: error?.status,
+            statusCode: error?.statusCode,
+            responseStatus: error?.response?.status,
+            responseData: error?.response?.data,
+            responseText: error?.response?.text,
+            body: error?.body,
+            request: error?.request ? {
+                url: error.request.url,
+                method: error.request.method,
+            } : null,
+        };
+        
+        console.error('[ReplicateTextService] ❌ GPT-4o failed with detailed error:', {
+            ...errorDetails,
+            model: REPLICATE_MODEL,
+            hasApiKey: !!env.replicateApiKey,
+            inputKeys: Object.keys(input),
+            promptLength: prompt.trim().length,
+            systemPromptLength: systemPrompt.length,
+        });
+        
+        // Provide more helpful error messages
+        let errorMessage = 'Unknown error';
+        if (error?.message) {
+            errorMessage = error.message;
+        } else if (error?.status || error?.statusCode) {
+            errorMessage = `Replicate API returned status ${error.status || error.statusCode}`;
+        }
+        
+        // Try to extract more specific error from response
+        let specificError = '';
+        if (error?.response?.data) {
+            try {
+                const data = typeof error.response.data === 'string' 
+                    ? JSON.parse(error.response.data) 
+                    : error.response.data;
+                specificError = data.detail || data.error || data.message || '';
+            } catch (e) {
+                specificError = String(error.response.data);
+            }
+        }
+        
+        // Check for common error patterns
+        if (errorMessage.includes('E001') || errorMessage.includes('Prediction failed')) {
+            // E001 from Replicate typically means:
+            // 1. Invalid input parameters
+            // 2. Model access restrictions
+            // 3. Account/credit issues
+            // 4. Prompt too long or contains invalid characters
+            const explanation = `E001 Error Explanation:
+- This is a generic Replicate API error that can occur due to:
+  1. Invalid input parameters (check prompt/system_prompt format)
+  2. Account doesn't have access to GPT-4o model (may need paid plan)
+  3. Prompt too long (current: ${prompt.trim().length} chars, system: ${systemPrompt.length} chars)
+  4. Invalid characters in prompt
+  5. API key permissions issue
+
+To fix:
+- Verify your Replicate account has access to 'openai/gpt-4o' model
+- Check if you need to enable the model in your Replicate dashboard
+- Try a shorter, simpler prompt to test
+- Verify your API key has the correct permissions`;
+            
+            throw new Error(`Replicate API error (E001): ${explanation}\n\nError: ${errorMessage}${specificError ? `\nDetails: ${specificError}` : ''}`);
+        }
+        
+        if (errorMessage.includes('404') || errorMessage.includes('Not Found')) {
+            throw new Error(`Replicate model not found: The model '${REPLICATE_MODEL}' is not available. This could mean: 1) The model identifier is incorrect, 2) Your account doesn't have access to this model, 3) The model has been deprecated. Please check your Replicate dashboard for available models.`);
+        }
+        
+        throw new Error(`Replicate text generation failed: ${errorMessage}${specificError ? ` (${specificError})` : ''}`);
     }
 }
 const SCENE_GENERATION_SYSTEM_INSTRUCTION = `You are a professional storyboard artist and story world director.
