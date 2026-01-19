@@ -7,8 +7,8 @@ export const validateCanvasGenerate = [
     .trim()
     .notEmpty()
     .withMessage('Prompt is required')
-    .isLength({ min: 1, max: 2000 })
-    .withMessage('Prompt must be between 1 and 2000 characters'),
+    .isLength({ min: 1, max: 5000 })
+    .withMessage('Prompt must be between 1 and 5000 characters'),
 
   body('model')
     .trim()

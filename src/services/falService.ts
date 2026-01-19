@@ -355,20 +355,20 @@ async function generate(
             stored = { publicUrl: proxyAsZata.publicUrl, key: proxyAsZata.key, originalUrl: src };
           } else
 
-          if (isDataUri) {
-            const base64Match = /^data:([^;]+);base64,(.+)$/.exec(src);
-            if (base64Match && base64Match[2]) {
-              stored = await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` });
+            if (isDataUri) {
+              const base64Match = /^data:([^;]+);base64,(.+)$/.exec(src);
+              if (base64Match && base64Match[2]) {
+                stored = await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` });
+              } else {
+                continue;
+              }
+            } else if (isBlobUrl) {
+              throw new ApiError('Blob URLs are not supported. Please convert to data URI or public URL first.', 400);
             } else {
-              continue;
+              // Regular URL - upload to Zata (handles Zata URLs via S3 AND proxy URLs)
+              // This is CRTIICAL: /api/proxy URLs must be fetched and uploaded to Zata
+              stored = await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
             }
-          } else if (isBlobUrl) {
-            throw new ApiError('Blob URLs are not supported. Please convert to data URI or public URL first.', 400);
-          } else {
-            // Regular URL - upload to Zata (handles Zata URLs via S3 AND proxy URLs)
-            // This is CRTIICAL: /api/proxy URLs must be fetched and uploaded to Zata
-            stored = await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
-          }
 
           if (stored && stored.publicUrl) {
             inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: stored.originalUrl || src });
@@ -1560,15 +1560,15 @@ async function generate(
         if (isI2IMode) {
           // Check payload.image_urls first (direct from frontend), then fallback to publicImageUrls/uploadedImages
           const payloadImageUrls = Array.isArray((payload as any).image_urls) ? (payload as any).image_urls : [];
-            const refs = pickPublicImageUrls(publicImageUrls, payloadImageUrls, uploadedImages);
-            if (refs.length === 0) {
-              throw new ApiError(
-                'Image-to-image mode requires at least one public input image URL (https://...). If you are using /api/proxy/resource/... links, configure API_GATEWAY_URL so the server can re-upload them to public storage first.',
-                400,
-                { error: 'image_not_public' }
-              );
-            }
-            input.image_urls = refs;
+          const refs = pickPublicImageUrls(publicImageUrls, payloadImageUrls, uploadedImages);
+          if (refs.length === 0) {
+            throw new ApiError(
+              'Image-to-image mode requires at least one public input image URL (https://...). If you are using /api/proxy/resource/... links, configure API_GATEWAY_URL so the server can re-upload them to public storage first.',
+              400,
+              { error: 'image_not_public' }
+            );
+          }
+          input.image_urls = refs;
         }
         // For T2I (base endpoint), don't include image_urls
       } else if (resolvedAspect) {
