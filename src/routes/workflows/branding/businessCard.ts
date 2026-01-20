@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { businessCardController } from '../../../controllers/workflows/photography/businessCardController';
+import { businessCardController } from '../../../controllers/workflows/branding/businessCardController';
 import { requireAuth } from '../../../middlewares/authMiddleware';
 
 const router = Router();

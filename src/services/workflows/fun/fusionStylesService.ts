@@ -15,25 +15,28 @@ const resolveOutputUrls = async (output: any) => {
     return [String(output)];
 };
 
-export interface BecomeCelebrityRequest {
+export interface FusionStylesRequest {
     imageUrl: string;
     isPublic?: boolean;
     additionalText?: string;
 }
 
-const buildCelebrityPrompt = (additionalText?: string) => {
-    return `Ultra realistic candid photo of the person in the reference image, standing in a crowded place with people holding cameras taking photos. The background is filled with fans and a little chaos, giving a true celebrity vibe. The photo should look like a real-life captured moment, with natural lighting, sharp details, and authentic atmosphere.
-    
-INSTRUCTIONS:
-- STRICTLY preserve the identity and facial features of the person in the reference image.
-- The person should be the main focus, looking confident or natural.
-- The crowd and cameras should be in the background/surroundings, creating depth.
-${additionalText ? `USER ADDITIONAL DETAILS: ${additionalText}` : ''}
+const buildFusionPrompt = (additionalText?: string) => {
+    return `Fusion of Styles: Blend a 2D animated character or animal seamlessly into the realistic background of the provided image.
 
-OUTPUT: A photorealistic, high-quality image of the user as a celebrity in a chaotic, fan-filled environment.`;
+STRICT RULES:
+- The existing human person or character in the input image MUST remain UNCHANGED. Do NOT alter their face, identity, clothing, or pose.
+- Maintain the original realistic background and lighting of the input image.
+- Introduce a 2D-style character or animal (cartoon, anime, or illustrative style) into the scene.
+- The 2D element must interact naturally with the realistic environment (proper scaling, placement, and subtle shadow integration).
+- Ensure a clean "hybrid" look where 2D and 3D/Realism coexist artfully.
+
+${additionalText ? `USER'S SPECIFIC INSTRUCTIONS: ${additionalText}` : "Instruction: Add a cute 2D cartoon companion or element that fits the scene's mood."}
+
+OUTPUT: A photorealistic photograph containing a perfectly blended 2D illustrative element.`;
 };
 
-export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) => {
+export const fusionStyles = async (uid: string, req: FusionStylesRequest) => {
     const key = env.replicateApiKey as string;
     if (!key) throw new ApiError("Replicate API key not configured", 500);
 
@@ -41,11 +44,11 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
     const modelBase = 'qwen/qwen-image-edit-2511';
 
     const creator = await authRepository.getUserById(uid);
-    const finalPrompt = buildCelebrityPrompt(req.additionalText);
+    const finalPrompt = buildFusionPrompt(req.additionalText);
 
     // 1. Create History Record
     const { historyId } = await generationHistoryRepository.create(uid, {
-        prompt: "Become a Celebrity",
+        prompt: "Fusion of Styles",
         model: modelBase,
         generationType: "image-to-image",
         visibility: req.isPublic ? "public" : "private",
@@ -71,7 +74,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         const username = creator?.username || uid;
         const stored = await uploadDataUriToZata({
             dataUri: inputImageUrl,
-            keyPrefix: `users/${username}/input/become-celebrity/${historyId}`,
+            keyPrefix: `users/${username}/input/fusion-styles/${historyId}`,
             fileName: "source",
         });
         inputImageUrl = stored.publicUrl;
@@ -102,7 +105,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
     };
 
     try {
-        console.log('[becomeCelebrityService] Running model', { model: modelBase, input: inputPayload });
+        console.log('[fusionStylesService] Running model', { model: modelBase, input: inputPayload });
         const output: any = await replicate.run(modelBase as any, { input: inputPayload });
 
         const urls = await resolveOutputUrls(output);
@@ -115,8 +118,8 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
             const username = creator?.username || uid;
             const uploaded = await uploadFromUrlToZata({
                 sourceUrl: outputUrl,
-                keyPrefix: `users/${username}/image/become-celebrity/${historyId}`,
-                fileName: `celebrity-${Date.now()}`,
+                keyPrefix: `users/${username}/image/fusion-styles/${historyId}`,
+                fileName: `fusion-${Date.now()}`,
             });
             storedUrl = uploaded.publicUrl;
             storagePath = uploaded.key;
@@ -156,7 +159,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         };
 
     } catch (e: any) {
-        console.error('[becomeCelebrityService] Error', e);
+        console.error('[fusionStylesService] Error', e);
         await generationHistoryRepository.update(uid, historyId, {
             status: "failed",
             error: e?.message || "Replicate failed"

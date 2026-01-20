@@ -15,25 +15,51 @@ const resolveOutputUrls = async (output: any) => {
     return [String(output)];
 };
 
-export interface BecomeCelebrityRequest {
+export interface PolaroidStyleRequest {
     imageUrl: string;
     isPublic?: boolean;
-    additionalText?: string;
 }
+const POLAROID_PROMPT = `Transform the attached image so it looks like it was captured using a real Polaroid instant camera.
 
-const buildCelebrityPrompt = (additionalText?: string) => {
-    return `Ultra realistic candid photo of the person in the reference image, standing in a crowded place with people holding cameras taking photos. The background is filled with fans and a little chaos, giving a true celebrity vibe. The photo should look like a real-life captured moment, with natural lighting, sharp details, and authentic atmosphere.
-    
-INSTRUCTIONS:
-- STRICTLY preserve the identity and facial features of the person in the reference image.
-- The person should be the main focus, looking confident or natural.
-- The crowd and cameras should be in the background/surroundings, creating depth.
-${additionalText ? `USER ADDITIONAL DETAILS: ${additionalText}` : ''}
+CRITICAL SUBJECT RULE (ABSOLUTE):
+- The output MUST contain EXACTLY the same number of people as in the input image.
+- If the input image has ONE person, the output must contain ONLY ONE person.
+- Do NOT add, duplicate, mirror, hallucinate, or introduce any new people.
+- Do NOT create background silhouettes, reflections, or partial faces.
+- The subject(s) must remain the same individual(s) from the input.
 
-OUTPUT: A photorealistic, high-quality image of the user as a celebrity in a chaotic, fan-filled environment.`;
-};
+IDENTITY PRESERVATION:
+- Do NOT change faces or identities.
+- Do NOT alter facial structure, skin tone, age, or core expression identity.
+- The person(s) must remain instantly recognizable.
 
-export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) => {
+STYLE & FEEL:
+- Make it look like a real Polaroid instant photo.
+- Slight motion blur, imperfect focus, subtle flash overexposure.
+- Soft film grain, mild color shift, low dynamic range.
+- Candid, casual, in-the-moment energy.
+
+SCENE CHANGES:
+- Replace the background with a simple white curtain backdrop.
+- Add playful, silly props ONLY to the existing person(s) (party glasses, paper hats, ribbons, etc.).
+- Make the existing person(s) perform funny, light-hearted poses.
+- Do NOT introduce new people in the background.
+
+CAMERA BEHAVIOR:
+- Simulate on-camera flash: bright foreground, slightly washed highlights.
+- Subtle vignetting and edge softness.
+- Natural imperfections: slight tilt, imperfect framing, mild blur.
+
+OUTPUT REQUIREMENTS:
+- Photorealistic instant-film look
+- No illustration or stylization
+- No studio perfection
+- Must feel like a real Polaroid snapshot
+- EXACTLY the same number of people as the input image
+`;
+
+
+export const polaroidStyle = async (uid: string, req: PolaroidStyleRequest) => {
     const key = env.replicateApiKey as string;
     if (!key) throw new ApiError("Replicate API key not configured", 500);
 
@@ -41,11 +67,11 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
     const modelBase = 'qwen/qwen-image-edit-2511';
 
     const creator = await authRepository.getUserById(uid);
-    const finalPrompt = buildCelebrityPrompt(req.additionalText);
+    const finalPrompt = POLAROID_PROMPT;
 
     // 1. Create History Record
     const { historyId } = await generationHistoryRepository.create(uid, {
-        prompt: "Become a Celebrity",
+        prompt: "Polaroid Style Transformation",
         model: modelBase,
         generationType: "image-to-image",
         visibility: req.isPublic ? "public" : "private",
@@ -71,7 +97,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         const username = creator?.username || uid;
         const stored = await uploadDataUriToZata({
             dataUri: inputImageUrl,
-            keyPrefix: `users/${username}/input/become-celebrity/${historyId}`,
+            keyPrefix: `users/${username}/input/polaroid-style/${historyId}`,
             fileName: "source",
         });
         inputImageUrl = stored.publicUrl;
@@ -102,7 +128,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
     };
 
     try {
-        console.log('[becomeCelebrityService] Running model', { model: modelBase, input: inputPayload });
+        console.log('[polaroidStyleService] Running model', { model: modelBase, input: inputPayload });
         const output: any = await replicate.run(modelBase as any, { input: inputPayload });
 
         const urls = await resolveOutputUrls(output);
@@ -115,8 +141,8 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
             const username = creator?.username || uid;
             const uploaded = await uploadFromUrlToZata({
                 sourceUrl: outputUrl,
-                keyPrefix: `users/${username}/image/become-celebrity/${historyId}`,
-                fileName: `celebrity-${Date.now()}`,
+                keyPrefix: `users/${username}/image/polaroid-style/${historyId}`,
+                fileName: `polaroid-${Date.now()}`,
             });
             storedUrl = uploaded.publicUrl;
             storagePath = uploaded.key;
@@ -156,7 +182,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         };
 
     } catch (e: any) {
-        console.error('[becomeCelebrityService] Error', e);
+        console.error('[polaroidStyleService] Error', e);
         await generationHistoryRepository.update(uid, historyId, {
             status: "failed",
             error: e?.message || "Replicate failed"

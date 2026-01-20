@@ -15,25 +15,82 @@ const resolveOutputUrls = async (output: any) => {
     return [String(output)];
 };
 
-export interface BecomeCelebrityRequest {
+export interface CustomStickersRequest {
     imageUrl: string;
     isPublic?: boolean;
-    additionalText?: string;
+    shape?: string;
+    style?: string;
+    theme?: string;
+    material?: string;
+    stickerType?: string;
+    fileStyle?: string;
+    details?: string;
 }
 
-const buildCelebrityPrompt = (additionalText?: string) => {
-    return `Ultra realistic candid photo of the person in the reference image, standing in a crowded place with people holding cameras taking photos. The background is filled with fans and a little chaos, giving a true celebrity vibe. The photo should look like a real-life captured moment, with natural lighting, sharp details, and authentic atmosphere.
-    
-INSTRUCTIONS:
-- STRICTLY preserve the identity and facial features of the person in the reference image.
-- The person should be the main focus, looking confident or natural.
-- The crowd and cameras should be in the background/surroundings, creating depth.
-${additionalText ? `USER ADDITIONAL DETAILS: ${additionalText}` : ''}
+const buildStickersPrompt = (req: CustomStickersRequest) => {
+    return `Create a collection of cute chibi-style illustration stickers using the person in the uploaded image as the ONLY character.
 
-OUTPUT: A photorealistic, high-quality image of the user as a celebrity in a chaotic, fan-filled environment.`;
+IDENTITY RULES (ABSOLUTE):
+- Use exactly the same person from the input image.
+- Do NOT add new characters.
+- Do NOT change gender, ethnicity, face structure, or hairstyle identity.
+- The character must remain clearly recognizable as the same person.
+- Do NOT merge multiple people or create duplicates.
+
+STYLE:
+- Chibi / super-deformed proportions (big head, small body).
+- Cute, friendly, expressive anime-inspired style.
+- Clean vector-like outlines.
+- Soft pastel colors.
+- High detail but simple shapes.
+- No realism, no 3D, no photorealism.
+${req.style ? `- Override style preference: ${req.style}` : ''}
+
+STICKER SET REQUIREMENTS:
+- Generate 6–10 different sticker poses and expressions.
+- Each sticker must show a different emotion or action, such as:
+  - Happy / smiling
+  - Excited
+  - Winking
+  - Peace sign
+  - Singing / holding microphone
+  - Thinking
+  - Thumbs up
+  - Laughing
+${req.theme ? `- Theme focus: ${req.theme}` : ''}
+
+POSE & CLOTHING:
+- Base outfit inspired by the original image.
+- Keep clothing style consistent with the source image.
+- Small cartoon accessories allowed (stars, hearts, music notes, sparkles).
+
+BACKGROUND & FORMAT:
+- Transparent background for each sticker.
+- No background scenes.
+- No shadows or environments.
+- Each sticker centered with padding.
+- White outline border around each sticker (die-cut style).
+${req.shape ? `- Preferred sticker shape: ${req.shape}` : ''}
+${req.material ? `- Material reference: ${req.material}` : ''}
+${req.stickerType ? `- Sticker type (format): ${req.stickerType}` : ''}
+${req.fileStyle ? `- Output file format: ${req.fileStyle}` : ''}
+
+QUALITY:
+- High resolution
+- Clean edges
+- Print-ready
+- No text
+- No watermark
+- No logos
+- No extra objects
+
+FINAL OUTPUT:
+A cohesive sticker pack sheet containing multiple individual chibi stickers of the same character, ready for export and cutting.
+
+${req.details ? `ADDITIONAL USER REQUESTS: ${req.details}` : ''}`;
 };
 
-export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) => {
+export const customStickers = async (uid: string, req: CustomStickersRequest) => {
     const key = env.replicateApiKey as string;
     if (!key) throw new ApiError("Replicate API key not configured", 500);
 
@@ -41,11 +98,11 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
     const modelBase = 'qwen/qwen-image-edit-2511';
 
     const creator = await authRepository.getUserById(uid);
-    const finalPrompt = buildCelebrityPrompt(req.additionalText);
+    const finalPrompt = buildStickersPrompt(req);
 
     // 1. Create History Record
     const { historyId } = await generationHistoryRepository.create(uid, {
-        prompt: "Become a Celebrity",
+        prompt: "Custom Chibi Stickers",
         model: modelBase,
         generationType: "image-to-image",
         visibility: req.isPublic ? "public" : "private",
@@ -71,7 +128,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         const username = creator?.username || uid;
         const stored = await uploadDataUriToZata({
             dataUri: inputImageUrl,
-            keyPrefix: `users/${username}/input/become-celebrity/${historyId}`,
+            keyPrefix: `users/${username}/input/custom-stickers/${historyId}`,
             fileName: "source",
         });
         inputImageUrl = stored.publicUrl;
@@ -102,7 +159,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
     };
 
     try {
-        console.log('[becomeCelebrityService] Running model', { model: modelBase, input: inputPayload });
+        console.log('[customStickersService] Running model', { model: modelBase, input: inputPayload });
         const output: any = await replicate.run(modelBase as any, { input: inputPayload });
 
         const urls = await resolveOutputUrls(output);
@@ -115,8 +172,8 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
             const username = creator?.username || uid;
             const uploaded = await uploadFromUrlToZata({
                 sourceUrl: outputUrl,
-                keyPrefix: `users/${username}/image/become-celebrity/${historyId}`,
-                fileName: `celebrity-${Date.now()}`,
+                keyPrefix: `users/${username}/image/custom-stickers/${historyId}`,
+                fileName: `stickers-${Date.now()}`,
             });
             storedUrl = uploaded.publicUrl;
             storagePath = uploaded.key;
@@ -156,7 +213,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         };
 
     } catch (e: any) {
-        console.error('[becomeCelebrityService] Error', e);
+        console.error('[customStickersService] Error', e);
         await generationHistoryRepository.update(uid, historyId, {
             status: "failed",
             error: e?.message || "Replicate failed"

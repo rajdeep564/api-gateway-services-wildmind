@@ -15,25 +15,40 @@ const resolveOutputUrls = async (output: any) => {
     return [String(output)];
 };
 
-export interface BecomeCelebrityRequest {
+export interface CCTVFootageRequest {
     imageUrl: string;
     isPublic?: boolean;
     additionalText?: string;
 }
 
-const buildCelebrityPrompt = (additionalText?: string) => {
-    return `Ultra realistic candid photo of the person in the reference image, standing in a crowded place with people holding cameras taking photos. The background is filled with fans and a little chaos, giving a true celebrity vibe. The photo should look like a real-life captured moment, with natural lighting, sharp details, and authentic atmosphere.
-    
-INSTRUCTIONS:
-- STRICTLY preserve the identity and facial features of the person in the reference image.
-- The person should be the main focus, looking confident or natural.
-- The crowd and cameras should be in the background/surroundings, creating depth.
-${additionalText ? `USER ADDITIONAL DETAILS: ${additionalText}` : ''}
+const buildCCTVPrompt = (additionalText?: string) => {
+    const randomCameraNum = Math.floor(Math.random() * 900) + 100;
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0].replace(/-/g, '/'); // YYYY/MM/DD
+    const timeStr = now.toTimeString().split(' ')[0]; // HH:MM:SS
 
-OUTPUT: A photorealistic, high-quality image of the user as a celebrity in a chaotic, fan-filled environment.`;
+    return `Generate a photorealistic image that looks like low quality and slightly blurry CCTV footage.
+The camera is mounted from the ceiling above (high angle surveillance view).
+
+SCENE & ATMOSPHERE:
+- Grainy, low-resolution texture typical of security cameras.
+- Slight motion blur or compression artifacts.
+- Lighting should feel harsh or dim, like warehouse or street lighting.
+
+OVERLAY ELEMENTS (CRITICAL):
+- Add a small digital TIMESTAMP and DATE in the TOP LEFT corner: "${timeStr}  ${dateStr}".
+- Add the text "CAMERA 1(${randomCameraNum})" in the TOP RIGHT corner.
+- The font should be a simple, pixelated white digital font.
+
+SUBJECT:
+- Transform the uploaded image into this CCTV style.
+- Keep the subject recognizable but fitting into this surveillance context.
+${additionalText ? `USER INSTRUCTION: ${additionalText}` : ''}
+
+OUTPUT: A photorealistic CCTV surveillance snapshot with overlay text.`;
 };
 
-export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) => {
+export const cctvFootage = async (uid: string, req: CCTVFootageRequest) => {
     const key = env.replicateApiKey as string;
     if (!key) throw new ApiError("Replicate API key not configured", 500);
 
@@ -41,11 +56,11 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
     const modelBase = 'qwen/qwen-image-edit-2511';
 
     const creator = await authRepository.getUserById(uid);
-    const finalPrompt = buildCelebrityPrompt(req.additionalText);
+    const finalPrompt = buildCCTVPrompt(req.additionalText);
 
     // 1. Create History Record
     const { historyId } = await generationHistoryRepository.create(uid, {
-        prompt: "Become a Celebrity",
+        prompt: "CCTV Footage Style",
         model: modelBase,
         generationType: "image-to-image",
         visibility: req.isPublic ? "public" : "private",
@@ -71,7 +86,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         const username = creator?.username || uid;
         const stored = await uploadDataUriToZata({
             dataUri: inputImageUrl,
-            keyPrefix: `users/${username}/input/become-celebrity/${historyId}`,
+            keyPrefix: `users/${username}/input/cctv-footage/${historyId}`,
             fileName: "source",
         });
         inputImageUrl = stored.publicUrl;
@@ -102,7 +117,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
     };
 
     try {
-        console.log('[becomeCelebrityService] Running model', { model: modelBase, input: inputPayload });
+        console.log('[cctvFootageService] Running model', { model: modelBase, input: inputPayload });
         const output: any = await replicate.run(modelBase as any, { input: inputPayload });
 
         const urls = await resolveOutputUrls(output);
@@ -115,8 +130,8 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
             const username = creator?.username || uid;
             const uploaded = await uploadFromUrlToZata({
                 sourceUrl: outputUrl,
-                keyPrefix: `users/${username}/image/become-celebrity/${historyId}`,
-                fileName: `celebrity-${Date.now()}`,
+                keyPrefix: `users/${username}/image/cctv-footage/${historyId}`,
+                fileName: `cctv-${Date.now()}`,
             });
             storedUrl = uploaded.publicUrl;
             storagePath = uploaded.key;
@@ -156,7 +171,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         };
 
     } catch (e: any) {
-        console.error('[becomeCelebrityService] Error', e);
+        console.error('[cctvFootageService] Error', e);
         await generationHistoryRepository.update(uid, historyId, {
             status: "failed",
             error: e?.message || "Replicate failed"

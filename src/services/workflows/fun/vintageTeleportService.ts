@@ -15,25 +15,32 @@ const resolveOutputUrls = async (output: any) => {
     return [String(output)];
 };
 
-export interface BecomeCelebrityRequest {
+export interface VintageTeleportRequest {
     imageUrl: string;
     isPublic?: boolean;
-    additionalText?: string;
 }
 
-const buildCelebrityPrompt = (additionalText?: string) => {
-    return `Ultra realistic candid photo of the person in the reference image, standing in a crowded place with people holding cameras taking photos. The background is filled with fans and a little chaos, giving a true celebrity vibe. The photo should look like a real-life captured moment, with natural lighting, sharp details, and authentic atmosphere.
-    
-INSTRUCTIONS:
-- STRICTLY preserve the identity and facial features of the person in the reference image.
-- The person should be the main focus, looking confident or natural.
-- The crowd and cameras should be in the background/surroundings, creating depth.
-${additionalText ? `USER ADDITIONAL DETAILS: ${additionalText}` : ''}
+const VINTAGE_PROMPT = `Generate a vintage image based on the attached person. 
 
-OUTPUT: A photorealistic, high-quality image of the user as a celebrity in a chaotic, fan-filled environment.`;
-};
+STYLE & COMPOSITION:
+- It must be a portrait of the attached person taken in the late 1800’s.
+- The person is seated on a chair in a room, dressed in authentic clothing related to the late 1800s period.
+- The image should be in a lower blurry quality, typical of early photography.
 
-export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) => {
+TEXTURES & EFFECTS:
+- The entire image must be in sepia tones.
+- Add torn and worn edges to the photo.
+- Add minor creases and folds throughout the image to make it look like an old physical photograph.
+- Authentic film grain and dust particles.
+
+IDENTITY PRESERVATION:
+- Maintain the EXACT face and identity of the person in the input image.
+- Do NOT change facial features, bone structure, or core expression.
+- The person must remain perfectly recognizable as the one in the original photo.
+
+OUTPUT: A photorealistic vintage physical photograph from the 1800s.`;
+
+export const vintageTeleport = async (uid: string, req: VintageTeleportRequest) => {
     const key = env.replicateApiKey as string;
     if (!key) throw new ApiError("Replicate API key not configured", 500);
 
@@ -41,11 +48,11 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
     const modelBase = 'qwen/qwen-image-edit-2511';
 
     const creator = await authRepository.getUserById(uid);
-    const finalPrompt = buildCelebrityPrompt(req.additionalText);
+    const finalPrompt = VINTAGE_PROMPT;
 
     // 1. Create History Record
     const { historyId } = await generationHistoryRepository.create(uid, {
-        prompt: "Become a Celebrity",
+        prompt: "Vintage Image Teleport",
         model: modelBase,
         generationType: "image-to-image",
         visibility: req.isPublic ? "public" : "private",
@@ -71,7 +78,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         const username = creator?.username || uid;
         const stored = await uploadDataUriToZata({
             dataUri: inputImageUrl,
-            keyPrefix: `users/${username}/input/become-celebrity/${historyId}`,
+            keyPrefix: `users/${username}/input/vintage-teleport/${historyId}`,
             fileName: "source",
         });
         inputImageUrl = stored.publicUrl;
@@ -102,7 +109,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
     };
 
     try {
-        console.log('[becomeCelebrityService] Running model', { model: modelBase, input: inputPayload });
+        console.log('[vintageTeleportService] Running model', { model: modelBase, input: inputPayload });
         const output: any = await replicate.run(modelBase as any, { input: inputPayload });
 
         const urls = await resolveOutputUrls(output);
@@ -115,8 +122,8 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
             const username = creator?.username || uid;
             const uploaded = await uploadFromUrlToZata({
                 sourceUrl: outputUrl,
-                keyPrefix: `users/${username}/image/become-celebrity/${historyId}`,
-                fileName: `celebrity-${Date.now()}`,
+                keyPrefix: `users/${username}/image/vintage-teleport/${historyId}`,
+                fileName: `vintage-${Date.now()}`,
             });
             storedUrl = uploaded.publicUrl;
             storagePath = uploaded.key;
@@ -156,7 +163,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         };
 
     } catch (e: any) {
-        console.error('[becomeCelebrityService] Error', e);
+        console.error('[vintageTeleportService] Error', e);
         await generationHistoryRepository.update(uid, historyId, {
             status: "failed",
             error: e?.message || "Replicate failed"

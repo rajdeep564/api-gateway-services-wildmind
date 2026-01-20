@@ -15,25 +15,38 @@ const resolveOutputUrls = async (output: any) => {
     return [String(output)];
 };
 
-export interface BecomeCelebrityRequest {
+export interface ChangeSeasonsRequest {
     imageUrl: string;
     isPublic?: boolean;
-    additionalText?: string;
+    seasonDescription: string;
 }
 
-const buildCelebrityPrompt = (additionalText?: string) => {
-    return `Ultra realistic candid photo of the person in the reference image, standing in a crowded place with people holding cameras taking photos. The background is filled with fans and a little chaos, giving a true celebrity vibe. The photo should look like a real-life captured moment, with natural lighting, sharp details, and authentic atmosphere.
-    
-INSTRUCTIONS:
-- STRICTLY preserve the identity and facial features of the person in the reference image.
-- The person should be the main focus, looking confident or natural.
-- The crowd and cameras should be in the background/surroundings, creating depth.
-${additionalText ? `USER ADDITIONAL DETAILS: ${additionalText}` : ''}
+const buildSeasonsPrompt = (seasonDescription: string) => {
+    // If user provided no description, default to a generic transformation or ask for emphasis on seasons.
+    // However, the controller/frontend should ideally enforce this.
+    // We will assume seasonDescription contains the user's desired season (e.g., "Winter", "Snowy Christmas", "Autumn leaves").
 
-OUTPUT: A photorealistic, high-quality image of the user as a celebrity in a chaotic, fan-filled environment.`;
+    return `Transform the season of this image.
+TARGET SEASON / ATMOSPHERE: "${seasonDescription}"
+
+INSTRUCTIONS:
+- completely transform the environment to match the target season/description provided above.
+- If "Winter": Add snow, frost, ice, and cold lighting. Trees should be bare or covered in snow.
+- If "Spring": Add blooming flowers, lush green grass, budding trees, and soft, warm sunlight.
+- If "Summer": Bright, vibrant sunlight, full green foliage, clear blue skies.
+- If "Autumn" / "Fall": distinct orange, red, and yellow leaves, fallen leaves on the ground, slightly cooler/moody lighting.
+- If the user entered a specific custom description (e.g., "Cherry Blossoms"), strictly follow that theme.
+
+CONSTRAINTS:
+- Keep the original structure of the image (buildings, mountains, roads, people) EXACTLY as they are.
+- Only change the textures, colors, and lighting to reflect the new season.
+- Do NOT add new large objects or remove existing structures.
+- The transformation must be photorealistic and seamless.
+
+OUTPUT: A photorealistic version of the original image, fully transformed into the requested season.`;
 };
 
-export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) => {
+export const changeSeasons = async (uid: string, req: ChangeSeasonsRequest) => {
     const key = env.replicateApiKey as string;
     if (!key) throw new ApiError("Replicate API key not configured", 500);
 
@@ -41,11 +54,11 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
     const modelBase = 'qwen/qwen-image-edit-2511';
 
     const creator = await authRepository.getUserById(uid);
-    const finalPrompt = buildCelebrityPrompt(req.additionalText);
+    const finalPrompt = buildSeasonsPrompt(req.seasonDescription);
 
     // 1. Create History Record
     const { historyId } = await generationHistoryRepository.create(uid, {
-        prompt: "Become a Celebrity",
+        prompt: "Change Seasons",
         model: modelBase,
         generationType: "image-to-image",
         visibility: req.isPublic ? "public" : "private",
@@ -71,7 +84,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         const username = creator?.username || uid;
         const stored = await uploadDataUriToZata({
             dataUri: inputImageUrl,
-            keyPrefix: `users/${username}/input/become-celebrity/${historyId}`,
+            keyPrefix: `users/${username}/input/change-seasons/${historyId}`,
             fileName: "source",
         });
         inputImageUrl = stored.publicUrl;
@@ -102,7 +115,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
     };
 
     try {
-        console.log('[becomeCelebrityService] Running model', { model: modelBase, input: inputPayload });
+        console.log('[changeSeasonsService] Running model', { model: modelBase, input: inputPayload });
         const output: any = await replicate.run(modelBase as any, { input: inputPayload });
 
         const urls = await resolveOutputUrls(output);
@@ -115,8 +128,8 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
             const username = creator?.username || uid;
             const uploaded = await uploadFromUrlToZata({
                 sourceUrl: outputUrl,
-                keyPrefix: `users/${username}/image/become-celebrity/${historyId}`,
-                fileName: `celebrity-${Date.now()}`,
+                keyPrefix: `users/${username}/image/change-seasons/${historyId}`,
+                fileName: `season-${Date.now()}`,
             });
             storedUrl = uploaded.publicUrl;
             storagePath = uploaded.key;
@@ -156,7 +169,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         };
 
     } catch (e: any) {
-        console.error('[becomeCelebrityService] Error', e);
+        console.error('[changeSeasonsService] Error', e);
         await generationHistoryRepository.update(uid, historyId, {
             status: "failed",
             error: e?.message || "Replicate failed"

@@ -115,25 +115,29 @@ export const generateAutomotiveShot = async (uid: string, req: AutomotiveRequest
     const lightPrompt = lightMap[req.lighting] || req.lighting;
     const motionPrompt = motionMap[req.motionBlur] || req.motionBlur;
 
-    const hardPrompt = `Create a REAL-WORLD automotive photograph using the provided car image.
+    const extraDetails = req.background === 'studio'
+        ? 'studio lighting, infinite background, professional automotive commercial'
+        : 'real world location, natural lighting, shot on location';
 
-Scene:
-Environment: ${bgPrompt}
-Lighting: ${lightPrompt}
-Motion: ${motionPrompt}
+    const hardPrompt = `RAW CANDID PHOTO, (Phase One XF IQ4 150MP:1.3), 80mm lens, f/8, ISO 100.
+A highly realistic automotive photograph of the car in the image.
 
-STRICT RULES:
-- This must look like a real camera photo taken in the physical world.
-- NO illustration, NO CGI look, NO anime, NO cartoon, NO concept art, NO painting style.
-- Use true-to-life optics: DSLR camera, 50mm lens, natural depth of field, realistic exposure.
-- Preserve the exact car identity: same make, model, body shape, paint color, wheels, mirrors, badges, proportions.
-- Do NOT redesign, exaggerate, or stylize the car in any way.
-- Integrate the car naturally into the environment with correct scale, shadows, ground contact, and perspective.
-- Lighting must physically match the environment and reflect accurately on the car’s body and glass.
-- The result must resemble a professional automotive photoshoot from a real magazine.
+CONTEXT:
+Environment: ${bgPrompt}, ${extraDetails}.
+Lighting: ${lightPrompt}, physically accurate reflections.
+Motion: ${motionPrompt}.
 
-Output style:
-Ultra-photorealistic, real-world photography, natural color science, cinematic but realistic, 8K detail, sharp focus on the car, believable motion blur if applicable, no fantasy elements.`;
+STRICT REALISM RULES:
+- The car MUST look like a real physical object with weight and mass.
+- Imperfect surfaces: road texture, tire dust, slight reflection inconsistencies (Fresnel effect).
+- Natural optical flaws: subtle chromatic aberration, sensor noise in shadows, natural depth of field.
+- NO PLASTIC LOOK, NO 3D RENDER SMOOTHNESS, NO CGI PERFECT SHINE.
+- The car paint must behave like real metallic/gloss paint, not like a blender shader.
+- Integration: The car must cast realistic ambient occlusion shadows on the ground.
+- Preserve exact car identity (wheels, badges, trim).
+
+STYLE:
+National Geographic Automotive, Evo Magazine, raw file, unedited, photorealistic, 8k, highly detailed.`;
 
 
     try {

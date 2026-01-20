@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { ApiError } from '../../../utils/errorHandler';
 import { postSuccessDebit } from '../../../utils/creditDebit';
-import { generateBusinessCard, BusinessCardRequest } from '../../../services/workflows/photography/businessCardService';
+import { generateBusinessCard, BusinessCardRequest } from '../../../services/workflows/branding/businessCardService';
 
 export async function businessCardController(req: Request, res: Response, next: NextFunction) {
     try {
@@ -22,7 +22,7 @@ export async function businessCardController(req: Request, res: Response, next: 
             isPublic,
         } = req.body as BusinessCardRequest;
 
-        // Basic validation
+        // Validation
         if (!logo) throw new ApiError('Logo image is required', 400);
         if (!companyName) throw new ApiError('Company name is required', 400);
         if (!personName) throw new ApiError('Person name is required', 400);
@@ -30,7 +30,8 @@ export async function businessCardController(req: Request, res: Response, next: 
         if (!contact) throw new ApiError('Contact details are required', 400);
         if (!style) throw new ApiError('Style is required', 400);
         if (!color) throw new ApiError('Color is required', 400);
-        const sideCount = sides === 2 ? 2 : 1;
+
+        const sideCount = (sides === 2) ? 2 : 1;
 
         const requestPayload: BusinessCardRequest = {
             logo,
@@ -44,11 +45,14 @@ export async function businessCardController(req: Request, res: Response, next: 
             isPublic,
         };
 
+        // Service call
         const result = await generateBusinessCard(uid, requestPayload);
 
-        // Credit deduction: 90 per side
+        // Credit deduction: 90 credits per side (Total: 90 or 180)
         const CREDIT_COST = 90 * sideCount;
         const ctx: any = { creditCost: CREDIT_COST };
+
+        console.log(`[businessCardController] Successful generation. uid=${uid} historyId=${result.historyId} cost=${CREDIT_COST}`);
         const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'business-card');
 
         const responseData = {
@@ -60,15 +64,16 @@ export async function businessCardController(req: Request, res: Response, next: 
                 debitOutcome,
                 creditCost: CREDIT_COST,
                 historyId: result.historyId,
-                uid,
-            },
+                uid
+            }
         };
 
         res.json({
             responseStatus: 'success',
             message: 'OK',
-            data: responseData,
+            data: responseData
         });
+
     } catch (error) {
         next(error);
     }

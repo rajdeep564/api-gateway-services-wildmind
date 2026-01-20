@@ -15,25 +15,55 @@ const resolveOutputUrls = async (output: any) => {
     return [String(output)];
 };
 
-export interface BecomeCelebrityRequest {
+export interface RelightingRequest {
     imageUrl: string;
     isPublic?: boolean;
-    additionalText?: string;
+    lightingStyle: string;
 }
 
-const buildCelebrityPrompt = (additionalText?: string) => {
-    return `Ultra realistic candid photo of the person in the reference image, standing in a crowded place with people holding cameras taking photos. The background is filled with fans and a little chaos, giving a true celebrity vibe. The photo should look like a real-life captured moment, with natural lighting, sharp details, and authentic atmosphere.
-    
-INSTRUCTIONS:
-- STRICTLY preserve the identity and facial features of the person in the reference image.
-- The person should be the main focus, looking confident or natural.
-- The crowd and cameras should be in the background/surroundings, creating depth.
-${additionalText ? `USER ADDITIONAL DETAILS: ${additionalText}` : ''}
+const buildRelightingPrompt = (lightingStyle: string) => {
+    let specificInstr = "";
 
-OUTPUT: A photorealistic, high-quality image of the user as a celebrity in a chaotic, fan-filled environment.`;
+    switch (lightingStyle) {
+        case "Natural":
+            specificInstr = "Soft, balanced daylight. Even exposure with natural sun direction. No harsh shadows or artificial tints.";
+            break;
+        case "Studio":
+            specificInstr = "Professional studio photography lighting. Three-point lighting setup with key, fill, and rim light. High contrast, clean shadows, and perfectly lit subject.";
+            break;
+        case "Cinematic":
+            specificInstr = "High-end movie scene lighting. Teal and orange color grading. Dramatic contrast, anamorphic lens flares, and atmospheric depth.";
+            break;
+        case "Dramatic":
+            specificInstr = "High contrast, low key lighting (chiaroscuro). Deep shadows and bright highlights. Emotional and intense atmosphere.";
+            break;
+        case "Soft Diffused":
+            specificInstr = "Extremely soft, wrap-around light. like a cloudy day or softbox. Minimal shadows, dreamy and ethereal look. Flattering for portraits.";
+            break;
+        case "Moody":
+            specificInstr = "Dark, atmospheric, and mysterious. Desaturated colors, heavy vignettes, and localized light pools. Emotional and somber tone.";
+            break;
+        default:
+            specificInstr = "Professional lighting enhancement. Balanced exposure and beautiful color grading.";
+            break;
+    }
+
+    return `Transform the lighting of this image.
+TARGET LIGHTING STYLE: "${lightingStyle}"
+
+LIGHTING INSTRUCTIONS:
+${specificInstr}
+
+GENERAL RULES:
+- Completely change the light sources, shadows, and color grading to match the target style.
+- Maintain the original subject, pose, and background details EXACTLY.
+- Do NOT change facial features or the identity of the person.
+- The output must be photorealistic and look like it was originally shot with this lighting setup.
+
+OUTPUT: A photorealistic image with the new lighting applied.`;
 };
 
-export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) => {
+export const relighting = async (uid: string, req: RelightingRequest) => {
     const key = env.replicateApiKey as string;
     if (!key) throw new ApiError("Replicate API key not configured", 500);
 
@@ -41,11 +71,11 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
     const modelBase = 'qwen/qwen-image-edit-2511';
 
     const creator = await authRepository.getUserById(uid);
-    const finalPrompt = buildCelebrityPrompt(req.additionalText);
+    const finalPrompt = buildRelightingPrompt(req.lightingStyle);
 
     // 1. Create History Record
     const { historyId } = await generationHistoryRepository.create(uid, {
-        prompt: "Become a Celebrity",
+        prompt: `Relighting: ${req.lightingStyle}`,
         model: modelBase,
         generationType: "image-to-image",
         visibility: req.isPublic ? "public" : "private",
@@ -71,7 +101,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         const username = creator?.username || uid;
         const stored = await uploadDataUriToZata({
             dataUri: inputImageUrl,
-            keyPrefix: `users/${username}/input/become-celebrity/${historyId}`,
+            keyPrefix: `users/${username}/input/relighting/${historyId}`,
             fileName: "source",
         });
         inputImageUrl = stored.publicUrl;
@@ -102,7 +132,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
     };
 
     try {
-        console.log('[becomeCelebrityService] Running model', { model: modelBase, input: inputPayload });
+        console.log('[relightingService] Running model', { model: modelBase, input: inputPayload });
         const output: any = await replicate.run(modelBase as any, { input: inputPayload });
 
         const urls = await resolveOutputUrls(output);
@@ -115,8 +145,8 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
             const username = creator?.username || uid;
             const uploaded = await uploadFromUrlToZata({
                 sourceUrl: outputUrl,
-                keyPrefix: `users/${username}/image/become-celebrity/${historyId}`,
-                fileName: `celebrity-${Date.now()}`,
+                keyPrefix: `users/${username}/image/relighting/${historyId}`,
+                fileName: `relighted-${Date.now()}`,
             });
             storedUrl = uploaded.publicUrl;
             storagePath = uploaded.key;
@@ -156,7 +186,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         };
 
     } catch (e: any) {
-        console.error('[becomeCelebrityService] Error', e);
+        console.error('[relightingService] Error', e);
         await generationHistoryRepository.update(uid, historyId, {
             status: "failed",
             error: e?.message || "Replicate failed"
