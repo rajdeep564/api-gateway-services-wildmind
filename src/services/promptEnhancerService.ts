@@ -257,25 +257,7 @@ export async function queryCanvasPrompt(
     throw new Error('Text is required');
   }
 
-  // Prioritize Replicate (GPT-4o) if available
-  if (env.replicateApiKey) {
-    try {
-      const enhancedText = await generateReplicateTextResponse(text, {
-        maxOutputTokens: maxNewTokens,
-        systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
-      });
-
-      return {
-        type: 'answer',
-        enhanced_prompt: enhancedText,
-        response: enhancedText,
-      };
-    } catch (err) {
-      console.error('[Canvas Query] Replicate integration failed, falling back to Gemini:', err);
-      // Fallback to Gemini
-    }
-  }
-
+  // Use Gemini 3 Preview for chat
   const hasGeminiKey =
     Boolean(
       env.googleGenAIApiKey ||
@@ -284,89 +266,35 @@ export async function queryCanvasPrompt(
       process.env.GEMINI_API_KEY
     );
 
-  if (hasGeminiKey) {
-    try {
-      const enhancedText = await generateGeminiTextResponse(text, {
-        maxOutputTokens: maxNewTokens,
-        systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
-        enableGoogleSearchTool: false,
-        enableThinking: false,
-      });
-
-      return {
-        type: 'answer',
-        enhanced_prompt: enhancedText,
-        response: enhancedText,
-      };
-    } catch (err) {
-      console.error('[Canvas Query] Gemini integration failed, falling back to prompt enhancer service if available:', err);
-      if (!env.promptEnhancerUrl) {
-        throw err;
-      }
-      // otherwise fall through to original service as backup
-    }
+  if (!hasGeminiKey) {
+    console.error('[Canvas Query] ❌ Gemini API key missing');
+    throw new Error('Gemini API key is required for chat. Gemini 3 Preview is the required model. Please configure GEMINI_API_KEY or GOOGLE_GENAI_API_KEY.');
   }
 
-  const baseUrl = getPromptEnhancerUrl();
-  const maxTokens = maxNewTokens || 300;
-
   try {
-    console.log(`[Canvas Query] Querying prompt enhancement for text: "${text.substring(0, 50)}..."`);
+    console.log('[Canvas Query] ✅ Using Gemini 3 Preview for chat');
+    const enhancedText = await generateGeminiTextResponse(text, {
+      maxOutputTokens: maxNewTokens,
+      systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
+      enableGoogleSearchTool: false,
+      enableThinking: false,
+    });
 
-    const response = await axios.post(
-      `${baseUrl}/canvas/query`,
-      {
-        text: text.trim(),
-        max_new_tokens: maxTokens,
-      },
-      {
-        timeout: 120000, // 120 second timeout (2 minutes) - increased for storyboard generation
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-
-    const data = response.data;
-
-    if (!data || typeof data.type !== 'string') {
-      console.error('[Canvas Query] Invalid response structure:', data);
-      throw new Error('Invalid response from canvas query service');
-    }
-
-    // Validate type
-    if (!['image', 'video', 'music', 'answer'].includes(data.type)) {
-      console.error('[Canvas Query] Invalid type in response:', data.type);
-      throw new Error('Invalid response type from canvas query service');
-    }
-
-    console.log(`[Canvas Query] Successfully processed query, type: ${data.type}`);
-
+    console.log('[Canvas Query] ✅ Gemini 3 Preview response received successfully');
     return {
-      type: data.type,
-      enhanced_prompt: data.enhanced_prompt || null,
-      response: data.response || null,
+      type: 'answer',
+      enhanced_prompt: enhancedText,
+      response: enhancedText,
     };
-  } catch (error: any) {
-    const axiosError = error as AxiosError;
-
-    if (axiosError.response) {
-      // Server responded with error status
-      const status = axiosError.response.status;
-      const statusText = axiosError.response.statusText;
-      const errorData = (axiosError.response.data as any)?.detail || axiosError.response.data;
-
-      console.error(`[Canvas Query] Service error (${status}):`, errorData);
-      throw new Error(`Canvas query failed: ${errorData || statusText}`);
-    } else if (axiosError.request) {
-      // Request was made but no response received
-      console.error('[Canvas Query] No response from service:', axiosError.message);
-      throw new Error('Canvas query service is unavailable. Please try again later.');
-    } else {
-      // Error setting up the request
-      console.error('[Canvas Query] Request setup error:', axiosError.message);
-      throw new Error(`Failed to query canvas prompt: ${axiosError.message}`);
-    }
+  } catch (err: any) {
+    console.error('[Canvas Query] ❌ Gemini 3 Preview failed:', {
+      error: err?.message,
+      stack: err?.stack,
+      model: 'gemini-3-pro-preview',
+      hasGeminiKey: hasGeminiKey,
+    });
+    const errorMessage = err?.message || 'Unknown error';
+    throw new Error(`Chat service unavailable: Gemini 3 Preview failed. ${errorMessage}. Please check your Gemini API key configuration.`);
   }
 }
 
