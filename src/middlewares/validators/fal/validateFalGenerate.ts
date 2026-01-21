@@ -37,6 +37,10 @@ export const ALLOWED_FAL_MODELS = [
   // Chatterbox speech-to-speech (resemble-ai)
   'resemble-ai/chatterboxhd/speech-to-speech',
   'chatterbox-sts',
+  // Qwen Image Edit Multiple Angles
+  'qwen-image-edit-2511-multiple-angles',
+  'qwen-multiple-angles',
+  'qwen-image-edit-multiple-angles',
 ];
 
 export const validateFalGenerate = [
@@ -278,6 +282,51 @@ export const validateFalQueueStatus = [
 ];
 
 export const validateFalQueueResult = validateFalQueueStatus;
+
+// Qwen Image Edit Multiple Angles validator
+// Model: fal-ai/qwen-image-edit-2511-multiple-angles
+export const validateFalQwenMultipleAngles = [
+  body('image_urls').isArray({ min: 1 }).withMessage('image_urls is required and must be a non-empty array'),
+  body('image_urls.*').isString().notEmpty().withMessage('Each image_urls item must be a non-empty string URL'),
+  body('horizontal_angle').optional().isFloat().withMessage('horizontal_angle must be a number'),
+  body('vertical_angle').optional().isFloat().withMessage('vertical_angle must be a number'),
+  body('zoom').optional().isFloat({ min: 0, max: 10 }).withMessage('zoom must be between 0 and 10'),
+  body('additional_prompt').optional().isString().withMessage('additional_prompt must be a string'),
+  body('lora_scale').optional().isFloat({ min: 0, max: 2 }).withMessage('lora_scale must be between 0 and 2'),
+  body('image_size').optional().custom((value) => {
+    // Allow enum string or custom object with width/height
+    if (typeof value === 'string') {
+      return [
+        'square_hd',
+        'square',
+        'portrait_4_3',
+        'portrait_16_9',
+        'landscape_4_3',
+        'landscape_16_9',
+      ].includes(value);
+    }
+    if (typeof value === 'object' && value !== null) {
+      const width = Number((value as any).width);
+      const height = Number((value as any).height);
+      return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0;
+    }
+    return false;
+  }).withMessage('image_size must be a valid enum string or object with width and height'),
+  body('guidance_scale').optional().isFloat({ min: 0, max: 20 }).withMessage('guidance_scale must be between 0 and 20'),
+  body('num_inference_steps').optional().isInt({ min: 1, max: 100 }).withMessage('num_inference_steps must be between 1 and 100'),
+  body('acceleration').optional().isIn(['none', 'regular']).withMessage('acceleration must be none or regular'),
+  body('negative_prompt').optional().isString().withMessage('negative_prompt must be a string'),
+  body('seed').optional().isInt().withMessage('seed must be an integer'),
+  body('sync_mode').optional().isBoolean().withMessage('sync_mode must be boolean'),
+  body('enable_safety_checker').optional().isBoolean().withMessage('enable_safety_checker must be boolean'),
+  body('output_format').optional().isIn(['png', 'jpeg', 'webp']).withMessage('output_format must be png, jpeg, or webp'),
+  body('num_images').optional().isInt({ min: 1, max: 10 }).withMessage('num_images must be between 1 and 10'),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
 
 // Kling 2.6 Pro Text-to-Video validator
 export const validateFalKling26ProT2v = [

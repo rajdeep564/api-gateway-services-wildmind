@@ -3690,6 +3690,211 @@ export const falService = {
       }
       throw falError;
     }
+  },
+  async qwenMultipleAngles(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    if (!body?.image_urls || !Array.isArray(body.image_urls) || body.image_urls.length === 0) {
+      throw new ApiError('image_urls is required and must be a non-empty array', 400);
+    }
+    fal.config({ credentials: falKey });
+
+    const model = 'fal-ai/qwen-image-edit-2511-multiple-angles';
+    const creator = await authRepository.getUserById(uid);
+    const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+    const promptText = typeof body?.additional_prompt === 'string' ? String(body.additional_prompt) : '';
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt: promptText ? `Qwen Multiple Angles: ${promptText}` : 'Qwen Multiple Angles',
+      model,
+      generationType: 'image-edit',
+      visibility: body.isPublic ? 'public' : 'private',
+      isPublic: body.isPublic === true,
+      createdBy,
+    });
+
+    try {
+      // Resolve image URLs - ensure they're publicly accessible
+      const username = creator?.username || uid;
+      const resolvedImageUrls: string[] = [];
+      
+      for (const imgUrl of body.image_urls) {
+        if (!imgUrl || typeof imgUrl !== 'string') continue;
+        
+        // Check if it's a proxy/Zata URL that needs conversion
+        const proxyAsZata = tryConvertProxyResourceToZataUrl(imgUrl);
+        if (proxyAsZata) {
+          resolvedImageUrls.push(proxyAsZata.publicUrl);
+          continue;
+        }
+
+        // Check if it's localhost or proxy URL that needs re-uploading
+        const isLocalhost = imgUrl.includes('localhost') || imgUrl.includes('127.0.0.1') || imgUrl.includes('/api/proxy/');
+        const isZataUrl = imgUrl.includes('idr01.zata.ai');
+
+        if (isLocalhost || isZataUrl) {
+          try {
+            const reuploaded = await uploadFromUrlToZata({
+              sourceUrl: imgUrl,
+              keyPrefix: `users/${username}/input/${historyId}`,
+              fileName: `qwen-angle-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+            });
+            resolvedImageUrls.push(reuploaded.publicUrl);
+          } catch (err: any) {
+            console.error('[falService.qwenMultipleAngles] Failed to re-upload image:', err?.message || err);
+            // Try using original URL - FAL might be able to access it
+            resolvedImageUrls.push(imgUrl);
+          }
+        } else {
+          // Public URL - use as-is
+          resolvedImageUrls.push(imgUrl);
+        }
+      }
+
+      if (resolvedImageUrls.length === 0) {
+        throw new ApiError('No valid image URLs could be resolved', 400);
+      }
+
+      const input: any = {
+        image_urls: resolvedImageUrls,
+      };
+
+      // Add optional parameters
+      if (typeof body?.horizontal_angle === 'number') {
+        input.horizontal_angle = Number(body.horizontal_angle);
+      }
+      if (typeof body?.vertical_angle === 'number') {
+        input.vertical_angle = Number(body.vertical_angle);
+      }
+      if (typeof body?.zoom === 'number') {
+        input.zoom = Number(body.zoom);
+      } else {
+        input.zoom = 5; // Default zoom
+      }
+      if (typeof body?.additional_prompt === 'string' && body.additional_prompt.trim()) {
+        input.additional_prompt = String(body.additional_prompt).trim();
+      }
+      if (typeof body?.lora_scale === 'number') {
+        input.lora_scale = Number(body.lora_scale);
+      } else {
+        input.lora_scale = 1; // Default lora_scale
+      }
+      if (body?.image_size) {
+        input.image_size = body.image_size;
+      }
+      if (typeof body?.guidance_scale === 'number') {
+        input.guidance_scale = Number(body.guidance_scale);
+      } else {
+        input.guidance_scale = 4.5; // Default guidance_scale
+      }
+      if (typeof body?.num_inference_steps === 'number') {
+        input.num_inference_steps = Math.round(Number(body.num_inference_steps));
+      } else {
+        input.num_inference_steps = 28; // Default num_inference_steps
+      }
+      if (body?.acceleration) {
+        input.acceleration = body.acceleration;
+      } else {
+        input.acceleration = 'regular'; // Default acceleration
+      }
+      if (typeof body?.negative_prompt === 'string' && body.negative_prompt.trim()) {
+        input.negative_prompt = String(body.negative_prompt).trim();
+      }
+      if (typeof body?.seed === 'number') {
+        input.seed = Math.round(Number(body.seed));
+      }
+      if (body?.sync_mode === true) {
+        input.sync_mode = true;
+      }
+      if (typeof body?.enable_safety_checker === 'boolean') {
+        input.enable_safety_checker = body.enable_safety_checker;
+      } else {
+        input.enable_safety_checker = true; // Default enable_safety_checker
+      }
+      if (body?.output_format) {
+        input.output_format = body.output_format;
+      } else {
+        input.output_format = 'png'; // Default output_format
+      }
+      if (typeof body?.num_images === 'number') {
+        input.num_images = Math.round(Number(body.num_images));
+      } else {
+        input.num_images = 1; // Default num_images
+      }
+
+      console.log('[falService.qwenMultipleAngles] Calling FAL API:', { 
+        model, 
+        input: { 
+          ...input, 
+          image_urls: input.image_urls.map((url: string) => url.substring(0, 100) + '...') 
+        } 
+      });
+
+      let result: any;
+      try {
+        result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
+      } catch (falErr: any) {
+        const details = falErr?.response?.data || falErr?.message || falErr;
+        console.error('[falService.qwenMultipleAngles] FAL API error:', JSON.stringify(details, null, 2));
+        throw new ApiError(`FAL API error: ${JSON.stringify(details)}`, 500);
+      }
+
+      const imagesArray: any[] = Array.isArray((result as any)?.data?.images) ? (result as any).data.images : [];
+      if (!imagesArray.length) {
+        console.error('[falService.qwenMultipleAngles] No images in response:', JSON.stringify(result, null, 2));
+        throw new ApiError('No images returned from FAL Qwen Multiple Angles API', 502);
+      }
+
+      const storedImages: FalGeneratedImage[] = await Promise.all(imagesArray.map(async (img, index) => {
+        const sourceUrl: string | undefined = img?.url;
+        const fallbackId = img?.file_name || img?.id || (result as any)?.requestId || `fal-qwen-${Date.now()}-${index}`;
+        if (!sourceUrl) {
+          return { id: fallbackId, url: '', originalUrl: '' } as any;
+        }
+        try {
+          const { key, publicUrl } = await uploadFromUrlToZata({ 
+            sourceUrl, 
+            keyPrefix: `users/${username}/image/${historyId}`, 
+            fileName: `qwen-angle-${index + 1}` 
+          });
+          return { id: fallbackId, url: publicUrl, storagePath: key, originalUrl: sourceUrl } as any;
+        } catch {
+          return { id: fallbackId, url: sourceUrl, originalUrl: sourceUrl } as any;
+        }
+      }));
+
+      // Score images
+      const scoredImages = await aestheticScoreService.scoreImages(storedImages as any);
+      const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: scoredImages,
+        aestheticScore: highestScore,
+        updatedAt: new Date().toISOString(),
+      } as any);
+
+      // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+      markGenerationCompleted(uid, historyId, {
+        status: "completed",
+        images: scoredImages as any,
+      }).catch(err => console.error('[FAL] Image optimization failed:', err));
+
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
+
+      return { images: scoredImages as any, historyId, model, status: 'completed' };
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to generate multiple camera angles with Qwen API',
+        context: 'falService.qwenMultipleAngles',
+        toastTitle: 'Multiple angles generation failed',
+      });
+      try {
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
+      } catch (mirrorErr) {
+        console.error('[qwenMultipleAngles] Failed to mirror error state:', mirrorErr);
+      }
+      throw falError;
+    }
   }
 };
 

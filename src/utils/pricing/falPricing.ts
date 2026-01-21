@@ -483,6 +483,16 @@ export async function computeFalRecraftVectorizeCost(_req: Request): Promise<{ c
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display } };
 }
 
+export async function computeFalQwenMultipleAnglesCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  // Use similar pricing to image generation - can be adjusted based on actual FAL pricing
+  const { num_images = 1 } = req.body || {};
+  const count = Math.max(1, Math.min(10, Number(num_images)));
+  // Use a base cost similar to image edit models (e.g., 100 credits per image)
+  const baseCost = 100;
+  const cost = Math.ceil(baseCost * count);
+  return { cost, pricingVersion: FAL_PRICING_VERSION, meta: { model: 'Qwen Multiple Angles', num_images: count } };
+}
+
 export async function computeFalBriaGenfillCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const display = 'fal-ai/bria/genfill';
   const base = findCredits(display);

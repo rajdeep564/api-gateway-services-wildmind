@@ -426,5 +426,14 @@ export const falController = {
       next(err);
     }
   },
+  async qwenMultipleAngles(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await (falService as any).qwenMultipleAngles(uid, req.body || {});
+      const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'qwen_multiple_angles');
+      res.json(formatApiResponse('success', 'Camera angles generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
+    } catch (err) { next(err); }
+  },
 };
 
