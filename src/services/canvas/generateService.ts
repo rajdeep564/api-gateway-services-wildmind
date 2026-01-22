@@ -164,7 +164,16 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
   // Qwen Image Edit - Replicate model (qwen/qwen-image-edit-2511)
   // Frontend often sends the short alias "qwen-image-edit"
   if (modelLower === 'qwen-image-edit' || modelLower.includes('qwen image edit') || modelLower.includes('qwen-image-edit')) {
+    // Check if it's the multiple angles variant
+    if (modelLower.includes('multiple-angles') || modelLower.includes('multiple angles') || modelLower.includes('multi-angle')) {
+      return { service: 'fal', backendModel: 'fal-ai/qwen-image-edit-2511-multiple-angles' };
+    }
     return { service: 'replicate', backendModel: 'qwen/qwen-image-edit-2511' };
+  }
+  
+  // Qwen Multiple Angles - FAL model (explicit check)
+  if (modelLower.includes('qwen-multiple-angles') || modelLower.includes('qwen multiple angles') || modelLower === 'qwen-image-edit-2511-multiple-angles') {
+    return { service: 'fal', backendModel: 'fal-ai/qwen-image-edit-2511-multiple-angles' };
   }
 
   // ChatGPT 1.5 - Replicate model (openai/gpt-image-1.5)
@@ -1059,10 +1068,16 @@ function mapVideoModelToBackend(frontendModel: string): VideoModelConfig {
   if (modelLower.includes('sora 2 pro') || modelLower === 'sora 2 pro') {
     return { service: 'fal', method: 'sora2ProT2vSubmit', backendModel: 'fal-ai/sora-2/text-to-video/pro' };
   }
-  if (modelLower.includes('veo 3.1 fast') || modelLower.includes('veo 3.1 fast') || modelLower === 'veo 3.1 fast') {
+  // Check for Veo 3.1 Fast first (more specific) - handle variations
+  if (
+    modelLower.includes('veo') && 
+    modelLower.includes('3.1') && 
+    (modelLower.includes('fast') || modelLower === 'veo 3.1 fast' || modelLower === 'veo-3.1-fast' || modelLower === 'veo3.1fast')
+  ) {
     return { service: 'fal', method: 'veo31TtvSubmit', backendModel: 'fal-ai/veo3.1/fast', isFast: true };
   }
-  if (modelLower.includes('veo 3.1') || modelLower.includes('veo 3.1') || modelLower === 'veo 3.1') {
+  // Check for Veo 3.1 (regular) - must check after fast to avoid false positives
+  if (modelLower.includes('veo') && modelLower.includes('3.1') && !modelLower.includes('fast')) {
     return { service: 'fal', method: 'veo31TtvSubmit', backendModel: 'fal-ai/veo3.1', isFast: false };
   }
   if (modelLower.includes('veo 3 fast pro') || modelLower === 'veo 3 fast pro') {

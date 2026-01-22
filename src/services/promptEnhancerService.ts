@@ -45,14 +45,14 @@ export async function enhancePrompt(
   const maxLength = options?.maxLength || 512;
   const targetModel = options?.targetModel;
 
-  // 1. Try Replicate (GPT-4o)
-  // If targetModel is specified as gpt-4o, we MUST use it (or fail/fallback to python, but skip gemini)
+  // 1. Try Replicate (GPT-5)
+  // If targetModel is specified as gpt-5, we MUST use it (or fail/fallback to python, but skip gemini)
   // If targetModel is NOT specified, we prioritize Replicate if key exists.
-  const shouldTryReplicate = env.replicateApiKey && (!targetModel || targetModel === 'openai/gpt-4o');
+  const shouldTryReplicate = env.replicateApiKey && (!targetModel || targetModel === 'openai/gpt-5');
 
   if (shouldTryReplicate) {
     try {
-      console.log(`[Prompt Enhancer] Enhancing prompt using Replicate (GPT-4o)`);
+      console.log(`[Prompt Enhancer] Enhancing prompt using Replicate (GPT-5)`);
       const enhancedText = await generateReplicateTextResponse(prompt, {
         maxOutputTokens: maxLength,
         systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
@@ -62,23 +62,22 @@ export async function enhancePrompt(
         enhancedPrompt: enhancedText,
         originalPrompt: prompt,
         mediaType: mediaType,
-        model: 'openai/gpt-4o',
+        model: 'openai/gpt-5',
       };
     } catch (err) {
       console.error('[Prompt Enhancer] Replicate failed:', err);
-      // If user specifically requested GPT-4o, we might want to throw here or fallback to Python service?
-      // User said "only use gpt-4o not gemini in just frontend of wild".
+      // If user specifically requested GPT-5, we might want to throw here or fallback to Python service?
       // So if Replicate fails, we should NOT use Gemini.
-      if (targetModel === 'openai/gpt-4o') {
-        console.warn('[Prompt Enhancer] Skipping Gemini fallback because targetModel is openai/gpt-4o');
+      if (targetModel === 'openai/gpt-5') {
+        console.warn('[Prompt Enhancer] Skipping Gemini fallback because targetModel is openai/gpt-5');
       }
     }
   }
 
   // 2. Try Gemini
   // Only try Gemini if targetModel is NOT set or explicitly allows it (not implemented here, assuming default allows)
-  // AND if targetModel is NOT 'openai/gpt-4o' (unless Replicate failed and we want to fallback? User said "not gemini")
-  const shouldTryGemini = !targetModel || targetModel !== 'openai/gpt-4o';
+  // AND if targetModel is NOT 'openai/gpt-5' (unless Replicate failed and we want to fallback)
+  const shouldTryGemini = !targetModel || targetModel !== 'openai/gpt-5';
 
   const hasGeminiKey =
     Boolean(
@@ -257,44 +256,36 @@ export async function queryCanvasPrompt(
     throw new Error('Text is required');
   }
 
-  // Use Gemini 3 Preview for chat
-  const hasGeminiKey =
-    Boolean(
-      env.googleGenAIApiKey ||
-      process.env.GOOGLE_GENAI_API_KEY ||
-      process.env.GENAI_API_KEY ||
-      process.env.GEMINI_API_KEY
-    );
+  // Use GPT-5 (Replicate) for chat
+  const hasReplicateKey = Boolean(env.replicateApiKey);
 
-  if (!hasGeminiKey) {
-    console.error('[Canvas Query] ❌ Gemini API key missing');
-    throw new Error('Gemini API key is required for chat. Gemini 3 Preview is the required model. Please configure GEMINI_API_KEY or GOOGLE_GENAI_API_KEY.');
+  if (!hasReplicateKey) {
+    console.error('[Canvas Query] ❌ Replicate API key missing');
+    throw new Error('Replicate API key is required for chat. GPT-5 (ChatGPT 5) is the required model. Please configure REPLICATE_API_KEY.');
   }
 
   try {
-    console.log('[Canvas Query] ✅ Using Gemini 3 Preview for chat');
-    const enhancedText = await generateGeminiTextResponse(text, {
+    console.log('[Canvas Query] ✅ Using GPT-5 (ChatGPT 5) via Replicate for chat');
+    const enhancedText = await generateReplicateTextResponse(text, {
       maxOutputTokens: maxNewTokens,
       systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
-      enableGoogleSearchTool: false,
-      enableThinking: false,
     });
 
-    console.log('[Canvas Query] ✅ Gemini 3 Preview response received successfully');
+    console.log('[Canvas Query] ✅ GPT-5 response received successfully');
     return {
       type: 'answer',
       enhanced_prompt: enhancedText,
       response: enhancedText,
     };
   } catch (err: any) {
-    console.error('[Canvas Query] ❌ Gemini 3 Preview failed:', {
+    console.error('[Canvas Query] ❌ GPT-5 (Replicate) failed:', {
       error: err?.message,
       stack: err?.stack,
-      model: 'gemini-3-pro-preview',
-      hasGeminiKey: hasGeminiKey,
+      model: 'openai/gpt-5',
+      hasReplicateKey: hasReplicateKey,
     });
     const errorMessage = err?.message || 'Unknown error';
-    throw new Error(`Chat service unavailable: Gemini 3 Preview failed. ${errorMessage}. Please check your Gemini API key configuration.`);
+    throw new Error(`Chat service unavailable: GPT-5 (ChatGPT 5 via Replicate) failed. ${errorMessage}. Please check your Replicate API key configuration and account credits.`);
   }
 }
 
@@ -314,7 +305,7 @@ export async function generateScenesFromStory(story: string): Promise<any> {
     return generateScenesGemini(story);
   }
 
-  // Priority 2: Fall back to Replicate (GPT-4o) if Gemini not available
+  // Priority 2: Fall back to Replicate (GPT-5) if Gemini not available
   const hasReplicateKey = Boolean(env.replicateApiKey);
 
   if (hasReplicateKey) {

@@ -33,6 +33,7 @@ import {
   computeFalKlingO1SubmitCost,
   computeFalKling26ProT2vSubmitCost,
   computeFalKling26ProI2vSubmitCost,
+  computeFalQwenMultipleAnglesCost,
 } from "../utils/pricing/falPricing";
 import {
   validateFalGenerate,
@@ -74,6 +75,7 @@ import {
   validateFalKling26ProT2v,
   validateFalKling26ProI2v,
   validateFalNanoBananaPro,
+  validateFalQwenMultipleAngles,
 } from "../middlewares/validators/fal/validateFalGenerate";
 
 const router = Router();
@@ -335,6 +337,15 @@ router.get(
 
 // NanoBanana queue submit
 // Note: NanoBanana uses the unified /fal/generate route; no separate routes needed
+
+// Qwen Multiple Angles (camera angle adjustment)
+router.post(
+  "/qwen/multiple-angles",
+  requireAuth as any,
+  validateFalQwenMultipleAngles as any,
+  makeCreditCost("fal", "qwen_multiple_angles", (req) => computeFalQwenMultipleAnglesCost(req)) as any,
+  (falController as any).qwenMultipleAngles
+);
 
 export default router;
 

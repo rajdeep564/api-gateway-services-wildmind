@@ -2,9 +2,9 @@ import Replicate from 'replicate';
 import { env } from '../../config/env';
 import { PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION, STORYBOARD_SYSTEM_INSTRUCTION } from './geminiTextService';
 
-// Replicate model identifier for GPT-4o
-// According to Replicate docs: https://replicate.com/openai/gpt-4o
-const REPLICATE_MODEL = 'openai/gpt-4o';
+// Replicate model identifier for GPT-5
+// According to Replicate docs: https://replicate.com/openai/gpt-5
+const REPLICATE_MODEL = 'openai/gpt-5';
 
 let cachedReplicate: Replicate | null = null;
 
@@ -25,7 +25,7 @@ function getReplicateClient(): Replicate {
 }
 
 /**
- * Calls Replicate's GPT-4o model and returns the response text.
+ * Calls Replicate's GPT-5 model and returns the response text.
  */
 export async function generateReplicateTextResponse(
     prompt: string,
@@ -48,7 +48,7 @@ export async function generateReplicateTextResponse(
         maxOutputTokens: options?.maxOutputTokens,
     });
 
-    // According to Replicate docs: https://replicate.com/openai/gpt-4o
+    // According to Replicate docs: https://replicate.com/openai/gpt-5
     // Input format: { prompt: string, system_prompt: string }
     // Note: Do NOT include max_tokens - it's not in the official docs and may cause E001 errors
     const input = {
@@ -57,7 +57,7 @@ export async function generateReplicateTextResponse(
     };
 
     try {
-        console.log('[ReplicateTextService] Calling GPT-4o via Replicate (exact format from docs):', {
+        console.log('[ReplicateTextService] Calling GPT-5 via Replicate (exact format from docs):', {
             model: REPLICATE_MODEL,
             promptLength: prompt.trim().length,
             systemPromptLength: systemPrompt.length,
@@ -121,7 +121,7 @@ export async function generateReplicateTextResponse(
         // Replicate returns an array of strings for streaming models, or a string
         const responseText = Array.isArray(output) ? output.join('') : String(output);
 
-        console.log('[ReplicateTextService] ✅ GPT-4o response received:', {
+        console.log('[ReplicateTextService] ✅ GPT-5 response received:', {
             totalLength: responseText.length,
         });
 
@@ -142,7 +142,7 @@ export async function generateReplicateTextResponse(
             } : null,
         };
         
-        console.error('[ReplicateTextService] ❌ GPT-4o failed with detailed error:', {
+        console.error('[ReplicateTextService] ❌ GPT-5 failed with detailed error:', {
             ...errorDetails,
             model: REPLICATE_MODEL,
             hasApiKey: !!env.replicateApiKey,
@@ -182,13 +182,13 @@ export async function generateReplicateTextResponse(
             const explanation = `E001 Error Explanation:
 - This is a generic Replicate API error that can occur due to:
   1. Invalid input parameters (check prompt/system_prompt format)
-  2. Account doesn't have access to GPT-4o model (may need paid plan)
+  2. Account doesn't have access to GPT-5 model (may need paid plan)
   3. Prompt too long (current: ${prompt.trim().length} chars, system: ${systemPrompt.length} chars)
   4. Invalid characters in prompt
   5. API key permissions issue
 
 To fix:
-- Verify your Replicate account has access to 'openai/gpt-4o' model
+- Verify your Replicate account has access to 'openai/gpt-5' model
 - Check if you need to enable the model in your Replicate dashboard
 - Try a shorter, simpler prompt to test
 - Verify your API key has the correct permissions`;
@@ -356,7 +356,7 @@ export async function generateScenesFromStory(story: string): Promise<any> {
         json: true // Force JSON output mode if supported by model/wrapper
     };
 
-    console.log('[ReplicateTextService] Starting scene generation with GPT-4o', {
+    console.log('[ReplicateTextService] Starting scene generation with GPT-5', {
         model: REPLICATE_MODEL,
         inputInternal: 'hidden (full story)'
     });
