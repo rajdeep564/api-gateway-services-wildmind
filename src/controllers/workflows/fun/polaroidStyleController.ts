@@ -8,7 +8,7 @@ export const handlePolaroidStyle = async (req: Request, res: Response, next: Nex
         const uid = (req as any).uid;
         if (!uid) throw new ApiError("User not authenticated", 401);
 
-        const { image, isPublic } = req.body;
+        const { image, isPublic, includeProps, aspectRatio } = req.body;
 
         if (!image) {
             throw new ApiError("Image is required", 400);
@@ -16,13 +16,15 @@ export const handlePolaroidStyle = async (req: Request, res: Response, next: Nex
 
         const result = await polaroidStyleService.polaroidStyle(uid, {
             imageUrl: image,
-            isPublic
+            isPublic,
+            includeProps,
+            aspectRatio
         });
 
-        // Credit deduction logic (90 credits for this workflow)
-        const CREDIT_COST = 90;
+        // Credit deduction logic (110 credits for this workflow)
+        const CREDIT_COST = 110;
         const ctx: { creditCost: number } = { creditCost: CREDIT_COST };
-        await postSuccessDebit(uid, result, ctx, 'replicate', 'polaroid-style');
+        await postSuccessDebit(uid, result, ctx, 'fal', 'polaroid-style');
 
         res.status(200).json({
             responseStatus: 'success',

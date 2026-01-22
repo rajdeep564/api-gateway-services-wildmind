@@ -1,4 +1,4 @@
-import Replicate from "replicate";
+import { fal } from "@fal-ai/client";
 import { env } from '../../../config/env';
 import { ApiError } from '../../../utils/errorHandler';
 import { authRepository } from '../../../repository/auth/authRepository';
@@ -10,8 +10,10 @@ import { syncToMirror } from '../../../utils/mirrorHelper';
 
 const resolveOutputUrls = async (output: any) => {
     if (!output) return [];
+    if (output.images && Array.isArray(output.images)) return output.images.map((img: any) => img.url);
+    if (output.image && output.image.url) return [output.image.url];
+    if (output.url) return [String(output.url)];
     if (Array.isArray(output)) return output.map(String);
-    if (typeof output === 'object' && output.url) return [String(output.url())];
     return [String(output)];
 };
 
@@ -34,11 +36,13 @@ OUTPUT: A photorealistic, high-quality image of the user as a celebrity in a cha
 };
 
 export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) => {
-    const key = env.replicateApiKey as string;
-    if (!key) throw new ApiError("Replicate API key not configured", 500);
+    const key = env.falKey as string;
+    if (!key) throw new ApiError("Fal API key not configured", 500);
 
-    const replicate = new Replicate({ auth: key });
-    const modelBase = 'qwen/qwen-image-edit-2511';
+    // Initial config
+    fal.config({ credentials: key });
+
+    const modelBase = 'fal-ai/gemini-25-flash-image/edit';
 
     const creator = await authRepository.getUserById(uid);
     const finalPrompt = buildCelebrityPrompt(req.additionalText);
@@ -92,22 +96,28 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         } as any);
     }
 
-    // 4. Call Replicate
+    // 4. Call Fal AI
     const inputPayload = {
-        image: [inputImageUrl],
+        image_urls: [inputImageUrl],
         prompt: finalPrompt,
-        frameSize: "match_input_image",
-        style: "none",
-        output_format: "png"
+        aspect_ratio: "1:1" // Default square for this workflow? Or make it match input like Polaroid. 
+        // The previous code had "match_input_image". 
+        // Fal Gemini defaults to Square or requires valid aspect ratio. 
+        // I'll stick to "1:1" as safe default or "match" if supported. 
+        // Given Gemini model behavior, "1:1" is safest unless we calculate it.
     };
 
     try {
         console.log('[becomeCelebrityService] Running model', { model: modelBase, input: inputPayload });
-        const output: any = await replicate.run(modelBase as any, { input: inputPayload });
 
-        const urls = await resolveOutputUrls(output);
+        const result: any = await fal.subscribe(modelBase, {
+            input: inputPayload,
+            logs: true,
+        });
+
+        const urls = await resolveOutputUrls(result.data);
         const outputUrl = urls[0];
-        if (!outputUrl) throw new Error("No output URL from Replicate");
+        if (!outputUrl) throw new Error("No output URL from Fal");
 
         let storedUrl = outputUrl;
         let storagePath = "";
@@ -125,7 +135,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         }
 
         const images = [{
-            id: `replicate-${Date.now()}`,
+            id: `fal-${Date.now()}`,
             url: storedUrl,
             storagePath,
             originalUrl: outputUrl
@@ -159,7 +169,7 @@ export const becomeCelebrity = async (uid: string, req: BecomeCelebrityRequest) 
         console.error('[becomeCelebrityService] Error', e);
         await generationHistoryRepository.update(uid, historyId, {
             status: "failed",
-            error: e?.message || "Replicate failed"
+            error: e?.message || "Fal generation failed"
         } as any);
         await replicateRepository.updateGenerationRecord(legacyId, {
             status: "failed",

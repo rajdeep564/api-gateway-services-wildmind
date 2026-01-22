@@ -8,13 +8,13 @@ const FREE_PLAN_CODE = 'FREE';
 const LAUNCH_PLAN_CODE = 'LAUNCH_4000_FIXED';
 const LAUNCH_FIXED_CREDITS = 2000;
 
-// Launch plan cutoff date: January 10, 2026 (end of day UTC)
+// Launch plan cutoff date: February 20, 2026 (end of day UTC)
 // Users signing up on or before this date get launch plan, after this date get FREE plan
 // ALL users on launch plan get extended trial until this cutoff date (regardless of 15-day period)
 // Can be overridden via LAUNCH_PLAN_CUTOFF_DATE environment variable (ISO string format)
-const LAUNCH_PLAN_CUTOFF_DATE = process.env.LAUNCH_PLAN_CUTOFF_DATE 
+const LAUNCH_PLAN_CUTOFF_DATE = process.env.LAUNCH_PLAN_CUTOFF_DATE
   ? new Date(process.env.LAUNCH_PLAN_CUTOFF_DATE)
-  : new Date('2026-01-20T23:59:59.999Z');
+  : new Date('2026-02-20T23:59:59.999Z');
 
 /**
  * Check if the current date is on or before the launch plan cutoff date
@@ -88,11 +88,11 @@ export async function ensurePlansSeeded(): Promise<void> {
 export async function ensureUserInit(uid: string): Promise<UserCreditsDoc> {
   const userRef = adminDb.collection('users').doc(uid);
   const snap = await userRef.get();
-  
+
   // Determine which plan to use based on cutoff date
   const isWithinPeriod = isWithinLaunchPlanPeriod();
-  const defaultPlan = isWithinPeriod 
-    ? await ensureLaunchPlan() 
+  const defaultPlan = isWithinPeriod
+    ? await ensureLaunchPlan()
     : await ensureFreePlan();
 
   if (!snap.exists) {
@@ -105,16 +105,16 @@ export async function ensureUserInit(uid: string): Promise<UserCreditsDoc> {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     } as any;
-    
+
     // If within launch period and on launch plan, set trial start date and mark as migrated
     if (isWithinPeriod && defaultPlan.code === LAUNCH_PLAN_CODE) {
       (doc as any).launchTrialStartDate = admin.firestore.FieldValue.serverTimestamp();
       (doc as any).launchMigrationDone = true; // Mark as migrated for new launch plan users
       console.log(`[LaunchOffer] New user ${uid} assigned to launch plan with trial start date`);
     }
-    
+
     await userRef.set(doc, { merge: true });
-    
+
     // Return the document with all fields including launchTrialStartDate
     const createdDoc = await userRef.get();
     const createdData = createdDoc.data() as any;
@@ -170,38 +170,38 @@ export const creditsService = {
   async reconcileCurrentCycle(uid: string): Promise<{ cycle: string; newBalance: number; debitsSinceReset: number; planCredits: number }> {
     const logger = require('../utils/logger').logger;
     logger.info({ uid }, '[CREDITS_SERVICE] reconcileCurrentCycle - Starting reconciliation');
-    
+
     // Get current balance before reconciliation
     const beforeInfo = await creditsRepository.readUserInfo(uid);
     const beforeBalance = beforeInfo?.creditBalance || 0;
     logger.info({ uid, beforeBalance }, '[CREDITS_SERVICE] Balance before reconciliation');
-    
+
     // Use the new reconcileBalanceFromLedgers which calculates from ALL ledger entries
     const reconciled = await creditsRepository.reconcileBalanceFromLedgers(uid);
-    
-    logger.info({ 
-      uid, 
+
+    logger.info({
+      uid,
       calculatedBalance: reconciled.calculatedBalance,
       totalGrants: reconciled.totalGrants,
       totalDebits: reconciled.totalDebits,
       ledgerCount: reconciled.ledgerCount
     }, '[CREDITS_SERVICE] Reconciliation calculation complete');
-    
+
     // CRITICAL: Ensure balance never goes below 0, but also log if it's 0 unexpectedly
     if (reconciled.calculatedBalance === 0 && reconciled.totalGrants > 0) {
-      logger.warn({ 
-        uid, 
+      logger.warn({
+        uid,
         calculatedBalance: reconciled.calculatedBalance,
         totalGrants: reconciled.totalGrants,
         totalDebits: reconciled.totalDebits,
         beforeBalance
       }, '[CREDITS_SERVICE] WARNING: Calculated balance is 0 despite having grants!');
-      
+
       // If we had a balance before and now it's 0, this might be a calculation error
       // Log detailed information for debugging but still proceed with the reconciliation
       if (beforeBalance > 0) {
-        logger.error({ 
-          uid, 
+        logger.error({
+          uid,
           beforeBalance,
           calculatedBalance: reconciled.calculatedBalance,
           totalGrants: reconciled.totalGrants,
@@ -209,22 +209,22 @@ export const creditsService = {
         }, '[CREDITS_SERVICE] ERROR: Balance went from positive to 0 during reconciliation!');
       }
     }
-    
+
     // Update balance to match calculated value
     const userRef = adminDb.collection('users').doc(uid);
-    await userRef.set({ 
-      creditBalance: reconciled.calculatedBalance, 
-      updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+    await userRef.set({
+      creditBalance: reconciled.calculatedBalance,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
-    
+
     logger.info({ uid, beforeBalance, afterBalance: reconciled.calculatedBalance }, '[CREDITS_SERVICE] Balance updated in database');
-    
+
     // Get plan info for return value
     const user = await creditsRepository.readUserInfo(uid);
     const planCode = (user?.planCode as any) || 'FREE';
     const now = new Date();
     const cycle = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-    
+
     let planCredits = 0;
     if (planCode === 'FREE') {
       planCredits = 2000;
@@ -233,20 +233,20 @@ export const creditsService = {
       const pdata = planSnap.data() as any;
       planCredits = Number(pdata?.credits ?? 0) || 0;
     }
-    
-    logger.info({ 
-      uid, 
-      cycle, 
-      newBalance: reconciled.calculatedBalance, 
-      debitsSinceReset: reconciled.totalDebits, 
-      planCredits 
+
+    logger.info({
+      uid,
+      cycle,
+      newBalance: reconciled.calculatedBalance,
+      debitsSinceReset: reconciled.totalDebits,
+      planCredits
     }, '[CREDITS_SERVICE] reconcileCurrentCycle - Completed');
-    
-    return { 
-      cycle, 
-      newBalance: reconciled.calculatedBalance, 
-      debitsSinceReset: reconciled.totalDebits, 
-      planCredits 
+
+    return {
+      cycle,
+      newBalance: reconciled.calculatedBalance,
+      debitsSinceReset: reconciled.totalDebits,
+      planCredits
     };
   },
   /**
@@ -259,15 +259,15 @@ export const creditsService = {
   async ensureLaunchDailyReset(uid: string): Promise<{ planCode: string; creditBalance: number }> {
     const userRef = adminDb.collection('users').doc(uid);
     const snap = await userRef.get();
-    
+
     // Check if we're past the cutoff date
     const isWithinPeriod = isWithinLaunchPlanPeriod();
-    
+
     if (!snap.exists) {
       // New user – let ensureUserInit handle default (it will check cutoff date and set trial start date)
       await ensureUserInit(uid);
       const userData = (await userRef.get()).data() as any;
-      
+
       // Ensure launchTrialStartDate is set if user is on launch plan
       if (userData?.planCode === LAUNCH_PLAN_CODE && !userData?.launchTrialStartDate && isWithinPeriod) {
         await userRef.set(
@@ -280,18 +280,18 @@ export const creditsService = {
         );
         // Re-fetch to get updated data
         const updatedData = (await userRef.get()).data() as any;
-        return { 
-          planCode: updatedData?.planCode || FREE_PLAN_CODE, 
-          creditBalance: updatedData?.creditBalance || LAUNCH_FIXED_CREDITS 
+        return {
+          planCode: updatedData?.planCode || FREE_PLAN_CODE,
+          creditBalance: updatedData?.creditBalance || LAUNCH_FIXED_CREDITS
         };
       }
-      
-      return { 
-        planCode: userData?.planCode || FREE_PLAN_CODE, 
+
+      return {
+        planCode: userData?.planCode || FREE_PLAN_CODE,
         creditBalance: userData?.creditBalance || (userData?.planCode === LAUNCH_PLAN_CODE ? LAUNCH_FIXED_CREDITS : 2000)
       };
     }
-    
+
     const data = snap.data() as any;
     const planCode: string = data.planCode || FREE_PLAN_CODE;
     const migrated: boolean = Boolean(data.launchMigrationDone);
@@ -305,11 +305,11 @@ export const creditsService = {
       const startDate = trialStartDate.toDate ? trialStartDate.toDate() : new Date(trialStartDate);
       const now = new Date();
       const daysSinceStart = Math.floor((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
-      
+
       // Trial expires ONLY when we're past the cutoff date (Dec 25, 2025)
       // All users get extended trial until cutoff date, regardless of 15-day period
       const isPastCutoff = now > LAUNCH_PLAN_CUTOFF_DATE;
-      
+
       if (isPastCutoff) {
         // Trial expired - cutoff date reached, switch to FREE plan
         console.log(`[LaunchOffer] Trial expired for user ${uid} - cutoff date reached (${daysSinceStart} days since start), switching to FREE plan`);
@@ -365,9 +365,9 @@ export const creditsService = {
     if (!isWithinPeriod) {
       // User is already on FREE or another plan, or was handled above
       if (planCode !== LAUNCH_PLAN_CODE) {
-        return { 
-          planCode: planCode, 
-          creditBalance: Number(data?.creditBalance || 2000) 
+        return {
+          planCode: planCode,
+          creditBalance: Number(data?.creditBalance || 2000)
         };
       }
       // If somehow still on launch plan (shouldn't happen after above checks), switch to FREE
@@ -408,7 +408,7 @@ export const creditsService = {
 
       return { planCode: LAUNCH_PLAN_CODE, creditBalance: LAUNCH_FIXED_CREDITS };
     }
-    
+
     // If not migrated and past cutoff, assign to FREE plan
     if (!migrated && !isWithinPeriod) {
       await userRef.set(
@@ -439,10 +439,10 @@ export const creditsService = {
       // This handles cases where user was created before trial start date logic was added
       // Use createdAt as trial start date if available, otherwise use current time
       const createdAt = data.createdAt;
-      const trialStartTimestamp = createdAt && createdAt.toDate 
-        ? createdAt 
+      const trialStartTimestamp = createdAt && createdAt.toDate
+        ? createdAt
         : admin.firestore.FieldValue.serverTimestamp();
-      
+
       await userRef.set(
         {
           launchTrialStartDate: trialStartTimestamp,
@@ -461,10 +461,10 @@ export const creditsService = {
         // Last resort: set trial start date if still missing
         // Prefer createdAt if available, otherwise use current time
         const createdAt = finalData.createdAt;
-        const trialStartTimestamp = createdAt && createdAt.toDate 
-          ? createdAt 
+        const trialStartTimestamp = createdAt && createdAt.toDate
+          ? createdAt
           : admin.firestore.FieldValue.serverTimestamp();
-        
+
         await userRef.set(
           {
             launchTrialStartDate: trialStartTimestamp,
@@ -517,7 +517,7 @@ export const creditsService = {
     const userRef = adminDb.collection('users').doc(uid);
     const ledgerRef = userRef.collection('ledgers').doc(reqId);
     const existingReset = await ledgerRef.get();
-    
+
     if (existingReset.exists) {
       // Monthly reset already done - don't overwrite (preserves manual grants)
       return { cycle, planCode, creditBalance: user?.creditBalance || 0 };
@@ -528,37 +528,37 @@ export const creditsService = {
     const ledgersCol = userRef.collection('ledgers');
     const monthStart = new Date(now.getUTCFullYear(), now.getUTCMonth(), 1);
     const monthStartTimestamp = admin.firestore.Timestamp.fromDate(monthStart);
-    
+
     // Check for manual grants this month (excluding monthly reset)
     // Query without createdAt filter first to avoid index requirement, then filter in memory
     const allGrantsSnap = await ledgersCol
       .where('type', '==', 'GRANT')
       .where('status', '==', 'CONFIRMED')
       .get();
-    
+
     const hasManualGrants = allGrantsSnap.docs.some(doc => {
       const entry = doc.data() as LedgerEntry;
       const reason = entry.reason || '';
       const createdAt = entry.createdAt;
-      
+
       // Check if it's within this month
       const isThisMonth = createdAt && createdAt.toMillis && createdAt.toMillis() >= monthStart.getTime();
-      
+
       // Check if it's a manual grant (not monthly reroll)
       return doc.id !== reqId && isThisMonth && (
-        reason.includes('testing') || 
-        reason.includes('manual') || 
+        reason.includes('testing') ||
+        reason.includes('manual') ||
         reason.includes('grant') ||
         doc.id.startsWith('TEST_GRANT_')
       );
     });
-    
+
     if (hasManualGrants) {
       // User has manual grants this month - reconcile balance instead of resetting
       const reconciled = await creditsRepository.reconcileBalanceFromLedgers(uid);
-      await userRef.set({ 
-        creditBalance: reconciled.calculatedBalance, 
-        updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+      await userRef.set({
+        creditBalance: reconciled.calculatedBalance,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
       return { cycle, planCode, creditBalance: reconciled.calculatedBalance };
     }
@@ -580,9 +580,9 @@ export const creditsService = {
     const credits = newPlanCode === 'FREE'
       ? 2000
       : newPlanCode === 'PLAN_A' ? PLAN_CREDITS.PLAN_A
-      : newPlanCode === 'PLAN_B' ? PLAN_CREDITS.PLAN_B
-      : newPlanCode === 'PLAN_C' ? PLAN_CREDITS.PLAN_C
-      : PLAN_CREDITS.PLAN_D;
+        : newPlanCode === 'PLAN_B' ? PLAN_CREDITS.PLAN_B
+          : newPlanCode === 'PLAN_C' ? PLAN_CREDITS.PLAN_C
+            : PLAN_CREDITS.PLAN_D;
     const reqId = `PLAN_SWITCH_${newPlanCode}`; // deterministic idempotency key per target plan
     await creditsRepository.writeGrantAndSetPlanIfAbsent(
       uid,

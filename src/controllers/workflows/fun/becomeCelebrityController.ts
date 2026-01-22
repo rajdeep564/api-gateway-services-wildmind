@@ -21,9 +21,9 @@ export const handleBecomeCelebrity = async (req: Request, res: Response, next: N
         });
 
         // Credit deduction logic (90 credits for this workflow)
-        const CREDIT_COST = 90;
+        const CREDIT_COST = 110;
         const ctx: { creditCost: number } = { creditCost: CREDIT_COST };
-        await postSuccessDebit(uid, result, ctx, 'replicate', 'become-celebrity');
+        await postSuccessDebit(uid, result, ctx, 'fal', 'become-celebrity');
 
         res.status(200).json({
             responseStatus: 'success',
