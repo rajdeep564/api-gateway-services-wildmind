@@ -20,6 +20,7 @@ export interface ReplaceElementRequest {
     imageUrl: string;
     from: string;
     to: string;
+    prompt?: string;
     frameSize?: string;
     output_format?: string;
     isPublic?: boolean;
@@ -38,7 +39,8 @@ export const replaceElement = async (uid: string, req: ReplaceElementRequest) =>
     const creator = await authRepository.getUserById(uid);
 
     // Hardcoded logic for prompt as requested by user
-    const finalPrompt = `Replace ${req.from} with ${req.to} in the attached image, ensuring the change blends naturally with the surrounding area and looks realistic, seamless, and visually consistent.`;
+    const basePrompt = `Replace ${req.from} with ${req.to} in the attached image, ensuring the change blends naturally with the surrounding area and looks realistic, seamless, and visually consistent.`;
+    const finalPrompt = req.prompt ? `${req.prompt}. ${basePrompt}` : basePrompt;
 
     // 1. Create History Record
     const { historyId } = await generationHistoryRepository.create(uid, {

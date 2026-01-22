@@ -19,6 +19,7 @@ export interface PeopleAgeRequest {
     imageUrl: string;
     targetAge: string;
     isPublic?: boolean;
+    additionalText?: string;
 }
 
 const AGE_MAP: Record<string, string> = {
@@ -72,7 +73,8 @@ export const peopleAge = async (uid: string, req: PeopleAgeRequest) => {
     const modelBase = 'qwen/qwen-image-edit-2511';
 
     const creator = await authRepository.getUserById(uid);
-    const finalPrompt = buildPeopleAgePrompt(req.targetAge);
+    const basePrompt = buildPeopleAgePrompt(req.targetAge);
+    const finalPrompt = req.additionalText ? `${req.additionalText}. ${basePrompt}` : basePrompt;
 
     // 1. Create History Record
     const { historyId } = await generationHistoryRepository.create(uid, {

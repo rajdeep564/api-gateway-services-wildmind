@@ -18,6 +18,7 @@ const resolveOutputUrls = async (output: any) => {
 export interface VintageTeleportRequest {
     imageUrl: string;
     isPublic?: boolean;
+    additionalText?: string;
 }
 
 const VINTAGE_PROMPT = `Generate a vintage image based on the attached person. 
@@ -48,7 +49,7 @@ export const vintageTeleport = async (uid: string, req: VintageTeleportRequest) 
     const modelBase = 'qwen/qwen-image-edit-2511';
 
     const creator = await authRepository.getUserById(uid);
-    const finalPrompt = VINTAGE_PROMPT;
+    const finalPrompt = req.additionalText ? `${req.additionalText}. ${VINTAGE_PROMPT}` : VINTAGE_PROMPT;
 
     // 1. Create History Record
     const { historyId } = await generationHistoryRepository.create(uid, {

@@ -19,6 +19,7 @@ export interface RelightingRequest {
     imageUrl: string;
     isPublic?: boolean;
     lightingStyle: string;
+    additionalText?: string;
 }
 
 const buildRelightingPrompt = (lightingStyle: string) => {
@@ -71,7 +72,8 @@ export const relighting = async (uid: string, req: RelightingRequest) => {
     const modelBase = 'qwen/qwen-image-edit-2511';
 
     const creator = await authRepository.getUserById(uid);
-    const finalPrompt = buildRelightingPrompt(req.lightingStyle);
+    const basePrompt = buildRelightingPrompt(req.lightingStyle);
+    const finalPrompt = req.additionalText ? `${req.additionalText}. ${basePrompt}` : basePrompt;
 
     // 1. Create History Record
     const { historyId } = await generationHistoryRepository.create(uid, {
