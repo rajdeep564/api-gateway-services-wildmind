@@ -266,17 +266,17 @@ export async function queryCanvasPrompt(
 
   try {
     console.log('[Canvas Query] ✅ Using GPT-5 (ChatGPT 5) via Replicate for chat');
-    const enhancedText = await generateReplicateTextResponse(text, {
-      maxOutputTokens: maxNewTokens,
-      systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
-    });
+      const enhancedText = await generateReplicateTextResponse(text, {
+        maxOutputTokens: maxNewTokens,
+        systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
+      });
 
     console.log('[Canvas Query] ✅ GPT-5 response received successfully');
-    return {
-      type: 'answer',
-      enhanced_prompt: enhancedText,
-      response: enhancedText,
-    };
+      return {
+        type: 'answer',
+        enhanced_prompt: enhancedText,
+        response: enhancedText,
+      };
   } catch (err: any) {
     console.error('[Canvas Query] ❌ GPT-5 (Replicate) failed:', {
       error: err?.message,
