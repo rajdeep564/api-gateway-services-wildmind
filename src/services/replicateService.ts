@@ -40,8 +40,9 @@ const DEFAULT_VERSION_BY_MODEL: Record<string, string> = {
     "f121d640bd286e1fdc67f9799164c1d5be36ff74576ee11c803ae5b665dd46aa",
   "mv-lab/swin2sr":
     "a01b0512004918ca55d02e554914a9eca63909fa83a29ff0f115c78a7045574f",
-  "prunaai/z-image-turbo":
-    "7ea16386290ff5977c7812e66e462d7ec3954d8e007a8cd18ded3e7d41f5d7cf",
+  // NOTE: Do not pin z-image-turbo to a specific version hash.
+  // The SDK supports `replicate.run("prunaai/z-image-turbo", { input })` and uses the latest model version.
+  // Pinning has caused runtime failures for some versions.
 };
 
 function composeModelSpec(modelBase: string, maybeVersion?: string): string {
@@ -2307,6 +2308,9 @@ export async function generateImage(uid: string, body: any) {
         height: rest.height,
         num_inference_steps: rest.num_inference_steps,
         guidance_scale: rest.guidance_scale,
+        go_fast: rest.go_fast,
+        output_format: rest.output_format,
+        output_quality: rest.output_quality,
         image_input: !!rest.image_input,
         image: !!rest.image
       });
@@ -2328,18 +2332,107 @@ export async function generateImage(uid: string, body: any) {
       } else {
         input.height = 1024; // Schema default
       }
-      if (rest.num_inference_steps != null) {
-        input.num_inference_steps = Math.max(1, Math.min(50, Number(rest.num_inference_steps)));
+
+      // IMPORTANT: z-image-turbo can fail at runtime when the internal token count is not a multiple of 32.
+      // Empirically, this corresponds to: (width/16) * (height/16) must be divisible by 32.
+      // Keep the user's requested frame sizing as-is when it's safe; otherwise nudge to the nearest safe dims.
+      try {
+        const minDim = 64;
+        const maxDim = 1440;
+        const baseW = Number(input.width);
+        const baseH = Number(input.height);
+        const round16 = (v: number) => Math.round(v / 16) * 16;
+        const clampDim = (v: number) => Math.max(minDim, Math.min(maxDim, round16(v)));
+        const tokensOk = (w: number, h: number) => {
+          const lw = Math.floor(w / 16);
+          const lh = Math.floor(h / 16);
+          return (lw * lh) % 32 === 0;
+        };
+
+        if (Number.isFinite(baseW) && Number.isFinite(baseH) && !tokensOk(baseW, baseH)) {
+          const baseRatio = baseW / baseH;
+          let bestW = baseW;
+          let bestH = baseH;
+          let bestScore = Number.POSITIVE_INFINITY;
+
+          // Search a small neighborhood around the requested dims.
+          // This keeps sizes stable ("frameSize") while avoiding the provider bug.
+          for (let dw = -256; dw <= 256; dw += 16) {
+            for (let dh = -256; dh <= 256; dh += 16) {
+              const w = clampDim(baseW + dw);
+              const h = clampDim(baseH + dh);
+              if (!tokensOk(w, h)) continue;
+
+              const ratio = w / h;
+              const ratioErr = Math.abs(ratio - baseRatio);
+              const dist = Math.abs(w - baseW) + Math.abs(h - baseH);
+
+              // Heavily prefer preserving aspect ratio; then prefer minimal size delta.
+              const score = ratioErr * 10000 + dist;
+              if (score < bestScore) {
+                bestScore = score;
+                bestW = w;
+                bestH = h;
+              }
+            }
+          }
+
+          if (bestW !== baseW || bestH !== baseH) {
+            console.log('[replicateService] Z Image Turbo adjusted dims for provider compatibility:', {
+              requested: { width: baseW, height: baseH },
+              adjusted: { width: bestW, height: bestH },
+            });
+            input.width = bestW;
+            input.height = bestH;
+          }
+        }
+      } catch { }
+
+      // Updated schema mapping for prunaai/z-image-turbo
+      // Required: prompt (already set).
+      // Optional: seed (nullable), width, height, go_fast, output_format, guidance_scale, output_quality, num_inference_steps.
+
+      // Seed: allow integer or explicit null (nullable)
+      if (rest.seed === null) {
+        input.seed = null;
+      } else if (rest.seed != null && Number.isInteger(Number(rest.seed))) {
+        input.seed = Number(rest.seed);
       }
 
-      if (rest.guidance_scale != null) {
-        input.guidance_scale = Math.max(0, Math.min(20, Number(rest.guidance_scale)));
+      // go_fast default true
+      input.go_fast = typeof rest.go_fast === 'boolean' ? rest.go_fast : true;
+
+      // output_format default "jpg" (schema allows png|jpg|webp)
+      {
+        const rawFmt = rest.output_format != null ? String(rest.output_format).toLowerCase() : 'jpg';
+        const fmt = rawFmt === 'jpeg' ? 'jpg' : rawFmt;
+        input.output_format = ['png', 'jpg', 'webp'].includes(fmt) ? fmt : 'jpg';
       }
-      if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
-      if (rest.output_format && ['png', 'jpg', 'webp'].includes(String(rest.output_format))) {
-        input.output_format = String(rest.output_format);
+
+      // guidance_scale default 0 (Turbo should be 0)
+      {
+        const gs = rest.guidance_scale != null && Number.isFinite(Number(rest.guidance_scale))
+          ? Number(rest.guidance_scale)
+          : 0;
+        input.guidance_scale = Math.max(0, Math.min(20, gs));
       }
-      if (rest.output_quality != null) input.output_quality = Math.max(0, Math.min(100, Number(rest.output_quality)));
+
+      // output_quality default 80
+      {
+        const oq = rest.output_quality != null && Number.isFinite(Number(rest.output_quality))
+          ? Number(rest.output_quality)
+          : 80;
+        input.output_quality = Math.max(0, Math.min(100, Math.round(oq)));
+      }
+
+      // num_inference_steps default 8
+      {
+        const steps = rest.num_inference_steps != null && Number.isFinite(Number(rest.num_inference_steps))
+          ? Number(rest.num_inference_steps)
+          : 8;
+        input.num_inference_steps = Math.max(1, Math.min(50, Math.round(steps)));
+      }
+
       // Support num_images parameter for multiple image generation
       // If num_images is provided, we'll handle it by making multiple calls internally
       const numImages = rest.num_images != null ? Math.max(1, Math.min(4, Number(rest.num_images))) : 1;
@@ -2348,21 +2441,12 @@ export async function generateImage(uid: string, body: any) {
       const ACTUAL_REPLICATE_MODEL = "prunaai/z-image-turbo";
 
       replicateModelBase = ACTUAL_REPLICATE_MODEL;
-      // Ensure version is used from DEFAULT_VERSION_BY_MODEL if not provided
-      // This ensures the model spec includes the required version hash
-      if (!body.version && DEFAULT_VERSION_BY_MODEL[ACTUAL_REPLICATE_MODEL]) {
-        body.version = DEFAULT_VERSION_BY_MODEL[ACTUAL_REPLICATE_MODEL];
-      }
+
+      // Do not force a version for z-image-turbo; allow Replicate to use the latest default.
+      // (If a client explicitly sends `version`, we still respect it.)
 
       // Store num_images for later use in the generation logic
       (body as any).__num_images = numImages;
-
-      // Handle image input for image-to-image generation
-      if (rest.image_input && Array.isArray(rest.image_input) && rest.image_input.length > 0) {
-        input.image = rest.image_input[0];
-      } else if (rest.image) {
-        input.image = rest.image;
-      }
     }
     // GPT Image 1.5 mapping
     if (modelBase === "openai/gpt-image-1.5") {

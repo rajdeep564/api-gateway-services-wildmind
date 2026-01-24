@@ -23,6 +23,7 @@ export interface PolaroidStyleRequest {
     isPublic?: boolean;
     includeProps?: boolean;
     aspectRatio?: string;
+    additionalText?: string;
 }
 const getPolaroidPrompt = (includeProps: boolean) => {
     // Generate current date like "21 Jan 2026"
@@ -111,7 +112,8 @@ export const polaroidStyle = async (uid: string, req: PolaroidStyleRequest) => {
     const creator = await authRepository.getUserById(uid);
     // Default includeProps to true if not specified, to maintain existing behavior
     const includeProps = req.includeProps !== undefined ? req.includeProps : true;
-    const finalPrompt = getPolaroidPrompt(includeProps);
+    const basePrompt = getPolaroidPrompt(includeProps);
+    const finalPrompt = req.additionalText ? `${req.additionalText}. ${basePrompt}` : basePrompt;
     // Log aspect ratio for debugging
     console.log('[polaroidStyleService] Aspect Ratio:', req.aspectRatio || "1:1");
 

@@ -31,7 +31,7 @@ export async function removeBackgroundController(req: Request, res: Response, ne
         // Cost: 8 credits (approx cost for utility models like this, or check standard)
         // If user provided specific credit instructions, I'd follow them.
         // Assuming a reasonable default for now.
-        const CREDIT_COST = 8;
+        const CREDIT_COST = 10;
         const ctx: any = { creditCost: CREDIT_COST };
 
         const debitOutcome = await postSuccessDebit(uid, result, ctx, 'replicate', 'remove-bg');

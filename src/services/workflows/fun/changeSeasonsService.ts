@@ -19,6 +19,7 @@ export interface ChangeSeasonsRequest {
     imageUrl: string;
     isPublic?: boolean;
     seasonDescription: string;
+    additionalText?: string;
 }
 
 const buildSeasonsPrompt = (seasonDescription: string) => {
@@ -54,7 +55,8 @@ export const changeSeasons = async (uid: string, req: ChangeSeasonsRequest) => {
     const modelBase = 'qwen/qwen-image-edit-2511';
 
     const creator = await authRepository.getUserById(uid);
-    const finalPrompt = buildSeasonsPrompt(req.seasonDescription);
+    const basePrompt = buildSeasonsPrompt(req.seasonDescription);
+    const finalPrompt = req.additionalText ? `${req.additionalText}. ${basePrompt}` : basePrompt;
 
     // 1. Create History Record
     const { historyId } = await generationHistoryRepository.create(uid, {
