@@ -1183,8 +1183,14 @@ async function generate(
   if (isNanoBananaPro) {
     console.log(`[falService] 🚀 Handling Nano Banana Pro request: ${modelEndpoint}`);
 
+    // Ensure prompt is not empty or undefined
+    const validatedPrompt = (finalPrompt || prompt || '').trim();
+    if (!validatedPrompt) {
+      throw new ApiError('Prompt is required for Google Nano Banana Pro image generation', 400);
+    }
+
     const inputBody: any = {
-      prompt: finalPrompt,
+      prompt: validatedPrompt, // Always include prompt, even in I2I mode
       num_images: imagesRequestedClamped,
       aspect_ratio: (payload as any).aspect_ratio || resolvedAspect || "auto",
       output_format: (payload as any).output_format || output_format || "png",
@@ -1210,7 +1216,21 @@ async function generate(
         );
       }
       inputBody.image_urls = refs;
+      // Ensure prompt is still included in I2I mode
+      if (!inputBody.prompt) {
+        inputBody.prompt = validatedPrompt;
+      }
     }
+
+    console.log('[falService] Nano Banana Pro inputBody:', {
+      hasPrompt: !!inputBody.prompt,
+      promptLength: inputBody.prompt?.length || 0,
+      promptPreview: inputBody.prompt?.substring(0, 100) || 'NONE',
+      hasImageUrls: !!inputBody.image_urls,
+      imageUrlsCount: inputBody.image_urls?.length || 0,
+      isI2IMode,
+      modelEndpoint
+    });
 
     try {
       console.log('[falService] Submitting Nano Banana Pro request to FAL:', { modelEndpoint, input: inputBody });
