@@ -26,6 +26,7 @@ import uploadsRoutes from './uploads';
 import wildmindRoutes from './wildmind';
 import chatCompanionRoutes from './chatCompanion';
 import subscriptionsRoutes from './subscriptions';
+import webhooksRoutes from './webhooks';
 import { contentModerationMiddleware } from '../middlewares/contentModeration';
 
 const router = Router();
@@ -67,5 +68,6 @@ router.use('/reimagine', reimagineRoutes);
 router.use('/wildmind', wildmindRoutes);
 router.use('/chat', chatCompanionRoutes);
 router.use('/subscriptions', subscriptionsRoutes);
+router.use('/webhooks', webhooksRoutes);
 
 export default router;
