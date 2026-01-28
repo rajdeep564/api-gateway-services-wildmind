@@ -8,7 +8,7 @@ export const handleRelighting = async (req: Request, res: Response, next: NextFu
         const uid = (req as any).uid;
         if (!uid) throw new ApiError("User not authenticated", 401);
 
-        const { image, isPublic, lightingStyle } = req.body;
+        const { image, isPublic, lightingStyle, additionalText, lightDirection, lightIntensity, shadowControl } = req.body;
 
         if (!image) {
             throw new ApiError("Image is required", 400);
@@ -17,7 +17,11 @@ export const handleRelighting = async (req: Request, res: Response, next: NextFu
         const result = await relightingService.relighting(uid, {
             imageUrl: image,
             isPublic,
-            lightingStyle: lightingStyle || "Natural"
+            lightingStyle: lightingStyle || "Natural",
+            additionalText,
+            lightDirection,
+            lightIntensity,
+            shadowControl
         });
 
         // Credit deduction logic (90 credits for this workflow)

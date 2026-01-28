@@ -20,7 +20,11 @@ export interface RelightingRequest {
     isPublic?: boolean;
     lightingStyle: string;
     additionalText?: string;
+    lightDirection?: string;
+    lightIntensity?: string;
+    shadowControl?: string;
 }
+
 
 const buildRelightingPrompt = (lightingStyle: string) => {
     let specificInstr = "";
@@ -73,7 +77,16 @@ export const relighting = async (uid: string, req: RelightingRequest) => {
 
     const creator = await authRepository.getUserById(uid);
     const basePrompt = buildRelightingPrompt(req.lightingStyle);
-    const finalPrompt = req.additionalText ? `${req.additionalText}. ${basePrompt}` : basePrompt;
+
+    let enhancements = [];
+    if (req.lightDirection) enhancements.push(`LIGHT DIRECTION: ${req.lightDirection}`);
+    if (req.lightIntensity) enhancements.push(`LIGHT INTENSITY: ${req.lightIntensity}`);
+    if (req.shadowControl) enhancements.push(`SHADOW CONTROL: ${req.shadowControl}`);
+    if (req.additionalText) enhancements.push(`USER INSTRUCTIONS: ${req.additionalText}`);
+
+    const finalPrompt = enhancements.length > 0
+        ? `${basePrompt}\n\nADDITIONAL CONTEXT:\n${enhancements.join('\n')}`
+        : basePrompt;
 
     // 1. Create History Record
     const { historyId } = await generationHistoryRepository.create(uid, {
