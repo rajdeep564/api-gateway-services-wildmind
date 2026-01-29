@@ -295,6 +295,28 @@ export async function computeFalKlingO1SubmitCost(req: Request): Promise<{ cost:
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: dur } };
 }
 
+export async function computeFalKling26ProT2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { duration, generate_audio } = req.body || {};
+  const dur = typeof duration === 'number' ? String(duration) : String(duration || '5').replace(/s$/i, '');
+  const hasAudio = generate_audio !== false; // Default to true
+  const audioSuffix = hasAudio ? ' Audio On' : ' Audio Off';
+  const display = `Kling 2.6 Pro T2V/I2V ${dur}s${audioSuffix}`;
+  const base = findCredits(display);
+  if (base == null) throw new Error(`Unsupported Kling 2.6 Pro pricing: ${display}`);
+  return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: dur, generate_audio: hasAudio } };
+}
+
+export async function computeFalKling26ProI2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { duration, generate_audio } = req.body || {};
+  const dur = typeof duration === 'number' ? String(duration) : String(duration || '5').replace(/s$/i, '');
+  const hasAudio = generate_audio !== false; // Default to true
+  const audioSuffix = hasAudio ? ' Audio On' : ' Audio Off';
+  const display = `Kling 2.6 Pro T2V/I2V ${dur}s${audioSuffix}`;
+  const base = findCredits(display);
+  if (base == null) throw new Error(`Unsupported Kling 2.6 Pro pricing: ${display}`);
+  return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: dur, generate_audio: hasAudio } };
+}
+
 // LTX V2 pricing (Text-to-Video) mirrors I2V
 export async function computeFalLtxV2ProT2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> { return computeLtxCredits(req, 'Pro'); }
 export async function computeFalLtxV2FastT2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> { return computeLtxCredits(req, 'Fast'); }
@@ -424,9 +446,22 @@ export function computeFalVeoCostFromModel(model: string, meta?: any): { cost: n
     const resIn = String(meta?.resolution || '1080p').toLowerCase();
     const res = resIn.includes('2160') ? '2160p' : resIn.includes('1440') ? '1440p' : '1080p';
     display = `LTX V2 Fast T2V/I2V ${dur}s ${res}`;
-  } else if (normalized === 'fal-ai/kling-video/o1/standard/image-to-video' || normalized === 'fal-ai/kling-video/o1/image-to-video') {
+  } else if (
+    normalized === 'fal-ai/kling-video/o1/standard/image-to-video' ||
+    normalized === 'fal-ai/kling-video/o1/image-to-video' ||
+    // reference-to-video and first-last endpoints should use the same Kling o1 SKUs
+    normalized === 'fal-ai/kling-video/o1/standard/reference-to-video' ||
+    normalized === 'fal-ai/kling-video/o1/reference-to-video' ||
+    normalized === 'fal-ai/kling-video/o1/standard/first-last-frame-to-video' ||
+    normalized === 'fal-ai/kling-video/o1/first-last-frame-to-video'
+  ) {
     const dur = String(meta?.duration ?? '5');
     display = dur.startsWith('10') ? 'Kling o1 10s' : 'Kling o1 5s';
+  } else if (normalized === 'fal-ai/kling-video/v2.6/pro/text-to-video' || normalized === 'fal-ai/kling-video/v2.6/pro/image-to-video') {
+    const dur = String(meta?.duration ?? '5');
+    const hasAudio = meta?.generate_audio !== false; // Default to true
+    const audioSuffix = hasAudio ? ' Audio On' : ' Audio Off';
+    display = `Kling 2.6 Pro T2V/I2V ${dur}s${audioSuffix}`;
   }
   const base = display ? findCredits(display) : null;
   if (base == null) throw new Error('Unsupported FAL Veo model');
@@ -446,6 +481,16 @@ export async function computeFalRecraftVectorizeCost(_req: Request): Promise<{ c
   const base = findCredits(display);
   if (base == null) throw new Error('Unsupported FAL recraft/vectorize pricing');
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display } };
+}
+
+export async function computeFalQwenMultipleAnglesCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  // Use similar pricing to image generation - can be adjusted based on actual FAL pricing
+  const { num_images = 1 } = req.body || {};
+  const count = Math.max(1, Math.min(10, Number(num_images)));
+  // Use a base cost similar to image edit models (e.g., 100 credits per image)
+  const baseCost = 100;
+  const cost = Math.ceil(baseCost * count);
+  return { cost, pricingVersion: FAL_PRICING_VERSION, meta: { model: 'Qwen Multiple Angles', num_images: count } };
 }
 
 export async function computeFalBriaGenfillCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
@@ -715,6 +760,69 @@ export async function computeFalTopazUpscaleImageCost(req: Request): Promise<{ c
       pricing: { megapixels, creditsPerMp, credits },
       upscale_factor: factor,
       topaz_model: body.model,
+    },
+  };
+}
+
+// SeedVR Image Upscaler (factor-only pricing)
+// Rule: 4 credits per output megapixel (width x height / 1e6), rounded up.
+// NOTE: target_resolution-based upscaling is explicitly forbidden for this integration.
+export async function computeFalSeedVrUpscaleImageCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const body: any = req.body || {};
+
+  // Enforce factor-only mode
+  const upscaleModeRaw = body.upscale_mode;
+  if (upscaleModeRaw != null && String(upscaleModeRaw).toLowerCase() !== 'factor') {
+    throw new Error('upscale_mode must be "factor"');
+  }
+  if (body.target_resolution != null) {
+    throw new Error('target_resolution is not supported for this endpoint');
+  }
+
+  let url: string | undefined = body.image_url;
+  // Allow data URI input (image); upload to Zata to obtain a public URL for probing
+  if (!url && typeof body.image === 'string' && body.image.startsWith('data:')) {
+    try {
+      const uid = (req as any)?.uid || 'anon';
+      const stored = await uploadDataUriToZata({
+        dataUri: body.image,
+        keyPrefix: `users/${uid}/pricing/seedvr-image/${Date.now()}`,
+        fileName: 'source',
+      });
+      url = stored.publicUrl;
+    } catch {
+      url = undefined;
+    }
+  }
+  if (!url) throw new Error('image_url is required');
+
+  const meta = (req as any).seedvrImageProbe || await probeImageMeta(url);
+  const inW = Number(meta?.width || 0);
+  const inH = Number(meta?.height || 0);
+  if (!isFinite(inW) || !isFinite(inH) || inW <= 0 || inH <= 0) {
+    throw new Error('Unable to compute image dimensions for pricing');
+  }
+
+  const factor = Math.max(1, Math.min(10, Number(body.upscale_factor ?? 2)));
+  const outW = Math.max(1, Math.round(inW * factor));
+  const outH = Math.max(1, Math.round(inH * factor));
+
+  const megapixels = (outW * outH) / 1_000_000;
+  const creditsPerMp = 4;
+  const credits = Math.max(1, Math.ceil(megapixels * creditsPerMp));
+
+  return {
+    cost: credits,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: 'fal-ai/seedvr/upscale/image',
+      input: { width: inW, height: inH },
+      output: { width: outW, height: outH },
+      pricing: { megapixels, creditsPerMp, credits },
+      upscale_mode: 'factor',
+      upscale_factor: factor,
+      noise_scale: body.noise_scale,
+      output_format: body.output_format,
     },
   };
 }

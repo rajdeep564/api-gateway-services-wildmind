@@ -4,12 +4,12 @@ import { env } from '../config/env';
 // Launch plan constants
 const FREE_PLAN_CODE = 'FREE';
 const LAUNCH_PLAN_CODE = 'LAUNCH_4000_FIXED';
-const LAUNCH_FIXED_CREDITS = 4000;
+const LAUNCH_FIXED_CREDITS = 2000;
 
 // Launch plan cutoff date
 const LAUNCH_PLAN_CUTOFF_DATE = process.env.LAUNCH_PLAN_CUTOFF_DATE 
   ? new Date(process.env.LAUNCH_PLAN_CUTOFF_DATE)
-  : new Date('2025-12-25T23:59:59.999Z');
+  : new Date('2026-02-20T23:59:59.999Z');
 
 function isWithinLaunchPlanPeriod(): boolean {
   const now = new Date();

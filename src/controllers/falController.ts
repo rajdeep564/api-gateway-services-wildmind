@@ -68,6 +68,15 @@ export const falController = {
       res.json(formatApiResponse('success', 'Upscaled', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
     } catch (err) { next(err); }
   },
+  async seedvrUpscaleImage(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await (falService as any).seedvrUpscaleImage(uid, req.body || {});
+      const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'seedvr.upscale.image');
+      res.json(formatApiResponse('success', 'Upscaled', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
+    } catch (err) { next(err); }
+  },
   async seedvrUpscale(req: Request, res: Response, next: NextFunction) {
     try {
       const uid = req.uid;
@@ -250,6 +259,22 @@ export const falController = {
       res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
     } catch (err) { next(err); }
   },
+  async kling26ProT2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.kling26ProT2vSubmit(uid, req.body || {});
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
+  async kling26ProI2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.kling26ProI2vSubmit(uid, req.body || {});
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
   async ltx2ProI2vSubmit(req: Request, res: Response, next: NextFunction) {
     try {
       const uid = req.uid;
@@ -400,6 +425,15 @@ export const falController = {
     } catch (err) {
       next(err);
     }
+  },
+  async qwenMultipleAngles(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await (falService as any).qwenMultipleAngles(uid, req.body || {});
+      const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'qwen_multiple_angles');
+      res.json(formatApiResponse('success', 'Camera angles generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
+    } catch (err) { next(err); }
   },
 };
 

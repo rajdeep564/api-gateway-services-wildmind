@@ -3,6 +3,8 @@ import { creditDistributionData } from '../../data/creditDistribution';
 
 export const SEEDANCE_PRICING_VERSION = 'seedance-v1';
 
+export const SEEDANCE_15_PRICING_VERSION = 'seedance-v1.5';
+
 function normalizeDuration(d: any): 5|10|undefined {
   if (d == null) return undefined;
   const num = Number(d);
@@ -17,6 +19,22 @@ function normalizeDuration(d: any): 5|10|undefined {
   return undefined;
 }
 
+function normalizeSeedance15Duration(d: any): number | undefined {
+  if (d == null) return undefined;
+  const num = Number(d);
+  if (Number.isFinite(num)) {
+    const rounded = Math.round(num);
+    if (rounded >= 2 && rounded <= 12) return rounded;
+    return undefined;
+  }
+  const s = String(d).toLowerCase();
+  const m = s.match(/(\d{1,2})/);
+  if (!m) return undefined;
+  const parsed = Number(m[1]);
+  if (parsed >= 2 && parsed <= 12) return parsed;
+  return undefined;
+}
+
 function normalizeResolution(r: any): '480p'|'720p'|'1080p'|undefined {
   if (!r) return undefined;
   const s = String(r).toLowerCase();
@@ -27,11 +45,31 @@ function normalizeResolution(r: any): '480p'|'720p'|'1080p'|undefined {
 }
 
 export async function computeSeedanceVideoCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>{
-  const { model, mode, kind, duration, resolution } = (req.body || {}) as any;
+  const { model, mode, kind, duration, resolution, generate_audio, generateAudio } = (req.body || {}) as any;
   const selectedMode = (String(kind || mode || '').toLowerCase() === 'i2v') ? 'i2v' : 't2v';
+  const modelStr = String(model || '').toLowerCase();
+
+  // Seedance 1.5 (Replicate) — duration 2-12, audio on/off SKUs
+  if (modelStr.includes('seedance-1.5')) {
+    const dur15 = normalizeSeedance15Duration(duration);
+    if (!dur15) {
+      throw new Error('Seedance 1.5 pricing: duration must be between 2 and 12 seconds');
+    }
+    const audioOn = Boolean((generate_audio ?? generateAudio) === true);
+    const display = `Seedance 1.5 T2V/I2V Audio ${audioOn ? 'On' : 'Off'} ${dur15}s`;
+    const row15 = creditDistributionData.find(m => m.modelName === display);
+    if (!row15) {
+      throw new Error(`Unsupported Seedance 1.5 pricing for "${display}". Please add this SKU to creditDistribution.`);
+    }
+    return {
+      cost: Math.ceil(row15.creditsPerGeneration),
+      pricingVersion: SEEDANCE_15_PRICING_VERSION,
+      meta: { model: display, duration: dur15, audio: audioOn ? 'on' : 'off' },
+    };
+  }
+
   const dur = normalizeDuration(duration);
   const res = normalizeResolution(resolution);
-  const modelStr = String(model || '').toLowerCase();
   
   // Determine tier: check for pro-fast first, then lite, then default to Pro
   let tier: string;

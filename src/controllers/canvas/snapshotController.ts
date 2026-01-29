@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { projectRepository } from '../../repository/canvas/projectRepository';
 import { opRepository } from '../../repository/canvas/opRepository';
-import { elementRepository } from '../../repository/canvas/elementRepository';
+import { listAllElements } from '../../repository/canvas/elementRepository';
 import { formatApiResponse } from '../../utils/formatApiResponse';
 import { ApiError } from '../../utils/errorHandler';
 import { CanvasSnapshot } from '../../types/canvas';
@@ -169,6 +169,7 @@ export async function setCurrentSnapshot(req: Request, res: Response) {
     const existingMetadata = (existingSnapshot?.metadata || {}) as Record<string, any>;
 
     // Log what we're receiving
+    console.log('[SNAPSHOT RECEIVED]', Object.keys(elements).length, 'metadata:', Object.keys(incomingMetadata));
 
 
     // Merge incoming metadata with existing metadata, preserving all fields
@@ -214,6 +215,53 @@ export async function setCurrentSnapshot(req: Request, res: Response) {
 
     await projectRepository.saveCurrentSnapshot(projectId, snapshot);
 
+    // Extract images for project preview
+    try {
+      const imageUrls: string[] = [];
+      const seenUrls = new Set<string>();
+
+      // 1. Check metadata for stitched image or others
+      if (mergedMetadata['stitched-image']) {
+        const url = typeof mergedMetadata['stitched-image'] === 'string'
+          ? mergedMetadata['stitched-image']
+          : mergedMetadata['stitched-image'].url;
+        if (url && !seenUrls.has(url)) {
+          imageUrls.push(url);
+          seenUrls.add(url);
+        }
+      }
+
+      // 2. Extract from elements
+      for (const elId in elements) {
+        const el = elements[elId];
+        const urlsToCheck = [
+          el.meta?.url,
+          el.generatedImageUrl,
+          el.generatedVideoUrl,
+          ...(Array.isArray(el.generatedImageUrls) ? el.generatedImageUrls : [])
+        ];
+
+        for (const url of urlsToCheck) {
+          if (url && typeof url === 'string' && !seenUrls.has(url)) {
+            imageUrls.push(url);
+            seenUrls.add(url);
+          }
+        }
+      }
+
+      if (imageUrls.length > 0) {
+        // Randomize order for the previewImages array
+        const shuffled = [...imageUrls].sort(() => Math.random() - 0.5).slice(0, 10);
+        await projectRepository.updateProject(projectId, {
+          thumbnail: shuffled[0], // Set one as primary thumbnail
+          previewImages: shuffled,
+        });
+      }
+    } catch (prevErr) {
+      console.error('[setCurrentSnapshot] Failed to update project preview images:', prevErr);
+      // Non-blocking error
+    }
+
     // Verify it was saved
     const verify = await projectRepository.getCurrentSnapshot(projectId);
     const savedMeta = (verify?.metadata || {}) as Record<string, any>;
@@ -249,7 +297,33 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
       throw new ApiError('Access denied', 403);
     }
 
-    const snapshot = await projectRepository.getCurrentSnapshot(projectId);
+    // 1. Get the base snapshot (metadata + viewport)
+    let snapshot = await projectRepository.getCurrentSnapshot(projectId);
+
+    // 2. (Legacy) Elements were previously authoritative from collection. 
+    // Now Snapshot Document is SSoT.
+    // const elementsList = await elementRepository.listAllElements(projectId);
+
+    // 3. Construct/Merge Snapshot
+    if (!snapshot) {
+      // If no current snapshot doc exists yet, create a scaffold
+      snapshot = {
+        projectId,
+        snapshotOpIndex: -1,
+        elements: {},
+        metadata: {
+          version: '1.0',
+          createdAt: admin.firestore.Timestamp.now(),
+        }
+      };
+    }
+
+    // 4. (Legacy) Overwrite removed.
+    // snapshot.elements = {};
+    // for (const el of elementsList) {
+    //   snapshot.elements[el.id] = el;
+    // }
+
     res.json(formatApiResponse('success', 'Current snapshot retrieved', { snapshot }));
   } catch (error: any) {
     res.status(error.statusCode || 500).json(

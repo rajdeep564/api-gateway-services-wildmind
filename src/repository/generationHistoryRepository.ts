@@ -467,14 +467,27 @@ export async function list(uid: string, params: {
         items = filteredItems;
 
         const rawCount = snap.docs.length;
-        let hasMore = items.length > params.limit;
-        if (!hasMore && (rawCount >= fetchLimit || removedByMode > 0)) hasMore = true;
+        // Determine hasMore: if we fetched the full limit OR items were filtered out, there might be more
+        // We should set hasMore=true if:
+        // 1. We got the full fetchLimit from DB (more docs might exist)
+        // 2. Items were removed by filters (we need to fetch more to fill the page)
+        // 3. After filtering, we still have more than requested limit
+        let hasMore = items.length > params.limit || rawCount >= fetchLimit || removedByMode > 0;
         const pageItems = items.slice(0, params.limit);
 
+        // Special case: if we returned 0 items but had raw docs, don't set hasMore
+        // This prevents infinite loops when all items are filtered out
+        if (pageItems.length === 0 && items.length === 0) {
+          hasMore = rawCount >= fetchLimit; // Only continue if we hit the fetch limit
+        }
+
+        // IMPORTANT: nextCursor must advance to the last RETURNED item, not the last
+        // over-fetched raw doc. Otherwise pagination will skip large time ranges.
         let nextCursor: number | null = null;
-        if (hasMore) {
-          const lastRawDoc = snap.docs[snap.docs.length - 1];
-          nextCursor = getCreatedAtMillisFromDoc(lastRawDoc);
+        if (hasMore && snap.docs.length > 0 && pageItems.length > 0) {
+          const lastReturnedId = (pageItems[pageItems.length - 1] as any)?.id;
+          const cursorDoc = lastReturnedId ? snap.docs.find((d) => d.id === lastReturnedId) : undefined;
+          nextCursor = cursorDoc ? getCreatedAtMillisFromDoc(cursorDoc) : getCreatedAtMillisFromDoc(snap.docs[snap.docs.length - 1]);
         }
 
         return {
@@ -535,10 +548,18 @@ export async function list(uid: string, params: {
 
       // If we scanned but found no items, there are no more matching items
       // Set hasMore to false to prevent infinite pagination
-      const hasMore = all.length > 0 && (all.length > params.limit || !ended);
+      // Also check if we actually reached the end vs just filtering everything out
+      const hasMore = all.length > params.limit || (!ended && all.length > 0);
       const pageItems = all.slice(0, params.limit);
-      // Only set nextCursor if we have items and there's more to fetch
-      const nextCursor = hasMore && lastRawDoc && all.length > 0 ? getCreatedAtMillisFromDoc(lastRawDoc) : null;
+      // IMPORTANT: nextCursor must be based on the last RETURNED item.
+      // Using the last scanned raw doc causes skipped results (especially when scanning/overfetching).
+      let nextCursor: number | null = null;
+      if (hasMore && pageItems.length > 0) {
+        const last = pageItems[pageItems.length - 1] as any;
+        const lastCreated = last?.createdAt || last?.updatedAt;
+        const ms = typeof lastCreated === 'string' ? Date.parse(lastCreated) : NaN;
+        nextCursor = Number.isNaN(ms) ? null : ms;
+      }
 
       return {
         items: pageItems,

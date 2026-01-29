@@ -71,7 +71,7 @@ export const validateUsername = body('username')
  */
 export const handleValidationErrors = (req: Request, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
-  
+
   if (!errors.isEmpty()) {
     return res.status(400).json({
       status: 'error',
@@ -79,7 +79,7 @@ export const handleValidationErrors = (req: Request, res: Response, next: NextFu
       errors: errors.array()
     });
   }
-  
+
   next();
 };
 
@@ -109,8 +109,15 @@ const XSS_PATTERNS = [
  * Check for injection attempts
  */
 export const detectInjectionAttacks = (req: Request, res: Response, next: NextFunction) => {
+  const textFields = ['text', 'prompt', 'lyrics', 'bio', 'description', 'message'];
+
   const checkValue = (value: any, path: string = ''): boolean => {
     if (typeof value === 'string') {
+      // Skip check for known text fields that naturally contain punctuation like quotes
+      if (textFields.some(field => path.endsWith(field))) {
+        return false;
+      }
+
       // Check SQL injection
       for (const pattern of SQL_INJECTION_PATTERNS) {
         if (pattern.test(value)) {
@@ -118,7 +125,7 @@ export const detectInjectionAttacks = (req: Request, res: Response, next: NextFu
           return true;
         }
       }
-      
+
       // Check XSS
       for (const pattern of XSS_PATTERNS) {
         if (pattern.test(value)) {
@@ -128,7 +135,7 @@ export const detectInjectionAttacks = (req: Request, res: Response, next: NextFu
       }
     } else if (typeof value === 'object' && value !== null) {
       for (const key in value) {
-        if (checkValue(value[key], `${path}.${key}`)) {
+        if (checkValue(value[key], path ? `${path}.${key}` : key)) {
           return true;
         }
       }
@@ -148,6 +155,13 @@ export const detectInjectionAttacks = (req: Request, res: Response, next: NextFu
     return res.status(400).json({
       status: 'error',
       message: 'Invalid query parameters'
+    });
+  }
+
+  if (req.params && checkValue(req.params, 'params')) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Invalid URL parameters'
     });
   }
 

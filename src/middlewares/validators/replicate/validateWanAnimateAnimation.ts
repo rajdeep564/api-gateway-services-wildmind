@@ -6,6 +6,7 @@ export const validateWanAnimateAnimation = [
   body('model').optional().isString(),
   body('video').isString().withMessage('video is required and must be a string URL or data URI'),
   body('character_image').isString().withMessage('character_image is required and must be a string URL or data URI'),
+  body('video_duration').isFloat({ gt: 0 }).withMessage('video_duration is required and must be a number > 0'),
   body('seed').optional().isInt().withMessage('seed must be an integer'),
   body('go_fast').optional().isBoolean().withMessage('go_fast must be a boolean'),
   body('refert_num').optional().isIn([1, 5]).withMessage('refert_num must be 1 or 5'),

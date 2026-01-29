@@ -1,5 +1,7 @@
 import { Request } from 'express';
 import { creditDistributionData } from '../../data/creditDistribution';
+import { probeImageMeta } from '../media/imageProbe';
+import { ApiError } from '../errorHandler';
 
 export const REPLICATE_PRICING_VERSION = 'replicate-v1';
 
@@ -41,37 +43,120 @@ export async function computeReplicateBgRemoveCost(req: Request): Promise<{ cost
 
 export async function computeReplicateUpscaleCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { model } = req.body || {};
-  const normalized = String(model || '').toLowerCase();
+  // Mirror replicateService.upscale default: Crystal Upscaler when model is omitted.
+  const normalized = String(model || 'philz1337x/crystal-upscaler').toLowerCase();
   let display = '';
   let meta: Record<string, any> = { model: normalized };
 
-  // Crystal Upscaler has resolution-based pricing
+  // Crystal Upscaler: pixel-tier pricing (based on output pixels)
+  // Tiers (total pixels):
+  //  <= 4 MP    -> $0.05
+  //  <= 8 MP    -> $0.10
+  //  <= 16 MP   -> $0.20
+  //  <= 25 MP   -> $0.40
+  //  <= 50 MP   -> $0.80
+  //  <= 100 MP  -> $1.60
+  //  else       -> $3.20
+  // User cost adds fixed $0.01 overcharge.
+  // Credit cost MUST match the sheet exactly (fixed credits per tier).
   if (normalized.includes('crystal')) {
-    const resRaw = String((req.body as any)?.resolution || '').toLowerCase();
-    // Normalize a few common forms
-    const res = ((): string => {
-      if (!resRaw) return '1080p';
-      if (resRaw.includes('1080')) return '1080p';
-      if (resRaw.includes('1440')) return '1440p';
-      if (resRaw.includes('2160') || resRaw.includes('4k')) return '2160p';
-      if (resRaw.includes('6k')) return '6K'; // Sheet uses 6K (uppercase K?)
-      if (resRaw.includes('8k')) return '8K';
-      if (resRaw.includes('12k')) return '12K';
+    const getNum = (v: any): number | undefined => {
+      const n = typeof v === 'number' ? v : Number(v);
+      if (!Number.isFinite(n)) return undefined;
+      return n;
+    };
 
-      const m = resRaw.match(/(\d{3,4})p/);
-      if (m) {
-        const p = Number(m[1]);
-        if (p <= 1080) return '1080p';
-        if (p <= 1440) return '1440p';
-        if (p <= 2160) return '2160p';
+    const width =
+      getNum((req.body as any)?.width) ??
+      getNum((req.body as any)?.inputWidth) ??
+      getNum((req.body as any)?.w);
+    const height =
+      getNum((req.body as any)?.height) ??
+      getNum((req.body as any)?.inputHeight) ??
+      getNum((req.body as any)?.h);
+
+    let inW = width;
+    let inH = height;
+
+    if (!inW || !inH) {
+      const imageUrl = String((req.body as any)?.image || '');
+      if (imageUrl) {
+        const probed = await probeImageMeta(imageUrl);
+        if (probed.width && probed.height) {
+          inW = probed.width;
+          inH = probed.height;
+          meta.probed = true;
+        }
       }
-      return '1080p';
+    }
+
+    if (!inW || !inH || inW <= 0 || inH <= 0) {
+      throw new ApiError('Unable to determine image dimensions for Crystal Upscaler pricing', 400);
+    }
+
+    const rawScale = getNum((req.body as any)?.scale_factor);
+    const scaleFactor = Math.max(1, Math.min(4, rawScale ?? 2));
+
+    const outW = Math.max(1, Math.round(inW * scaleFactor));
+    const outH = Math.max(1, Math.round(inH * scaleFactor));
+    const totalPixels = outW * outH;
+
+    const baseCents = ((): number => {
+      // Match credit sheet tiers (MP = million pixels)
+      if (totalPixels <= 4_000_000) return 5;
+      if (totalPixels <= 8_000_000) return 10;
+      if (totalPixels <= 16_000_000) return 20;
+      if (totalPixels <= 25_000_000) return 40;
+      if (totalPixels <= 50_000_000) return 80;
+      if (totalPixels <= 100_000_000) return 160;
+      return 320;
     })();
 
-    // Map to sheet names: "replicate/crystal-upscaler 1080p", etc.
-    // Sheet uses "6K", "8K", "12K", "2160p", "1440p", "1080p"
-    display = `replicate/crystal-upscaler ${res}`;
-    meta.resolution = res;
+    const overchargeCents = 1;
+    const userCostCents = baseCents + overchargeCents;
+    const cost = ((): number => {
+      // Sheet mapping: MP tier => credits per generation
+      if (totalPixels <= 4_000_000) return 120;
+      if (totalPixels <= 8_000_000) return 220;
+      if (totalPixels <= 16_000_000) return 420;
+      if (totalPixels <= 25_000_000) return 820;
+      if (totalPixels <= 50_000_000) return 1620;
+      if (totalPixels <= 100_000_000) return 3220;
+      return 6420;
+    })();
+
+    meta = {
+      ...meta,
+      model: 'replicate/crystal-upscaler',
+      inputWidth: Math.round(inW),
+      inputHeight: Math.round(inH),
+      scaleFactor,
+      outputWidth: outW,
+      outputHeight: outH,
+      totalPixels,
+      totalMP: Math.round((totalPixels / 1_000_000) * 100) / 100,
+      baseCents,
+      overchargeCents,
+      userCostCents,
+      computedCredits: cost,
+    };
+
+    // Detailed debug logs to verify real requests against the pricing sheet
+    // eslint-disable-next-line no-console
+    console.log('[pricing][replicate.upscale][crystal] computed', {
+      input: { w: meta.inputWidth, h: meta.inputHeight },
+      scaleFactor,
+      output: { w: outW, h: outH },
+      totalPixels,
+      totalMP: meta.totalMP,
+      baseCents,
+      overchargeCents,
+      userCostCents,
+      credits: cost,
+      probed: meta.probed === true,
+    });
+
+    return { cost, pricingVersion: 'replicate-upscale-v2', meta };
   }
   else if (normalized.includes('philz1337x/clarity-upscaler')) display = 'replicate/philz1337x/clarity-upscaler';
   else if (normalized.includes('fermatresearch/magic-image-refiner')) display = 'replicate/fermatresearch/magic-image-refiner';
@@ -88,6 +173,15 @@ export async function computeReplicateUpscaleCost(req: Request): Promise<{ cost:
 export async function computeReplicateImageGenCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { model, quality } = req.body || {};
   const normalized = String(model || '').toLowerCase();
+
+  // Resolve requested image count across common param names.
+  // Frontend uses `n`; GPT Image 1.5 schema uses `number_of_images`.
+  const rawCount =
+    (req.body as any)?.number_of_images ??
+    (req.body as any)?.n ??
+    (req.body as any)?.num_images ??
+    (req.body as any)?.max_images;
+  const count = Math.max(1, Math.min(10, Number(rawCount ?? 1)));
 
   let display = 'replicate/bytedance/seedream-4'; // Default fallback
   let meta: Record<string, any> = { model: normalized };
@@ -132,11 +226,16 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   else if (normalized.includes('p-image-edit') || normalized.includes('prunaai/p-image-edit')) {
     display = 'P-Image-Edit';
   }
+  else if (normalized.includes('qwen-image')) {
+    // Qwen Image 2512 should be charged at 60 credits (matches credit sheet entry: qwen-image-edit-2512)
+    // Keep pricing keyed to the creditDistributionData modelName.
+    display = normalized.includes('2512') ? 'qwen-image-edit-2512' : 'qwen-image-edit-2511';
+  }
 
-  // Lookup cost
-  let cost = 0;
+  // Lookup base cost (per image)
+  let baseCost = 0;
 
-  // Handle Z-Image Turbo explicit override (Free)
+  // Handle Z-Image Turbo mapping
   if (
     normalized.includes('z-image-turbo') ||
     normalized.includes('zimage-turbo') ||
@@ -144,15 +243,19 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
     normalized.includes('new-turbo-model') ||
     normalized.includes('placeholder-model-name')
   ) {
-    cost = 0;
-  } else {
-    const base = findCredits(display);
-    if (base == null) throw new Error(`Unsupported Replicate Image model: ${display}`);
-    cost = Math.ceil(base);
+    display = 'z-image-turbo';
   }
 
+  const base = findCredits(display);
+  if (base == null) throw new Error(`Unsupported Replicate Image model: ${display}`);
+  baseCost = Math.ceil(base);
 
-  return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { ...meta, model: display } };
+  const cost = Math.ceil(baseCost * count);
+  return {
+    cost,
+    pricingVersion: REPLICATE_PRICING_VERSION,
+    meta: { ...meta, model: display, n: count },
+  };
 }
 
 export async function computeReplicateMultiangleCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
@@ -175,4 +278,95 @@ export async function computeReplicateNextSceneCost(req: Request): Promise<{ cos
   const cost = base !== null ? Math.ceil(base) : 40;
 
   return { cost, pricingVersion: REPLICATE_PRICING_VERSION, meta: { model: display } };
+}
+
+export async function computeQwenImageEditCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  // Credit distribution uses the short model name (no replicate/ prefix)
+  const requested = String((req.body as any)?.model || '').toLowerCase();
+  const display = requested.includes('2512') ? 'qwen-image-edit-2512' : 'qwen-image-edit-2511';
+
+  const base = findCredits(display);
+  // Default to 60 credits for 2512 and 80 for 2511 if not found
+  const fallback = display.includes('2512') ? 60 : 80;
+  const cost = base !== null ? Math.ceil(base) : fallback;
+
+  return {
+    cost,
+    pricingVersion: REPLICATE_PRICING_VERSION,
+    meta: { model: display, requestedModel: (req.body as any)?.model },
+  };
+}
+
+export async function computeReplicateVideoCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { model, duration, resolution, firstFrameUrl } = req.body || {};
+  const normalized = String(model || '').toLowerCase();
+  const isI2V = !!firstFrameUrl;
+  const dur = duration || 5;
+  const res = (resolution || '720p').toLowerCase();
+
+  let display = '';
+  let meta: Record<string, any> = {
+    model: normalized,
+    duration: dur,
+    resolution: res,
+    mode: isI2V ? 'I2V' : 'T2V'
+  };
+
+  if (normalized.includes('kling')) {
+    // Patterns: "Kling 2.5 Turbo Pro T2V 5s", "Kling 2.5 Turbo Pro I2V 10s"
+    const type = isI2V ? 'I2V' : 'T2V';
+    // Round duration to nearest supported (5 or 10)
+    const durTag = dur > 5 ? '10s' : '5s';
+    display = `Kling 2.5 Turbo Pro ${type} ${durTag}`;
+  }
+  else if (normalized.includes('wan')) {
+    // Patterns: "Wan 2.5 T2V 5s 720p", "Wan 2.5 Fast T2V 5s 1080p"
+    const isFast = normalized.includes('fast');
+    const type = isI2V ? 'I2V' : 'T2V';
+    const durTag = dur > 5 ? '10s' : '5s';
+    const fastTag = isFast ? 'Fast ' : '';
+    // Wan supports 480p, 720p, 1080p
+    let resTag = '720p';
+    if (res.includes('480')) resTag = '480p';
+    else if (res.includes('1080')) resTag = '1080p';
+
+    display = `Wan 2.5 ${fastTag}${type} ${durTag} ${resTag}`;
+  }
+  else if (normalized.includes('seedance')) {
+    // Patterns: "Seedance 1.0 Pro T2V 5s 720p", "Seedance 1.0 Lite T2V 5s 480p"
+    const isLite = normalized.includes('lite');
+    const type = isI2V ? 'I2V' : 'T2V';
+    const durTag = dur > 5 ? '10s' : '5s';
+    const variant = isLite ? 'Lite' : 'Pro';
+    let resTag = '720p';
+    if (res.includes('480')) resTag = '480p';
+    else if (res.includes('1080')) resTag = '1080p';
+
+    display = `Seedance 1.0 ${variant} ${type} ${durTag} ${resTag}`;
+  }
+  else if (normalized.includes('pixverse')) {
+    // Patterns: "PixVerse 5 T2V 5s 360p", "PixVerse 5 I2V 8s 1080p"
+    const type = isI2V ? 'I2V' : 'T2V';
+    // PixVerse v5 supports 5s and 8s
+    const durTag = dur > 5 ? '8s' : '5s';
+    // PixVerse v5 supports 360p, 540p, 720p, 1080p
+    let resTag = '720p';
+    if (res.includes('360')) resTag = '360p';
+    else if (res.includes('540')) resTag = '540p';
+    else if (res.includes('1080')) resTag = '1080p';
+
+    display = `PixVerse 5 ${type} ${durTag} ${resTag}`;
+  }
+
+  if (!display) {
+    throw new Error(`Unsupported Replicate Video model: ${model}`);
+  }
+
+  const base = findCredits(display);
+  if (base == null) {
+    console.warn(`[computeReplicateVideoCost] Pricing not found for "${display}", using fallback 760`);
+    return { cost: 760, pricingVersion: REPLICATE_PRICING_VERSION, meta: { ...meta, display, note: 'Fallback pricing' } };
+  }
+
+  return { cost: Math.ceil(base), pricingVersion: REPLICATE_PRICING_VERSION, meta: { ...meta, display } };
 }

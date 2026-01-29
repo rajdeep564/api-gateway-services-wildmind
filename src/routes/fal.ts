@@ -22,6 +22,7 @@ import {
   computeFalRecraftVectorizeCost,
   computeFalBriaGenfillCost,
   computeFalSeedVrUpscaleCost,
+  computeFalSeedVrUpscaleImageCost,
   computeFalTopazUpscaleImageCost,
   computeFalBirefnetVideoCost,
   computeFalElevenTtsCost,
@@ -30,6 +31,9 @@ import {
   computeFalMayaTtsCost,
   computeFalElevenSfxCost,
   computeFalKlingO1SubmitCost,
+  computeFalKling26ProT2vSubmitCost,
+  computeFalKling26ProI2vSubmitCost,
+  computeFalQwenMultipleAnglesCost,
 } from "../utils/pricing/falPricing";
 import {
   validateFalGenerate,
@@ -63,11 +67,15 @@ import {
   validateFalRecraftVectorize,
   validateFalBriaGenfill,
   validateFalSeedvrUpscale,
+  validateFalSeedvrUpscaleImage,
   validateFalTopazUpscaleImage,
   validateFalBirefnetVideo,
   validateFalKlingO1FirstLastSubmit,
   validateFalKlingO1ReferenceSubmit,
+  validateFalKling26ProT2v,
+  validateFalKling26ProI2v,
   validateFalNanoBananaPro,
+  validateFalQwenMultipleAngles,
 } from "../middlewares/validators/fal/validateFalGenerate";
 
 const router = Router();
@@ -207,6 +215,17 @@ router.post(
   ) as any,
   (falController as any).topazUpscaleImage
 );
+
+// SeedVR Image Upscaler (factor-only)
+router.post(
+  "/seedvr/upscale/image",
+  requireAuth as any,
+  validateFalSeedvrUpscaleImage as any,
+  makeCreditCost("fal", "seedvr_upscale_image", (req) =>
+    computeFalSeedVrUpscaleImageCost(req)
+  ) as any,
+  (falController as any).seedvrUpscaleImage
+);
 // SeedVR2 Video Upscaler
 router.post(
   "/seedvr/upscale/video",
@@ -283,6 +302,26 @@ router.post(
   ) as any,
   (falController as any).klingO1ReferenceSubmit
 );
+// Kling 2.6 Pro Text-to-Video
+router.post(
+  "/kling-2.6-pro/text-to-video/submit",
+  requireAuth as any,
+  validateFalKling26ProT2v as any,
+  makeCreditCost("fal", "kling_26_pro_t2v_submit", (req) =>
+    computeFalKling26ProT2vSubmitCost(req)
+  ) as any,
+  (falController as any).kling26ProT2vSubmit
+);
+// Kling 2.6 Pro Image-to-Video
+router.post(
+  "/kling-2.6-pro/image-to-video/submit",
+  requireAuth as any,
+  validateFalKling26ProI2v as any,
+  makeCreditCost("fal", "kling_26_pro_i2v_submit", (req) =>
+    computeFalKling26ProI2vSubmitCost(req)
+  ) as any,
+  (falController as any).kling26ProI2vSubmit
+);
 router.get(
   "/queue/status",
   requireAuth as any,
@@ -298,6 +337,15 @@ router.get(
 
 // NanoBanana queue submit
 // Note: NanoBanana uses the unified /fal/generate route; no separate routes needed
+
+// Qwen Multiple Angles (camera angle adjustment)
+router.post(
+  "/qwen/multiple-angles",
+  requireAuth as any,
+  validateFalQwenMultipleAngles as any,
+  makeCreditCost("fal", "qwen_multiple_angles", (req) => computeFalQwenMultipleAnglesCost(req)) as any,
+  (falController as any).qwenMultipleAngles
+);
 
 export default router;
 

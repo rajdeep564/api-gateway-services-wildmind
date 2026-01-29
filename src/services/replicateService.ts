@@ -15,6 +15,7 @@ import {
 } from "../utils/storage/zataUpload";
 import { replicateRepository } from "../repository/replicateRepository";
 import { creditsRepository } from "../repository/creditsRepository";
+import { creditsService } from "./creditsService";
 import { computeWanVideoCost } from "../utils/pricing/wanPricing";
 import { syncToMirror, updateMirror } from "../utils/mirrorHelper";
 import { aestheticScoreService } from "./aestheticScoreService";
@@ -659,7 +660,7 @@ export async function waitForPrediction(
   const replicate = ensureReplicate();
   const startTime = Date.now();
   let pollCount = 0;
-  
+
   while (Date.now() - startTime < timeoutMs) {
     const prediction = await replicate.predictions.get(predictionId);
     const status = prediction.status;
@@ -673,7 +674,7 @@ export async function waitForPrediction(
     pollCount++;
     // OPTIMIZED: Exponential backoff to reduce CPU load - start at 5s, increase gradually
     const backoffInterval = Math.min(intervalMs * (1 + Math.floor(pollCount / 10)), 30000); // Max 30s
-    
+
     // Wait before next poll with exponential backoff
     await new Promise(resolve => setTimeout(resolve, backoffInterval));
   }
@@ -736,6 +737,17 @@ export async function replicateQueueResult(
     const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
     // Get current history to preserve duration/resolution/quality/inputImages if they exist
     const currentHistory = await generationHistoryRepository.get(uid, historyId).catch(() => null);
+    const inputFromPrediction = (result as any)?.input || {};
+    const audioFromPrediction =
+      typeof inputFromPrediction?.generate_audio === "boolean"
+        ? inputFromPrediction.generate_audio
+        : typeof inputFromPrediction?.generateAudio === "boolean"
+          ? inputFromPrediction.generateAudio
+          : undefined;
+    const aspectFromPrediction =
+      typeof inputFromPrediction?.aspect_ratio === "string"
+        ? inputFromPrediction.aspect_ratio
+        : undefined;
     await generationHistoryRepository.update(uid, historyId, {
       status: "completed",
       videos: scoredVideos,
@@ -745,6 +757,17 @@ export async function replicateQueueResult(
       ...(currentHistory && (currentHistory as any)?.resolution ? { resolution: (currentHistory as any).resolution } : {}),
       // Preserve quality field (for PixVerse models)
       ...(currentHistory && (currentHistory as any)?.quality ? { quality: (currentHistory as any).quality } : {}),
+      // Preserve Seedance 1.5 fields if we have them (needed for correct pricing)
+      ...(currentHistory && typeof (currentHistory as any)?.generate_audio === "boolean"
+        ? { generate_audio: (currentHistory as any).generate_audio }
+        : typeof audioFromPrediction === "boolean"
+          ? { generate_audio: audioFromPrediction }
+          : {}),
+      ...(currentHistory && typeof (currentHistory as any)?.aspect_ratio === "string"
+        ? { aspect_ratio: (currentHistory as any).aspect_ratio }
+        : typeof aspectFromPrediction === "string"
+          ? { aspect_ratio: aspectFromPrediction }
+          : {}),
       // Preserve inputImages if they exist (for showing "Your Uploads" in UI)
       ...(currentHistory && Array.isArray((currentHistory as any)?.inputImages) && (currentHistory as any).inputImages.length > 0
         ? { inputImages: (currentHistory as any).inputImages }
@@ -864,12 +887,22 @@ export async function replicateQueueResult(
         // Ensure duration and resolution have defaults if not stored in history
         const duration = (fresh as any)?.duration ?? 5;
         const resolution = (fresh as any)?.resolution ?? "1080p";
+        const audioFromPredictionInput = (result as any)?.input?.generate_audio ?? (result as any)?.input?.generateAudio;
         const fakeReq = {
           body: {
             kind: kindFromHistory,
             duration: duration,
             resolution: resolution,
             model: (fresh as any)?.model,
+            // Preserve audio flag from stored history so pricing uses correct SKU (Audio On/Off)
+            generate_audio:
+              typeof (fresh as any)?.generate_audio === "boolean"
+                ? (fresh as any).generate_audio
+                : typeof (fresh as any)?.generateAudio === "boolean"
+                  ? (fresh as any).generateAudio
+                  : typeof audioFromPredictionInput === "boolean"
+                    ? audioFromPredictionInput
+                    : false,
           },
         } as any;
         console.log('[replicateQueueResult] Computing Seedance cost', {
@@ -935,19 +968,50 @@ export async function replicateQueueResult(
         debitedCredits = cost;
         debitStatus = status;
       } else if (model.includes("wan-2.2-animate-replace")) {
-        const { computeWanAnimateReplaceCost } = await import(
-          "../utils/pricing/wanAnimatePricing"
-        );
-        // Estimate runtime from video duration if available, otherwise use default
-        const estimatedRuntime = (fresh as any)?.video_duration || (fresh as any)?.duration || 5;
-        const fakeReq = {
-          body: {
-            estimated_runtime: estimatedRuntime,
-            runtime: estimatedRuntime,
-            video_duration: estimatedRuntime,
+        const nowMs = Date.now();
+        const parseMs = (v: any): number => {
+          const t = Date.parse(String(v || ''));
+          return Number.isFinite(t) ? t : NaN;
+        };
+
+        const startFromPrediction =
+          parseMs((result as any)?.started_at) || parseMs((result as any)?.created_at);
+        const startFromHistory =
+          (typeof (fresh as any)?.providerRequestStartMs === 'number'
+            ? (fresh as any).providerRequestStartMs
+            : Number((fresh as any)?.providerRequestStartMs)) ||
+          parseMs((fresh as any)?.providerRequestStartAt);
+
+        const startMs = Number.isFinite(startFromPrediction)
+          ? startFromPrediction
+          : Number.isFinite(startFromHistory)
+            ? startFromHistory
+            : nowMs;
+
+        const endFromPrediction =
+          parseMs((result as any)?.completed_at) ||
+          parseMs((result as any)?.completedAt) ||
+          parseMs((result as any)?.ended_at);
+        const endMs = Number.isFinite(endFromPrediction) ? endFromPrediction : nowMs;
+
+        const elapsedSeconds = Math.max(0, Math.ceil((endMs - startMs) / 1000));
+        const cost = elapsedSeconds * 8;
+        const pricingVersion = 'wan2.2.time.v1';
+        const meta = {
+          elapsedSeconds,
+          creditsPerSecond: 8,
+          startMs,
+          endMs,
+          timingSource: {
+            start: Number.isFinite(startFromPrediction)
+              ? 'prediction.started_at|created_at'
+              : Number.isFinite(startFromHistory)
+                ? 'history.providerRequestStart*'
+                : 'now',
+            end: Number.isFinite(endFromPrediction) ? 'prediction.completed_at' : 'now',
           },
-        } as any;
-        const { cost, pricingVersion, meta } = await computeWanAnimateReplaceCost(fakeReq as any);
+        };
+
         const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
@@ -958,19 +1022,50 @@ export async function replicateQueueResult(
         debitedCredits = cost;
         debitStatus = status;
       } else if (model.includes("wan-2.2-animate-animation")) {
-        const { computeWanAnimateAnimationCost } = await import(
-          "../utils/pricing/wanAnimateAnimationPricing"
-        );
-        // Estimate runtime from video duration if available, otherwise use default
-        const estimatedRuntime = (fresh as any)?.video_duration || (fresh as any)?.duration || 5;
-        const fakeReq = {
-          body: {
-            estimated_runtime: estimatedRuntime,
-            runtime: estimatedRuntime,
-            video_duration: estimatedRuntime,
+        const nowMs = Date.now();
+        const parseMs = (v: any): number => {
+          const t = Date.parse(String(v || ''));
+          return Number.isFinite(t) ? t : NaN;
+        };
+
+        const startFromPrediction =
+          parseMs((result as any)?.started_at) || parseMs((result as any)?.created_at);
+        const startFromHistory =
+          (typeof (fresh as any)?.providerRequestStartMs === 'number'
+            ? (fresh as any).providerRequestStartMs
+            : Number((fresh as any)?.providerRequestStartMs)) ||
+          parseMs((fresh as any)?.providerRequestStartAt);
+
+        const startMs = Number.isFinite(startFromPrediction)
+          ? startFromPrediction
+          : Number.isFinite(startFromHistory)
+            ? startFromHistory
+            : nowMs;
+
+        const endFromPrediction =
+          parseMs((result as any)?.completed_at) ||
+          parseMs((result as any)?.completedAt) ||
+          parseMs((result as any)?.ended_at);
+        const endMs = Number.isFinite(endFromPrediction) ? endFromPrediction : nowMs;
+
+        const elapsedSeconds = Math.max(0, Math.ceil((endMs - startMs) / 1000));
+        const cost = elapsedSeconds * 8;
+        const pricingVersion = 'wan2.2.time.v1';
+        const meta = {
+          elapsedSeconds,
+          creditsPerSecond: 8,
+          startMs,
+          endMs,
+          timingSource: {
+            start: Number.isFinite(startFromPrediction)
+              ? 'prediction.started_at|created_at'
+              : Number.isFinite(startFromHistory)
+                ? 'history.providerRequestStart*'
+                : 'now',
+            end: Number.isFinite(endFromPrediction) ? 'prediction.completed_at' : 'now',
           },
-        } as any;
-        const { cost, pricingVersion, meta } = await computeWanAnimateAnimationCost(fakeReq as any);
+        };
+
         const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
@@ -1416,6 +1511,11 @@ export async function wanAnimateReplaceSubmit(
   uid: string,
   body: any
 ): Promise<SubmitReturn> {
+  // Time-based billing for WAN 2.2 Animate happens post-success;
+  // still ensure user credits doc exists upfront.
+  await creditsService.ensureUserInit(uid);
+  await creditsService.ensureLaunchDailyReset(uid);
+
   if (!body?.video) {
     throw new ApiError("video is required", 400);
   }
@@ -1442,6 +1542,7 @@ export async function wanAnimateReplaceSubmit(
     isPublic: body.isPublic ?? false,
     createdBy,
     originalPrompt: body.prompt || "",
+    duration: body?.video_duration,
   } as any);
 
   // Persist input video and character image to history
@@ -1469,8 +1570,8 @@ export async function wanAnimateReplaceSubmit(
   } catch { }
 
   const input: any = {
-    video: String(body.video),
-    character_image: String(body.character_image),
+    video: resolveToPublicUrl(String(body.video)),
+    character_image: resolveToPublicUrl(String(body.character_image)),
   };
 
   // Optional parameters
@@ -1510,6 +1611,15 @@ export async function wanAnimateReplaceSubmit(
 
   let predictionId = "";
   try {
+    // Start timer when request is sent to provider
+    const requestStartMs = Date.now();
+    try {
+      await generationHistoryRepository.update(uid, historyId, {
+        providerRequestStartMs: requestStartMs,
+        providerRequestStartAt: new Date(requestStartMs).toISOString(),
+      } as any);
+    } catch { }
+
     const version = await getLatestModelVersion(replicate, modelBase);
     const pred = await replicate.predictions.create(
       version ? { version, input } : { model: modelBase, input }
@@ -1517,9 +1627,15 @@ export async function wanAnimateReplaceSubmit(
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
   } catch (e: any) {
+    const upstreamMsg =
+      e?.response?.data?.detail ||
+      e?.response?.data?.error ||
+      e?.response?.data?.message ||
+      e?.message ||
+      'Replicate submit failed';
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
-      error: e?.message || "Replicate submit failed",
+      error: String(upstreamMsg),
     } as any);
     throw new ApiError("Failed to submit WAN Animate Replace job", 502, e);
   }
@@ -1545,6 +1661,11 @@ export async function wanAnimateAnimationSubmit(
   uid: string,
   body: any
 ): Promise<SubmitReturn> {
+  // Time-based billing for WAN 2.2 Animate happens post-success;
+  // still ensure user credits doc exists upfront.
+  await creditsService.ensureUserInit(uid);
+  await creditsService.ensureLaunchDailyReset(uid);
+
   if (!body?.video) {
     throw new ApiError("video is required", 400);
   }
@@ -1571,6 +1692,7 @@ export async function wanAnimateAnimationSubmit(
     isPublic: body.isPublic ?? false,
     createdBy,
     originalPrompt: body.prompt || "",
+    duration: body?.video_duration,
   } as any);
 
   // Persist input video and character image to history
@@ -1598,8 +1720,8 @@ export async function wanAnimateAnimationSubmit(
   } catch { }
 
   const input: any = {
-    video: String(body.video),
-    character_image: String(body.character_image),
+    video: resolveToPublicUrl(String(body.video)),
+    character_image: resolveToPublicUrl(String(body.character_image)),
   };
 
   // Optional parameters
@@ -1639,6 +1761,15 @@ export async function wanAnimateAnimationSubmit(
 
   let predictionId = "";
   try {
+    // Start timer when request is sent to provider
+    const requestStartMs = Date.now();
+    try {
+      await generationHistoryRepository.update(uid, historyId, {
+        providerRequestStartMs: requestStartMs,
+        providerRequestStartAt: new Date(requestStartMs).toISOString(),
+      } as any);
+    } catch { }
+
     const version = await getLatestModelVersion(replicate, modelBase);
     const pred = await replicate.predictions.create(
       version ? { version, input } : { model: modelBase, input }
@@ -1646,9 +1777,15 @@ export async function wanAnimateAnimationSubmit(
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
   } catch (e: any) {
+    const upstreamMsg =
+      e?.response?.data?.detail ||
+      e?.response?.data?.error ||
+      e?.response?.data?.message ||
+      e?.message ||
+      'Replicate submit failed';
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
-      error: e?.message || "Replicate submit failed",
+      error: String(upstreamMsg),
     } as any);
     throw new ApiError("Failed to submit WAN Animate Animation job", 502, e);
   }
@@ -1678,24 +1815,22 @@ export async function seedanceT2vSubmit(
   const replicate = ensureReplicate();
   const modelStr = String(body.model || "").toLowerCase();
   const speed = String(body.speed || "").toLowerCase();
+  const isSeedance15 = modelStr.includes('seedance-1.5') || speed.includes('1.5');
   const isLite =
     modelStr.includes("lite") || speed === "lite" || speed.includes("lite");
   // Correct model names on Replicate: bytedance/seedance-1-pro and bytedance/seedance-1-lite (not 1.0)
-  const modelBase = isLite
-    ? "bytedance/seedance-1-lite"
-    : "bytedance/seedance-1-pro";
+  // Seedance 1.5: bytedance/seedance-1.5-pro
+  const modelBase = isSeedance15
+    ? 'bytedance/seedance-1.5-pro'
+    : (isLite ? "bytedance/seedance-1-lite" : "bytedance/seedance-1-pro");
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
     : ({ uid } as any);
   const durationSec = ((): number => {
     const d = Number(body?.duration ?? 5);
-    return Math.max(2, Math.min(12, Math.round(d)));
-  })();
-  const res = ((): string => {
-    const r = String(body?.resolution ?? "1080p").toLowerCase();
-    const m = r.match(/(480|720|1080)/);
-    return m ? `${m[1]}p` : "1080p";
+    const minAllowed = isSeedance15 ? 4 : 2;
+    return Math.max(minAllowed, Math.min(12, Math.round(d)));
   })();
   const aspect = ((): string => {
     const a = String(body?.aspect_ratio ?? "16:9");
@@ -1703,7 +1838,21 @@ export async function seedanceT2vSubmit(
       ? a
       : "16:9";
   })();
-  const { historyId } = await generationHistoryRepository.create(uid, {
+  const res = isSeedance15
+    ? undefined
+    : (((): string => {
+      const r = String(body?.resolution ?? "1080p").toLowerCase();
+      const m = r.match(/(480|720|1080)/);
+      return m ? `${m[1]}p` : "1080p";
+    })());
+  const audioFlag =
+    typeof body.generate_audio === "boolean"
+      ? body.generate_audio
+      : typeof body.generateAudio === "boolean"
+        ? body.generateAudio
+        : undefined;
+
+  const createPayload: any = {
     prompt: body.prompt,
     model: modelBase,
     generationType: "text-to-video",
@@ -1711,8 +1860,17 @@ export async function seedanceT2vSubmit(
     isPublic: body.isPublic ?? false,
     createdBy,
     duration: durationSec as any,
-    resolution: res as any,
-  } as any);
+    ...(res ? { resolution: res as any } : {}),
+  };
+
+  if (isSeedance15) {
+    createPayload.aspect_ratio = aspect;
+    if (typeof audioFlag === "boolean") createPayload.generate_audio = audioFlag;
+  }
+
+  const { historyId } = await generationHistoryRepository.create(uid, createPayload as any);
+
+  // Seedance 1.5 fields were persisted during create above; no-op here.
 
   // Persist image (first frame), last_frame_image, and reference_images (if provided) as inputImages so preview shows uploads
   try {
@@ -1743,10 +1901,18 @@ export async function seedanceT2vSubmit(
   const input: any = {
     prompt: body.prompt,
     duration: durationSec,
-    resolution: res,
-    aspect_ratio: aspect,
     fps: 24,
   };
+  if (!isSeedance15) {
+    input.resolution = res;
+    input.aspect_ratio = aspect;
+  } else {
+    // Seedance 1.5 uses aspect_ratio for T2V
+    input.aspect_ratio = aspect;
+    // Seedance 1.5 supports audio generation
+    if (typeof body.generate_audio === 'boolean') input.generate_audio = body.generate_audio;
+    else if (typeof body.generateAudio === 'boolean') input.generate_audio = body.generateAudio;
+  }
   if (body.seed != null && Number.isInteger(Number(body.seed)))
     input.seed = Number(body.seed);
   if (typeof body.camera_fixed === "boolean")
@@ -1759,26 +1925,28 @@ export async function seedanceT2vSubmit(
   if (typeof body.last_frame_image === 'string' && body.last_frame_image.length > 5) {
     input.last_frame_image = String(body.last_frame_image);
   }
-  // Reference images (1-4 images) for guiding video generation
-  // Note: Cannot be used with 1080p resolution or first/last frame images
-  if (
-    Array.isArray(body.reference_images) &&
-    body.reference_images.length > 0 &&
-    body.reference_images.length <= 4
-  ) {
-    // Validate that reference images are not used with incompatible settings
-    const hasFirstFrame = body.image && String(body.image).length > 5;
-    const hasLastFrame = body.last_frame_image && String(body.last_frame_image).length > 5;
-    if (res === "1080p") {
-      console.warn(
-        "[seedanceT2vSubmit] reference_images cannot be used with 1080p resolution, ignoring"
-      );
-    } else if (hasFirstFrame || hasLastFrame) {
-      console.warn(
-        "[seedanceT2vSubmit] reference_images cannot be used with first/last frame images, ignoring"
-      );
-    } else {
-      input.reference_images = body.reference_images.slice(0, 4); // Limit to 4 images
+  if (!isSeedance15) {
+    // Reference images (1-4 images) for guiding video generation
+    // Note: Cannot be used with 1080p resolution or first/last frame images
+    if (
+      Array.isArray(body.reference_images) &&
+      body.reference_images.length > 0 &&
+      body.reference_images.length <= 4
+    ) {
+      // Validate that reference images are not used with incompatible settings
+      const hasFirstFrame = body.image && String(body.image).length > 5;
+      const hasLastFrame = body.last_frame_image && String(body.last_frame_image).length > 5;
+      if (res === "1080p") {
+        console.warn(
+          "[seedanceT2vSubmit] reference_images cannot be used with 1080p resolution, ignoring"
+        );
+      } else if (hasFirstFrame || hasLastFrame) {
+        console.warn(
+          "[seedanceT2vSubmit] reference_images cannot be used with first/last frame images, ignoring"
+        );
+      } else {
+        input.reference_images = body.reference_images.slice(0, 4); // Limit to 4 images
+      }
     }
   }
 
@@ -1918,26 +2086,44 @@ export async function seedanceI2vSubmit(
   const replicate = ensureReplicate();
   const modelStr = String(body.model || "").toLowerCase();
   const speed = String(body.speed || "").toLowerCase();
+  const isSeedance15 = modelStr.includes('seedance-1.5') || speed.includes('1.5');
   const isLite =
     modelStr.includes("lite") || speed === "lite" || speed.includes("lite");
   // Correct model names on Replicate: bytedance/seedance-1-pro and bytedance/seedance-1-lite (not 1.0)
-  const modelBase = isLite
-    ? "bytedance/seedance-1-lite"
-    : "bytedance/seedance-1-pro";
+  // Seedance 1.5: bytedance/seedance-1.5-pro
+  const modelBase = isSeedance15
+    ? 'bytedance/seedance-1.5-pro'
+    : (isLite ? "bytedance/seedance-1-lite" : "bytedance/seedance-1-pro");
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
     : ({ uid } as any);
   const durationSec = ((): number => {
     const d = Number(body?.duration ?? 5);
-    return Math.max(2, Math.min(12, Math.round(d)));
+    const minAllowed = isSeedance15 ? 4 : 2;
+    return Math.max(minAllowed, Math.min(12, Math.round(d)));
   })();
-  const res = ((): string => {
-    const r = String(body?.resolution ?? "1080p").toLowerCase();
-    const m = r.match(/(480|720|1080)/);
-    return m ? `${m[1]}p` : "1080p";
+  const aspect = ((): string => {
+    const a = String(body?.aspect_ratio ?? "16:9");
+    return ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "9:21"].includes(a)
+      ? a
+      : "16:9";
   })();
-  const { historyId } = await generationHistoryRepository.create(uid, {
+  const res = isSeedance15
+    ? undefined
+    : (((): string => {
+      const r = String(body?.resolution ?? "1080p").toLowerCase();
+      const m = r.match(/(480|720|1080)/);
+      return m ? `${m[1]}p` : "1080p";
+    })());
+  const audioFlag =
+    typeof body.generate_audio === "boolean"
+      ? body.generate_audio
+      : typeof body.generateAudio === "boolean"
+        ? body.generateAudio
+        : undefined;
+
+  const createPayloadImg: any = {
     prompt: body.prompt,
     model: modelBase,
     generationType: "image-to-video",
@@ -1945,8 +2131,60 @@ export async function seedanceI2vSubmit(
     isPublic: body.isPublic ?? false,
     createdBy,
     duration: durationSec as any,
-    resolution: res as any,
-  } as any);
+    ...(res ? { resolution: res as any } : {}),
+  };
+
+  if (isSeedance15) {
+    createPayloadImg.aspect_ratio = aspect;
+    if (typeof audioFlag === "boolean") createPayloadImg.generate_audio = audioFlag;
+  }
+
+  const { historyId } = await generationHistoryRepository.create(uid, createPayloadImg as any);
+  const input: any = {
+    prompt: body.prompt,
+    duration: durationSec,
+    fps: 24,
+    image: String(body.image),
+    aspect_ratio: aspect,
+  };
+  if (!isSeedance15) {
+    input.resolution = res;
+  } else {
+    // Seedance 1.5 supports audio generation
+    if (typeof body.generate_audio === 'boolean') input.generate_audio = body.generate_audio;
+    else if (typeof body.generateAudio === 'boolean') input.generate_audio = body.generateAudio;
+  }
+
+  if (body.seed != null && Number.isInteger(Number(body.seed))) input.seed = Number(body.seed);
+  if (typeof body.camera_fixed === 'boolean') input.camera_fixed = body.camera_fixed;
+  if (typeof body.last_frame_image === 'string' && body.last_frame_image.length > 5) {
+    input.last_frame_image = String(body.last_frame_image);
+  }
+
+  if (!isSeedance15) {
+    // Reference images (1-4 images) for guiding video generation
+    // Note: Cannot be used with 1080p resolution or first/last frame images
+    if (
+      Array.isArray(body.reference_images) &&
+      body.reference_images.length > 0 &&
+      body.reference_images.length <= 4
+    ) {
+      // In I2V, `image` is always present (acts as first frame image), so reference_images are incompatible.
+      const hasFirstFrame = true;
+      const hasLastFrame = body.last_frame_image && String(body.last_frame_image).length > 5;
+      if (res === '1080p') {
+        console.warn(
+          '[seedanceI2vSubmit] reference_images cannot be used with 1080p resolution or first/last frame images, ignoring'
+        );
+      } else if (hasFirstFrame || hasLastFrame) {
+        console.warn(
+          '[seedanceI2vSubmit] reference_images cannot be used with 1080p resolution or first/last frame images, ignoring'
+        );
+      } else {
+        input.reference_images = body.reference_images.slice(0, 4);
+      }
+    }
+  }
 
   // Persist input image, last_frame_image, and reference_images to history
   try {
@@ -1970,42 +2208,6 @@ export async function seedanceI2vSubmit(
     }
     if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
   } catch { }
-
-  const input: any = {
-    prompt: body.prompt,
-    image: String(body.image),
-    duration: durationSec,
-    resolution: res,
-    fps: 24,
-  };
-  if (body.seed != null && Number.isInteger(Number(body.seed)))
-    input.seed = Number(body.seed);
-  if (typeof body.camera_fixed === "boolean")
-    input.camera_fixed = body.camera_fixed;
-  if (body.last_frame_image && String(body.last_frame_image).length > 5)
-    input.last_frame_image = String(body.last_frame_image);
-  // Reference images (1-4 images) for guiding video generation
-  // Note: Cannot be used with 1080p resolution or first/last frame images
-  if (
-    Array.isArray(body.reference_images) &&
-    body.reference_images.length > 0 &&
-    body.reference_images.length <= 4
-  ) {
-    // Validate that reference images are not used with incompatible settings
-    const hasFirstFrame = body.image && String(body.image).length > 5;
-    const hasLastFrame = body.last_frame_image && String(body.last_frame_image).length > 5;
-    if (
-      res === "1080p" ||
-      hasFirstFrame ||
-      hasLastFrame
-    ) {
-      console.warn(
-        "[seedanceI2vSubmit] reference_images cannot be used with 1080p resolution or first/last frame images, ignoring"
-      );
-    } else {
-      input.reference_images = body.reference_images.slice(0, 4); // Limit to 4 images
-    }
-  }
 
   let predictionId = "";
   try {
@@ -2544,7 +2746,7 @@ export async function pixverseT2vSubmit(
   const modelBase =
     body.model && String(body.model).length > 0
       ? String(body.model)
-      : "pixverseai/pixverse-v5";
+      : "pixverse/pixverse-v5";
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
@@ -2735,7 +2937,7 @@ export async function pixverseI2vSubmit(
   const modelBase =
     body.model && String(body.model).length > 0
       ? String(body.model)
-      : "pixverseai/pixverse-v5";
+      : "pixverse/pixverse-v5";
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
@@ -2821,3 +3023,4 @@ export async function pixverseI2vSubmit(
 Object.assign(replicateService, { pixverseT2vSubmit, pixverseI2vSubmit });
 
 
+// ... existing code ...

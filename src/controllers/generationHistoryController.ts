@@ -63,6 +63,15 @@ async function listMine(req: Request, res: Response, next: NextFunction) {
 		const uid = (req as any).uid;
 		const { limit = 20, cursor, nextCursor, status, generationType, sortBy, sortOrder, sort, mode, dateStart, dateEnd, search, debug } = req.query as any;
 		const normalizedMode = normalizeMode(mode);
+
+		// Backward compatibility: some clients still send a numeric timestamp cursor under `cursor`.
+		// The optimized repository path expects this under `nextCursor` and `cursor` is reserved for legacy doc-id cursors.
+		let legacyCursor: string | undefined = cursor ? String(cursor) : undefined;
+		let effectiveNextCursor: string | undefined = nextCursor ? String(nextCursor) : undefined;
+		if (!effectiveNextCursor && legacyCursor && /^\d+$/.test(legacyCursor)) {
+			effectiveNextCursor = legacyCursor;
+			legacyCursor = undefined;
+		}
 		
 		// Allow explicit generationType override, otherwise rely on mode down the chain
 		const generationTypeFilter: string | string[] | undefined = generationType;
@@ -86,8 +95,8 @@ async function listMine(req: Request, res: Response, next: NextFunction) {
 		const result = await generationHistoryService.listUserGenerations(uid, { 
 			limit: Number(limit),
 			// Legacy cursor only if explicitly provided (kept for backward compatibility)
-			cursor: cursor || undefined,
-			nextCursor: nextCursor || undefined,
+			cursor: legacyCursor || undefined,
+			nextCursor: effectiveNextCursor || undefined,
 			status, 
 			generationType: generationTypeFilter as any,
 			// Pass sortBy/sortOrder only if they were explicitly included to avoid disabling optimized path
@@ -110,24 +119,29 @@ async function softDelete(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid;
     const { historyId } = req.params as any;
+    const { imageId } = req.query as any;
     
     console.log('[Controller][softDelete] Request received:', {
       uid,
       historyId,
+      imageId,
       method: req.method,
       path: req.path,
       timestamp: new Date().toISOString(),
     });
     
-    const result = await generationHistoryService.softDelete(uid, historyId);
+    // Pass imageId to service if present
+    const result = await generationHistoryService.softDelete(uid, historyId, imageId);
     
-    const response = formatApiResponse('success', 'Deleted', result);
+    const response = formatApiResponse('success', imageId ? 'Image deleted' : 'Generation deleted', result);
     console.log('[Controller][softDelete] Response:', {
       status: 'success',
       historyId,
+      imageId,
       itemId: result.item?.id,
       isDeleted: result.item?.isDeleted,
       isPublic: result.item?.isPublic,
+      remainingImages: Array.isArray(result.item?.images) ? result.item?.images?.length : 0,
     });
     
     return res.json(response);

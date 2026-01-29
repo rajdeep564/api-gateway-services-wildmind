@@ -19,6 +19,8 @@ export interface CanvasProject {
   };
   lastSnapshotOpIndex?: number;
   lastSnapshotAt?: Timestamp;
+  thumbnail?: string;
+  previewImages?: string[];
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

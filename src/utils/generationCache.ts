@@ -253,9 +253,11 @@ export async function setCachedPublicFeed(params: any, result: any): Promise<voi
       return;
     }
     const key = getPublicFeedCacheKey(params);
-    // Cache public feed for 2 minutes (same as list cache)
-    await client.setEx(key, LIST_CACHE_TTL, JSON.stringify(result));
-    console.log(`[generationCache] 💾 PUBLIC FEED CACHED: ${key} (TTL: ${LIST_CACHE_TTL}s, items: ${result.items?.length || 0})`);
+    // CRITICAL: If list is empty, cache for much shorter time (60s) to avoid "poisoning" the cache
+    // with transient empty states (e.g. cold starts, sync delays)
+    const ttl = (result.items && result.items.length > 0) ? LIST_CACHE_TTL : 60;
+    await client.setEx(key, ttl, JSON.stringify(result));
+    console.log(`[generationCache] 💾 PUBLIC FEED CACHED: ${key} (TTL: ${ttl}s, items: ${result.items?.length || 0})`);
   } catch (error) {
     console.warn('[generationCache] setCachedPublicFeed error:', error);
   }

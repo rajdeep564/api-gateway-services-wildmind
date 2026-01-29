@@ -18,6 +18,7 @@ export const validateSeedanceI2V = [
   body('seed').optional().isInt(),
   body('fps').optional().custom(v => v == null || Number(v) === 24).withMessage('fps must be 24'),
   body('camera_fixed').optional().isBoolean(),
+  body('generate_audio').optional().isBoolean(),
   body('last_frame_image').optional().isString().isLength({ min: 5 }),
   body('speed').optional().custom(v => typeof v === 'string' || typeof v === 'boolean'), // For tier detection (lite vs pro)
   body('reference_images').optional().isArray().withMessage('reference_images must be an array'),
@@ -26,21 +27,34 @@ export const validateSeedanceI2V = [
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
 
+    const modelStr = String(req.body.model || '').toLowerCase();
+    const speed = String(req.body.speed || '').toLowerCase();
+    const isSeedance15 = modelStr.includes('seedance-1.5') || speed.includes('1.5');
+
     // Defaults and normalization
     if (!req.body.model) {
-      // Default to Pro tier unless 'lite' is specified
-      const modelStr = String(req.body.model || '').toLowerCase();
-      const speed = String(req.body.speed || '').toLowerCase();
-      const isLite = modelStr.includes('lite') || speed === 'lite' || speed.includes('lite');
-      req.body.model = isLite ? 'bytedance/seedance-1-lite' : 'bytedance/seedance-1-pro';
+      if (isSeedance15) {
+        req.body.model = 'bytedance/seedance-1.5-pro';
+      } else {
+        // Default to Pro tier unless 'lite' is specified
+        const isLite = modelStr.includes('lite') || speed === 'lite' || speed.includes('lite');
+        req.body.model = isLite ? 'bytedance/seedance-1-lite' : 'bytedance/seedance-1-pro';
+      }
     }
     
     // Normalize duration: default 5, clamp to 2-12
     const d = Number(req.body.duration ?? 5);
     req.body.duration = Math.max(2, Math.min(12, Math.round(d)));
     
-    // Default resolution to 1080p
-    if (!req.body.resolution) req.body.resolution = '1080p';
+    // Seedance 1.5 does not support resolution/reference_images in our API contract
+    if (isSeedance15) {
+      if (req.body.resolution != null) delete req.body.resolution;
+      if (req.body.reference_images != null) delete req.body.reference_images;
+      if (req.body.generate_audio === undefined) req.body.generate_audio = false;
+    } else {
+      // Default resolution to 1080p
+      if (!req.body.resolution) req.body.resolution = '1080p';
+    }
     
     // Default fps to 24
     if (!req.body.fps) req.body.fps = 24;
@@ -49,7 +63,7 @@ export const validateSeedanceI2V = [
     if (req.body.camera_fixed === undefined) req.body.camera_fixed = false;
     
     // Validate reference_images: 1-4 images, cannot be used with 1080p or first/last frame images
-    if (Array.isArray(req.body.reference_images) && req.body.reference_images.length > 0) {
+    if (!isSeedance15 && Array.isArray(req.body.reference_images) && req.body.reference_images.length > 0) {
       if (req.body.reference_images.length > 4) {
         return next(new ApiError('reference_images can contain at most 4 images', 400));
       }

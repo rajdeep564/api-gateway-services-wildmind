@@ -45,14 +45,14 @@ export async function enhancePrompt(
   const maxLength = options?.maxLength || 512;
   const targetModel = options?.targetModel;
 
-  // 1. Try Replicate (GPT-4o)
-  // If targetModel is specified as gpt-4o, we MUST use it (or fail/fallback to python, but skip gemini)
+  // 1. Try Replicate (GPT-5)
+  // If targetModel is specified as gpt-5, we MUST use it (or fail/fallback to python, but skip gemini)
   // If targetModel is NOT specified, we prioritize Replicate if key exists.
-  const shouldTryReplicate = env.replicateApiKey && (!targetModel || targetModel === 'openai/gpt-4o');
+  const shouldTryReplicate = env.replicateApiKey && (!targetModel || targetModel === 'openai/gpt-5');
 
   if (shouldTryReplicate) {
     try {
-      console.log(`[Prompt Enhancer] Enhancing prompt using Replicate (GPT-4o)`);
+      console.log(`[Prompt Enhancer] Enhancing prompt using Replicate (GPT-5)`);
       const enhancedText = await generateReplicateTextResponse(prompt, {
         maxOutputTokens: maxLength,
         systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
@@ -62,23 +62,22 @@ export async function enhancePrompt(
         enhancedPrompt: enhancedText,
         originalPrompt: prompt,
         mediaType: mediaType,
-        model: 'openai/gpt-4o',
+        model: 'openai/gpt-5',
       };
     } catch (err) {
       console.error('[Prompt Enhancer] Replicate failed:', err);
-      // If user specifically requested GPT-4o, we might want to throw here or fallback to Python service?
-      // User said "only use gpt-4o not gemini in just frontend of wild".
+      // If user specifically requested GPT-5, we might want to throw here or fallback to Python service?
       // So if Replicate fails, we should NOT use Gemini.
-      if (targetModel === 'openai/gpt-4o') {
-        console.warn('[Prompt Enhancer] Skipping Gemini fallback because targetModel is openai/gpt-4o');
+      if (targetModel === 'openai/gpt-5') {
+        console.warn('[Prompt Enhancer] Skipping Gemini fallback because targetModel is openai/gpt-5');
       }
     }
   }
 
   // 2. Try Gemini
   // Only try Gemini if targetModel is NOT set or explicitly allows it (not implemented here, assuming default allows)
-  // AND if targetModel is NOT 'openai/gpt-4o' (unless Replicate failed and we want to fallback? User said "not gemini")
-  const shouldTryGemini = !targetModel || targetModel !== 'openai/gpt-4o';
+  // AND if targetModel is NOT 'openai/gpt-5' (unless Replicate failed and we want to fallback)
+  const shouldTryGemini = !targetModel || targetModel !== 'openai/gpt-5';
 
   const hasGeminiKey =
     Boolean(
@@ -257,128 +256,41 @@ export async function queryCanvasPrompt(
     throw new Error('Text is required');
   }
 
-  // Prioritize Replicate (GPT-4o) if available
-  if (env.replicateApiKey) {
-    try {
+  // Use GPT-5 (Replicate) for chat
+  const hasReplicateKey = Boolean(env.replicateApiKey);
+
+  if (!hasReplicateKey) {
+    console.error('[Canvas Query] ❌ Replicate API key missing');
+    throw new Error('Replicate API key is required for chat. GPT-5 (ChatGPT 5) is the required model. Please configure REPLICATE_API_KEY.');
+  }
+
+  try {
+    console.log('[Canvas Query] ✅ Using GPT-5 (ChatGPT 5) via Replicate for chat');
       const enhancedText = await generateReplicateTextResponse(text, {
         maxOutputTokens: maxNewTokens,
         systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
       });
 
+    console.log('[Canvas Query] ✅ GPT-5 response received successfully');
       return {
         type: 'answer',
         enhanced_prompt: enhancedText,
         response: enhancedText,
       };
-    } catch (err) {
-      console.error('[Canvas Query] Replicate integration failed, falling back to Gemini:', err);
-      // Fallback to Gemini
-    }
-  }
-
-  const hasGeminiKey =
-    Boolean(
-      env.googleGenAIApiKey ||
-      process.env.GOOGLE_GENAI_API_KEY ||
-      process.env.GENAI_API_KEY ||
-      process.env.GEMINI_API_KEY
-    );
-
-  if (hasGeminiKey) {
-    try {
-      const enhancedText = await generateGeminiTextResponse(text, {
-        maxOutputTokens: maxNewTokens,
-        systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
-        enableGoogleSearchTool: false,
-        enableThinking: false,
-      });
-
-      return {
-        type: 'answer',
-        enhanced_prompt: enhancedText,
-        response: enhancedText,
-      };
-    } catch (err) {
-      console.error('[Canvas Query] Gemini integration failed, falling back to prompt enhancer service if available:', err);
-      if (!env.promptEnhancerUrl) {
-        throw err;
-      }
-      // otherwise fall through to original service as backup
-    }
-  }
-
-  const baseUrl = getPromptEnhancerUrl();
-  const maxTokens = maxNewTokens || 300;
-
-  try {
-    console.log(`[Canvas Query] Querying prompt enhancement for text: "${text.substring(0, 50)}..."`);
-
-    const response = await axios.post(
-      `${baseUrl}/canvas/query`,
-      {
-        text: text.trim(),
-        max_new_tokens: maxTokens,
-      },
-      {
-        timeout: 120000, // 120 second timeout (2 minutes) - increased for storyboard generation
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-
-    const data = response.data;
-
-    if (!data || typeof data.type !== 'string') {
-      console.error('[Canvas Query] Invalid response structure:', data);
-      throw new Error('Invalid response from canvas query service');
-    }
-
-    // Validate type
-    if (!['image', 'video', 'music', 'answer'].includes(data.type)) {
-      console.error('[Canvas Query] Invalid type in response:', data.type);
-      throw new Error('Invalid response type from canvas query service');
-    }
-
-    console.log(`[Canvas Query] Successfully processed query, type: ${data.type}`);
-
-    return {
-      type: data.type,
-      enhanced_prompt: data.enhanced_prompt || null,
-      response: data.response || null,
-    };
-  } catch (error: any) {
-    const axiosError = error as AxiosError;
-
-    if (axiosError.response) {
-      // Server responded with error status
-      const status = axiosError.response.status;
-      const statusText = axiosError.response.statusText;
-      const errorData = (axiosError.response.data as any)?.detail || axiosError.response.data;
-
-      console.error(`[Canvas Query] Service error (${status}):`, errorData);
-      throw new Error(`Canvas query failed: ${errorData || statusText}`);
-    } else if (axiosError.request) {
-      // Request was made but no response received
-      console.error('[Canvas Query] No response from service:', axiosError.message);
-      throw new Error('Canvas query service is unavailable. Please try again later.');
-    } else {
-      // Error setting up the request
-      console.error('[Canvas Query] Request setup error:', axiosError.message);
-      throw new Error(`Failed to query canvas prompt: ${axiosError.message}`);
-    }
+  } catch (err: any) {
+    console.error('[Canvas Query] ❌ GPT-5 (Replicate) failed:', {
+      error: err?.message,
+      stack: err?.stack,
+      model: 'openai/gpt-5',
+      hasReplicateKey: hasReplicateKey,
+    });
+    const errorMessage = err?.message || 'Unknown error';
+    throw new Error(`Chat service unavailable: GPT-5 (ChatGPT 5 via Replicate) failed. ${errorMessage}. Please check your Replicate API key configuration and account credits.`);
   }
 }
 
 export async function generateScenesFromStory(story: string): Promise<any> {
-  const hasReplicateKey = Boolean(env.replicateApiKey);
-
-  if (hasReplicateKey) {
-    // Use Replicate (GPT-4o) service
-    const { generateScenesFromStory: generateScenesReplicate } = require('./genai/replicateTextService');
-    return generateScenesReplicate(story);
-  }
-
+  // Priority 1: Use Gemini (free, no credit issues)
   const hasGeminiKey =
     Boolean(
       env.googleGenAIApiKey ||
@@ -388,12 +300,21 @@ export async function generateScenesFromStory(story: string): Promise<any> {
     );
 
   if (hasGeminiKey) {
-    console.warn('[Prompt Enhancer] Replicate key missing, falling back to Gemini for scene generation');
+    console.log('[Prompt Enhancer] Using Gemini for scene generation (free tier)');
     const { generateScenesFromStory: generateScenesGemini } = require('./genai/geminiTextService');
     return generateScenesGemini(story);
   }
 
-  throw new Error('Replicate API key (or Gemini fallback) required for scene generation');
+  // Priority 2: Fall back to Replicate (GPT-5) if Gemini not available
+  const hasReplicateKey = Boolean(env.replicateApiKey);
+
+  if (hasReplicateKey) {
+    console.warn('[Prompt Enhancer] Gemini key missing, falling back to Replicate for scene generation');
+    const { generateScenesFromStory: generateScenesReplicate } = require('./genai/replicateTextService');
+    return generateScenesReplicate(story);
+  }
+
+  throw new Error('Gemini API key (or Replicate fallback) required for scene generation');
 }
 
 export default { enhancePrompt, enhancePromptsBatch, queryCanvasPrompt, generateScenesFromStory };

@@ -5,7 +5,7 @@ import { generationStatsRepository } from "../repository/generationStatsReposito
 import { imageOptimizationService } from "./imageOptimizationService";
 // CACHING REMOVED: Redis generationCache disabled due to stale list items not reflecting newly started generations promptly.
 // If reintroducing, ensure immediate inclusion of generating items and robust invalidation on create/complete/fail/update.
-import { deleteGenerationFiles } from "../utils/storage/zataDelete";
+import { deleteGenerationFiles, deleteFiles, extractKeyFromUrl } from "../utils/storage/zataDelete";
 import { getCachedItem, setCachedItem, getCachedList, setCachedList, invalidateLibraryCache } from "../utils/generationCache";
 import {
   GenerationStatus,
@@ -482,20 +482,99 @@ export async function listUserGenerations(
 
   const result = await generationHistoryRepository.list(uid, effectiveParams as any);
 
-  // Post-filter: exclude failed items while preserving original hasMore/nextCursor semantics.
-  // Note: If we filter out many failed items and end up with < limit while hasMore=true, we still return hasMore=true
-  // so client can request the next page. For a perfect fill we could iteratively fetch more pages, but that is omitted
-  // for performance simplicity.
-  const filteredItems = Array.isArray(result.items) ? result.items.filter(it => it.status !== GenerationStatus.Failed) : [];
-  const response = { ...result, items: filteredItems };
+  // Post-filter: exclude failed items.
+  // IMPORTANT: If we remove items (especially at page tail), we must recompute nextCursor
+  // based on the last item we actually return; otherwise the client cursor can "jump".
+  const parseItemCursorMs = (it: any): number | null => {
+    try {
+      const raw = it?.createdAt || it?.updatedAt;
+      if (typeof raw === 'string') {
+        const ms = Date.parse(raw);
+        return Number.isNaN(ms) ? null : ms;
+      }
+      if (typeof raw === 'number') return raw;
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const isFailed = (it: any) => it?.status === GenerationStatus.Failed;
+  const aggregated: GenerationHistoryItem[] = [];
+  const seenIds = new Set<string>();
+
+  const pushNonFailed = (items: any[]) => {
+    for (const it of items || []) {
+      if (!it || isFailed(it)) continue;
+      const id = String((it as any).id || '');
+      if (id && seenIds.has(id)) continue;
+      if (id) seenIds.add(id);
+      aggregated.push(it as GenerationHistoryItem);
+      if (aggregated.length >= params.limit) break;
+    }
+  };
+
+  pushNonFailed(Array.isArray(result.items) ? result.items : []);
+
+  // Top-up: if filters removed items and there are more pages, fetch subsequent pages until we fill `limit`
+  // (bounded by a small safety cap to avoid runaway reads).
+  let currentNextCursor: any = (result as any).nextCursor;
+  let hasMore: boolean = Boolean((result as any).hasMore);
+  let scans = 0;
+  const maxScans = 6;
+  while (aggregated.length < params.limit && hasMore && scans < maxScans) {
+    scans += 1;
+    const remaining = Math.max(1, params.limit - aggregated.length);
+    const nextCursorStr = currentNextCursor === null || currentNextCursor === undefined ? undefined : String(currentNextCursor);
+    if (!nextCursorStr) break;
+
+    const page = await generationHistoryRepository.list(uid, {
+      ...effectiveParams,
+      limit: remaining,
+      nextCursor: nextCursorStr,
+      cursor: undefined,
+    } as any);
+
+    pushNonFailed(Array.isArray(page.items) ? page.items : []);
+    hasMore = Boolean((page as any).hasMore);
+
+    // Ensure cursor advances; otherwise break to avoid infinite loops.
+    if ((page as any).nextCursor === currentNextCursor) break;
+    currentNextCursor = (page as any).nextCursor;
+  }
+
+  // Final cursor must reflect the last item ACTUALLY returned to the client.
+  // If we couldn't compute from items, fall back to repository cursor.
+  let finalNextCursor: string | number | null | undefined = undefined;
+  if (hasMore && aggregated.length > 0) {
+    const ms = parseItemCursorMs(aggregated[aggregated.length - 1]);
+    finalNextCursor = ms ?? (currentNextCursor ?? (result as any).nextCursor ?? null);
+  } else {
+    finalNextCursor = null;
+  }
+
+  const response = {
+    ...result,
+    items: aggregated,
+    hasMore,
+    nextCursor: finalNextCursor,
+  } as any;
+
   if (debugFlag) {
-    (response as any).diagnostics = {
+    const rawLen = Array.isArray(result.items) ? result.items.length : 0;
+    const failedInFirst = Array.isArray(result.items) ? result.items.filter(isFailed).length : 0;
+    response.diagnostics = {
       ...(response as any).diagnostics,
-      postFilterReturned: filteredItems.length,
-      postFilterExcluded: Array.isArray(result.items) ? (result.items.length - filteredItems.length) : 0,
+      postFilterExcludedFirstPage: failedInFirst,
+      returned: aggregated.length,
+      requestedLimit: params.limit,
+      topUpScans: scans,
+      finalNextCursor,
+      rawFirstPage: rawLen,
       debug: true,
     };
   }
+
   try {
     await setCachedList(uid, effectiveParams, response);
   } catch (e) {
@@ -505,9 +584,9 @@ export async function listUserGenerations(
   return response;
 }
 
-export async function softDelete(uid: string, historyId: string): Promise<{ item: GenerationHistoryItem }> {
+export async function softDelete(uid: string, historyId: string, imageId?: string): Promise<{ item: GenerationHistoryItem }> {
   console.log('[softDelete] ========== STARTING DELETION ==========');
-  console.log('[softDelete] Request:', { uid, historyId, timestamp: new Date().toISOString() });
+  console.log('[softDelete] Request:', { uid, historyId, imageId, timestamp: new Date().toISOString() });
   
   // 1. Fetch existing item
   const existing = await generationHistoryRepository.get(uid, historyId);
@@ -515,9 +594,59 @@ export async function softDelete(uid: string, historyId: string): Promise<{ item
     console.error('[softDelete] ❌ History item not found:', { uid, historyId });
     throw new ApiError('History item not found', 404);
   }
+
+  // === SINGLE IMAGE DELETION LOGIC ===
+  if (imageId) {
+    const images = Array.isArray(existing.images) ? existing.images : [];
+    const imageIndex = images.findIndex((img: any) => img.id === imageId);
+
+    if (imageIndex !== -1) {
+      const imageToDelete = images[imageIndex];
+      const newImages = images.filter((_, idx) => idx !== imageIndex);
+
+      // Check if generation becomes empty (no images, no videos, no audios)
+      const hasVideos = Array.isArray(existing.videos) && existing.videos.length > 0;
+      const hasAudios = Array.isArray(existing.audios) && existing.audios.length > 0;
+
+      if (newImages.length === 0 && !hasVideos && !hasAudios) {
+        // Proceed to full delete
+        console.log('[softDelete] Generation became empty after removing image, performing full delete');
+      } else {
+        // Update generation with removed image
+        console.log('[softDelete] Removing single image:', imageId);
+
+        // a. Delete files for this specific image (background)
+        const keysToDelete: string[] = [];
+        if (imageToDelete.url) { const k = extractKeyFromUrl(imageToDelete.url); if (k) keysToDelete.push(k); }
+        if (imageToDelete.avifUrl) { const k = extractKeyFromUrl(imageToDelete.avifUrl); if (k) keysToDelete.push(k); }
+        if ((imageToDelete as any).webpUrl) { const k = extractKeyFromUrl((imageToDelete as any).webpUrl); if (k) keysToDelete.push(k); }
+        if (imageToDelete.thumbnailUrl) { const k = extractKeyFromUrl(imageToDelete.thumbnailUrl); if (k) keysToDelete.push(k); }
+        if (imageToDelete.storagePath) { keysToDelete.push(imageToDelete.storagePath); }
+        
+        if (keysToDelete.length > 0) {
+          console.log('[softDelete] Deleting files for single image:', keysToDelete.length);
+          // Fire and forget deletion
+          deleteFiles(keysToDelete).catch(err => console.error('[softDelete] Failed to delete single image files:', err));
+        }
+
+        // b. Update in DB (using update service to handle cache/mirror/normalization)
+        // Pass images: newImages. The update service will handle isPublic logic.
+        const updateResult = await update(uid, historyId, { images: newImages });
+        
+        console.log('[softDelete] Single image removed successfully');
+        return updateResult;
+      }
+    } else {
+      console.warn('[softDelete] Image ID not found in generation, treating as success (idempotent)', imageId);
+      return { item: existing };
+    }
+  }
+
+  // === FULL GENERATION DELETION LOGIC (Existing) ===
   
   const generationType = existing.generationType || 'unknown';
   const hasImages = Array.isArray(existing.images) && existing.images.length > 0;
+  // ... (rest of function)
   const hasVideos = Array.isArray(existing.videos) && existing.videos.length > 0;
   const hasAudios = Array.isArray(existing.audios) && existing.audios.length > 0;
   const imageCount = hasImages ? existing.images!.length : 0;

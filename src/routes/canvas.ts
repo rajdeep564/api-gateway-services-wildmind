@@ -11,8 +11,26 @@ import * as workersController from '../controllers/canvas/workersController';
 import * as presenceController from '../websocket/canvasPresenceServer';
 import * as mediaLibraryController from '../controllers/canvas/mediaLibraryController';
 import * as queryController from '../controllers/canvas/queryController';
+import multer from 'multer';
+import os from 'os';
+import path from 'path';
 
 const router = Router();
+
+const upload = multer({
+    storage: multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, os.tmpdir()),
+        filename: (_req, file, cb) => {
+            const ext = path.extname(file.originalname || '').toLowerCase();
+            const safeExt = ext && ext.length <= 12 ? ext : '';
+            const name = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${safeExt}`;
+            cb(null, name);
+        },
+    }),
+    limits: {
+        fileSize: 200 * 1024 * 1024, // 200MB
+    },
+});
 
 // All routes require authentication
 router.use(requireAuth);
@@ -77,6 +95,7 @@ router.post('/generate-scenes', makeCreditCost('canvas', 'generate-scenes', comp
 // Media Library
 router.get('/media-library', mediaLibraryController.getMediaLibrary);
 router.post('/media-library/upload', mediaLibraryController.saveUploadedMedia);
+router.post('/media-library/upload-file', upload.single('file'), mediaLibraryController.uploadMediaFile);
 
 // Cursor Agent
 router.post('/agent/plan', cursorAgentController.planAgentActions);

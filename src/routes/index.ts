@@ -24,9 +24,11 @@ import reimagineRoutes from './reimagine';
 import libraryRoutes from './library';
 import uploadsRoutes from './uploads';
 import wildmindRoutes from './wildmind';
+import wildmindImageRoutes from './wildmindimage';
 import chatCompanionRoutes from './chatCompanion';
 import subscriptionsRoutes from './subscriptions';
 import webhooksRoutes from './webhooks';
+import workflowsRoutes from './workflows';
 import { contentModerationMiddleware } from '../middlewares/contentModeration';
 
 const router = Router();
@@ -44,6 +46,7 @@ router.use(
     '/replace',
     '/reimagine',
     '/wildmind',
+    '/wildmindimage',
   ],
   contentModerationMiddleware
 );
@@ -66,8 +69,10 @@ router.use('/prompt-enhancer', promptEnhancerRoutes);
 router.use('/replace', replaceRoutes);
 router.use('/reimagine', reimagineRoutes);
 router.use('/wildmind', wildmindRoutes);
+router.use('/wildmindimage', wildmindImageRoutes);
 router.use('/chat', chatCompanionRoutes);
 router.use('/subscriptions', subscriptionsRoutes);
 router.use('/webhooks', webhooksRoutes);
+router.use('/workflows', workflowsRoutes);
 
 export default router;

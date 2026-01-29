@@ -11,6 +11,7 @@ import { authRepository } from "../repository/auth/authRepository";
 import { GenerationHistoryItem, GenerationType, VideoMedia } from "../types/generate";
 import { env } from "../config/env";
 import { uploadFromUrlToZata, uploadDataUriToZata, uploadBufferToZata } from "../utils/storage/zataUpload";
+import { makeZataPublicUrl } from "../utils/storage/zataClient";
 import { falRepository } from "../repository/falRepository";
 import { creditsRepository } from "../repository/creditsRepository";
 import { computeFalVeoCostFromModel } from "../utils/pricing/falPricing";
@@ -28,6 +29,49 @@ const buildGenerationImageFileName = (historyId?: string, index: number = 0) => 
   }
   return `image-${Date.now()}-${index + 1}-${Math.random().toString(36).slice(2, 6)}`;
 };
+
+function isPublicHttpUrl(url: unknown): url is string {
+  return typeof url === 'string' && /^https?:\/\//i.test(url);
+}
+
+function pickPublicImageUrls(...candidates: Array<unknown>): string[] {
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    const urls = (candidate as unknown[]).filter(isPublicHttpUrl);
+    if (urls.length > 0) return urls;
+  }
+  return [];
+}
+
+function tryConvertProxyResourceToZataUrl(src: string): { key: string; publicUrl: string } | null {
+  try {
+    if (!src) return null;
+
+    // Handle both relative and absolute URLs.
+    const pathWithQuery = (() => {
+      if (/^https?:\/\//i.test(src)) {
+        const u = new URL(src);
+        return u.pathname; // ignore query
+      }
+      return src.split('?')[0];
+    })();
+
+    const marker = '/api/proxy/resource/';
+    const idx = pathWithQuery.toLowerCase().indexOf(marker);
+    if (idx < 0) return null;
+
+    const encodedKey = pathWithQuery.substring(idx + marker.length);
+    if (!encodedKey) return null;
+
+    const key = decodeURIComponent(encodedKey);
+    // Proxy route also supports external URLs; don't treat those as Zata keys.
+    if (/^https?:\/\//i.test(key)) return null;
+
+    return { key, publicUrl: makeZataPublicUrl(key) };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Resize image to 1MP (1,000,000 pixels) while maintaining aspect ratio
@@ -103,11 +147,22 @@ async function generate(
   const falKey = env.falKey as string;
   if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
 
-  // Check if this is a dialogue request (uses inputs array instead of prompt)
-  // Skip prompt validation for dialogue requests
+  // Check if this is an audio/speech request (uses text or inputs array instead of prompt)
   const hasDialogueInputs = Array.isArray((payload as any).inputs) && (payload as any).inputs.length > 0;
-  const isDialogueRequest = hasDialogueInputs || modelLower.includes('dialogue') || modelLower.includes('text-to-dialogue');
-  if (!isDialogueRequest && !prompt) throw new ApiError("Prompt is required", 400);
+  const hasTextInPayload = typeof (payload as any).text === 'string' && (payload as any).text.trim().length > 0;
+
+  const isAudioRequest = modelLower.includes('eleven') ||
+    modelLower.includes('maya') ||
+    modelLower.includes('chatterbox') ||
+    modelLower.includes('tts') ||
+    modelLower.includes('text-to-speech') ||
+    modelLower.includes('sfx') ||
+    modelLower.includes('dialogue') ||
+    modelLower.includes('text-to-dialogue');
+
+  const canSkipPrompt = isAudioRequest && (hasDialogueInputs || hasTextInPayload);
+
+  if (!canSkipPrompt && !prompt) throw new ApiError("Prompt is required (from falService)", 400);
 
   fal.config({ credentials: falKey });
 
@@ -139,12 +194,12 @@ async function generate(
   // Use 'character' folder for text-to-character generation input images
   const inputFolder = generationType === 'text-to-character' ? 'character' : 'input';
   let publicImageUrls: string[] = [];
-  const isFlux2Pro = modelLower.includes('flux-2-pro');
-  const isNanoBananaPro = modelLower.includes('google/nano-banana-pro') || modelLower.includes('nano-banana-pro');
-  
+  const isFlux2Pro = modelLower.includes('flux-2-pro') || modelLower.includes('flux 2 pro');
+  const isNanoBananaPro = modelLower.includes('google/nano-banana-pro') || modelLower.includes('nano-banana-pro') || modelLower.includes('nano banana pro');
+
   // For nano-banana-pro, also check image_urls from payload
   const payloadImageUrls = isNanoBananaPro && Array.isArray((payload as any).image_urls) ? (payload as any).image_urls : [];
-  
+
   try {
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/${inputFolder}/${historyId}`;
@@ -155,6 +210,17 @@ async function generate(
       if (!src || typeof src !== 'string') continue;
       try {
         let stored: any;
+
+        // Fast-path: frontend sometimes sends internal proxy URLs that reference Zata keys.
+        // Convert them into direct, public Zata URLs so FAL can fetch them.
+        const proxyAsZata = tryConvertProxyResourceToZataUrl(src);
+        if (proxyAsZata) {
+          stored = { publicUrl: proxyAsZata.publicUrl, key: proxyAsZata.key, originalUrl: src };
+          inputPersisted.push({ id: `in-${++idx}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: stored.originalUrl });
+          publicImageUrls.push(stored.publicUrl);
+          continue;
+        }
+
         if (isFlux2Pro) {
           // For Flux 2 Pro, resize images to 1MP before uploading
           let imageBuffer: Buffer;
@@ -201,17 +267,55 @@ async function generate(
           stored = await uploadBufferToZata(key, resizedBuffer, 'image/jpeg');
           stored.originalUrl = src;
         } else {
-          // For other models, use existing upload logic
+          // For other models (including Seedream 4.5), use existing upload logic
           // uploadFromUrlToZata now handles Zata URLs by downloading via S3
-          stored = /^data:/i.test(src)
-            ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
-            : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+          const isDataUri = /^data:/i.test(src);
+          const isBlobUrl = src.startsWith('blob:');
+
+          if (isDataUri) {
+            // Validate data URI is complete (not truncated)
+            const base64Match = /^data:([^;]+);base64,(.+)$/.exec(src);
+            if (!base64Match || !base64Match[2] || base64Match[2].length < 100) {
+              console.error('[falService] ❌ Invalid or truncated data URI:', {
+                srcLength: src.length,
+                srcPreview: src.substring(0, 100),
+                hasBase64Data: !!base64Match?.[2],
+                base64DataLength: base64Match?.[2]?.length || 0
+              });
+              throw new ApiError(
+                'Invalid or truncated data URI. The image data appears to be incomplete. Please try again or use a different image.',
+                400
+              );
+            }
+
+            console.log('[falService] 📤 Uploading data URI to Zata for Seedream 4.5:', {
+              dataUriLength: src.length,
+              base64DataLength: base64Match[2].length,
+              contentType: base64Match[1],
+              dataUriPreview: src.substring(0, 50) + '...',
+              keyPrefix,
+              fileName: `input-${idx + 1}`
+            });
+            stored = await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` });
+            console.log('[falService] ✅ Data URI uploaded to Zata:', {
+              publicUrl: stored.publicUrl,
+              key: (stored as any).key
+            });
+          } else if (isBlobUrl) {
+            // Blob URLs should have been converted to data URIs on frontend, but handle gracefully
+            throw new ApiError('Blob URLs are not supported. Please convert to data URI or public URL first.', 400);
+          } else {
+            // Regular URL - upload to Zata (handles Zata URLs via S3)
+            stored = await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+          }
         }
         inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: stored.originalUrl || src });
         publicImageUrls.push(stored.publicUrl);
-        console.log('[falService] ✅ Successfully processed uploaded image:', { 
-          original: src.substring(0, 80) + '...', 
-          publicUrl: stored.publicUrl.substring(0, 80) + '...' 
+        console.log('[falService] ✅ Successfully processed uploaded image:', {
+          original: src.substring(0, 80) + '...',
+          publicUrl: stored.publicUrl.substring(0, 80) + '...',
+          isDataUri: /^data:/i.test(src),
+          isBlobUrl: src.startsWith('blob:')
         });
       } catch (error: any) {
         console.error('[falService] ❌ Failed to process uploaded image:', {
@@ -219,24 +323,73 @@ async function generate(
           error: error?.message,
           stack: error?.stack?.substring(0, 200)
         });
-        // Don't silently fail - log the error so we can debug
-        // But continue processing other images
+        // Don't silently fail - throw error for data URIs and blob URLs since they must be converted
+        // For regular URLs, we can continue, but data URIs and blob URLs must be uploaded to Zata
+        if (/^data:/i.test(src) || src.startsWith('blob:')) {
+          throw new ApiError(
+            `Failed to upload image to Zata storage: ${error?.message || 'Unknown error'}. Image-to-image generation requires images to be uploaded to public storage.`,
+            500
+          );
+        }
+        // For regular URLs, continue (might be a transient network issue)
       }
     }
-    
+
     // For nano-banana-pro, also persist image_urls from payload if provided
     if (isNanoBananaPro && payloadImageUrls.length > 0) {
-      for (const url of payloadImageUrls) {
-        if (!url || typeof url !== 'string') continue;
+      for (const src of payloadImageUrls) {
+        if (!src || typeof src !== 'string') continue;
+
         // Check if already persisted (avoid duplicates)
-        const alreadyPersisted = inputPersisted.some(img => img.url === url || img.originalUrl === url);
-        if (!alreadyPersisted) {
-          inputPersisted.push({ id: `in-${++idx}`, url, originalUrl: url });
-          publicImageUrls.push(url);
+        const alreadyPersisted = inputPersisted.some(img => img.url === src || img.originalUrl === src);
+        if (alreadyPersisted) continue;
+
+        try {
+          // Upload to Zata to ensure we have a public URL (FAL cannot access /api/proxy/...)
+          let stored: any;
+          const isDataUri = /^data:/i.test(src);
+          const isBlobUrl = src.startsWith('blob:');
+
+          const proxyAsZata = tryConvertProxyResourceToZataUrl(src);
+          if (proxyAsZata) {
+            stored = { publicUrl: proxyAsZata.publicUrl, key: proxyAsZata.key, originalUrl: src };
+          } else
+
+            if (isDataUri) {
+              const base64Match = /^data:([^;]+);base64,(.+)$/.exec(src);
+              if (base64Match && base64Match[2]) {
+                stored = await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` });
+              } else {
+                continue;
+              }
+            } else if (isBlobUrl) {
+              throw new ApiError('Blob URLs are not supported. Please convert to data URI or public URL first.', 400);
+            } else {
+              // Regular URL - upload to Zata (handles Zata URLs via S3 AND proxy URLs)
+              // This is CRTIICAL: /api/proxy URLs must be fetched and uploaded to Zata
+              stored = await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+            }
+
+          if (stored && stored.publicUrl) {
+            inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: stored.originalUrl || src });
+            publicImageUrls.push(stored.publicUrl);
+            console.log('[falService] ✅ Successfully processed Nano Banana image_url:', {
+              original: src.substring(0, 50) + '...',
+              publicUrl: stored.publicUrl.substring(0, 50) + '...'
+            });
+          }
+        } catch (error: any) {
+          console.error('[falService] ❌ Failed to process Nano Banana image_url:', {
+            src: src.substring(0, 50) + '...',
+            error: error?.message
+          });
+          // Fallback: push original if upload fails (though likely to fail at FAL too if it's a proxy URL)
+          inputPersisted.push({ id: `in-${++idx}`, url: src, originalUrl: src });
+          publicImageUrls.push(src);
         }
       }
     }
-    
+
     if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
   } catch { }
   // Create public generations record for FAL (like BFL)
@@ -254,7 +407,7 @@ async function generate(
     modelEndpoint = hasImages
       ? 'fal-ai/nano-banana-pro/edit'
       : 'fal-ai/nano-banana-pro';
-  } else if (modelLower.includes('flux-2-pro')) {
+  } else if (isFlux2Pro) {
     // Flux 2 Pro: use /edit endpoint when images are uploaded, otherwise use text-to-image endpoint
     const hasImages = Array.isArray(uploadedImages) && uploadedImages.length > 0;
     modelEndpoint = hasImages
@@ -266,8 +419,8 @@ async function generate(
     else if (modelLower.includes('fast')) modelEndpoint = 'fal-ai/imagen4/preview/fast';
     else modelEndpoint = 'fal-ai/imagen4/preview'; // standard
   } else if (
-    modelLower.includes('seedream-4.5') || 
-    modelLower.includes('seedream_v45') || 
+    modelLower.includes('seedream-4.5') ||
+    modelLower.includes('seedream_v45') ||
     modelLower.includes('seedreamv45') ||
     (modelLower.includes('seedream') && (modelLower.includes('4.5') || modelLower.includes('v4.5') || modelLower.includes('v45')))
   ) {
@@ -280,7 +433,7 @@ async function generate(
     modelEndpoint = hasImages
       ? 'fal-ai/bytedance/seedream/v4.5/edit'
       : 'fal-ai/bytedance/seedream/v4.5/text-to-image';
-    
+
     // Store flag for later use in queue mode detection
     (payload as any)._isSeedream45 = true;
   } else if (modelLower.includes('seedream')) {
@@ -291,6 +444,15 @@ async function generate(
     modelEndpoint = uploadedImages.length > 0
       ? 'fal-ai/gemini-25-flash-image/edit'
       : 'fal-ai/gemini-25-flash-image';
+  }
+
+  // Handle explicit Flux Pro Text-to-Image request (e.g. from generateService routing)
+  if (modelLower.includes('flux-pro')) {
+    // Use the model string passed from generateService (which should be 'fal-ai/flux-pro/v1.1-ultra')
+    // If it's just 'flux-pro', default to ultra or pro depending on string
+    if (modelLower.includes('ultra')) modelEndpoint = 'fal-ai/flux-pro/v1.1-ultra';
+    else if (modelLower.includes('1.1')) modelEndpoint = 'fal-ai/flux-pro/v1.1';
+    else modelEndpoint = 'fal-ai/flux-pro/v1.1-ultra'; // Default to ultra for generic 'flux-pro' on FAL
   }
 
   // Parse prompt to extract @references and map them to image indices
@@ -647,6 +809,10 @@ async function generate(
         if ((payload as any).exaggeration != null) inputBody.exaggeration = Number((payload as any).exaggeration);
         if ((payload as any).temperature != null) inputBody.temperature = Number((payload as any).temperature);
         if ((payload as any).cfg_scale != null) inputBody.cfg_scale = Number((payload as any).cfg_scale);
+        if ((payload as any).stability != null) inputBody.stability = Number((payload as any).stability);
+        if ((payload as any).similarity_boost != null) inputBody.similarity_boost = Number((payload as any).similarity_boost);
+        if ((payload as any).style != null) inputBody.style = Number((payload as any).style);
+        if ((payload as any).speed != null) inputBody.speed = Number((payload as any).speed);
 
         console.log('[falService.generate] Calling ElevenLabs TTS model:', { ttsEndpoint, input: { ...inputBody, text: String(inputBody.text).slice(0, 120) + (String(inputBody.text).length > 120 ? '...' : '') } });
         const result = await fal.subscribe(ttsEndpoint as any, ({ input: inputBody, logs: true } as unknown) as any);
@@ -758,6 +924,404 @@ async function generate(
     }
   }
 
+  // >>> FLUX PRO 1.1 ULTRA HANDLER <<<
+  if (modelLower.includes('flux-pro')) {
+    console.log(`[falService] 🚀 Handling Flux Pro request: ${modelEndpoint}`);
+
+    const inputBody: any = {
+      prompt: finalPrompt,
+      safety_tolerance: (payload as any).safety_tolerance || "2",
+      output_format: (payload as any).output_format || "jpeg",
+      num_images: imagesRequestedClamped,
+      enable_safety_checker: (payload as any).enable_safety_checker !== false, // Default true
+      raw: (payload as any).raw === true,
+    };
+
+    // Add seed if provided
+    if ((payload as any).seed) inputBody.seed = (payload as any).seed;
+
+    // CRITICAL: Handle image_size (custom dimensions) vs aspect_ratio
+    // If image_size is present (passed from generateService), use it and IGNORE aspect_ratio
+    if ((payload as any).image_size) {
+      inputBody.image_size = (payload as any).image_size;
+      console.log('[falService] ✅ Using custom image_size for Flux Pro:', JSON.stringify(inputBody.image_size));
+    } else {
+      // Fallback to aspect_ratio if no custom size
+      inputBody.aspect_ratio = (payload as any).aspect_ratio || "16:9";
+    }
+
+    // Add optional sync_mode to return URLs directly (though we use subscribe)
+    inputBody.sync_mode = false;
+
+    try {
+      console.log('[falService] Submitting Flux Pro request to FAL:', { modelEndpoint, input: inputBody });
+      const result = await fal.subscribe(modelEndpoint as any, {
+        input: inputBody,
+        logs: true,
+        onQueueUpdate: (update) => {
+          if (update.status === "IN_PROGRESS") {
+            update.logs.map((log) => log.message).forEach(msg => console.log(`[FAL Flux Log] ${msg}`));
+          }
+        },
+      });
+
+      // Check for images in result
+      if (!result.data || !result.data.images || !Array.isArray(result.data.images) || result.data.images.length === 0) {
+        console.error('[falService] No images returned from Flux Pro generation:', result);
+        throw new ApiError('No images returned from Flux Pro generation', 502, result);
+      }
+
+      const images = result.data.images;
+      const requestId = result.requestId;
+
+      // Upload images to Zata
+      const username = creator?.username || uid;
+      const storedImages = await Promise.all(images.map(async (img: any, idx: number) => {
+        const url = img.url;
+        if (!url) return null;
+
+        try {
+          const stored = await uploadFromUrlToZata({
+            sourceUrl: url,
+            keyPrefix: `users/${username}/image/${historyId}`,
+            fileName: `flux-pro-${idx + 1}`
+          });
+          return {
+            id: `${requestId}-${idx}`,
+            url: stored.publicUrl,
+            storagePath: stored.key,
+            originalUrl: url,
+            content_type: img.content_type
+          };
+        } catch (e) {
+          console.warn('[falService] Failed to upload Flux Pro image to Zata, using original:', e);
+          return {
+            id: `${requestId}-${idx}`,
+            url: url,
+            originalUrl: url,
+            content_type: img.content_type
+          };
+        }
+      }));
+
+      const validStoredImages = storedImages.filter(img => img !== null);
+
+      // Update history
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: validStoredImages,
+      } as any);
+
+      await falRepository.updateGenerationRecord(legacyId, {
+        status: 'completed',
+        images: validStoredImages
+      } as any);
+
+      await syncToMirror(uid, historyId);
+
+      // Trigger optimization
+      markGenerationCompleted(uid, historyId, {
+        status: 'completed',
+        images: validStoredImages,
+        isPublic: (payload as any).isPublic === true,
+      }).catch(err => console.error('[falService] Optimization failed:', err));
+
+      return {
+        images: validStoredImages,
+        historyId,
+        model: modelEndpoint,
+        status: 'completed',
+        seed: result.data.seed,
+        has_nsfw_concepts: result.data.has_nsfw_concepts
+      } as any;
+
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to generate image with Flux Pro',
+        context: 'falService.generate.fluxPro',
+      });
+      try {
+        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
+      } catch (mirrorErr) {
+        console.error('[falService.generate][flux-pro] Failed to mirror error state:', mirrorErr);
+      }
+      throw falError;
+    }
+  }
+
+  // >>> FLUX PRO HANDLER (v1.1 Ultra, v1.1, and Flux 2 Pro) <<<
+  // Update: Exclude 'flux-2-pro' so it falls through to the specific handler below (which handles parallel requests)
+  if (modelLower.includes('flux-pro') && !modelLower.includes('flux-2-pro')) {
+    console.log(`[falService] 🚀 Handling Flux Pro request: ${modelEndpoint}`);
+
+    const inputBody: any = {
+      prompt: finalPrompt,
+      safety_tolerance: (payload as any).safety_tolerance || "2",
+      output_format: (payload as any).output_format || "jpeg",
+      num_images: imagesRequestedClamped,
+      enable_safety_checker: (payload as any).enable_safety_checker !== false, // Default true
+      raw: (payload as any).raw === true,
+    };
+
+    // Add seed if provided
+    if ((payload as any).seed) inputBody.seed = (payload as any).seed;
+
+    // CRITICAL: Handle image_size (custom dimensions) vs aspect_ratio
+    // If image_size is present (passed from generateService), use it and IGNORE aspect_ratio
+    if ((payload as any).image_size) {
+      inputBody.image_size = (payload as any).image_size;
+      console.log('[falService] ✅ Using custom image_size for Flux Pro:', JSON.stringify(inputBody.image_size));
+    } else {
+      // Fallback to aspect_ratio if no custom size
+      inputBody.aspect_ratio = (payload as any).aspect_ratio || "16:9";
+    }
+
+    // Add optional sync_mode to return URLs directly (though we use subscribe)
+    inputBody.sync_mode = false;
+
+    try {
+      console.log('[falService] Submitting Flux Pro request to FAL:', { modelEndpoint, input: inputBody });
+      const result = await fal.subscribe(modelEndpoint as any, {
+        input: inputBody,
+        logs: true,
+        onQueueUpdate: (update) => {
+          if (update.status === "IN_PROGRESS") {
+            update.logs.map((log) => log.message).forEach(msg => console.log(`[FAL Flux Log] ${msg}`));
+          }
+        },
+      });
+
+      // Check for images in result
+      if (!result.data || !result.data.images || !Array.isArray(result.data.images) || result.data.images.length === 0) {
+        console.error('[falService] No images returned from Flux Pro generation:', result);
+        throw new ApiError('No images returned from Flux Pro generation', 502, result);
+      }
+
+      const images = result.data.images;
+      const requestId = result.requestId;
+
+      // Upload images to Zata
+      const username = creator?.username || uid;
+      const storedImages = await Promise.all(images.map(async (img: any, idx: number) => {
+        const url = img.url;
+        if (!url) return null;
+
+        try {
+          const stored = await uploadFromUrlToZata({
+            sourceUrl: url,
+            keyPrefix: `users/${username}/image/${historyId}`,
+            fileName: `flux-pro-${idx + 1}`
+          });
+          return {
+            id: `${requestId}-${idx}`,
+            url: stored.publicUrl,
+            storagePath: stored.key,
+            originalUrl: url,
+            content_type: img.content_type
+          };
+        } catch (e) {
+          console.warn('[falService] Failed to upload Flux Pro image to Zata, using original:', e);
+          return {
+            id: `${requestId}-${idx}`,
+            url: url,
+            originalUrl: url,
+            content_type: img.content_type
+          };
+        }
+      }));
+
+      const validStoredImages = storedImages.filter(img => img !== null);
+
+      // Update history
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: validStoredImages,
+      } as any);
+
+      await falRepository.updateGenerationRecord(legacyId, {
+        status: 'completed',
+        images: validStoredImages
+      } as any);
+
+      await syncToMirror(uid, historyId);
+
+      // Trigger optimization
+      markGenerationCompleted(uid, historyId, {
+        status: 'completed',
+        images: validStoredImages,
+        isPublic: (payload as any).isPublic === true,
+      }).catch(err => console.error('[falService] Optimization failed:', err));
+
+      return {
+        images: validStoredImages,
+        historyId,
+        model: modelEndpoint,
+        status: 'completed',
+        seed: result.data.seed,
+        has_nsfw_concepts: result.data.has_nsfw_concepts
+      } as any;
+
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to generate image with Flux Pro',
+        context: 'falService.generate.fluxPro',
+      });
+      try {
+        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
+      } catch (mirrorErr) {
+        console.error('[falService.generate][flux-pro] Failed to mirror error state:', mirrorErr);
+      }
+      throw falError;
+    }
+  }
+
+  // >>> GOOGLE NANO BANANA PRO HANDLER <<<
+  if (isNanoBananaPro) {
+    console.log(`[falService] 🚀 Handling Nano Banana Pro request: ${modelEndpoint}`);
+
+    // Ensure prompt is not empty or undefined
+    const validatedPrompt = (finalPrompt || prompt || '').trim();
+    if (!validatedPrompt) {
+      throw new ApiError('Prompt is required for Google Nano Banana Pro image generation', 400);
+    }
+
+    const inputBody: any = {
+      prompt: validatedPrompt, // Always include prompt, even in I2I mode
+      num_images: imagesRequestedClamped,
+      aspect_ratio: (payload as any).aspect_ratio || resolvedAspect || "auto",
+      output_format: (payload as any).output_format || output_format || "png",
+      resolution: (payload as any).resolution || "1K",
+      sync_mode: (payload as any).sync_mode || false,
+    };
+
+    if ((payload as any).limit_generations !== undefined) inputBody.limit_generations = (payload as any).limit_generations;
+    if ((payload as any).enable_web_search !== undefined) inputBody.enable_web_search = (payload as any).enable_web_search;
+    if ((payload as any).seed != null) inputBody.seed = Number((payload as any).seed);
+
+    // I2I mode for Nano Banana Pro
+    const isI2IMode = modelEndpoint.includes('/edit');
+    if (isI2IMode) {
+      const payloadImageUrls = Array.isArray((payload as any).image_urls) ? (payload as any).image_urls : [];
+      // Only send public URLs to FAL. Internal /api/proxy/... links are not fetchable by FAL.
+      const refs = pickPublicImageUrls(publicImageUrls, payloadImageUrls, uploadedImages);
+      if (refs.length === 0) {
+        throw new ApiError(
+          'Image-to-image mode requires at least one public input image URL (https://...). If you are using /api/proxy/resource/... links, configure API_GATEWAY_URL so the server can re-upload them to public storage first.',
+          400,
+          { error: 'image_not_public' }
+        );
+      }
+      inputBody.image_urls = refs;
+      // Ensure prompt is still included in I2I mode
+      if (!inputBody.prompt) {
+        inputBody.prompt = validatedPrompt;
+      }
+    }
+
+    console.log('[falService] Nano Banana Pro inputBody:', {
+      hasPrompt: !!inputBody.prompt,
+      promptLength: inputBody.prompt?.length || 0,
+      promptPreview: inputBody.prompt?.substring(0, 100) || 'NONE',
+      hasImageUrls: !!inputBody.image_urls,
+      imageUrlsCount: inputBody.image_urls?.length || 0,
+      isI2IMode,
+      modelEndpoint
+    });
+
+    try {
+      console.log('[falService] Submitting Nano Banana Pro request to FAL:', { modelEndpoint, input: inputBody });
+      const result = await fal.subscribe(modelEndpoint as any, {
+        input: inputBody,
+        logs: true,
+      });
+
+      // Extract images from Nano Banana Pro response
+      const images = result.data?.images || result.data?.image || [];
+      const finalImages = Array.isArray(images) ? images : (images ? [images] : []);
+
+      if (finalImages.length === 0) {
+        console.error('[falService] No images returned from Nano Banana Pro generation:', result);
+        throw new ApiError('No images returned from Nano Banana Pro generation', 502, result);
+      }
+
+      const requestId = result.requestId;
+      const username = creator?.username || uid;
+
+      // Upload images to Zata
+      const storedImages = await Promise.all(finalImages.map(async (img: any, idx: number) => {
+        const url = typeof img === 'string' ? img : img.url;
+        if (!url) return null;
+
+        try {
+          const stored = await uploadFromUrlToZata({
+            sourceUrl: url,
+            keyPrefix: `users/${username}/image/${historyId}`,
+            fileName: `nano-banana-${idx + 1}`
+          });
+          return {
+            id: `${requestId}-${idx}`,
+            url: stored.publicUrl,
+            storagePath: stored.key,
+            originalUrl: url,
+            content_type: img.content_type || 'image/png'
+          };
+        } catch (e) {
+          console.warn('[falService] Failed to upload Nano Banana image to Zata:', e);
+          return {
+            id: `${requestId}-${idx}`,
+            url: url,
+            originalUrl: url,
+            content_type: img.content_type || 'image/png'
+          };
+        }
+      }));
+
+      const validStoredImages = storedImages.filter(img => img !== null);
+
+      // Update history
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: validStoredImages,
+        frameSize: resolvedAspect,
+      } as any);
+
+      await falRepository.updateGenerationRecord(legacyId, {
+        status: 'completed',
+        images: validStoredImages
+      } as any);
+
+      await syncToMirror(uid, historyId);
+      markGenerationCompleted(uid, historyId, {
+        status: 'completed',
+        images: validStoredImages,
+        isPublic: (payload as any).isPublic === true,
+      }).catch(() => { });
+
+      return {
+        images: validStoredImages,
+        historyId,
+        model: modelEndpoint,
+        status: 'completed',
+        seed: (result.data as any)?.seed
+      } as any;
+
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to generate image with Nano Banana Pro',
+        context: 'falService.generate.nanoBanana',
+      });
+      try {
+        await falRepository.updateGenerationRecord(legacyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message } as any);
+      } catch { }
+      throw falError;
+    }
+  }
+
   try {
     const fileNameForIndex = (index: number) => buildGenerationImageFileName(historyId, index);
     const imagePromises = Array.from({ length: imagesRequested }, async (_, index) => {
@@ -840,12 +1404,12 @@ async function generate(
         const explicitSize = (payload as any).image_size;
         // Check for Seedream 4.5 - handle both 'seedream-4.5' (from backend) and 'seedream 4.5' (from frontend)
         // Use flag from payload if set, otherwise check model name
-        const isSeedream45 = (payload as any)._isSeedream45 || 
+        const isSeedream45 = (payload as any)._isSeedream45 ||
           modelLower.includes('seedream-4.5') ||
           modelLower.includes('seedream_v45') ||
           modelLower.includes('seedreamv45') ||
           (modelLower.includes('seedream') && (modelLower.includes('4.5') || modelLower.includes('v4.5') || modelLower.includes('v45')));
-        
+
         // Store for later use in queue mode detection
         (input as any)._isSeedream45 = isSeedream45;
 
@@ -907,11 +1471,40 @@ async function generate(
           // Store for later use in queue mode detection
           (input as any)._isEditEndpoint = isEditEndpoint;
           if (isEditEndpoint) {
+            // CRITICAL: Always use publicImageUrls (Zata URLs) for Seedream 4.5, never data URIs or blob URLs
+            // If publicImageUrls is empty but uploadedImages has data URIs, that means upload failed
+            if (publicImageUrls.length === 0 && uploadedImages.length > 0) {
+              const hasDataUris = uploadedImages.some((url: string) => /^data:/i.test(url) || url.startsWith('blob:'));
+              if (hasDataUris) {
+                throw new ApiError(
+                  'Failed to upload images to Zata storage. Image-to-image generation requires images to be uploaded to public storage (Zata). Please try again.',
+                  500
+                );
+              }
+            }
+            // Use publicImageUrls (Zata URLs) - these are guaranteed to be public URLs
             const refs = publicImageUrls.length > 0 ? publicImageUrls : uploadedImages;
             if (Array.isArray(refs) && refs.length > 0) {
+              // Validate that we're not sending data URIs or blob URLs
+              const invalidUrls = refs.filter((url: string) => /^data:/i.test(url) || url.startsWith('blob:'));
+              if (invalidUrls.length > 0) {
+                console.error('[falService] ❌ ERROR: Attempting to send data URIs or blob URLs to Fal:', {
+                  invalidUrls: invalidUrls.map((url: string) => url.substring(0, 50) + '...'),
+                  publicImageUrlsCount: publicImageUrls.length,
+                  uploadedImagesCount: uploadedImages.length
+                });
+                throw new ApiError(
+                  'Internal error: Images were not properly uploaded to Zata storage. Please try again.',
+                  500
+                );
+              }
               // Schema: if >10 images are sent, only the last 10 will be used
               const lastTen = refs.slice(-10);
               input.image_urls = lastTen;
+              console.log('[falService] ✅ Seedream 4.5: Using Zata URLs for image-to-image:', {
+                urlCount: lastTen.length,
+                urls: lastTen.map((url: string) => url.substring(0, 80) + '...')
+              });
             } else {
               // Edit endpoint requires at least 1 image, but we have none
               // This shouldn't happen if endpoint selection is correct, but handle gracefully
@@ -938,11 +1531,11 @@ async function generate(
         // Google Nano Banana Pro specific schema mapping
         // prompt is required for T2I, optional for I2I
         if (finalPrompt) input.prompt = finalPrompt;
-        
+
         // num_images (default 1)
         const numImg = (payload as any).num_images || (payload as any).n || 1;
         input.num_images = Math.max(1, Math.min(10, Number(numImg)));
-        
+
         // aspect_ratio (default "auto")
         if ((payload as any).aspect_ratio) {
           input.aspect_ratio = String((payload as any).aspect_ratio);
@@ -951,48 +1544,51 @@ async function generate(
         } else {
           input.aspect_ratio = 'auto';
         }
-        
+
         // output_format (default "png")
         if ((payload as any).output_format) {
           input.output_format = String((payload as any).output_format);
         } else {
           input.output_format = output_format || 'png';
         }
-        
+
         // sync_mode (boolean, optional)
         if ((payload as any).sync_mode !== undefined) {
           input.sync_mode = Boolean((payload as any).sync_mode);
         }
-        
+
         // resolution (default "1K")
         if ((payload as any).resolution) {
           input.resolution = String((payload as any).resolution);
         } else {
           input.resolution = '1K';
         }
-        
+
         // limit_generations (boolean, optional)
         if ((payload as any).limit_generations !== undefined) {
           input.limit_generations = Boolean((payload as any).limit_generations);
         }
-        
+
         // enable_web_search (boolean, optional)
         if ((payload as any).enable_web_search !== undefined) {
           input.enable_web_search = Boolean((payload as any).enable_web_search);
         }
-        
+
         // image_urls (for I2I mode) - only include if using /edit endpoint (I2I)
         // Note: T2I uses base endpoint (no image_urls), I2I uses /edit endpoint (with image_urls)
         const isI2IMode = modelEndpoint === 'fal-ai/nano-banana-pro/edit'; // /edit endpoint = I2I
         if (isI2IMode) {
           // Check payload.image_urls first (direct from frontend), then fallback to publicImageUrls/uploadedImages
           const payloadImageUrls = Array.isArray((payload as any).image_urls) ? (payload as any).image_urls : [];
-          const refs = payloadImageUrls.length > 0 ? payloadImageUrls : (publicImageUrls.length > 0 ? publicImageUrls : uploadedImages);
-          if (Array.isArray(refs) && refs.length > 0) {
-            input.image_urls = refs;
-          } else {
-            throw new ApiError('Image-to-image mode requires at least one input image in image_urls', 400);
+          const refs = pickPublicImageUrls(publicImageUrls, payloadImageUrls, uploadedImages);
+          if (refs.length === 0) {
+            throw new ApiError(
+              'Image-to-image mode requires at least one public input image URL (https://...). If you are using /api/proxy/resource/... links, configure API_GATEWAY_URL so the server can re-upload them to public storage first.',
+              400,
+              { error: 'image_not_public' }
+            );
           }
+          input.image_urls = refs;
         }
         // For T2I (base endpoint), don't include image_urls
       } else if (resolvedAspect) {
@@ -1006,7 +1602,14 @@ async function generate(
       }
       if (modelEndpoint.endsWith("/edit") && !modelEndpoint.includes('nano-banana-pro')) {
         // Use public URLs for edit endpoint; allow up to 10 reference images for Nano Banana I2I
-        const refs = publicImageUrls.length > 0 ? publicImageUrls : uploadedImages;
+        const refs = pickPublicImageUrls(publicImageUrls, uploadedImages);
+        if (refs.length === 0) {
+          throw new ApiError(
+            'Image-to-image mode requires at least one public input image URL (https://...). If you are using /api/proxy/resource/... links, configure API_GATEWAY_URL so the server can re-upload them to public storage first.',
+            400,
+            { error: 'image_not_public' }
+          );
+        }
         // Images are already ordered by frontend to match @references in prompt
         // @Rajdeep -> image[0], @Aryan -> image[1], etc.
         input.image_urls = Array.isArray(refs) ? refs.slice(0, 10) : [];
@@ -1040,35 +1643,292 @@ async function generate(
       const isSeedream45 = (input as any)._isSeedream45 === true;
       const isEditEndpoint = (input as any)._isEditEndpoint === true || modelEndpoint.includes('/edit');
       const isSeedream45I2I = isSeedream45 && isEditEndpoint && publicImageUrls.length > 0;
-      
+
       let result: any;
       if (isSeedream45I2I) {
         // Use queue mode for Seedream 4.5 image-to-image to avoid timeout
         console.log('[falService] Using queue mode for Seedream 4.5 image-to-image to avoid timeout');
         const { request_id } = await fal.queue.submit(modelEndpoint as any, { input } as any);
-        
+
         if (!request_id) {
           throw new ApiError('No request ID returned from FAL queue', 502);
         }
-        
+
         // Poll for result (max 10 minutes, check every 2 seconds)
         const maxAttempts = 300; // 10 minutes max (2 second intervals)
         const pollInterval = 2000; // 2 seconds
         let attempts = 0;
         let queueResult: any = null;
-        
+
         while (attempts < maxAttempts) {
           await new Promise(resolve => setTimeout(resolve, pollInterval));
           attempts++;
-          
+
           try {
             const status: any = await fal.queue.status(modelEndpoint as any, { requestId: request_id, logs: true } as any);
-            
-            if (status?.status === 'COMPLETED') {
-              queueResult = status;
-              break;
-            } else if (status?.status === 'FAILED') {
-              throw new ApiError(`FAL queue generation failed: ${status?.error || 'Unknown error'}`, 502);
+
+            const statusValue = status?.status || status?.status_code || '';
+
+            if (statusValue === 'COMPLETED' || statusValue === 'completed') {
+              console.log('[falService] ✅ Queue task completed, extracting result...');
+              console.log('[falService] Status response structure:', {
+                hasData: !!status?.data,
+                hasOutput: !!status?.output,
+                hasImages: !!status?.images,
+                dataKeys: status?.data ? Object.keys(status.data) : [],
+                outputKeys: status?.output ? Object.keys(status.output) : [],
+                statusKeys: Object.keys(status || {}),
+                statusPreview: JSON.stringify(status).substring(0, 500)
+              });
+
+              // Check if result is already in the status response - check multiple locations
+              let foundResult = false;
+
+              // 1. Check status.data.images (array)
+              if (status?.data?.images && Array.isArray(status.data.images) && status.data.images.length > 0) {
+                console.log('[falService] ✅ Found images in status.data.images');
+                queueResult = { data: status.data };
+                foundResult = true;
+              }
+              // 2. Check status.data.image.url (single image)
+              else if (status?.data?.image?.url) {
+                console.log('[falService] ✅ Found image in status.data.image.url');
+                queueResult = { data: { images: [{ url: status.data.image.url }] } };
+                foundResult = true;
+              }
+              // 3. Check status.data.image_url (direct URL)
+              else if (status?.data?.image_url) {
+                console.log('[falService] ✅ Found image_url in status.data');
+                queueResult = { data: { images: [{ url: status.data.image_url }] } };
+                foundResult = true;
+              }
+              // 4. Check status.images (top level array)
+              else if (status?.images && Array.isArray(status.images) && status.images.length > 0) {
+                console.log('[falService] ✅ Found images at top level');
+                queueResult = { data: { images: status.images } };
+                foundResult = true;
+              }
+              // 5. Check status.output.images
+              else if (status?.output?.images && Array.isArray(status.output.images) && status.output.images.length > 0) {
+                console.log('[falService] ✅ Found images in status.output.images');
+                queueResult = { data: { images: status.output.images } };
+                foundResult = true;
+              }
+              // 6. Check status.output.image.url
+              else if (status?.output?.image?.url) {
+                console.log('[falService] ✅ Found image in status.output.image.url');
+                queueResult = { data: { images: [{ url: status.output.image.url }] } };
+                foundResult = true;
+              }
+              // 7. Check if status.data itself is the result (sometimes the whole data is the result)
+              else if (status?.data && typeof status.data === 'object') {
+                // Try to extract from any nested structure
+                const dataStr = JSON.stringify(status.data);
+                if (dataStr.includes('http') && (dataStr.includes('.jpg') || dataStr.includes('.png') || dataStr.includes('.jpeg'))) {
+                  console.log('[falService] ✅ Found URL-like data in status.data, attempting extraction');
+                  // Try to find URL in the data structure
+                  const findUrlInObject = (obj: any): string | null => {
+                    if (typeof obj === 'string' && obj.startsWith('http')) return obj;
+                    if (obj?.url && typeof obj.url === 'string') return obj.url;
+                    if (obj?.image_url && typeof obj.image_url === 'string') return obj.image_url;
+                    if (Array.isArray(obj)) {
+                      for (const item of obj) {
+                        const url = findUrlInObject(item);
+                        if (url) return url;
+                      }
+                    }
+                    if (typeof obj === 'object' && obj !== null) {
+                      for (const key in obj) {
+                        const url = findUrlInObject(obj[key]);
+                        if (url) return url;
+                      }
+                    }
+                    return null;
+                  };
+                  const foundUrl = findUrlInObject(status.data);
+                  if (foundUrl) {
+                    console.log('[falService] ✅ Extracted URL from status.data:', foundUrl.substring(0, 80));
+                    queueResult = { data: { images: [{ url: foundUrl }] } };
+                    foundResult = true;
+                  }
+                }
+              }
+
+              if (foundResult) {
+                break;
+              }
+
+              // If result not in status, fetch from response_url (recommended approach)
+              // The response_url is the direct URL to get the result when COMPLETED
+              if (!foundResult && status?.response_url) {
+                try {
+                  console.log('[falService] Result not in status response, fetching from response_url:', status.response_url.substring(0, 80));
+                  const falKey = env.falKey as string;
+
+                  if (!falKey) {
+                    throw new ApiError('FAL AI API key not configured', 500);
+                  }
+
+                  const responseUrlFetch = await fetch(status.response_url, {
+                    method: 'GET',
+                    headers: {
+                      'Authorization': `Key ${falKey}`,
+                    },
+                  });
+
+                  if (!responseUrlFetch.ok) {
+                    const errorText = await responseUrlFetch.text().catch(() => responseUrlFetch.statusText);
+                    console.warn('[falService] Failed to fetch from response_url:', {
+                      status: responseUrlFetch.status,
+                      statusText: responseUrlFetch.statusText,
+                      errorPreview: errorText.substring(0, 200),
+                      responseUrl: status.response_url
+                    });
+                    // Don't throw - continue to try other methods
+                  } else {
+                    const queueResultData: any = await responseUrlFetch.json();
+                    console.log('[falService] ✅ Raw response from response_url:', {
+                      status: responseUrlFetch.status,
+                      contentType: responseUrlFetch.headers.get('content-type'),
+                      dataKeys: queueResultData ? Object.keys(queueResultData) : [],
+                      fullResponse: JSON.stringify(queueResultData).substring(0, 1000)
+                    });
+
+                    console.log('[falService] ✅ Result fetched from response_url:', {
+                      hasData: !!queueResultData?.data,
+                      hasImages: !!(queueResultData?.data && 'images' in queueResultData.data && Array.isArray(queueResultData.data.images)),
+                      hasImage: !!(queueResultData?.data && 'image' in queueResultData.data),
+                      resultKeys: Object.keys(queueResultData || {}),
+                      dataKeys: queueResultData?.data ? Object.keys(queueResultData.data) : [],
+                      resultPreview: JSON.stringify(queueResultData).substring(0, 500)
+                    });
+
+                    // Check different result structures (using type-safe checks)
+                    const data = queueResultData?.data;
+                    if (data && 'images' in data && Array.isArray(data.images) && data.images.length > 0) {
+                      console.log('[falService] ✅ Found images in queueResult.data.images');
+                      queueResult = queueResultData;
+                      foundResult = true;
+                      break;
+                    } else if (data && 'image' in data && typeof data.image === 'object' && data.image?.url) {
+                      console.log('[falService] ✅ Found image in queueResult.data.image.url');
+                      queueResult = { data: { images: [{ url: data.image.url }] } };
+                      foundResult = true;
+                      break;
+                    } else if ('images' in queueResultData && Array.isArray((queueResultData as any).images) && (queueResultData as any).images.length > 0) {
+                      console.log('[falService] ✅ Found images at top level of queueResult');
+                      queueResult = { data: { images: (queueResultData as any).images } };
+                      foundResult = true;
+                      break;
+                    } else if (data && 'image_url' in data && typeof data.image_url === 'string') {
+                      console.log('[falService] ✅ Found image_url in queueResult.data');
+                      queueResult = { data: { images: [{ url: data.image_url }] } };
+                      foundResult = true;
+                      break;
+                    } else {
+                      console.warn('[falService] ⚠️ Result fetched from response_url but no images found, structure:', {
+                        resultKeys: Object.keys(queueResultData || {}),
+                        dataKeys: data ? Object.keys(data) : []
+                      });
+                    }
+                  }
+                } catch (responseUrlError: any) {
+                  console.warn('[falService] Failed to fetch from response_url:', {
+                    error: responseUrlError?.message,
+                    status: responseUrlError?.status || responseUrlError?.statusCode,
+                    responseUrl: status?.response_url?.substring(0, 80)
+                  });
+                }
+              }
+
+              // Fallback: Try fetching from the queue URL directly (like replaceService does)
+              if (!foundResult) {
+                try {
+                  console.log('[falService] Trying to fetch from queue URL directly...');
+                  // Extract model path from response_url or use modelEndpoint
+                  // response_url format: https://queue.fal.run/fal-ai/bytedance/requests/{request_id}
+                  // So we need: fal-ai/bytedance (without /seedream/v4.5/edit)
+                  let queueModelPath = modelEndpoint;
+                  if (status?.response_url) {
+                    // Extract from response_url: https://queue.fal.run/fal-ai/bytedance/requests/...
+                    const urlMatch = status.response_url.match(/https:\/\/queue\.fal\.run\/([^\/]+\/[^\/]+)\//);
+                    if (urlMatch && urlMatch[1]) {
+                      queueModelPath = urlMatch[1];
+                      console.log('[falService] Extracted model path from response_url:', queueModelPath);
+                    }
+                  }
+
+                  const queueUrl = `https://queue.fal.run/${queueModelPath}/requests/${request_id}`;
+                  const falKey = env.falKey as string;
+
+                  if (!falKey) {
+                    throw new ApiError('FAL AI API key not configured', 500);
+                  }
+
+                  const queueResponse = await fetch(queueUrl, {
+                    method: 'GET',
+                    headers: {
+                      'Authorization': `Key ${falKey}`,
+                    },
+                  });
+
+                  if (!queueResponse.ok) {
+                    const text = await queueResponse.text().catch(() => queueResponse.statusText);
+                    throw new Error(`Failed to fetch queue response (${queueResponse.status}): ${text.substring(0, 200)}`);
+                  }
+
+                  const queueResultData: any = await queueResponse.json();
+
+                  console.log('[falService] ✅ Result fetched from queue URL:', {
+                    hasData: !!queueResultData?.data,
+                    hasImages: !!(queueResultData?.data && 'images' in queueResultData.data && Array.isArray(queueResultData.data.images)),
+                    hasImage: !!(queueResultData?.data && 'image' in queueResultData.data),
+                    resultKeys: Object.keys(queueResultData || {}),
+                    dataKeys: queueResultData?.data ? Object.keys(queueResultData.data) : [],
+                    resultPreview: JSON.stringify(queueResultData).substring(0, 500)
+                  });
+
+                  // Check different result structures (using type-safe checks)
+                  const data = queueResultData?.data;
+                  if (data && 'images' in data && Array.isArray(data.images) && data.images.length > 0) {
+                    console.log('[falService] ✅ Found images in queueResult.data.images');
+                    queueResult = queueResultData;
+                    foundResult = true;
+                    break;
+                  } else if (data && 'image' in data && typeof data.image === 'object' && data.image?.url) {
+                    console.log('[falService] ✅ Found image in queueResult.data.image.url');
+                    queueResult = { data: { images: [{ url: data.image.url }] } };
+                    foundResult = true;
+                    break;
+                  } else if ('images' in queueResultData && Array.isArray((queueResultData as any).images) && (queueResultData as any).images.length > 0) {
+                    console.log('[falService] ✅ Found images at top level of queueResult');
+                    queueResult = { data: { images: (queueResultData as any).images } };
+                    foundResult = true;
+                    break;
+                  } else if (data && 'image_url' in data && typeof data.image_url === 'string') {
+                    console.log('[falService] ✅ Found image_url in queueResult.data');
+                    queueResult = { data: { images: [{ url: data.image_url }] } };
+                    foundResult = true;
+                    break;
+                  } else {
+                    console.warn('[falService] ⚠️ Result fetched from queue URL but no images found, continuing to poll...');
+                    // Don't break - continue polling as result might appear later
+                  }
+                } catch (queueUrlError: any) {
+                  console.warn('[falService] Failed to fetch from queue URL:', {
+                    error: queueUrlError?.message,
+                    status: queueUrlError?.status || queueUrlError?.statusCode
+                  });
+                }
+              }
+
+              // If we still don't have a result, log and continue polling (might need more time)
+              if (!foundResult) {
+                console.log('[falService] ⚠️ Result not found, will continue polling (attempt ' + (attempts + 1) + '/' + maxAttempts + ')...');
+                // Don't break - continue polling as the result might appear in next poll
+              }
+            } else if (statusValue === 'FAILED' || statusValue === 'failed') {
+              throw new ApiError(`FAL queue generation failed: ${status?.error || status?.message || 'Unknown error'}`, 502);
             }
             // Continue polling if status is 'IN_QUEUE' or 'IN_PROGRESS'
           } catch (pollError: any) {
@@ -1078,11 +1938,21 @@ async function generate(
             }
           }
         }
-        
+
         if (!queueResult) {
           throw new ApiError('FAL queue generation timed out after 10 minutes', 504);
         }
-        
+
+        // Queue result structure might be different from subscribe
+        // Log the structure to debug
+        console.log('[falService] Queue result structure:', {
+          hasData: !!queueResult?.data,
+          hasOutput: !!queueResult?.output,
+          status: queueResult?.status,
+          keys: Object.keys(queueResult || {}),
+          dataKeys: queueResult?.data ? Object.keys(queueResult.data) : [],
+        });
+
         result = queueResult;
       } else {
         // Use synchronous subscribe for other models (faster for short requests)
@@ -1090,11 +1960,42 @@ async function generate(
       }
 
       let imageUrl = "";
+      // Handle both queue result and subscribe result structures
       if (result?.data?.images?.length > 0) {
+        // Standard subscribe result structure
         imageUrl = result.data.images[0].url;
+      } else if (result?.data?.image?.url) {
+        // Single image in data.image
+        imageUrl = result.data.image.url;
+      } else if (result?.data?.image_url) {
+        // Direct image_url in data
+        imageUrl = result.data.image_url;
+      } else if (result?.output?.images?.length > 0) {
+        // Queue result might have output.images
+        imageUrl = result.output.images[0].url || result.output.images[0];
+      } else if (result?.output?.image?.url) {
+        // Queue result with output.image
+        imageUrl = result.output.image.url;
+      } else if (result?.output?.image_url) {
+        // Queue result with direct output.image_url
+        imageUrl = result.output.image_url;
+      } else if (Array.isArray(result?.output) && result.output.length > 0) {
+        // Queue result with array output
+        const firstOutput = result.output[0];
+        imageUrl = typeof firstOutput === 'string' ? firstOutput : (firstOutput?.url || firstOutput?.image_url);
       }
-      if (!imageUrl)
+
+      if (!imageUrl) {
+        console.error('[falService] ❌ Failed to extract image URL from result:', {
+          resultKeys: Object.keys(result || {}),
+          dataKeys: result?.data ? Object.keys(result.data) : [],
+          outputKeys: result?.output ? Object.keys(result.output) : [],
+          resultPreview: JSON.stringify(result).substring(0, 500)
+        });
         throw new ApiError("No image URL returned from FAL API", 502);
+      }
+
+      console.log('[falService] ✅ Successfully extracted image URL from result:', imageUrl.substring(0, 80) + '...');
 
       return {
         url: imageUrl,
@@ -1181,8 +2082,9 @@ async function generate(
 
       return { images: scoredImages as any, historyId, model, status: 'completed' };
     } else {
-      // For canvas flows, force synchronous upload using override (so we have storagePath immediately)
-      if ((payload as any)?.forceSyncUpload === true || (payload as any)?.storageKeyPrefixOverride) {
+      // For canvas flows and live-chat edits, force synchronous upload (so we have storagePath immediately)
+      // Live-chat UX expects a stable Zata URL in the response (not a transient provider URL).
+      if ((payload as any)?.forceSyncUpload === true || (payload as any)?.storageKeyPrefixOverride || generationType === 'live-chat') {
         const storedImages = await Promise.all(
           images.map(async (img, index) => {
             try {
@@ -2121,12 +3023,21 @@ export const falService = {
 
     try {
       // Resolve input URL: allow direct URL or data URI via temporary upload
-      let resolvedUrl: string | undefined = typeof body.image_url === 'string' ? body.image_url : undefined;
-      if (!resolvedUrl && typeof body.image === 'string' && /^data:/i.test(body.image)) {
+      let resolvedUrl: string | undefined = typeof body.image_url === 'string' ? body.image_url : (typeof body.image === 'string' ? body.image : undefined);
+
+      if (resolvedUrl && /^data:/i.test(resolvedUrl)) {
         try {
-          const stored = await uploadDataUriToZata({ dataUri: body.image, keyPrefix: `users/${(creator?.username || uid)}/input/${historyId}`, fileName: 'topaz-source' });
+          const stored = await uploadDataUriToZata({ dataUri: resolvedUrl, keyPrefix: `users/${(creator?.username || uid)}/input/${historyId}`, fileName: 'topaz-source' });
           resolvedUrl = stored.publicUrl;
         } catch { }
+      } else if (resolvedUrl) {
+        // Ensure regular URLs (especially proxy URLs) are uploaded to Zata
+        try {
+          const stored = await uploadFromUrlToZata({ sourceUrl: resolvedUrl, keyPrefix: `users/${(creator?.username || uid)}/input/${historyId}`, fileName: 'topaz-source' });
+          resolvedUrl = stored.publicUrl;
+        } catch (err) {
+          console.warn('[topazUpscaleImage] Failed to upload input image to Zata, using original:', err);
+        }
       }
       if (!resolvedUrl) throw new ApiError('Unable to resolve image_url for Topaz upscale', 400);
 
@@ -2181,6 +3092,98 @@ export const falService = {
       throw falError;
     }
   },
+  async seedvrUpscaleImage(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    if (!body?.image_url && !body?.image) throw new ApiError('image_url or image is required', 400);
+    fal.config({ credentials: falKey });
+
+    const model = 'fal-ai/seedvr/upscale/image';
+    const creator = await authRepository.getUserById(uid);
+    const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt: 'Upscale Image',
+      model,
+      generationType: 'image-upscale',
+      visibility: body.isPublic ? 'public' : 'private',
+      isPublic: body.isPublic === true,
+      createdBy,
+    });
+
+    try {
+      // Resolve input URL: allow direct URL or data URI via temporary upload
+      let resolvedUrl: string | undefined = typeof body.image_url === 'string' ? body.image_url : (typeof body.image === 'string' ? body.image : undefined);
+
+      if (resolvedUrl && /^data:/i.test(resolvedUrl)) {
+        try {
+          const stored = await uploadDataUriToZata({ dataUri: resolvedUrl, keyPrefix: `users/${(creator?.username || uid)}/input/${historyId}`, fileName: 'seedvr-image-source' });
+          resolvedUrl = stored.publicUrl;
+        } catch { }
+      } else if (resolvedUrl) {
+        // Ensure regular URLs are uploaded to Zata for reliable access
+        try {
+          const stored = await uploadFromUrlToZata({ sourceUrl: resolvedUrl, keyPrefix: `users/${(creator?.username || uid)}/input/${historyId}`, fileName: 'seedvr-image-source' });
+          resolvedUrl = stored.publicUrl;
+        } catch (err) {
+          console.warn('[seedvrUpscaleImage] Failed to upload input image to Zata, using original:', err);
+        }
+      }
+
+      if (!resolvedUrl) throw new ApiError('Unable to resolve image_url for SeedVR image upscale', 400);
+
+      // Enforce factor-only API usage (never target_resolution)
+      const input: any = {
+        image_url: resolvedUrl,
+        upscale_mode: 'factor',
+        upscale_factor: body.upscale_factor ?? 2,
+        noise_scale: body.noise_scale ?? 0.1,
+        output_format: body.output_format || 'jpg',
+      };
+      if (body.seed != null) input.seed = body.seed;
+
+      const result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
+      const imgUrl: string | undefined = (result as any)?.data?.image?.url;
+      if (!imgUrl) throw new ApiError('No image URL returned from FAL API', 502);
+
+      const username = creator?.username || uid;
+      const { key, publicUrl } = await uploadFromUrlToZata({ sourceUrl: imgUrl, keyPrefix: `users/${username}/image/${historyId}`, fileName: 'upscaled' });
+      const images: FalGeneratedImage[] = [{ id: (result as any).requestId || `fal-${Date.now()}`, url: publicUrl, storagePath: key, originalUrl: imgUrl } as any];
+
+      // Score images
+      const scoredImages = await aestheticScoreService.scoreImages(images as any);
+      const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: scoredImages,
+        aestheticScore: highestScore,
+        updatedAt: new Date().toISOString(),
+      } as any);
+
+      // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+      markGenerationCompleted(uid, historyId, {
+        status: 'completed',
+        images: scoredImages as any,
+      }).catch(err => console.error('[FAL] Image optimization failed:', err));
+
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
+
+      return { images: scoredImages as any, historyId, model, status: 'completed' };
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to upscale image with FAL API',
+        context: 'falService.seedvrUpscaleImage',
+        toastTitle: 'Image upscale failed',
+      });
+      try {
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
+      } catch (mirrorErr) {
+        console.error('[seedvrUpscaleImage] Failed to mirror error state:', mirrorErr);
+      }
+      throw falError;
+    }
+  },
   async seedvrUpscale(uid: string, body: any): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!body?.video_url) throw new ApiError('video_url is required', 400);
@@ -2199,7 +3202,27 @@ export const falService = {
     });
 
     try {
-      const input: any = { video_url: body.video_url };
+      let resolvedUrl = body.video_url;
+      if (resolvedUrl && resolvedUrl.includes('idr01.zata.ai')) {
+        try {
+          const username = creator?.username || uid;
+          // Download from Zata using our backend (bypasses TLS) and re-upload
+          // This creates a new Zata URL, but FAL may still not be able to access it
+          // Ideally we would upload to FAL storage, but for now we try re-uploading to Zata
+          const reuploaded = await uploadFromUrlToZata({
+            sourceUrl: resolvedUrl,
+            keyPrefix: `users/${username}/input/${historyId}`,
+            fileName: `upscale-fal-${Date.now()}`
+          });
+          resolvedUrl = reuploaded.publicUrl;
+          console.log('[falService.seedvrUpscale] Re-uploaded video for FAL access:', resolvedUrl);
+        } catch (err: any) {
+          console.error('[falService.seedvrUpscale] Failed to re-upload video for FAL access:', err?.message || err);
+          // Continue with original URL
+        }
+      }
+
+      const input: any = { video_url: resolvedUrl };
       if (body.upscale_mode) input.upscale_mode = body.upscale_mode;
       if (body.upscale_factor != null) input.upscale_factor = body.upscale_factor;
       if (body.target_resolution) input.target_resolution = body.target_resolution;
@@ -2211,17 +3234,25 @@ export const falService = {
 
       console.log('[seedvrUpscale] Calling FAL API with input:', { ...input, video_url: input.video_url?.substring(0, 100) + '...' });
 
-      let result: any;
-      try {
-        result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
-      } catch (falErr: any) {
-        const errorDetails = falErr?.response?.data || falErr?.message || falErr;
-        console.error('[seedvrUpscale] FAL API error:', JSON.stringify(errorDetails, null, 2));
-        const errorMessage = typeof errorDetails === 'string'
-          ? errorDetails
-          : errorDetails?.error || errorDetails?.message || errorDetails?.detail || 'FAL API request failed';
-        throw new ApiError(`FAL API error: ${errorMessage}`, 502);
+      // Validate that the video URL is an http(s) URL and reachable by FAL
+      if (!input.video_url || typeof input.video_url !== 'string' || !/^https?:\/\//i.test(input.video_url)) {
+        console.error('[seedvrUpscale] Invalid video_url provided:', input.video_url);
+        throw new ApiError('video_url must be a public http(s) URL accessible by the FAL service', 400);
       }
+
+      try {
+        const headResp = await axios.head(input.video_url, { timeout: 5000 });
+        const contentType = headResp.headers && (headResp.headers['content-type'] || headResp.headers['Content-Type']);
+        if (contentType && !/^video\//i.test(contentType) && !/octet-stream/i.test(contentType)) {
+          console.warn('[seedvrUpscale] video_url content-type is not a recognized video type:', contentType);
+        }
+      } catch (headErr: any) {
+        console.error('[seedvrUpscale] Unable to reach video_url or non-200 response:', headErr?.message || headErr);
+        throw new ApiError('Unable to download video_url; ensure it is a public, reachable URL (FAL needs to fetch it)', 400);
+      }
+
+      let result: any;
+      result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
 
       const videoUrl: string | undefined = (result as any)?.data?.video?.url || (result as any)?.data?.video_url || (result as any)?.data?.output?.video?.url;
       if (!videoUrl) {
@@ -2679,6 +3710,211 @@ export const falService = {
       }
       throw falError;
     }
+  },
+  async qwenMultipleAngles(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    if (!body?.image_urls || !Array.isArray(body.image_urls) || body.image_urls.length === 0) {
+      throw new ApiError('image_urls is required and must be a non-empty array', 400);
+    }
+    fal.config({ credentials: falKey });
+
+    const model = 'fal-ai/qwen-image-edit-2511-multiple-angles';
+    const creator = await authRepository.getUserById(uid);
+    const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
+    const promptText = typeof body?.additional_prompt === 'string' ? String(body.additional_prompt) : '';
+    const { historyId } = await generationHistoryRepository.create(uid, {
+      prompt: promptText ? `Qwen Multiple Angles: ${promptText}` : 'Qwen Multiple Angles',
+      model,
+      generationType: 'image-edit',
+      visibility: body.isPublic ? 'public' : 'private',
+      isPublic: body.isPublic === true,
+      createdBy,
+    });
+
+    try {
+      // Resolve image URLs - ensure they're publicly accessible
+      const username = creator?.username || uid;
+      const resolvedImageUrls: string[] = [];
+      
+      for (const imgUrl of body.image_urls) {
+        if (!imgUrl || typeof imgUrl !== 'string') continue;
+        
+        // Check if it's a proxy/Zata URL that needs conversion
+        const proxyAsZata = tryConvertProxyResourceToZataUrl(imgUrl);
+        if (proxyAsZata) {
+          resolvedImageUrls.push(proxyAsZata.publicUrl);
+          continue;
+        }
+
+        // Check if it's localhost or proxy URL that needs re-uploading
+        const isLocalhost = imgUrl.includes('localhost') || imgUrl.includes('127.0.0.1') || imgUrl.includes('/api/proxy/');
+        const isZataUrl = imgUrl.includes('idr01.zata.ai');
+
+        if (isLocalhost || isZataUrl) {
+          try {
+            const reuploaded = await uploadFromUrlToZata({
+              sourceUrl: imgUrl,
+              keyPrefix: `users/${username}/input/${historyId}`,
+              fileName: `qwen-angle-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+            });
+            resolvedImageUrls.push(reuploaded.publicUrl);
+          } catch (err: any) {
+            console.error('[falService.qwenMultipleAngles] Failed to re-upload image:', err?.message || err);
+            // Try using original URL - FAL might be able to access it
+            resolvedImageUrls.push(imgUrl);
+          }
+        } else {
+          // Public URL - use as-is
+          resolvedImageUrls.push(imgUrl);
+        }
+      }
+
+      if (resolvedImageUrls.length === 0) {
+        throw new ApiError('No valid image URLs could be resolved', 400);
+      }
+
+      const input: any = {
+        image_urls: resolvedImageUrls,
+      };
+
+      // Add optional parameters
+      if (typeof body?.horizontal_angle === 'number') {
+        input.horizontal_angle = Number(body.horizontal_angle);
+      }
+      if (typeof body?.vertical_angle === 'number') {
+        input.vertical_angle = Number(body.vertical_angle);
+      }
+      if (typeof body?.zoom === 'number') {
+        input.zoom = Number(body.zoom);
+      } else {
+        input.zoom = 5; // Default zoom
+      }
+      if (typeof body?.additional_prompt === 'string' && body.additional_prompt.trim()) {
+        input.additional_prompt = String(body.additional_prompt).trim();
+      }
+      if (typeof body?.lora_scale === 'number') {
+        input.lora_scale = Number(body.lora_scale);
+      } else {
+        input.lora_scale = 1; // Default lora_scale
+      }
+      if (body?.image_size) {
+        input.image_size = body.image_size;
+      }
+      if (typeof body?.guidance_scale === 'number') {
+        input.guidance_scale = Number(body.guidance_scale);
+      } else {
+        input.guidance_scale = 4.5; // Default guidance_scale
+      }
+      if (typeof body?.num_inference_steps === 'number') {
+        input.num_inference_steps = Math.round(Number(body.num_inference_steps));
+      } else {
+        input.num_inference_steps = 28; // Default num_inference_steps
+      }
+      if (body?.acceleration) {
+        input.acceleration = body.acceleration;
+      } else {
+        input.acceleration = 'regular'; // Default acceleration
+      }
+      if (typeof body?.negative_prompt === 'string' && body.negative_prompt.trim()) {
+        input.negative_prompt = String(body.negative_prompt).trim();
+      }
+      if (typeof body?.seed === 'number') {
+        input.seed = Math.round(Number(body.seed));
+      }
+      if (body?.sync_mode === true) {
+        input.sync_mode = true;
+      }
+      if (typeof body?.enable_safety_checker === 'boolean') {
+        input.enable_safety_checker = body.enable_safety_checker;
+      } else {
+        input.enable_safety_checker = true; // Default enable_safety_checker
+      }
+      if (body?.output_format) {
+        input.output_format = body.output_format;
+      } else {
+        input.output_format = 'png'; // Default output_format
+      }
+      if (typeof body?.num_images === 'number') {
+        input.num_images = Math.round(Number(body.num_images));
+      } else {
+        input.num_images = 1; // Default num_images
+      }
+
+      console.log('[falService.qwenMultipleAngles] Calling FAL API:', { 
+        model, 
+        input: { 
+          ...input, 
+          image_urls: input.image_urls.map((url: string) => url.substring(0, 100) + '...') 
+        } 
+      });
+
+      let result: any;
+      try {
+        result = await fal.subscribe(model as any, ({ input, logs: true } as unknown) as any);
+      } catch (falErr: any) {
+        const details = falErr?.response?.data || falErr?.message || falErr;
+        console.error('[falService.qwenMultipleAngles] FAL API error:', JSON.stringify(details, null, 2));
+        throw new ApiError(`FAL API error: ${JSON.stringify(details)}`, 500);
+      }
+
+      const imagesArray: any[] = Array.isArray((result as any)?.data?.images) ? (result as any).data.images : [];
+      if (!imagesArray.length) {
+        console.error('[falService.qwenMultipleAngles] No images in response:', JSON.stringify(result, null, 2));
+        throw new ApiError('No images returned from FAL Qwen Multiple Angles API', 502);
+      }
+
+      const storedImages: FalGeneratedImage[] = await Promise.all(imagesArray.map(async (img, index) => {
+        const sourceUrl: string | undefined = img?.url;
+        const fallbackId = img?.file_name || img?.id || (result as any)?.requestId || `fal-qwen-${Date.now()}-${index}`;
+        if (!sourceUrl) {
+          return { id: fallbackId, url: '', originalUrl: '' } as any;
+        }
+        try {
+          const { key, publicUrl } = await uploadFromUrlToZata({ 
+            sourceUrl, 
+            keyPrefix: `users/${username}/image/${historyId}`, 
+            fileName: `qwen-angle-${index + 1}` 
+          });
+          return { id: fallbackId, url: publicUrl, storagePath: key, originalUrl: sourceUrl } as any;
+        } catch {
+          return { id: fallbackId, url: sourceUrl, originalUrl: sourceUrl } as any;
+        }
+      }));
+
+      // Score images
+      const scoredImages = await aestheticScoreService.scoreImages(storedImages as any);
+      const highestScore = aestheticScoreService.getHighestScore(scoredImages);
+      await generationHistoryRepository.update(uid, historyId, {
+        status: 'completed',
+        images: scoredImages,
+        aestheticScore: highestScore,
+        updatedAt: new Date().toISOString(),
+      } as any);
+
+      // Trigger image optimization (thumbnails, AVIF, blur placeholders) in background
+      markGenerationCompleted(uid, historyId, {
+        status: "completed",
+        images: scoredImages as any,
+      }).catch(err => console.error('[FAL] Image optimization failed:', err));
+
+      // Sync to mirror with retries
+      await syncToMirror(uid, historyId);
+
+      return { images: scoredImages as any, historyId, model, status: 'completed' };
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: 'Failed to generate multiple camera angles with Qwen API',
+        context: 'falService.qwenMultipleAngles',
+        toastTitle: 'Multiple angles generation failed',
+      });
+      try {
+        await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: falError.message, falError: falError.data } as any);
+        await updateMirror(uid, historyId, { status: 'failed' as any, error: falError.message });
+      } catch (mirrorErr) {
+        console.error('[qwenMultipleAngles] Failed to mirror error state:', mirrorErr);
+      }
+      throw falError;
+    }
   }
 };
 
@@ -2784,12 +4020,12 @@ async function klingO1FirstLastSubmit(uid: string, body: any): Promise<SubmitRet
   const model = 'fal-ai/kling-video/o1/standard/image-to-video';
 
   const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-  
+
   // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
   const creator = await authRepository.getUserById(uid);
   const username = creator?.username || uid;
   const keyPrefix = `users/${username}/input/${historyId}`;
-  
+
   try {
     // Upload first image if it's a data URI
     if (typeof first === 'string' && /^data:/i.test(first)) {
@@ -2805,7 +4041,7 @@ async function klingO1FirstLastSubmit(uid: string, body: any): Promise<SubmitRet
     console.error('[falService.klingO1FirstLastSubmit] Failed to upload images to Zata:', e);
     throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
   }
-  
+
   // Persist images to history
   await persistInputImagesFromUrls(uid, historyId, [first, last]);
 
@@ -2836,28 +4072,28 @@ async function klingO1ReferenceSubmit(uid: string, body: any): Promise<SubmitRet
   if (!body?.image_urls || !Array.isArray(body.image_urls) || body.image_urls.length === 0) {
     throw new ApiError('image_urls array is required and must contain at least one image', 400);
   }
-  
+
   // Duration must be "5" or "10" as string enum
   const duration = typeof body.duration === 'number' ? String(body.duration) : String(body.duration || '5');
   if (duration !== '5' && duration !== '10') {
     throw new ApiError('duration must be "5" or "10"', 400);
   }
-  
+
   // Aspect ratio validation
   const aspectRatio = body.aspect_ratio || '16:9';
   if (!['16:9', '9:16', '1:1'].includes(aspectRatio)) {
     throw new ApiError('aspect_ratio must be "16:9", "9:16", or "1:1"', 400);
   }
-  
+
   const model = 'fal-ai/kling-video/o1/standard/reference-to-video';
   const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-  
+
   // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
   const creator = await authRepository.getUserById(uid);
   const username = creator?.username || uid;
   const keyPrefix = `users/${username}/input/${historyId}`;
   const imageUrls: string[] = [];
-  
+
   try {
     // Upload each image if it's a data URI
     for (let i = 0; i < body.image_urls.length; i++) {
@@ -2872,10 +4108,10 @@ async function klingO1ReferenceSubmit(uid: string, body: any): Promise<SubmitRet
     console.error('[falService.klingO1ReferenceSubmit] Failed to upload images to Zata:', e);
     throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
   }
-  
+
   // Persist images to history
   await persistInputImagesFromUrls(uid, historyId, imageUrls);
-  
+
   // Build request payload
   const input: any = {
     prompt: body.prompt,
@@ -2883,14 +4119,14 @@ async function klingO1ReferenceSubmit(uid: string, body: any): Promise<SubmitRet
     duration,
     aspect_ratio: aspectRatio,
   };
-  
+
   // Add elements if provided (for future support)
   if (body.elements && Array.isArray(body.elements) && body.elements.length > 0) {
     input.elements = body.elements;
   }
-  
+
   const { request_id } = await fal.queue.submit(model, { input } as any);
-  
+
   await generationHistoryRepository.update(uid, historyId, {
     provider: 'fal',
     providerTaskId: request_id,
@@ -2898,7 +4134,7 @@ async function klingO1ReferenceSubmit(uid: string, body: any): Promise<SubmitRet
     aspect_ratio: aspectRatio,
     image_urls: imageUrls,
   } as any);
-  
+
   return { requestId: request_id, historyId, model, status: 'submitted' };
 }
 
@@ -3156,11 +4392,90 @@ async function queueResult(uid: string, model: string | undefined, requestId: st
   return result;
 }
 
+async function kling26ProT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+  fal.config({ credentials: falKey });
+  if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+  const model = 'fal-ai/kling-video/v2.6/pro/text-to-video';
+  const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+  const duration = typeof body.duration === 'string' ? body.duration : (body.duration ? `${body.duration}` : '5');
+  const { request_id } = await fal.queue.submit(model, {
+    input: {
+      prompt: body.prompt,
+      duration: duration,
+      aspect_ratio: body.aspect_ratio ?? '16:9',
+      negative_prompt: body.negative_prompt ?? 'blur, distort, and low quality',
+      cfg_scale: body.cfg_scale ?? 0.5,
+      generate_audio: body.generate_audio !== false, // Default to true if not explicitly false
+    },
+  } as any);
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: 'fal',
+    providerTaskId: request_id,
+    generate_audio: body.generate_audio !== false, // Default to true if not explicitly false
+    duration: duration,
+    aspect_ratio: body.aspect_ratio ?? '16:9'
+  } as any);
+  return { requestId: request_id, historyId, model, status: 'submitted' };
+}
+
+async function kling26ProI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+  fal.config({ credentials: falKey });
+  if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+  if (!body?.image_url) throw new ApiError('image_url is required', 400);
+  const model = 'fal-ai/kling-video/v2.6/pro/image-to-video';
+  const duration = typeof body.duration === 'string' ? body.duration : (body.duration ? `${body.duration}` : '5');
+
+  // Upload image_url to Zata if it's a data URI
+  let imageUrl = body.image_url;
+  const creator = await authRepository.getUserById(uid);
+  const username = creator?.username || uid;
+  const { historyId } = await queueCreateHistory(uid, {
+    prompt: body.prompt,
+    model,
+    isPublic: body.isPublic,
+  });
+
+  const keyPrefix = `users/${username}/input/${historyId}`;
+  try {
+    if (typeof imageUrl === 'string' && /^data:/i.test(imageUrl)) {
+      const stored = await uploadDataUriToZata({ dataUri: imageUrl, keyPrefix, fileName: 'input-1' });
+      imageUrl = stored.publicUrl;
+    }
+    // Persist image to history
+    await persistInputImagesFromUrls(uid, historyId, [imageUrl]);
+  } catch (e: any) {
+    console.error('[falService.kling26ProI2vSubmit] Failed to upload image to Zata:', e);
+    // Continue with original URL if upload fails
+  }
+
+  const { request_id } = await fal.queue.submit(model, {
+    input: {
+      prompt: body.prompt,
+      image_url: imageUrl,
+      duration: duration,
+      negative_prompt: body.negative_prompt ?? 'blur, distort, and low quality',
+      cfg_scale: body.cfg_scale ?? 0.5,
+      generate_audio: body.generate_audio !== false, // Default to true if not explicitly false
+    },
+  } as any);
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: 'fal',
+    providerTaskId: request_id,
+    generate_audio: body.generate_audio !== false, // Default to true if not explicitly false
+    duration: duration
+  } as any);
+  return { requestId: request_id, historyId, model, status: 'submitted' };
+}
+
 export const falQueueService = {
   veoTtvSubmit,
   veoI2vSubmit,
   klingO1FirstLastSubmit,
   klingO1ReferenceSubmit,
+  kling26ProT2vSubmit,
+  kling26ProI2vSubmit,
   // Veo 3.1 variants
   async veo31TtvSubmit(uid: string, body: any, fast = false): Promise<SubmitReturn> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
@@ -3209,7 +4524,7 @@ export const falQueueService = {
     const creator = await authRepository.getUserById(uid);
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
-    
+
     try {
       if (typeof imageUrl === 'string' && /^data:/i.test(imageUrl)) {
         const stored = await uploadDataUriToZata({ dataUri: imageUrl, keyPrefix, fileName: 'input-1' });
@@ -3242,13 +4557,13 @@ export const falQueueService = {
     if (!Array.isArray(body?.image_urls) || body.image_urls.length === 0) throw new ApiError('image_urls is required and must contain at least one URL', 400);
     const model = 'fal-ai/veo3.1/reference-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    
+
     // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
     const creator = await authRepository.getUserById(uid);
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
     const imageUrls = Array.isArray(body.image_urls) ? body.image_urls : [];
-    
+
     try {
       for (let i = 0; i < imageUrls.length; i++) {
         if (typeof imageUrls[i] === 'string' && /^data:/i.test(imageUrls[i])) {
@@ -3260,7 +4575,7 @@ export const falQueueService = {
       console.error('[falService.veo31ReferenceToVideoSubmit] Failed to upload images to Zata:', e);
       throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
     }
-    
+
     // Persist reference images
     await persistInputImagesFromUrls(uid, historyId, imageUrls);
     const { request_id } = await fal.queue.submit(model, {
@@ -3298,12 +4613,12 @@ export const falQueueService = {
 
     const model = 'fal-ai/veo3.1/fast/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    
+
     // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
     const creator = await authRepository.getUserById(uid);
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
-    
+
     try {
       // Upload first image if it's a data URI
       if (typeof firstUrl === 'string' && /^data:/i.test(firstUrl)) {
@@ -3319,7 +4634,7 @@ export const falQueueService = {
       console.error('[falService.veo31FirstLastFastSubmit] Failed to upload images to Zata:', e);
       throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
     }
-    
+
     // Persist first and last frame images
     await persistInputImagesFromUrls(uid, historyId, [firstUrl, lastUrl]);
     const { request_id } = await fal.queue.submit(model, {
@@ -3359,12 +4674,12 @@ export const falQueueService = {
 
     const model = 'fal-ai/veo3.1/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
-    
+
     // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
     const creator = await authRepository.getUserById(uid);
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
-    
+
     try {
       // Upload first image if it's a data URI
       if (typeof firstUrl === 'string' && /^data:/i.test(firstUrl)) {
@@ -3380,7 +4695,7 @@ export const falQueueService = {
       console.error('[falService.veo31FirstLastSubmit] Failed to upload images to Zata:', e);
       throw new ApiError('Failed to upload images: ' + (e?.message || String(e)), 500);
     }
-    
+
     // Persist first and last frame images
     await persistInputImagesFromUrls(uid, historyId, [firstUrl, lastUrl]);
     const { request_id } = await fal.queue.submit(model, {

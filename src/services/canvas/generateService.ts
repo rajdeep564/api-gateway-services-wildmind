@@ -15,6 +15,7 @@ import sharp from 'sharp';
 import axios from 'axios';
 import { createStoryboard, downloadImageAsBuffer, StoryboardFrame } from '../../utils/createStoryboard';
 import { Agent as HttpsAgent } from 'https';
+import { processGoogleGeminiFlash } from '../replaceService';
 
 // Zata sometimes has TLS issues; proxy route already works around it.
 // For server-side downloads (to inline images for Replicate), we use a permissive agent.
@@ -110,7 +111,7 @@ function calculateAspectRatio(width?: number, height?: number): string {
  */
 export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 'replicate' | 'fal' | 'runway'; backendModel: string; resolution?: string } {
   const modelLower = frontendModel.toLowerCase().trim();
-  
+
   // Extract resolution from model name if present (e.g., "Google nano banana pro 2K" -> resolution: "2K")
   // Check in reverse order (4K, 2K, 1K) to match longer suffixes first
   let resolution: string | undefined;
@@ -134,8 +135,8 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
   // Seedream 4.5 - MUST check BEFORE Seedream 4K check to avoid false matches
   // Check for "seedream 4.5", "seedream-4.5", "seedream_v45", etc. (with or without resolution suffix)
   const seedream45Base = modelLower.replace(/\s+(1k|2k|4k)$/, ''); // Remove resolution suffix for matching
-  if (seedream45Base.includes('seedream-4.5') || seedream45Base.includes('seedream_v45') || seedream45Base.includes('seedreamv45') || 
-      (seedream45Base.includes('seedream') && (seedream45Base.includes('4.5') || seedream45Base.includes('v4.5') || seedream45Base.includes('v45')))) {
+  if (seedream45Base.includes('seedream-4.5') || seedream45Base.includes('seedream_v45') || seedream45Base.includes('seedreamv45') ||
+    (seedream45Base.includes('seedream') && (seedream45Base.includes('4.5') || seedream45Base.includes('v4.5') || seedream45Base.includes('v45')))) {
     return { service: 'fal', backendModel: 'seedream-4.5', resolution };
   }
 
@@ -146,7 +147,8 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
     modelLower.includes('4 k') ||
     (modelLower.includes('v4') && modelLower.includes('4k'))
   ) && !modelLower.includes('4.5') && !modelLower.includes('v4.5') && !modelLower.includes('v45')) {
-    return { service: 'replicate', backendModel: 'bytedance/seedream-4' };
+    // Switch to FAL for Seedream v4 to avoid Replicate credit issues
+    return { service: 'fal', backendModel: 'fal-ai/bytedance/seedream/v4/text-to-image', resolution };
   }
 
   // Z Image Turbo - Replicate model (prunaai/z-image-turbo)
@@ -159,12 +161,35 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
     return { service: 'replicate', backendModel: 'prunaai/p-image' };
   }
 
-  // BFL Flux models - check in order of specificity
-  if (modelLower.includes('flux-pro-1.1-ultra') || modelLower.includes('pro 1.1 ultra')) {
-    return { service: 'bfl', backendModel: 'flux-pro-1.1-ultra' };
+  // Qwen Image Edit - Replicate model (qwen/qwen-image-edit-2511)
+  // Frontend often sends the short alias "qwen-image-edit"
+  if (modelLower === 'qwen-image-edit' || modelLower.includes('qwen image edit') || modelLower.includes('qwen-image-edit')) {
+    // Check if it's the multiple angles variant
+    if (modelLower.includes('multiple-angles') || modelLower.includes('multiple angles') || modelLower.includes('multi-angle')) {
+      return { service: 'fal', backendModel: 'fal-ai/qwen-image-edit-2511-multiple-angles' };
+    }
+    return { service: 'replicate', backendModel: 'qwen/qwen-image-edit-2511' };
+  }
+  
+  // Qwen Multiple Angles - FAL model (explicit check)
+  if (modelLower.includes('qwen-multiple-angles') || modelLower.includes('qwen multiple angles') || modelLower === 'qwen-image-edit-2511-multiple-angles') {
+    return { service: 'fal', backendModel: 'fal-ai/qwen-image-edit-2511-multiple-angles' };
+  }
+
+  // ChatGPT 1.5 - Replicate model (openai/gpt-image-1.5)
+  if (modelLower.includes('chatgpt 1.5') || modelLower.includes('chat-gpt-1.5') || modelLower === 'openai/gpt-image-1.5') {
+    return { service: 'replicate', backendModel: 'openai/gpt-image-1.5' };
+  }
+
+  // Explicit mapping for Flux 2 Pro to FAL as requested by user
+  if (modelLower.includes('flux 2 pro') || modelLower.includes('flux-2-pro')) {
+    return { service: 'fal', backendModel: 'fal-ai/flux-2-pro', resolution };
+  }
+  if (modelLower.includes('flux-pro/v1.1-ultra') || (modelLower.includes('pro 1.1') && modelLower.includes('ultra'))) {
+    return { service: 'fal', backendModel: 'fal-ai/flux-pro/v1.1-ultra', resolution };
   }
   if (modelLower.includes('flux-pro-1.1') || (modelLower.includes('pro 1.1') && !modelLower.includes('ultra'))) {
-    return { service: 'bfl', backendModel: 'flux-pro-1.1' };
+    return { service: 'bfl', backendModel: 'flux-pro-1.1', resolution };
   }
   if (modelLower.includes('flux-kontext-max') || modelLower.includes('kontext max')) {
     return { service: 'bfl', backendModel: 'flux-kontext-max' };
@@ -204,9 +229,9 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
     return { service: 'fal', backendModel: 'gemini-25-flash-image' };
   }
   if (modelLower.includes('flux 2 pro') || modelLower.includes('flux-2-pro')) {
-    return { service: 'fal', backendModel: 'flux-2-pro' };
+    return { service: 'fal', backendModel: 'flux-2-pro', resolution };
   }
-  
+
   // Seedream v4 (without 4K) - goes to FAL
   // This check comes after Seedream 4.5 and Seedream 4K checks
   if (modelLower.includes('seedream') && !modelLower.includes('4.5') && !modelLower.includes('v4.5') && !modelLower.includes('v45') && !modelLower.includes('4k')) {
@@ -375,19 +400,30 @@ export async function generateForCanvas(
 
       const replicatePayload: any = {
         prompt: request.prompt,
-        model: backendModel, // Use mapped backend model name: 'bytedance/seedream-4', 'z-image-turbo', 'prunaai/p-image'
+        model: backendModel,
         aspect_ratio: aspectRatio,
         storageKeyPrefixOverride: canvasKeyPrefix,
         ...(request.width && request.height && {
           width: request.width,
           height: request.height,
         }),
+        // Merge GPT-specific options or other custom parameters
+        ...(request.options || {}),
       };
 
-      // Add num_images for models that support multiple images (z-image-turbo, p-image)
+      // Enforce 90% compression for ChatGPT 1.5 as per user requirement
+      if (backendModel === 'openai/gpt-image-1.5') {
+        replicatePayload.output_compression = 90;
+        console.log('[generateForCanvas] Enforcing 90% compression for ChatGPT 1.5');
+      }
+
+      // Add num_images for models that support multiple images (z-image-turbo, p-image, gpt-image-1.5, qwen)
       const isZTurbo = backendModel === 'z-image-turbo' || backendModel === 'new-turbo-model';
       const isPImage = backendModel === 'prunaai/p-image' || backendModel === 'p-image';
-      if ((isZTurbo || isPImage) && clampedImageCount > 1) {
+      const isGptImage15 = backendModel === 'openai/gpt-image-1.5';
+      const isQwen = backendModel.startsWith('qwen/');
+
+      if ((isZTurbo || isPImage || isGptImage15 || isQwen) && clampedImageCount > 1) {
         (replicatePayload as any).__num_images = clampedImageCount;
       }
 
@@ -436,9 +472,57 @@ export async function generateForCanvas(
 
       const result = await replicateService.generateImage(uid, replicatePayload);
 
-      imageUrl = (result as any)?.images?.[0]?.url || (result as any)?.images?.[0]?.originalUrl || '';
-      imageStoragePath = (result as any)?.images?.[0]?.storagePath;
-      generationId = result.data?.historyId;
+      // Handle multiple images from Replicate
+      if (clampedImageCount > 1 && result.images && result.images.length > 0) {
+        // Process all generated images
+        for (const img of result.images) {
+          const imgUrl = img.url || img.originalUrl || '';
+          const imgStoragePath = (img as any).storagePath;
+
+          // Ensure we have a Zata-stored URL
+          let finalUrl = imgUrl;
+          let finalKey = imgStoragePath || '';
+          if (!finalKey || !(finalUrl || '').includes('/users/')) {
+            const zataResult = await uploadFromUrlToZata({
+              sourceUrl: imgUrl,
+              keyPrefix: canvasKeyPrefix,
+              fileName: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            });
+            finalUrl = zataResult.publicUrl;
+            finalKey = zataResult.key;
+          }
+
+          // Create media record for each image
+          const media = await mediaRepository.createMedia({
+            url: finalUrl,
+            storagePath: finalKey,
+            origin: 'canvas',
+            projectId: request.meta.projectId,
+            referencedByCount: 0,
+            metadata: {
+              width: request.width,
+              height: request.height,
+              format: 'jpg',
+            },
+          });
+
+          allImages.push({
+            mediaId: media.id,
+            url: finalUrl,
+            storagePath: finalKey,
+          });
+        }
+
+        // Return first image for backward compatibility, plus all images are in allImages
+        imageUrl = allImages[0]?.url || '';
+        imageStoragePath = allImages[0]?.storagePath;
+      } else {
+        // Single image (backward compatible)
+        imageUrl = (result as any)?.images?.[0]?.url || (result as any)?.images?.[0]?.originalUrl || '';
+        imageStoragePath = (result as any)?.images?.[0]?.storagePath;
+      }
+
+      generationId = result.historyId || (result as any).data?.historyId;
     } else if (service === 'runway') {
       // Use Runway service for Gen4 Image models
       // Convert aspect ratio from "16:9" to Runway format (e.g., "1920:1080")
@@ -458,6 +542,8 @@ export async function generateForCanvas(
         model: backendModel, // 'gen4_image' or 'gen4_image_turbo'
         ratio: runwayRatio as any,
         generationType: 'text-to-image',
+        ...(request.options?.style ? { style: request.options.style } : {}),
+        ...(request.seed !== undefined ? { seed: request.seed } : {}),
       };
 
       // Handle reference images based on scene number
@@ -555,25 +641,70 @@ export async function generateForCanvas(
       const falPayload: any = {
         prompt: request.prompt,
         model: backendModel, // Use mapped backend model name (e.g., 'seedream-4.5')
-        aspect_ratio: aspectRatio as any,
+        // aspect_ratio: aspectRatio as any, // MOVED: Conditionally set below
         num_images: clampedImageCount, // Pass imageCount to generate multiple images
+        resolution: extractedResolution, // Pass resolution (e.g., '2K', '4K') to FAL service
         storageKeyPrefixOverride: canvasKeyPrefix,
         forceSyncUpload: true,
       };
 
-      // Pass resolution for Google Nano Banana Pro and Seedream 4.5 if provided
+      // Special handling for Flux Pro (1.1 Ultra, 2 Pro) capability on FAL
+      // If we have custom width/height (from Fit-Inside logic), use 'image_size' object and OMIT aspect_ratio
+      const isFluxUltra = backendModel.includes('flux-pro/v1.1-ultra') || backendModel.includes('flux-2-pro');
+
+      // Special check for Seedream models (v4, v4.5): Only use custom image_size if it meets API constraints
+      // Constraints: width/height >= 1920 OR total pixels >= 3,686,400 (approx 2560x1440)
+      // Otherwise fall back to 'resolution' parameter (which maps to auto_2K/auto_4K enums in falService)
+      const isSeedreamCheck = backendModel.includes('seedream');
+      const customWidth = (request as any).width;
+      const customHeight = (request as any).height;
+
+      let useCustomSize = false;
+      if (customWidth && customHeight) {
+        if (isFluxUltra) {
+          useCustomSize = true;
+        } else if (isSeedreamCheck) {
+          // Seedream 4.5 Smart Logic:
+          // Check strict constraints
+          const totalPixels = customWidth * customHeight;
+          const minSide = 1920;
+          const minPixels = 2560 * 1440; // 3,686,400
+
+          if ((customWidth >= minSide && customHeight >= minSide) || totalPixels >= minPixels) {
+            useCustomSize = true;
+            console.log(`[generateForCanvas] ✅ Seedream 4.5: Dimensions ${customWidth}x${customHeight} meet custom size constraints`);
+          } else {
+            console.log(`[generateForCanvas] ⚠️ Seedream 4.5: Dimensions ${customWidth}x${customHeight} are too small for custom size, falling back to auto resolution enum`);
+            useCustomSize = false;
+          }
+        }
+      }
+
+      if (useCustomSize && customWidth && customHeight) {
+        falPayload.image_size = {
+          width: customWidth,
+          height: customHeight
+        };
+        console.log(`[generateForCanvas] ✅ Using custom image_size for ${isFluxUltra ? 'Flux Ultra/Pro' : 'Seedream'}: ${customWidth}x${customHeight}`);
+        // Do NOT set falPayload.aspect_ratio here
+      } else {
+        // Default behavior: use aspect_ratio
+        falPayload.aspect_ratio = aspectRatio as any;
+      }
+
+      // Pass resolution for Google Nano Banana Pro and Seedream if provided
       // Priority: extracted from model name > direct resolution field > options.resolution
       const resolution = extractedResolution || (request as any).resolution || (request.options && request.options.resolution);
       const isNanoBananaPro = backendModel.includes('nano-banana-pro') || backendModel.includes('google/nano-banana-pro');
-      const isSeedream45 = backendModel.includes('seedream-4.5');
-      
-      if (resolution && (isNanoBananaPro || isSeedream45)) {
+      const isSeedream = backendModel.includes('seedream');
+
+      if (resolution && (isNanoBananaPro || isSeedream)) {
         falPayload.resolution = resolution;
-        console.log(`[generateForCanvas] ✅ Setting resolution for ${isNanoBananaPro ? 'Google Nano Banana Pro' : 'Seedream 4.5'}:`, resolution);
+        console.log(`[generateForCanvas] ✅ Setting resolution for ${isNanoBananaPro ? 'Google Nano Banana Pro' : 'Seedream'}:`, resolution);
       } else if (isNanoBananaPro) {
         console.log('[generateForCanvas] ⚠️ No resolution provided for Google Nano Banana Pro, Fal service will default to 1K');
-      } else if (isSeedream45) {
-        console.log('[generateForCanvas] ⚠️ No resolution provided for Seedream 4.5, Fal service will use default image_size');
+      } else if (isSeedream) {
+        console.log('[generateForCanvas] ⚠️ No resolution provided for Seedream, Fal service will use default image_size');
       }
 
       // Handle reference images based on scene number
@@ -937,10 +1068,16 @@ function mapVideoModelToBackend(frontendModel: string): VideoModelConfig {
   if (modelLower.includes('sora 2 pro') || modelLower === 'sora 2 pro') {
     return { service: 'fal', method: 'sora2ProT2vSubmit', backendModel: 'fal-ai/sora-2/text-to-video/pro' };
   }
-  if (modelLower.includes('veo 3.1 fast') || modelLower.includes('veo 3.1 fast') || modelLower === 'veo 3.1 fast') {
+  // Check for Veo 3.1 Fast first (more specific) - handle variations
+  if (
+    modelLower.includes('veo') && 
+    modelLower.includes('3.1') && 
+    (modelLower.includes('fast') || modelLower === 'veo 3.1 fast' || modelLower === 'veo-3.1-fast' || modelLower === 'veo3.1fast')
+  ) {
     return { service: 'fal', method: 'veo31TtvSubmit', backendModel: 'fal-ai/veo3.1/fast', isFast: true };
   }
-  if (modelLower.includes('veo 3.1') || modelLower.includes('veo 3.1') || modelLower === 'veo 3.1') {
+  // Check for Veo 3.1 (regular) - must check after fast to avoid false positives
+  if (modelLower.includes('veo') && modelLower.includes('3.1') && !modelLower.includes('fast')) {
     return { service: 'fal', method: 'veo31TtvSubmit', backendModel: 'fal-ai/veo3.1', isFast: false };
   }
   if (modelLower.includes('veo 3 fast pro') || modelLower === 'veo 3 fast pro') {
@@ -960,11 +1097,19 @@ function mapVideoModelToBackend(frontendModel: string): VideoModelConfig {
   if (modelLower.includes('seedance 1.0 lite') || modelLower === 'seedance 1.0 lite') {
     return { service: 'replicate', method: 'seedanceT2vSubmit', backendModel: 'bytedance/seedance-1-lite' };
   }
+  // Seedance 1.5 (audio-capable)
+  if (
+    modelLower.includes('seedance 1.5') ||
+    modelLower.includes('seedance-1.5') ||
+    modelLower.includes('seedance-1.5-pro')
+  ) {
+    return { service: 'replicate', method: 'seedanceT2vSubmit', backendModel: 'bytedance/seedance-1.5-pro' };
+  }
   if (modelLower.includes('seedance 1.0 pro') || modelLower === 'seedance 1.0 pro' || modelLower.includes('seedance')) {
     return { service: 'replicate', method: 'seedanceT2vSubmit', backendModel: 'bytedance/seedance-1-pro' };
   }
   if (modelLower.includes('pixverse v5') || modelLower === 'pixverse v5' || modelLower.includes('pixverse')) {
-    return { service: 'replicate', method: 'pixverseT2vSubmit', backendModel: 'pixverseai/pixverse-v5' };
+    return { service: 'replicate', method: 'pixverseT2vSubmit', backendModel: 'pixverse/pixverse-v5' };
   }
   if (modelLower.includes('wan 2.5 fast') || modelLower === 'wan 2.5 fast') {
     return { service: 'replicate', method: 'wanT2vSubmit', backendModel: 'wan-video/wan-2.5-t2v-fast', isFast: true };
@@ -1024,6 +1169,7 @@ export async function generateVideoForCanvas(
     elementId?: string;
     firstFrameUrl?: string;
     lastFrameUrl?: string;
+    generate_audio?: boolean;
   }
 ): Promise<{ mediaId: string; url: string; storagePath: string; generationId?: string; taskId?: string; provider?: string }> {
   if (!request.prompt) {
@@ -1079,9 +1225,17 @@ export async function generateVideoForCanvas(
         isPublic: false,
       };
 
+      // FAL LTX V2 Pro (Text-to-Video) ONLY supports 16:9 aspect ratio.
+      // Other ratios (9:16, 1:1) will cause a 422 Unprocessable Entity error from FAL.
+      const isLtx = modelConfig.method.includes('ltx');
+      const isT2v = !request.firstFrameUrl;
+      if (isLtx && isT2v && aspectRatio !== '16:9') {
+        console.warn(`[generateVideoForCanvas] LTX T2V only supports 16:9. Adjusting ${aspectRatio} to 16:9.`);
+        falPayload.aspect_ratio = '16:9';
+      }
+
       // FAL Sora 2 expects duration as number, Veo expects as string "8s"
       const isSora2 = modelConfig.method.includes('sora2');
-      const isLtx = modelConfig.method.includes('ltx');
       if (isSora2 || isLtx) {
         falPayload.duration = duration; // Number for Sora 2 and LTX
       } else {
@@ -1139,6 +1293,12 @@ export async function generateVideoForCanvas(
         isPublic: false,
       };
 
+      // Seedance 1.5 supports optional audio generation
+      const isSeedance15 = Boolean(modelConfig.backendModel?.includes('seedance-1.5'));
+      if (isSeedance15 && typeof request.generate_audio === 'boolean') {
+        replicatePayload.generate_audio = request.generate_audio;
+      }
+
       // PixVerse uses "quality" instead of "resolution" for T2V (no image/frame parameters)
       if (modelConfig.method === 'pixverseT2vSubmit') {
         replicatePayload.quality = resolution;
@@ -1187,6 +1347,14 @@ export async function generateVideoForCanvas(
       // Add speed for WAN fast models
       if (modelConfig.isFast && modelConfig.method === 'wanT2vSubmit') {
         replicatePayload.speed = 'fast';
+      }
+
+      // Forward first/last frame URLs for Seedance and potentially other Replicate models
+      if (request.firstFrameUrl) {
+        replicatePayload.image = request.firstFrameUrl;
+      }
+      if (request.lastFrameUrl) {
+        replicatePayload.last_frame_image = request.lastFrameUrl;
       }
 
       result = await method(uid, replicatePayload);
@@ -1346,6 +1514,11 @@ export async function upscaleForCanvas(
     scale?: number;
     projectId: string;
     elementId?: string;
+    faceEnhance?: boolean;
+    faceEnhanceStrength?: number;
+    topazModel?: string;
+    faceEnhanceCreativity?: number;
+    [key: string]: any;
   }
 ): Promise<{ url: string; storagePath: string; mediaId?: string; generationId?: string }> {
   if (!request.image) {
@@ -1361,28 +1534,51 @@ export async function upscaleForCanvas(
     scale: request.scale,
     projectId: request.projectId,
     hasImage: !!request.image,
+    faceEnhance: request.faceEnhance,
+    topazModel: request.topazModel,
   });
 
   try {
-    // Map frontend model name to Replicate model
-    const replicateModel = request.model === 'Crystal Upscaler'
-      ? 'philz1337x/crystal-upscaler'
-      : 'philz1337x/crystal-upscaler'; // Default to Crystal Upscaler
+    let result: any;
 
-    // Clamp scale to valid range (1-4 for Crystal Upscaler, but we allow up to 6 in UI)
-    // For scale > 4, we'll use 4 as the maximum
-    const scaleFactor = Math.min(Math.max(request.scale || 2, 1), 4);
+    if (request.model === 'Topaz Upscaler') {
+      // Call FAL Topaz Upscale
+      result = await falService.topazUpscaleImage(uid, {
+        image_url: request.image,
+        upscale_factor: Math.min(request.scale || 2, 4), // Cap at 4x for Topaz
+        model: request.topazModel || 'Standard V2',
+        face_enhancement: request.faceEnhance ?? true,
+        face_enhancement_strength: request.faceEnhanceStrength ?? 0.8,
+        face_enhancement_creativity: request.faceEnhanceCreativity ?? 0,
+        isPublic: false,
+      });
+    } else if (request.model === 'Real-ESRGAN') {
+      // Call Replicate Real-ESRGAN
+      const scaleFactor = Math.min(Math.max(request.scale || 2, 1), 10);
+      result = await replicateService.upscale(uid, {
+        image: request.image,
+        model: 'nightmareai/real-esrgan',
+        scale: scaleFactor,
+        face_enhance: request.faceEnhance ?? false,
+        output_format: 'png',
+        isPublic: false,
+      });
+    } else {
+      // Default to Crystal Upscaler (Replicate)
+      const replicateModel = 'philz1337x/crystal-upscaler';
+      const scaleFactor = Math.min(Math.max(request.scale || 2, 1), 4);
 
-    // Call Replicate upscale service
-    const result = await replicateService.upscale(uid, {
-      image: request.image,
-      model: replicateModel,
-      scale_factor: scaleFactor,
-      output_format: 'png',
-      isPublic: false,
-    });
+      result = await replicateService.upscale(uid, {
+        image: request.image,
+        model: replicateModel,
+        scale_factor: scaleFactor,
+        output_format: 'png',
+        isPublic: false,
+      });
+    }
 
-    console.log('[upscaleForCanvas] Replicate upscale completed:', {
+    console.log('[upscaleForCanvas] Upscale service completed:', {
+      model: request.model,
       hasImages: !!result.images,
       imageCount: result.images?.length || 0,
       hasHistoryId: !!result.historyId,
@@ -1493,7 +1689,7 @@ export async function removeBgForCanvas(
       imageLength: request.image?.length || 0,
       imageInlined: inlined.wasInlined,
     });
-    
+
     const result = await replicateService.removeBackground(uid, {
       image: inlined.image,
       model: replicateModel,
@@ -1740,7 +1936,7 @@ async function eraseForCanvasCropEditComposite(
     console.log('[eraseForCanvasCropEditComposite] ========== CROP-EDIT-COMPOSITE APPROACH ==========');
     console.log('[eraseForCanvasCropEditComposite] Selection:', request.selectionCoords);
     console.log('[eraseForCanvasCropEditComposite] User Prompt:', request.prompt || '(none)');
-
+ 
     // Step 1: Download and load original image
     let originalImageBuffer: Buffer;
     try {
@@ -1755,24 +1951,24 @@ async function eraseForCanvasCropEditComposite(
     } catch (error: any) {
       throw new ApiError(`Failed to download original image: ${error.message}`, 400);
     }
-
+ 
     const originalImage = sharp(originalImageBuffer);
     const originalMetadata = await originalImage.metadata();
     const originalWidth = originalMetadata.width || 1024;
     const originalHeight = originalMetadata.height || 1024;
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Original image:', {
       width: originalWidth,
       height: originalHeight,
       format: originalMetadata.format
     });
-
+ 
     // Validate selection coordinates
     const { x, y, width, height } = request.selectionCoords;
     if (x < 0 || y < 0 || x + width > originalWidth || y + height > originalHeight) {
       throw new ApiError(`Selection coordinates out of bounds. Image: ${originalWidth}x${originalHeight}, Selection: x=${x}, y=${y}, w=${width}, h=${height}`, 400);
     }
-
+ 
     // Step 2: Crop the selected region (create a clone to avoid mutating originalImage)
     const croppedRegionBuffer = await sharp(originalImageBuffer)
       .extract({
@@ -1783,10 +1979,10 @@ async function eraseForCanvasCropEditComposite(
       })
       .png()
       .toBuffer();
-
+ 
     const croppedRegionBase64 = croppedRegionBuffer.toString('base64');
     const croppedRegionDataUrl = `data:image/png;base64,${croppedRegionBase64}`;
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Cropped region:', {
       x: Math.round(x),
       y: Math.round(y),
@@ -1794,7 +1990,7 @@ async function eraseForCanvasCropEditComposite(
       height: Math.round(height),
       croppedSize: croppedRegionBuffer.length
     });
-
+ 
     // Step 3: Upload cropped region to storage for Runway
     const croppedRegionResult = await uploadBufferToZata(
       `users/${uid}/canvas/${request.projectId}/erase_crop_${Date.now()}.png`,
@@ -1802,9 +1998,9 @@ async function eraseForCanvasCropEditComposite(
       'image/png'
     );
     const croppedRegionUrl = croppedRegionResult.publicUrl;
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Cropped region uploaded:', croppedRegionUrl);
-
+ 
     // Step 4: Calculate aspect ratio for cropped region
     // Runway requires: ratio >= 0.5 (width/height) and must be one of the allowed ratios
     const croppedRatio = width / height;
@@ -2105,15 +2301,15 @@ async function eraseForCanvasCropEditComposite(
         aspectRatio = r.value;
       }
     }
-
+ 
     // Step 5: Create prompt for erasing the cropped region
     const basePrompt = request.prompt && request.prompt.trim()
       ? `${request.prompt.trim()}. Remove the object and fill with natural background that matches the surrounding area.`
       : 'Remove the object and fill with natural background that seamlessly matches the surrounding area, maintaining the same lighting, colors, and textures.';
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Prompt for cropped region:', basePrompt);
     console.log('[eraseForCanvasCropEditComposite] Aspect ratio:', aspectRatio);
-
+ 
     // Step 6: Send cropped region to Runway image-to-image (no mask, just the cropped image)
     const runwayPayload: any = {
       promptText: basePrompt,
@@ -2124,25 +2320,25 @@ async function eraseForCanvasCropEditComposite(
         { uri: croppedRegionUrl } // Only the cropped region, no mask
       ],
     };
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Sending cropped region to Runway...');
     const taskResult = await runwayService.textToImage(uid, runwayPayload);
-
+ 
     if (!taskResult.taskId) {
       throw new ApiError('Runway image generation failed: no taskId returned', 500);
     }
-
+ 
     if (!taskResult.historyId) {
       throw new ApiError('Runway image generation failed: no historyId returned', 500);
     }
-
+ 
     // Step 7: Poll for completion
     const maxWaitTime = 5 * 60 * 1000; // 5 minutes
     const pollInterval = 2000; // 2 seconds
     const startTime = Date.now();
     let completed = false;
     let finalHistory: any = null;
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Polling for Runway completion...');
     while (!completed && (Date.now() - startTime) < maxWaitTime) {
       await new Promise(resolve => setTimeout(resolve, pollInterval));
@@ -2160,23 +2356,23 @@ async function eraseForCanvasCropEditComposite(
         console.warn('[eraseForCanvasCropEditComposite] Poll error:', pollError);
       }
     }
-
+ 
     if (!completed || !finalHistory || !finalHistory.images || finalHistory.images.length === 0) {
       throw new ApiError('Image erase timed out or failed', 500);
     }
-
+ 
     const firstImageNormal = finalHistory.images[0];
     if (!firstImageNormal || !firstImageNormal.url) {
       throw new ApiError('Runway image generation completed but no image URL was returned', 500);
     }
-
+ 
     const editedRegionUrl = firstImageNormal.url;
     console.log('[eraseForCanvasCropEditComposite] Edited region received:', {
       url: editedRegionUrl,
       hasUrl: !!editedRegionUrl,
       imageObject: firstImageNormal
     });
-
+ 
     // Step 8: Download edited region
     let editedRegionBuffer: Buffer;
     try {
@@ -2191,7 +2387,7 @@ async function eraseForCanvasCropEditComposite(
     } catch (error: any) {
       throw new ApiError(`Failed to download edited region: ${error.message}`, 400);
     }
-
+ 
     // Step 9: Resize edited region to match original selection size (in case Runway changed dimensions)
     const editedRegionResized = await sharp(editedRegionBuffer)
       .resize(Math.round(width), Math.round(height), {
@@ -2199,12 +2395,12 @@ async function eraseForCanvasCropEditComposite(
       })
       .png()
       .toBuffer();
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Edited region resized to match selection:', {
       width: Math.round(width),
       height: Math.round(height)
     });
-
+ 
     // Step 10: Composite edited region back into original image
     // Create a fresh instance of the original image for compositing
     const finalComposite = await sharp(originalImageBuffer)
@@ -2217,22 +2413,22 @@ async function eraseForCanvasCropEditComposite(
       ])
       .png()
       .toBuffer();
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Final composite created');
-
+ 
     // Step 11: Upload final composite to storage
     const finalResult = await uploadBufferToZata(
       `users/${uid}/canvas/${request.projectId}/erase_result_${Date.now()}.png`,
       finalComposite,
       'image/png'
     );
-
+ 
     const finalUrl = finalResult.publicUrl;
     const storagePath = finalResult.key;
-
+ 
     console.log('[eraseForCanvasCropEditComposite] Final composite uploaded:', finalUrl);
     console.log('[eraseForCanvasCropEditComposite] =========================================');
-
+ 
     return {
       url: finalUrl,
       storagePath,
@@ -2243,9 +2439,9 @@ async function eraseForCanvasCropEditComposite(
     throw error;
   }
 }
-
-
-
+ 
+ 
+ 
 /**
  * Erase objects from image using Google Nano Banana edit model
  * Uses mask-based editing where white areas = erase, black areas = keep
@@ -2287,7 +2483,7 @@ export async function eraseForCanvas(
     // Create history record - Firestore will auto-generate the ID
     const { historyId } = await generationHistoryRepository.create(uid, {
       prompt: request.prompt || 'Erase selected area',
-      model: 'google-nano-banana-edit',
+      model: 'google-gemini-flash-edit',
       generationType: 'image-to-image',
       isPublic: false,
       createdBy: creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid },
@@ -2304,13 +2500,27 @@ export async function eraseForCanvas(
       console.warn('[eraseForCanvas] Failed to link to canvas project:', e);
     }
 
-    // Base prompt - enhanced to preserve image vibrancy, color, and temperature
-    const basePrompt = 'Edit ONLY the white masked region. Keep the ENTIRE unmasked image IDENTICAL - do not modify any pixels outside the white mask. Reconstruct the masked area with natural continuation that seamlessly matches the surrounding environment. Maintain the EXACT original camera angle, lighting conditions, color temperature, color saturation, vibrancy, brightness, contrast, white balance, and depth of field. Preserve the original image quality, sharpness, color richness, and overall visual appearance. CRITICAL: The unmasked areas must remain pixel-perfect identical to the original image with no color shifts, desaturation, or quality degradation. Do not add new objects or alter any existing ones outside the mask. The result must blend seamlessly while maintaining the original image\'s exact color palette, temperature, and visual characteristics.';
+    // Base prompts for different modes
+    const eraseBasePrompt = 'Edit ONLY the white masked region. Keep the ENTIRE unmasked image IDENTICAL - do not modify any pixels outside the white mask. Reconstruct the masked area with natural continuation that seamlessly matches the surrounding environment. Maintain the EXACT original camera angle, lighting conditions, color temperature, color saturation, vibrancy, brightness, contrast, white balance, and depth of field. Preserve the original image quality, sharpness, color richness, and overall visual appearance. CRITICAL: The unmasked areas must remain pixel-perfect identical to the original image with no color shifts, desaturation, or quality degradation. Do not add new objects or alter any existing ones outside the mask. The result must blend seamlessly while maintaining the original image\'s exact color palette, temperature, and visual characteristics.';
 
-    // Combine user prompt with base prompt if provided
-    const finalPrompt = request.prompt && request.prompt.trim()
-      ? `${request.prompt.trim()}. ${basePrompt}`
-      : basePrompt;
+    const replaceBasePrompt = 'Replace ONLY the white masked region with the requested object/content. The replacement must naturally blend into the scene and match the style of the original image. Keep the ENTIRE unmasked area pixel-perfect identical — do not modify any pixels outside the mask. Maintain the original camera perspective, lighting direction, color temperature, shadows, reflections, texture sharpness, and depth of field. Ensure the replaced object fits realistically into the environment, scaled and positioned naturally. Match the original visual quality, contrast, brightness, and color palette. No new elements should appear outside the masked area. The final result must look like the new object was originally part of the photo.';
+
+    // Determine if this is a Replace or Erase operation
+    const userPrompt = request.prompt ? request.prompt.trim() : '';
+    const isReplaceOperation = userPrompt.length > 0 &&
+      userPrompt.toLowerCase() !== 'remove object' &&
+      userPrompt.toLowerCase() !== 'erase';
+
+    // Combine user prompt with appropriate base prompt
+    let finalPrompt = '';
+
+    if (isReplaceOperation) {
+      console.log('[eraseForCanvas] Detected REPLACE operation with prompt:', userPrompt);
+      finalPrompt = `${userPrompt}. ${replaceBasePrompt}`;
+    } else {
+      console.log('[eraseForCanvas] Detected ERASE operation (defaulting to remove object)');
+      finalPrompt = `remove object. ${eraseBasePrompt}`;
+    }
 
     console.log('[eraseForCanvas] Using prompt:', finalPrompt);
     console.log('[eraseForCanvas] Received image and mask:', {
@@ -2369,6 +2579,20 @@ export async function eraseForCanvas(
       const imageResponse = await axios.get(originalImageUrl, { responseType: 'arraybuffer' });
       const originalImageBuffer = Buffer.from(imageResponse.data);
 
+      // If originalImageUrl is a local/proxy URL (e.g. localhost), we must upload the original image
+      // to Zata so FAL can access it.
+      if (originalImageUrl.includes('localhost') || originalImageUrl.includes('127.0.0.1')) {
+        console.log('[eraseForCanvas] Original image is local/proxy, uploading to Zata...');
+        const { uploadBufferToZata } = await import('../../utils/storage/zataUpload');
+        const originalUpload = await uploadBufferToZata(
+          `users/${username}/canvas/${request.projectId}/erase-original-${Date.now()}.png`,
+          originalImageBuffer,
+          'image/png'
+        );
+        originalImageUrl = originalUpload.publicUrl;
+        console.log('[eraseForCanvas] ✅ Original image uploaded to Zata:', originalImageUrl);
+      }
+
       // Download mask
       const maskResponse = await axios.get(maskUrl, { responseType: 'arraybuffer' });
       const maskBuffer = Buffer.from(maskResponse.data);
@@ -2409,12 +2633,26 @@ export async function eraseForCanvas(
       console.log('[eraseForCanvas] No mask provided, using original image only');
     }
 
-    // Process with Google Nano Banana edit - send the composited image
-    const { processGoogleNanoBanana } = await import('../replaceService');
-    const result = await processGoogleNanoBanana(
+    // Process with Google Nano Banana edit
+    // improved: pass original image + mask explicitly if we have them
+    // this allows the model to see the original context under the mask if needed (though usually it just needs the mask)
+    // and avoids "white hole" artifacts if the model expects to do the masking itself
+    // const { processGoogleGeminiFlash } = await import('../replaceService'); // Replaced with static import
+
+    // If we have a mask URL, use the original image + mask URL for standard inpainting
+    // Otherwise fallback to the composited image (if for some reason we only have that)
+    const imageInput = maskUrl ? originalImageUrl : compositedImageUrl;
+    const maskInput = maskUrl || null;
+
+    console.log('[eraseForCanvas] calling processGoogleGeminiFlash with:', {
+      usingOriginalImage: imageInput === originalImageUrl,
+      hasMask: !!maskInput
+    });
+
+    const result = await processGoogleGeminiFlash(
       uid,
-      compositedImageUrl,
-      null, // No separate mask - mask is already composited into the image
+      imageInput,
+      maskInput,
       finalPrompt,
       historyId
     );
@@ -2623,8 +2861,8 @@ export async function replaceForCanvas(
     }
 
     // Process with Google Nano Banana edit - send the composited image
-    const { processGoogleNanoBanana } = await import('../replaceService');
-    const result = await processGoogleNanoBanana(
+    // const { processGoogleGeminiFlash } = await import('../replaceService'); // Replaced with static import
+    const result = await processGoogleGeminiFlash(
       uid,
       compositedImageUrl,
       null, // No separate mask - mask is already composited into the image
@@ -2677,11 +2915,11 @@ try {
     selectionCoords: request.selectionCoords,
     projectId: request.projectId,
   });
-
+ 
   if (!request.image) {
     throw new ApiError('Image is required', 400);
   }
-
+ 
   // Use new crop-edit-composite approach if selectionCoords provided
   if (request.selectionCoords) {
     return await eraseForCanvasCropEditComposite(uid, {
@@ -2692,12 +2930,12 @@ try {
       prompt: request.prompt
     });
   }
-
+ 
   // Fall back to mask-based approach for backward compatibility
   if (!request.mask) {
     throw new ApiError('Either mask or selectionCoords is required', 400);
   }
-
+ 
   // Calculate aspect ratio from image dimensions
   let aspectRatio = '1024:1024'; // Default
   
@@ -2744,7 +2982,7 @@ try {
   } catch (e) {
     console.warn('[eraseForCanvas] Could not determine aspect ratio, using default:', e);
   }
-
+ 
   // Analyze mask to provide debug info
   let maskAnalysis: any = {};
   try {
@@ -2769,7 +3007,7 @@ try {
   } catch (e) {
     maskAnalysis = { error: 'Could not analyze mask', errorMessage: (e as Error).message };
   }
-
+ 
   console.log('[eraseForCanvas] ========== ERASE PROCESS DEBUG ==========');
   console.log('[eraseForCanvas] Received Request:', {
     hasImage: !!request.image,
@@ -2781,7 +3019,7 @@ try {
     projectId: request.projectId,
     aspectRatio
   });
-
+ 
   // Use Runway Gen4 Image Turbo for erase/inpainting
   // The mask (white areas) tells Runway what to remove
   // CRITICAL: Prompt must be mask-pixel-specific, not object-specific
@@ -2818,7 +3056,7 @@ try {
       { uri: request.mask, tag: 'mask' }
     ],
   };
-
+ 
   console.log('[eraseForCanvas] Runway Payload:', {
     model: runwayPayload.model,
     ratio: runwayPayload.ratio,
@@ -2831,20 +3069,20 @@ try {
     maskUriPreview: runwayPayload.referenceImages?.[1]?.uri ? runwayPayload.referenceImages[1].uri.substring(0, 100) + '...' : 'null'
   });
   console.log('[eraseForCanvas] =========================================');
-
+ 
   // Runway textToImage returns a taskId and status "pending"
   // Note: Runway SDK may not support negative prompts directly, but we include it in the prompt text
   // The negative prompt concepts are incorporated into the main prompt for maximum effect
   const taskResult = await runwayService.textToImage(uid, runwayPayload);
-
+ 
   if (!taskResult.taskId) {
     throw new ApiError('Runway image generation failed: no taskId returned', 500);
   }
-
+ 
   if (!taskResult.historyId) {
     throw new ApiError('Runway image generation failed: no historyId returned', 500);
   }
-
+ 
   // Poll for completion (max 5 minutes, check every 2 seconds)
   // Call getStatus to trigger history updates when Runway completes
   const maxWaitTime = 5 * 60 * 1000; // 5 minutes
@@ -2852,7 +3090,7 @@ try {
   const startTime = Date.now();
   let completed = false;
   let finalHistory: any = null;
-
+ 
   while (!completed && (Date.now() - startTime) < maxWaitTime) {
     await new Promise(resolve => setTimeout(resolve, pollInterval));
     
@@ -2888,19 +3126,19 @@ try {
       // Continue polling
     }
   }
-
+ 
   if (!completed || !finalHistory) {
     throw new ApiError('Image erase timed out or failed', 500);
   }
-
+ 
   const firstImage = finalHistory.images && Array.isArray(finalHistory.images) && finalHistory.images.length > 0
     ? finalHistory.images[0]
     : null;
-
+ 
   if (!firstImage || !firstImage.url) {
     throw new ApiError('No image returned from erase operation', 500);
   }
-
+ 
   // Attach canvas project linkage
   try {
     if (taskResult.historyId && request.projectId) {
@@ -2911,12 +3149,12 @@ try {
   } catch (e) {
     console.warn('[eraseForCanvas] Failed to tag history with canvasProjectId', e);
   }
-
+ 
   console.log('[eraseForCanvas] Erase completed:', {
     hasUrl: !!firstImage.url,
     hasStoragePath: !!firstImage.storagePath,
   });
-
+ 
   return {
     url: firstImage.url,
     storagePath: (firstImage as any).storagePath || firstImage.originalUrl || firstImage.url,

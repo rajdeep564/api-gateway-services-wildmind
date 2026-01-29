@@ -27,6 +27,12 @@ app.use(requestId);
 app.use(securityHeaders);
 // CORS for frontend with credentials (dev + prod)
 const isProdEnv = env.nodeEnv === 'production';
+let wildmindImageOrigin: string | undefined;
+try {
+  wildmindImageOrigin = env.wildmindImageServiceUrl ? new URL(env.wildmindImageServiceUrl).origin : undefined;
+} catch {
+  wildmindImageOrigin = undefined;
+}
 // Always include production origins (even if NODE_ENV isn't set, Render.com is production)
 const allowedOrigins = [
   // Production hosts (always include these for live site)
@@ -35,26 +41,46 @@ const allowedOrigins = [
   env.productionStudioDomain, // Canvas subdomain
   // Development origins (only in dev)
   ...(!isProdEnv ? [
-    env.devFrontendUrl, // Main project dev
-    env.devCanvasUrl, // Canvas dev
+    env.devFrontendUrl, // Main project dev (usually :3000)
+    env.devCanvasUrl, // Canvas dev (usually :3001)
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
+    // Optional: allow local browser testing against the ngrok WILDMINDIMAGE service in dev only
+    wildmindImageOrigin,
   ] : []),
   ...env.frontendOrigins,
   ...env.allowedOrigins
 ].filter(Boolean);
 
+console.log('[CORS] Allowed origins:', allowedOrigins);
+
+
 const corsOptions: any = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // Allow server-to-server (no Origin header) and health checks
+
     if (!origin) return callback(null, true);
+
+    // Explicitly allow known production domains (Hardcoded safeguard)
+    const hardcodedAllowed = [
+      'https://studio.wildmindai.com',
+      'https://www.wildmindai.com',
+      'https://wildmindai.com'
+    ];
+    if (hardcodedAllowed.includes(origin)) return callback(null, true);
+
     try {
       if (allowedOrigins.includes(origin)) return callback(null, true);
+
       // Allow subdomains of production domain
       const originUrl = new URL(origin);
       const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
       const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
-      if (prodDomain && (originUrl.hostname === prodWwwDomain || 
-          originUrl.hostname === prodDomain ||
-          originUrl.hostname.endsWith(`.${prodDomain}`))) {
+      if (prodDomain && (originUrl.hostname === prodWwwDomain ||
+        originUrl.hostname === prodDomain ||
+        originUrl.hostname.endsWith(`.${prodDomain}`))) {
         return callback(null, true);
       }
       // Allow subdomains of the configured frontend origins
@@ -102,45 +128,45 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
 // Strong preflight guard + always-set CORS headers (defensive against proxies/edges)
-const allowOrigin = (origin?: string) => {
-  if (!origin) return false;
-  try {
-    if (allowedOrigins.includes(origin)) return true;
-    // Allow production domain and all its subdomains
-    const originUrl = new URL(origin);
-    const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
-    const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
-    if (prodDomain && (originUrl.hostname === prodWwwDomain || 
-        originUrl.hostname === prodDomain ||
-        originUrl.hostname.endsWith(`.${prodDomain}`))) {
-      return true;
-    }
-    if (env.frontendOrigin) {
-      const allowHost = new URL(env.frontendOrigin).hostname;
-      const reqHost = originUrl.hostname;
-      if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) return true;
-    }
-  } catch {}
-  return false;
-};
+// const allowOrigin = (origin?: string) => {
+//   if (!origin) return false;
+//   try {
+//     if (allowedOrigins.includes(origin)) return true;
+//     // Allow production domain and all its subdomains
+//     const originUrl = new URL(origin);
+//     const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
+//     const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
+//     if (prodDomain && (originUrl.hostname === prodWwwDomain || 
+//         originUrl.hostname === prodDomain ||
+//         originUrl.hostname.endsWith(`.${prodDomain}`))) {
+//       return true;
+//     }
+//     if (env.frontendOrigin) {
+//       const allowHost = new URL(env.frontendOrigin).hostname;
+//       const reqHost = originUrl.hostname;
+//       if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) return true;
+//     }
+//   } catch {}
+//   return false;
+// };
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin as string | undefined;
-  if (allowOrigin(origin)) {
-    res.header('Access-Control-Allow-Origin', origin as string);
-    res.header('Vary', 'Origin');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD');
-    res.header(
-      'Access-Control-Allow-Headers',
-      'Content-Type, Authorization, X-Requested-With, X-Request-Id, X-Device-Id, X-Device-Name, X-Device-Info, ngrok-skip-browser-warning, Range, Cache-Control, Pragma, Expires'
-    );
-  }
-  if (req.method === 'OPTIONS') {
-    return res.status(204).end();
-  }
-  return next();
-});
+// app.use((req, res, next) => {
+//   const origin = req.headers.origin as string | undefined;
+//   if (allowOrigin(origin)) {
+//     res.header('Access-Control-Allow-Origin', origin as string);
+//     res.header('Vary', 'Origin');
+//     res.header('Access-Control-Allow-Credentials', 'true');
+//     res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD');
+//     res.header(
+//       'Access-Control-Allow-Headers',
+//       'Content-Type, Authorization, X-Requested-With, X-Request-Id, X-Device-Id, X-Device-Name, X-Device-Info, ngrok-skip-browser-warning, Range, Cache-Control, Pragma, Expires'
+//     );
+//   }
+//   if (req.method === 'OPTIONS') {
+//     return res.status(204).end();
+//   }
+//   return next();
+// });
 
 // ============================================================================
 // SECURITY LAYER - Applied in this order for defense-in-depth
@@ -222,6 +248,27 @@ app.get('/health/auth', (_req, res) => {
   }
 });
 
+// Version health endpoint
+app.get('/health/version', (_req, res) => {
+  try {
+    // Try to require the buildInfo.json file
+    // Using require to allow it to be missing during dev if not built
+    let buildInfo;
+    try {
+      buildInfo = require('../config/buildInfo.json');
+    } catch {
+      buildInfo = {
+        commitHash: 'dev',
+        buildTime: new Date().toISOString(),
+        nodeEnv: process.env.NODE_ENV
+      };
+    }
+    return res.json(formatApiResponse('success', 'OK', buildInfo));
+  } catch (error) {
+    return res.json(formatApiResponse('error', 'Failed to get version info', null));
+  }
+});
+
 // Redis health (optional): reports if Redis cache is enabled and ping works
 app.get('/health/redis', async (_req, res) => {
   try {
@@ -254,14 +301,14 @@ export default app;
 (async () => {
   try {
     await creditsService.ensurePlansSeeded();
-  } catch (_e) {}
+  } catch (_e) { }
 })();
 
 // Initialize Redis connection in background (non-blocking) when configured
 (async () => {
   try {
     if (isRedisEnabled()) getRedisClient();
-  } catch (_e) {}
+  } catch (_e) { }
 })();
 
 // Auto-populate signup image cache on startup (non-blocking, runs ONCE globally)
@@ -270,7 +317,7 @@ let cachePopulateStarted = false;
   try {
     const { signupImageCache } = await import('../repository/signupImageCache');
     const stats = await signupImageCache.getCacheStats();
-    
+
     if (stats.count === 0 && !cachePopulateStarted) {
       cachePopulateStarted = true;
       console.log('[App] Signup image cache is empty, populating in background (ONE TIME ONLY)...');
@@ -293,7 +340,7 @@ let cachePopulateStarted = false;
   try {
     const { isEmailConfigured } = await import('../utils/mailer');
     const { env } = await import('../config/env');
-    
+
     if (!isEmailConfigured()) {
       console.warn('[EMAIL CONFIG] ⚠️  Email service is not properly configured!');
       console.warn('[EMAIL CONFIG] For production, you need:');
@@ -322,23 +369,23 @@ let refreshSchedulerStarted = false;
 (async () => {
   if (refreshSchedulerStarted) return;
   refreshSchedulerStarted = true;
-  
+
   try {
     const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-    
+
     console.log('[App] Starting automatic signup image cache refresh scheduler (every 24 hours)');
-    
+
     // Refresh immediately if cache is empty
     const { signupImageCache } = await import('../repository/signupImageCache');
     const stats = await signupImageCache.getCacheStats();
-    
+
     if (stats.count === 0) {
       console.log('[App] Cache empty, refreshing now...');
       signupImageCache.refreshSignupImageCache().catch((error) => {
         console.error('[App] Initial cache refresh failed:', error);
       });
     }
-    
+
     // Schedule automatic refresh every 24 hours (runs ONCE globally)
     setInterval(() => {
       console.log('[App] Auto-refreshing signup image cache (24-hour schedule)...');
@@ -348,7 +395,7 @@ let refreshSchedulerStarted = false;
         console.error('[App] Auto-refresh failed:', error);
       });
     }, REFRESH_INTERVAL_MS);
-    
+
     console.log('[App] ✅ Signup image cache auto-refresh scheduler started (runs every 24 hours)');
   } catch (_e) {
     console.error('[App] Failed to start cache refresh scheduler:', _e);

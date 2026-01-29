@@ -60,6 +60,7 @@ export interface EnvConfig {
   // Local services
   scoreLocal?: string; // base URL for aesthetic scoring service
   promptEnhancerUrl?: string; // base URL for prompt enhancer service (Python FastAPI)
+  wildmindImageServiceUrl?: string; // base URL for WILDMINDIMAGE Python service (ngrok)
   // API Base URLs
   minimaxApiBase?: string; // MiniMax API base URL
   resendApiBase?: string; // Resend API base URL
@@ -100,9 +101,16 @@ function normalizeBoolean(value: string | undefined, defaultTrue: boolean): bool
   return defaultTrue;
 }
 
+function parseList(value: string | undefined): string[] {
+  if (!value) return [];
+  // Remove surrounding quotes from the whole string first
+  const cleanValue = value.replace(/^["']|["']$/g, '');
+  return cleanValue.split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+}
+
 export const env: EnvConfig = {
   nodeEnv: process.env.NODE_ENV || 'development',
-  port: Number(process.env.PORT || 5000),
+  port: Number(process.env.PORT || 5001),
   firebaseApiKey: process.env.FIREBASE_API_KEY,
   firebaseAuthDomain: process.env.FIREBASE_AUTH_DOMAIN,
   firebaseProjectId: process.env.FIREBASE_PROJECT_ID,
@@ -147,15 +155,14 @@ export const env: EnvConfig = {
   revokeFirebaseTokens: normalizeBoolean(process.env.REVOKE_FIREBASE_TOKENS, false),
   cookieDomain: process.env.COOKIE_DOMAIN,
   frontendOrigin: process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL,
-  frontendOrigins: (process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL)
-    ? (process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL || '').split(',').map(s => s.trim()).filter(Boolean)
-    : [],
-  allowedOrigins: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : [],
+  frontendOrigins: parseList(process.env.FRONTEND_ORIGINS || process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL),
+  allowedOrigins: parseList(process.env.ALLOWED_ORIGINS || process.env.CORS_ORIGINS),
   otpEmailAwait: normalizeBoolean(process.env.OTP_EMAIL_AWAIT, false),
   debugOtp: normalizeBoolean(process.env.DEBUG_OTP, false),
   // Local services
   scoreLocal: (process.env.SCORE_LOCAL ? String(process.env.SCORE_LOCAL).trim() : undefined)?.replace(/\/$/, ''),
   promptEnhancerUrl: (process.env.PROMPT_ENHANCER_URL || process.env.NGROK_LANGUAGE)?.replace(/\/$/, ''),
+  wildmindImageServiceUrl: (process.env.WILDMINDIMAGE_URL || 'https://ac38194cdfc0.ngrok-free.app')?.replace(/\/$/, ''),
   // API Base URLs
   minimaxApiBase: process.env.MINIMAX_API_BASE || 'https://api.minimax.io/v1',
   resendApiBase: process.env.RESEND_API_BASE || 'https://api.resend.com',
@@ -187,5 +194,7 @@ export const env: EnvConfig = {
   // Microservices
   creditServiceUrl: process.env.CREDIT_SERVICE_URL || 'http://credit-service:3000',
 };
+
+
 
 

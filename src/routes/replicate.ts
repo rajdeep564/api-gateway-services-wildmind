@@ -4,6 +4,7 @@ import { makeCreditCost } from '../middlewares/creditCostFactory';
 // Removed route-level debit writes; controller handles debit via unified helper
 import { replicateController, multiangle } from '../controllers/replicateController';
 import { computeReplicateBgRemoveCost, computeReplicateImageGenCost, computeReplicateUpscaleCost, computeReplicateMultiangleCost } from '../utils/pricing/replicatePricing';
+import { computeQwenImageEditCost } from '../utils/pricing/replicatePricing';
 import { computeWanVideoCost } from '../utils/pricing/wanPricing';
 import { computeKlingVideoCost, computeKlingLipsyncCost } from '../utils/pricing/klingPricing';
 import { computeSeedanceVideoCost } from '../utils/pricing/seedancePricing';
@@ -22,9 +23,7 @@ import { validateSeedanceProFastT2V } from '../middlewares/validators/replicate/
 import { validateSeedanceProFastI2V } from '../middlewares/validators/replicate/validateSeedanceProFastI2V';
 import { validatePixverseT2V } from '../middlewares/validators/replicate/validatePixverseT2V';
 import { validatePixverseI2V } from '../middlewares/validators/replicate/validatePixverseI2V';
-import { computeWanAnimateReplaceCost } from '../utils/pricing/wanAnimatePricing';
 import { validateWanAnimateReplace } from '../middlewares/validators/replicate/validateWanAnimateReplace';
-import { computeWanAnimateAnimationCost } from '../utils/pricing/wanAnimateAnimationPricing';
 import { validateWanAnimateAnimation } from '../middlewares/validators/replicate/validateWanAnimateAnimation';
 
 console.log('[ReplicateRoutes] Reloading routes...'); // Force refresh log
@@ -156,7 +155,6 @@ router.post(
   '/wan-2-2-animate-replace/submit',
   requireAuth,
   validateWanAnimateReplace,
-  makeCreditCost('replicate', 'wan-animate-replace', computeWanAnimateReplaceCost),
   (replicateController as any).wanAnimateReplaceSubmit
 );
 
@@ -165,7 +163,6 @@ router.post(
   '/wan-2-2-animate-animation/submit',
   requireAuth,
   validateWanAnimateAnimation,
-  makeCreditCost('replicate', 'wan-animate-animation', computeWanAnimateAnimationCost),
   (replicateController as any).wanAnimateAnimationSubmit
 );
 
@@ -221,6 +218,15 @@ router.post(
   validatePixverseI2V,
   makeCreditCost('replicate', 'pixverse-i2v', computePixverseVideoCost),
   (replicateController as any).pixverseI2vSubmit
+);
+
+// Qwen image edit (Replicate qwen/qwen-image-edit-2511)
+router.post(
+  '/qwen-image-edit/submit',
+  requireAuth,
+  validateReplicateGenerate,
+  makeCreditCost('replicate', 'qwen-image-edit', computeQwenImageEditCost),
+  (replicateController as any).qwenImageEditSubmit
 );
 
 export default router;

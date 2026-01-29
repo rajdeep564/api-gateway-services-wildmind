@@ -26,9 +26,9 @@ import { creditsRepository } from '../src/repository/creditsRepository';
 import { creditsService } from '../src/services/creditsService';
 
 const LAUNCH_PLAN_CODE = 'LAUNCH_4000_FIXED';
-const LAUNCH_FIXED_CREDITS = 4000;
-// December 25, 2025 at 00:00:00 UTC
-const TRIAL_START_DATE = new Date('2025-12-25T00:00:00.000Z');
+const LAUNCH_FIXED_CREDITS = 2000;
+// January 10, 2026 at 00:00:00 UTC
+const TRIAL_START_DATE = new Date('2026-01-10T00:00:00.000Z');
 const TRIAL_START_TIMESTAMP = admin.firestore.Timestamp.fromDate(TRIAL_START_DATE);
 
 interface MigrationStats {
