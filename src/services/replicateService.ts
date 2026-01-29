@@ -42,6 +42,7 @@ import {
   buildReplicateImageFileName,
   clamp,
   type SubmitReturn,
+  resolveToPublicUrl,
 } from "./replicate/replicateUtils";
 
 // Image functions (removeBackground, upscale, generateImage, multiangle, nextScene) 

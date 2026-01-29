@@ -162,6 +162,57 @@ export async function resolveOutputUrls(output: any): Promise<string[]> {
 }
 
 /**
+ * Resolves a given URL (which might be a local proxy path or a data URI)
+ * to a public URL that Replicate can access.
+ */
+export function resolveToPublicUrl(url: string | any): string {
+  if (typeof url !== 'string') return '';
+  if (!url) return '';
+
+  // Handle already-public URLs or data URIs
+  if (url.startsWith('http') || url.startsWith('data:')) return url;
+
+  const toZataPrefixUrl = (decodedPath: string): string => {
+    const key = decodedPath.replace(/^\//, '');
+    const prefix = (env.zataPrefix || '').replace(/\/$/, '');
+    if (prefix) return `${prefix}/${key}`;
+
+    const endpoint = (env.zataEndpoint || '').replace(/\/$/, '');
+    const bucket = env.zataBucket || '';
+    if (endpoint && bucket) return `${endpoint}/${bucket}/${encodeURI(key)}`;
+    return decodedPath;
+  };
+
+  if (url.includes('/api/proxy/resource/')) {
+    try {
+      const parts = url.split('/api/proxy/resource/');
+      const encodedPath = parts[parts.length - 1];
+      if (encodedPath) {
+        const decodedPath = decodeURIComponent(encodedPath);
+        return toZataPrefixUrl(decodedPath);
+      }
+    } catch (e) {
+      console.warn('[replicateUtils] Failed to resolve proxy URL:', url, e);
+    }
+  }
+
+  if (url.includes('/api/proxy/media/')) {
+    try {
+      const parts = url.split('/api/proxy/media/');
+      const encodedPath = parts[parts.length - 1];
+      if (encodedPath) {
+        const decodedPath = decodeURIComponent(encodedPath);
+        return toZataPrefixUrl(decodedPath);
+      }
+    } catch (e) {
+      console.warn('[replicateUtils] Failed to resolve proxy media URL:', url, e);
+    }
+  }
+
+  return url;
+}
+
+/**
  * Resolves if WAN model should use fast variant based on body parameters
  */
 export async function resolveWanModelFast(body: any): Promise<boolean> {
