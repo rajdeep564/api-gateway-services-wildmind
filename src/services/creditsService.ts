@@ -161,6 +161,40 @@ export const creditsService = {
       return { cycle, planCode, creditBalance: updated?.creditBalance || 0 };
   },
 
+  /**
+   * Validate if user has sufficient credits AND storage quota for generation
+   * This should be called BEFORE starting any generation
+   * @returns validation result with error code if invalid
+   */
+  async validateBeforeGeneration(
+    uid: string,
+    creditCost: number,
+    estimatedSizeBytes: number = 10 * 1024 * 1024 // Default 10MB estimate
+  ): Promise<{ valid: boolean; reason?: string; code?: string }> {
+    try {
+      await creditsRepository.validateGeneration(uid, creditCost, estimatedSizeBytes);
+      return { valid: true };
+    } catch (error: any) {
+      // Extract error code and message
+      if (error.code === 'STORAGE_QUOTA_EXCEEDED') {
+        return {
+          valid: false,
+          reason: error.message || 'Storage quota exceeded. Upgrade your plan to continue.',
+          code: 'STORAGE_QUOTA_EXCEEDED',
+        };
+      }
+      if (error.code === 'INSUFFICIENT_CREDITS') {
+        return {
+          valid: false,
+          reason: error.message || 'Insufficient credits for this generation.',
+          code: 'INSUFFICIENT_CREDITS',
+        };
+      }
+      // Unknown error
+      throw error;
+    }
+  },
+
   async switchPlan(uid: string, newPlanCode: string) {
      // Just call repo
      await creditsRepository.writeGrantAndSetPlanIfAbsent(uid, `SWITCH_${Date.now()}`, 0, newPlanCode, 'plan.switch');

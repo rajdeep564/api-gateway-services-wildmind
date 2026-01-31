@@ -20,6 +20,7 @@ import { computeWanVideoCost } from "../utils/pricing/wanPricing";
 import { syncToMirror, updateMirror } from "../utils/mirrorHelper";
 import { aestheticScoreService } from "./aestheticScoreService";
 import { markGenerationCompleted } from "./generationHistoryService";
+import { validateGenerationRequest, estimateFileSize } from "../utils/validationHelpers";
 
 // Import image functions from the new replicate module
 import {
@@ -459,6 +460,37 @@ export async function wanT2vSubmit(
         ? "1080p"
         : "720p";
 
+  // Validate storage and credits BEFORE creating generation
+  try {
+    const { cost } = await computeWanVideoCost({
+      body: {
+        mode: 't2v',
+        duration: durationSec,
+        resolution: res,
+        model: modelBase,
+      }
+    } as any);
+
+    const validation = await validateGenerationRequest(
+      uid,
+      cost,
+      estimateFileSize('video', { duration: durationSec, quality: 'medium' })
+    );
+
+    if (!validation.valid) {
+      console.log('[wanT2vSubmit] Validation failed', { uid, reason: validation.reason, code: validation.code });
+      throw new ApiError(
+        validation.reason || 'Validation failed',
+        validation.code === 'STORAGE_QUOTA_EXCEEDED' ? 507 : 402
+      );
+    }
+  } catch (e: any) {
+    // If validation throws ApiError, propagate it
+    if (e instanceof ApiError) throw e;
+    // Otherwise, log and continue (cost calculation might fail for unknown models)
+    console.warn('[wanT2vSubmit] Validation check failed, continuing:', e?.message);
+  }
+
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
     model: modelBase,
@@ -550,6 +582,37 @@ export async function wanI2vSubmit(
     const m = s.match(/(480|720|1080)/);
     return m ? `${m[1]}p` : "720p";
   })();
+
+  // Validate storage and credits BEFORE creating generation
+  try {
+    const { cost } = await computeWanVideoCost({
+      body: {
+        mode: 'i2v',
+        duration: durationSec,
+        resolution: res,
+        model: modelBase,
+      }
+    } as any);
+
+    const validation = await validateGenerationRequest(
+      uid,
+      cost,
+      estimateFileSize('video', { duration: durationSec, quality: 'medium' })
+    );
+
+    if (!validation.valid) {
+      console.log('[wanI2vSubmit] Validation failed', { uid, reason: validation.reason, code: validation.code });
+      throw new ApiError(
+        validation.reason || 'Validation failed',
+        validation.code === 'STORAGE_QUOTA_EXCEEDED' ? 507 : 402
+      );
+    }
+  } catch (e: any) {
+    // If validation throws ApiError, propagate it
+    if (e instanceof ApiError) throw e;
+    // Otherwise, log and continue (cost calculation might fail for unknown models)
+    console.warn('[wanI2vSubmit] Validation check failed, continuing:', e?.message);
+  }
 
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
