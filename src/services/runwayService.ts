@@ -14,6 +14,7 @@ import { computeRunwayCostFromHistoryModel } from "../utils/pricing/runwayPricin
 import { syncToMirror } from "../utils/mirrorHelper";
 import { aestheticScoreService } from "./aestheticScoreService";
 import { markGenerationCompleted } from "./generationHistoryService";
+import { validateGenerationRequest, estimateFileSize } from "../utils/validationHelpers";
 //
 
 // (SDK handles base/version internally)
@@ -63,6 +64,30 @@ async function textToImage(
     );
   } else {
     referenceImages = [];
+  }
+
+  // Validate storage and credits BEFORE creating task
+  try {
+    const { cost } = computeRunwayCostFromHistoryModel(model);
+    
+    const validation = await validateGenerationRequest(
+      uid,
+      cost,
+      estimateFileSize('image', { width: 1024, height: 1024, quality: 'high' })
+    );
+
+    if (!validation.valid) {
+      console.log('[runwayService.textToImage] Validation failed', { uid, reason: validation.reason, code: validation.code });
+      throw new ApiError(
+        validation.reason || 'Validation failed',
+        validation.code === 'STORAGE_QUOTA_EXCEEDED' ? 507 : 402
+      );
+    }
+  } catch (e: any) {
+    // If validation throws ApiError, propagate it
+    if (e instanceof ApiError) throw e;
+    // Otherwise, log and continue
+    console.warn('[runwayService.textToImage] Validation check failed, continuing:', e?.message);
   }
 
 
@@ -260,6 +285,31 @@ async function videoGenerate(
   const client = getRunwayClient();
   const { mode, imageToVideo, videoToVideo, textToVideo, videoUpscale } =
     body || {};
+
+  // Validate storage and credits BEFORE creating any video task
+  try {
+    const { cost } = computeRunwayCostFromHistoryModel(body?.model || 'runway_video');
+    
+    const validation = await validateGenerationRequest(
+      uid,
+      cost,
+      estimateFileSize('video', { duration: 10, quality: 'medium' }) // Runway videos ~10s
+    );
+
+    if (!validation.valid) {
+      console.log('[runwayService.videoGenerate] Validation failed', { uid, mode, reason: validation.reason, code: validation.code });
+      throw new ApiError(
+        validation.reason || 'Validation failed',
+        validation.code === 'STORAGE_QUOTA_EXCEEDED' ? 507 : 402
+      );
+    }
+  } catch (e: any) {
+    // If validation throws ApiError, propagate it
+    if (e instanceof ApiError) throw e;
+    // Otherwise, log and continue
+    console.warn('[runwayService.videoGenerate] Validation check failed, continuing:', e?.message);
+  }
+
   if (mode === "image_to_video") {
     const created = await client.imageToVideo.create(imageToVideo);
     const prompt = imageToVideo?.promptText || (imageToVideo && imageToVideo.prompts && imageToVideo.prompts[0]?.text) || '';

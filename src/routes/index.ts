@@ -29,6 +29,7 @@ import chatCompanionRoutes from './chatCompanion';
 import subscriptionsRoutes from './subscriptions';
 import webhooksRoutes from './webhooks';
 import workflowsRoutes from './workflows';
+import billingRoutes from './billing';
 import { contentModerationMiddleware } from '../middlewares/contentModeration';
 
 const router = Router();
@@ -74,5 +75,6 @@ router.use('/chat', chatCompanionRoutes);
 router.use('/subscriptions', subscriptionsRoutes);
 router.use('/webhooks', webhooksRoutes);
 router.use('/workflows', workflowsRoutes);
+router.use('/billing', billingRoutes);
 
 export default router;

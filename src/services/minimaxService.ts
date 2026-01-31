@@ -21,6 +21,7 @@ import { computeMinimaxVideoCostFromParams } from "../utils/pricing/minimaxPrici
 import { syncToMirror, updateMirror } from "../utils/mirrorHelper";
 import { aestheticScoreService } from "./aestheticScoreService";
 import { markGenerationCompleted } from "./generationHistoryService";
+import { validateGenerationRequest, estimateFileSize } from "../utils/validationHelpers";
 
 
 const MINIMAX_API_BASE = env.minimaxApiBase;
@@ -101,6 +102,31 @@ async function generate(
 
   // Debug log incoming payload flags (visibility/isPublic) to help trace public generation flow
   console.log('[MiniMax] generate() payload flags:', { uid, isPublic: (payload as any).isPublic, visibility: (payload as any).visibility, generationType: payload.generationType });
+
+  // Validate storage and credits BEFORE creating generation
+  try {
+    // MiniMax image generation cost: Assume generic image cost
+    const estimatedCost = 50; // Placeholder - should use actual pricing
+    
+    const validation = await validateGenerationRequest(
+      uid,
+      estimatedCost,
+      estimateFileSize('image', { width: width || 1024, height: height || 1024, quality: 'high' })
+    );
+
+    if (!validation.valid) {
+      console.log('[minimaxService.generate] Validation failed', { uid, reason: validation.reason, code: validation.code });
+      throw new ApiError(
+        validation.reason || 'Validation failed',
+        validation.code === 'STORAGE_QUOTA_EXCEEDED' ? 507 : 402
+      );
+    }
+  } catch (e: any) {
+    // If validation throws ApiError, propagate it
+    if (e instanceof ApiError) throw e;
+    // Otherwise, log and continue
+    console.warn('[minimaxService.generate] Validation check failed, continuing:', e?.message);
+  }
 
   const legacyId = await minimaxRepository.createGenerationRecord(
     { ...payload, isPublic: (payload as any).isPublic === true },

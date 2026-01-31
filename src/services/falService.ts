@@ -22,6 +22,7 @@ import { buildFalApiError } from "../utils/falErrorMapper";
 import fetch from "node-fetch";
 import sharp from "sharp";
 import axios from "axios";
+import { validateGenerationRequest, estimateFileSize } from "../utils/validationHelpers";
 
 const buildGenerationImageFileName = (historyId?: string, index: number = 0) => {
   if (historyId) {
@@ -163,6 +164,34 @@ async function generate(
   const canSkipPrompt = isAudioRequest && (hasDialogueInputs || hasTextInPayload);
 
   if (!canSkipPrompt && !prompt) throw new ApiError("Prompt is required (from falService)", 400);
+
+  // Validate storage and credits BEFORE creating generation
+  try {
+    // Estimate cost based on model and type
+    const estimatedCost = 100; // Placeholder - should use actual pricing
+    const isVideo = modelLower.includes('veo') || modelLower.includes('video');
+    
+    const validation = await validateGenerationRequest(
+      uid,
+      estimatedCost,
+      isVideo 
+        ? estimateFileSize('video', { duration: 5, quality: 'medium' })
+        : estimateFileSize('image', { width: 1024, height: 1024, quality: 'high' })
+    );
+
+    if (!validation.valid) {
+      console.log('[falService.generate] Validation failed', { uid, model, reason: validation.reason, code: validation.code });
+      throw new ApiError(
+        validation.reason || 'Validation failed',
+        validation.code === 'STORAGE_QUOTA_EXCEEDED' ? 507 : 402
+      );
+    }
+  } catch (e: any) {
+    // If validation throws ApiError, propagate it
+    if (e instanceof ApiError) throw e;
+    // Otherwise, log and continue
+    console.warn('[falService.generate] Validation check failed, continuing:', e?.message);
+  }
 
   fal.config({ credentials: falKey });
 

@@ -241,6 +241,70 @@ export async function initUser(uid: string, email: string): Promise<any> {
     }
 }
 
+/**
+ * Validate if user has sufficient credits AND storage quota for generation
+ * Calls credit-service's validate-generation endpoint
+ * @throws Error with code STORAGE_QUOTA_EXCEEDED or INSUFFICIENT_CREDITS
+ */
+export async function validateGeneration(
+  uid: string,
+  creditCost: number,
+  estimatedSizeBytes: number = 0
+): Promise<{ valid: boolean }> {
+  try {
+    const res = await axios.post(`${CREDIT_SERVICE_URL}/credits/validate-generation`, {
+      userId: uid,
+      creditCost,
+      estimatedSizeBytes,
+    });
+    
+    if (res.data.success) {
+      return { valid: true };
+    }
+    throw new Error('Validation failed');
+  } catch (e: any) {
+    // Re-throw with code preserved for proper error handling
+    if (e.response?.data?.code) {
+      const error: any = new Error(e.response.data.message);
+      error.code = e.response.data.code;
+      error.statusCode = e.response.status;
+      throw error;
+    }
+    handleAxiosError(e, 'validateGeneration');
+    return { valid: false }; // Unreachable
+  }
+}
+
+export async function listInvoices(uid: string): Promise<any[]> {
+  try {
+    const res = await axios.get(`${CREDIT_SERVICE_URL}/billing/invoices/${uid}`);
+    if (res.data.success && Array.isArray(res.data.data)) {
+      return res.data.data;
+    }
+    return [];
+  } catch (e: any) {
+    // If 404, just return empty list
+    if (e.response?.status === 404) return [];
+    
+    handleAxiosError(e, 'listInvoices');
+    return [];
+  }
+}
+
+export async function listPayments(uid: string): Promise<any[]> {
+  try {
+    const res = await axios.get(`${CREDIT_SERVICE_URL}/billing/payments/${uid}`);
+    if (res.data.success && Array.isArray(res.data.data)) {
+      return res.data.data;
+    }
+    return [];
+  } catch (e: any) {
+     if (e.response?.status === 404) return [];
+    handleAxiosError(e, 'listPayments');
+    return [];
+  }
+}
+
 export const creditsRepository = {
   readUserCredits,
   readUserInfo,
@@ -251,5 +315,8 @@ export const creditsRepository = {
   reconcileBalanceFromLedgers,
   clearAllLedgersForUser,
   writeRefund,
-  initUser
+  initUser,
+  validateGeneration,
+  listInvoices,
+  listPayments
 };
