@@ -1,6 +1,11 @@
 import sharp from 'sharp';
 import axios from 'axios';
-import { uploadBufferToZata, getZataSignedGetUrl } from '../utils/storage/zataUpload';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { pipeline } from 'stream/promises';
+import { createWriteStream, createReadStream } from 'fs';
+import { uploadStreamToZata, getZataSignedGetUrl } from '../utils/storage/zataUpload';
 import { adminDb } from '../config/firebaseAdmin';
 import { logger } from '../utils/logger';
 import { generationsMirrorRepository } from '../repository/generationsMirrorRepository';
@@ -78,10 +83,14 @@ function extractStoragePathFromUrl(imageUrl: string): { basePath: string; filena
 }
 
 /**
- * Download image from URL and return buffer
+ * Download image from URL to a temporary file
  * Handles both public URLs and Zata storage URLs with signed URLs
+ * @returns Path to temporary file
  */
-async function downloadImage(url: string): Promise<Buffer> {
+async function downloadImageToTemp(url: string): Promise<string> {
+  const tempDir = os.tmpdir();
+  const tempFilePath = path.join(tempDir, `opt-${Date.now()}-${Math.random().toString(36).substring(7)}`);
+
   try {
     // Check if this is a Zata storage URL
     const ZATA_PATTERN = /https?:\/\/[^\/]+\/(devstoragev1|prodstoragev1)\//;
@@ -119,23 +128,31 @@ async function downloadImage(url: string): Promise<Buffer> {
     }
     
     const response = await axios.get(downloadUrl, {
-      responseType: 'arraybuffer',
-      timeout: 30000,
-      maxContentLength: 50 * 1024 * 1024, // 50MB max
+      responseType: 'stream',
+      timeout: 60000, // Increased timeout for large files
     });
-    return Buffer.from(response.data);
+
+    const fileWriter = createWriteStream(tempFilePath);
+    await pipeline(response.data, fileWriter);
+    
+    return tempFilePath;
   } catch (error) {
-    console.error('[ImageOptimization] Failed to download image:', error);
+    // Clean up if file was created partially
+    if (fs.existsSync(tempFilePath)) {
+      try { fs.unlinkSync(tempFilePath); } catch {}
+    }
+    console.error('[ImageOptimization] Failed to download image to temp:', error);
     throw new Error('Failed to download image from URL');
   }
 }
 
 /**
  * Generate blur placeholder (tiny base64 image)
+ * Reads from temp file to keep memory usage low
  */
-async function generateBlurPlaceholder(imageBuffer: Buffer): Promise<string> {
+async function generateBlurPlaceholder(filePath: string): Promise<string> {
   try {
-    const placeholder = await sharp(imageBuffer)
+    const placeholder = await sharp(filePath)
       .resize(20, 20, { fit: 'inside' })
       .blur(5)
       .webp({ quality: 20 })
@@ -149,21 +166,14 @@ async function generateBlurPlaceholder(imageBuffer: Buffer): Promise<string> {
 }
 
 /**
- * Upload buffer to Zata Storage
+ * Calculate file size
  */
-async function uploadToStorage(
-  buffer: Buffer,
-  path: string,
-  contentType: string,
-  metadata?: Record<string, string>
-): Promise<string> {
+async function getFileSize(filePath: string): Promise<number> {
   try {
-    const { publicUrl } = await uploadBufferToZata(path, buffer, contentType);
-    logger.info(`[ImageOptimization] Uploaded to Zata: ${path}`);
-    return publicUrl;
-  } catch (error: any) {
-    logger.error(`[ImageOptimization] Failed to upload to Zata: ${error.message}`);
-    throw error;
+    const stats = await fs.promises.stat(filePath);
+    return stats.size;
+  } catch {
+    return 0;
   }
 }
 
@@ -194,52 +204,51 @@ export async function optimizeImage(
     thumbnailQuality = 80,  // Thumbnail quality
   } = options;
 
+  let tempFilePath: string | null = null;
+
   try {
-    console.log('[ImageOptimization] Starting optimization (AVIF only):', { originalUrl, basePath, filename });
+    console.log('[ImageOptimization] Starting streaming optimization (AVIF only):', { originalUrl, basePath, filename });
 
-    // Download original image
-    const imageBuffer = await downloadImage(originalUrl);
+    // Stream download to temp file
+    tempFilePath = await downloadImageToTemp(originalUrl);
+    const originalSize = await getFileSize(tempFilePath);
 
-    // Get original metadata
-    const metadata = await sharp(imageBuffer).metadata();
-    const { width = 0, height = 0, size = 0 } = metadata;
+    // Get original metadata using sharp on file
+    const metadata = await sharp(tempFilePath).metadata();
+    const { width = 0, height = 0 } = metadata;
 
-    console.log('[ImageOptimization] Original image:', { width, height, size, format: metadata.format });
+    console.log('[ImageOptimization] Original image:', { width, height, size: originalSize, format: metadata.format });
 
     // Prepare sharp pipeline with resize if needed
-    let pipeline = sharp(imageBuffer);
-    
-    if (width > maxWidth || height > maxHeight) {
-      pipeline = pipeline.resize(maxWidth, maxHeight, {
-        fit: 'inside',
-        withoutEnlargement: true,
+    // Note: We create new instances for each operation to avoid pipeline conflicts
+    const resizeOptions = (width > maxWidth || height > maxHeight) 
+      ? { width: maxWidth, height: maxHeight, fit: 'inside' as const, withoutEnlargement: true }
+      : null;
+
+    // --- Generate AVIF (Primary Format) ---
+    const avifPipeline = sharp(tempFilePath);
+    if (resizeOptions) {
+      avifPipeline.resize(resizeOptions.width, resizeOptions.height, {
+        fit: resizeOptions.fit,
+        withoutEnlargement: resizeOptions.withoutEnlargement
       });
     }
-
-    // Generate AVIF version (ONLY FORMAT - best compression with high quality)
-    const avifBuffer = await pipeline
-      .clone()
+    
+    const avifStream = avifPipeline
       .avif({ 
         quality: avifQuality, 
-        effort: 6,              // Higher effort = better compression (0-9)
-        chromaSubsampling: '4:4:4'  // Best quality chroma subsampling
-      })
-      .toBuffer();
+        effort: 6,
+        chromaSubsampling: '4:4:4'
+      });
 
     const avifPath = `${basePath}/${filename}_optimized.avif`;
-    const avifUrl = await uploadToStorage(avifBuffer, avifPath, 'image/avif', {
-      originalUrl,
-      variant: 'optimized_avif',
-    });
+    // Upload stream directly to S3
+    const { publicUrl: avifUrl } = await uploadStreamToZata(avifPath, avifStream, 'image/avif');
 
-    console.log('[ImageOptimization] AVIF created:', { 
-      size: avifBuffer.length, 
-      compressionRatio: ((1 - avifBuffer.length / size) * 100).toFixed(2) + '%',
-      url: avifUrl 
-    });
+    console.log('[ImageOptimization] AVIF streamed to storage:', { url: avifUrl });
 
-    // Generate thumbnail (small preview for grids) - using AVIF for best quality/size
-    const thumbnailBuffer = await sharp(imageBuffer)
+    // --- Generate Thumbnail ---
+    const thumbStream = sharp(tempFilePath)
       .resize(thumbnailSize, thumbnailSize, {
         fit: 'cover',
         position: 'center',
@@ -247,21 +256,17 @@ export async function optimizeImage(
       .avif({ 
         quality: thumbnailQuality,
         effort: 5
-      })
-      .toBuffer();
+      });
 
     const thumbnailPath = `${basePath}/${filename}_thumb.avif`;
-    const thumbnailUrl = await uploadToStorage(thumbnailBuffer, thumbnailPath, 'image/avif', {
-      originalUrl,
-      variant: 'thumbnail',
-    });
+    const { publicUrl: thumbnailUrl } = await uploadStreamToZata(thumbnailPath, thumbStream, 'image/avif');
 
-    console.log('[ImageOptimization] Thumbnail created:', { size: thumbnailBuffer.length, url: thumbnailUrl });
+    console.log('[ImageOptimization] Thumbnail streamed to storage:', { url: thumbnailUrl });
 
-    // Generate blur placeholder (tiny base64)
-    const blurDataUrl = await generateBlurPlaceholder(imageBuffer);
+    // --- Generate Blur Placeholder ---
+    const blurDataUrl = await generateBlurPlaceholder(tempFilePath);
 
-    console.log('[ImageOptimization] Optimization complete (AVIF only)');
+    console.log('[ImageOptimization] Optimization complete (Streamed)');
 
     return {
       originalUrl,
@@ -270,11 +275,21 @@ export async function optimizeImage(
       blurDataUrl,
       width,
       height,
-      size,
+      size: originalSize,
     };
   } catch (error) {
     console.error('[ImageOptimization] Optimization failed:', error);
     throw error;
+  } finally {
+    // Cleanup temp file
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      try {
+        fs.unlinkSync(tempFilePath);
+        console.log('[ImageOptimization] Cleaned up temp file:', tempFilePath);
+      } catch (err) {
+        console.error('[ImageOptimization] Failed to cleanup temp file:', err);
+      }
+    }
   }
 }
 
@@ -373,11 +388,11 @@ export async function optimizeExistingImage(
     const imageId = existingImage.id || `img-${historyId}-${imageIndex}-${Date.now()}`;
     
     images[imageIndex] = {
-      ...existingImage, // Preserve all existing fields (id, originalUrl, storagePath, aestheticScore, etc.)
+      ...existingImage, // Preserve all existing fields
       id: imageId, // Ensure id is always present
       url: imageUrl, // Ensure url is set
-      originalUrl: existingImage.originalUrl || imageUrl, // Preserve or set originalUrl
-      avifUrl: optimized.avifUrl,      // Primary and only format
+      originalUrl: existingImage.originalUrl || imageUrl,
+      avifUrl: optimized.avifUrl,
       thumbnailUrl: optimized.thumbnailUrl,
       blurDataUrl: optimized.blurDataUrl,
       optimized: true,

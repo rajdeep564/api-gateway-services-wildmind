@@ -87,8 +87,35 @@ async function processTask(id: string, task: any) {
   }
 }
 
+const TASK_TIMEOUT_MS = 120000; // 2 minutes
+
+async function processTaskWithTimeout(id: string, task: any) {
+  try {
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`Task timed out after ${TASK_TIMEOUT_MS}ms`)), TASK_TIMEOUT_MS);
+    });
+
+    await Promise.race([
+      processTask(id, task),
+      timeoutPromise
+    ]);
+  } catch (e: any) {
+    console.error('[MirrorWorker] Task wrapper failed/timed out', { id, historyId: task.historyId, err: e?.message });
+    // Attempt to mark failed in DB if possible, but safely (don't block forever on this either)
+    try { 
+        // We only attempt to mark failed if it wasn't already handled inside processTask
+        // But since we don't know the internal state, we conservatively try to mark failed if it's a timeout
+        if (e?.message?.includes('timed out')) {
+            await markFailed(id, 'timeout'); 
+        }
+    } catch (markErr) {
+        console.error('[MirrorWorker] Failed to mark task as failed after timeout', markErr);
+    }
+  }
+}
+
 async function loop() {
-  console.log('[MirrorWorker] Starting loop', { POLL_INTERVAL_MS, PROMISE_POOL_SIZE, BATCH_LIMIT });
+  console.log('[MirrorWorker] Starting loop', { POLL_INTERVAL_MS, PROMISE_POOL_SIZE, BATCH_LIMIT, TASK_TIMEOUT_MS });
   while (running) {
     try {
       const tasks = await pollPendingTasks(BATCH_LIMIT);
@@ -102,7 +129,8 @@ async function loop() {
       // process in pools
       for (let i = 0; i < tasks.length; i += PROMISE_POOL_SIZE) {
         const slice = tasks.slice(i, i + PROMISE_POOL_SIZE);
-        await Promise.all(slice.map(t => processTask(t.id, t.task)));
+        // Use timeout wrapper
+        await Promise.all(slice.map(t => processTaskWithTimeout(t.id, t.task)));
       }
       await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
     } catch (e: any) {

@@ -74,31 +74,9 @@ async function generateImage(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-async function wanI2V(req: Request, res: Response, next: NextFunction) {
-  try {
-    const uid = (req as any).uid as string;
-    const data = await replicateService.wanI2V(uid, req.body || {});
-    (res as any).locals = { ...(res as any).locals, success: true };
-    res.json({ responseStatus: 'success', message: 'OK', data });
-  } catch (e) {
-    next(e);
-    return;
-  }
-}
 
-async function wanT2V(req: Request, res: Response, next: NextFunction) {
-  try {
-    const uid = (req as any).uid as string;
-    const data = await replicateService.wanT2V(uid, req.body || {});
-    (res as any).locals = { ...(res as any).locals, success: true };
-    res.json({ responseStatus: 'success', message: 'OK', data });
-  } catch (e) {
-    next(e);
-    return;
-  }
-}
 
-export const replicateController = { removeBackground, upscale, generateImage, wanI2V, wanT2V, multiangle } as any;
+export const replicateController = { removeBackground, upscale, generateImage, multiangle } as any;
 // Queue-style handlers for Replicate WAN 2.5
 export async function wanT2vSubmit(req: Request, res: Response, next: NextFunction) {
   try {

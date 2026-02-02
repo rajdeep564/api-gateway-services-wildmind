@@ -444,18 +444,35 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     try {
       const exp = typeof decoded?.exp === 'number' ? decoded.exp : undefined;
       const issuedAt = typeof decoded?.iat === 'number' ? decoded.iat : undefined;
+      
+      // Smart TTL Logic:
+      // Trust the cache for at most 24 hours, or until the token expires, whichever is sooner.
+      // This forces a Firebase verification check at least once a day for long-lived cookies,
+      // balancing performance (hit Redis) with security (re-check revocation).
+      let smartTtl = 24 * 60 * 60; // Default 24 hours
+      if (exp) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const timeUntilExp = exp - nowSec;
+        if (timeUntilExp < smartTtl) {
+          smartTtl = timeUntilExp;
+        }
+      }
+      // Ensure TTL is at least 60 seconds to be useful
+      smartTtl = Math.max(60, smartTtl);
+
       await cacheSession(token, {
         uid: decoded.uid,
         exp,
         issuedAt,
         userAgent: req.get('user-agent') || undefined,
         ip: req.ip,
-      });
+      }, smartTtl);
+
       if (env.redisDebug) {
         console.log('[AUTH][Redis] SET (after verification)', { 
           uid: decoded.uid, 
           exp,
-          expDate: exp ? new Date(exp * 1000).toISOString() : 'N/A',
+          ttl: smartTtl,
           issuedAt,
           issuedAtDate: issuedAt ? new Date(issuedAt * 1000).toISOString() : 'N/A'
         });

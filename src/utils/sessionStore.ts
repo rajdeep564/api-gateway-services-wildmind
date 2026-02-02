@@ -22,18 +22,22 @@ function keyForToken(token: string): string {
   return `${prefix}${hashToken(token)}`;
 }
 
-export async function cacheSession(token: string, session: CachedSession): Promise<void> {
-  // Compute TTL from exp if available
-  // CRITICAL FIX: Add buffer time (1 day) to ensure cache doesn't expire before cookie
-  // This prevents false cache misses that could cause authentication failures
-  let ttlSec: number | undefined;
-  if (session.exp) {
+export async function cacheSession(token: string, session: CachedSession, customTtlSec?: number): Promise<void> {
+  // Compute TTL:
+  // 1. If customTtlSec is provided, use it.
+  // 2. If session.exp is provided, use it (plus buffer).
+  // 3. Fallback to default Redis TTL (usually infinite/eviction policy, but here we set explicit).
+  
+  let ttlSec: number | undefined = customTtlSec;
+
+  if (ttlSec === undefined && session.exp) {
     const nowSec = Math.floor(Date.now() / 1000);
     const timeUntilExp = session.exp - nowSec;
-    // Add 1 day buffer to prevent premature cache expiration
-    const bufferSec = 24 * 60 * 60; // 1 day in seconds
+    // Add 1 day buffer to prevent premature cache expiration if relying on cookie exp
+    const bufferSec = 24 * 60 * 60; // 1 day
     ttlSec = Math.max(1, timeUntilExp + bufferSec);
   }
+  
   const key = keyForToken(token);
   await redisSetSafe(key, session, ttlSec);
 }
