@@ -1,4 +1,5 @@
 import axios from "axios";
+import { mapMinimaxError } from "../utils/errors/minimaxErrors";
 import { env } from "../config/env";
 import {
   MinimaxGenerateRequest,
@@ -61,11 +62,24 @@ function assertMiniMaxOk(baseResp?: {
   if (!baseResp) return;
   const code = Number(baseResp.status_code);
   if (!isNaN(code) && code !== 0) {
-    const http = mapMiniMaxCodeToHttp(code);
+    // Use new mapper to get user-friendly details
+    const mapped = mapMinimaxError({ base_resp: baseResp });
+    
+    // Determine HTTP status from code (keeping some original logic or defaulting)
+    let httpStatus = 400;
+    if ([1002].includes(code)) httpStatus = 429;
+    if ([1004, 2049].includes(code)) httpStatus = 401;
+    if ([1008].includes(code)) httpStatus = 402; // Provider limit/balance
+    if ([1000, 1013, 1039].includes(code)) httpStatus = 502;
+
     throw new ApiError(
-      baseResp.status_msg || `MiniMax error ${code}`,
-      http,
-      baseResp
+      mapped.message,
+      httpStatus,
+      {
+        title: mapped.title,
+        code: mapped.code,
+        technical: baseResp.status_msg
+      }
     );
   }
 }
@@ -286,7 +300,10 @@ async function generate(
     await syncToMirror(uid, historyId);
     return { images: scoredImages, aestheticScore: highestScore, historyId, id: data.id } as any;
   } catch (err: any) {
-    const message = err?.message || "Failed to generate images with MiniMax";
+    // Use centralized mapper
+    const mapped = mapMinimaxError(err);
+    const message = mapped.message;
+    
     await minimaxRepository.updateGenerationRecord(legacyId, {
       status: "failed",
       error: message,
@@ -294,7 +311,9 @@ async function generate(
     // Update history and mirror with error state
     await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: message } as any);
     await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
-    throw err;
+    
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(message, 502, { title: mapped.title, code: mapped.code, technical: err?.message });
   }
 }
 
@@ -313,8 +332,10 @@ async function generateVideo(
     },
     validateStatus: () => true,
   });
-  if (res.status < 200 || res.status >= 300)
-    throw new ApiError("MiniMax video request failed", res.status, res.data);
+  if (res.status < 200 || res.status >= 300) {
+    const mapped = mapMinimaxError({ ...res.data, status: res.status });
+    throw new ApiError(mapped.message, res.status, { title: mapped.title, code: mapped.code, technical: res.data });
+  }
   const data = res.data || {};
   assertMiniMaxOk(data.base_resp);
   const taskId = data?.result?.task_id || data?.task_id || data?.id;
@@ -334,12 +355,10 @@ async function getVideoStatus(apiKey: string, taskId: string): Promise<any> {
       validateStatus: () => true,
     }
   );
-  if (res.status < 200 || res.status >= 300)
-    throw new ApiError(
-      `MiniMax API error: ${res.status}`,
-      res.status,
-      res.data
-    );
+  if (res.status < 200 || res.status >= 300) {
+    const mapped = mapMinimaxError({ ...res.data, status: res.status });
+    throw new ApiError(mapped.message, res.status, { title: mapped.title, code: mapped.code, technical: res.data });
+  }
   const data = res.data || {};
   // Some responses embed base_resp at root
   assertMiniMaxOk(data.base_resp || (data.result && data.result.base_resp));
@@ -361,12 +380,10 @@ async function getFile(
       validateStatus: () => true,
     }
   );
-  if (res.status < 200 || res.status >= 300)
-    throw new ApiError(
-      `MiniMax API error: ${res.status}`,
-      res.status,
-      res.data
-    );
+  if (res.status < 200 || res.status >= 300) {
+    const mapped = mapMinimaxError({ ...res.data, status: res.status });
+    throw new ApiError(mapped.message, res.status, { title: mapped.title, code: mapped.code, technical: res.data });
+  }
   const data = res.data || {};
   // Surface group mismatch case clearly
   if (
@@ -482,24 +499,18 @@ async function generateMusic(
   
   if (res.status < 200 || res.status >= 300) {
     console.error('[MiniMax] Music API error response:', JSON.stringify(res.data, null, 2));
-    const errorMsg = res.data?.base_resp?.status_msg || res.data?.status_msg || `MiniMax music error: ${res.status}`;
+    const mapped = mapMinimaxError({ ...res.data, status: res.status });
     throw new ApiError(
-      errorMsg,
+      mapped.message,
       res.status,
-      res.data
+      { title: mapped.title, code: mapped.code, technical: res.data }
     );
   }
   
   const data = res.data;
   // Check base_resp before asserting
   if (data.base_resp && data.base_resp.status_code !== 0) {
-    const errorMsg = data.base_resp.status_msg || `MiniMax API error: status_code ${data.base_resp.status_code}`;
-    console.error('[MiniMax] Music API base_resp error:', JSON.stringify(data.base_resp, null, 2));
-    throw new ApiError(
-      errorMsg,
-      mapMiniMaxCodeToHttp(data.base_resp.status_code),
-      data
-    );
+    assertMiniMaxOk(data.base_resp); // This will throw structured ApiError via new helper
   }
   
   return data as MinimaxMusicResponse;
@@ -724,13 +735,18 @@ async function musicGenerateAndStore(
     } as any);
     throw new ApiError('MiniMax music response missing audio data', 502, result);
   } catch (err: any) {
-    const message = err?.message || 'Failed to generate music with MiniMax';
+    // Use centralized mapper
+    const mapped = mapMinimaxError(err);
+    const message = mapped.message;
+
     await generationHistoryRepository.update(uid, historyId, { 
       status: 'failed', 
       error: message 
     } as any);
     await updateMirror(uid, historyId, { status: 'failed' as any, error: message });
-    throw err;
+    
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(message, 502, { title: mapped.title, code: mapped.code, technical: err?.message });
   }
 }
 

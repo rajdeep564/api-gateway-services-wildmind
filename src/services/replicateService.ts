@@ -1,4 +1,5 @@
 import { mediaRepository } from "../repository/canvas/mediaRepository";
+import { mapReplicateError } from "../utils/errors/replicateErrors";
 import { generationHistoryRepository } from "../repository/generationHistoryRepository";
 // Use dynamic import signature to avoid type requirement during build-time
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -319,19 +320,30 @@ export async function removeBackground(
     outputUrl = urls[0] || "";
     if (!outputUrl) throw new Error("No output URL returned by Replicate");
   } catch (e: any) {
+    const mappedError = mapReplicateError(e);
     // eslint-disable-next-line no-console
-    console.error("[replicateService.removeBackground] error", e?.message || e);
+    console.error("[replicateService.removeBackground] error", {
+      original: e?.message || e,
+      mapped: mappedError
+    });
+    
     try {
       await replicateRepository.updateGenerationRecord(legacyId, {
         status: "failed",
-        error: e?.message || "Replicate failed",
+        error: mappedError.message,
       });
     } catch { }
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
-      error: e?.message || "Replicate failed",
+      error: mappedError.message,
     } as any);
-    throw new ApiError("Replicate generation failed", 502, e);
+    
+    // Return standard ApiError with user-friendly message and data
+    throw new ApiError(mappedError.message, 502, { 
+      title: mappedError.title, 
+      code: mappedError.code,
+      technical: e?.message 
+    });
   }
 
   // Upload to Zata
@@ -760,6 +772,8 @@ export async function upscale(uid: string, body: any) {
       throw new Error("No output URL returned by Replicate. The model may have failed or returned an unexpected format.");
     }
   } catch (e: any) {
+    const mappedError = mapReplicateError(e);
+
     // Extract HTTP status code for logging
     const httpStatusForLog =
       e?.statusCode ||
@@ -781,59 +795,23 @@ export async function upscale(uid: string, body: any) {
       isParseError: e?.message?.includes("Deserialization error") || e?.message?.includes("Expected closing tag"),
     });
 
-    // Extract meaningful error message from HTML responses or API errors
-    let errorMessage = "Replicate generation failed";
-
-    // Extract HTTP status code from various error formats
-    const httpStatus =
-      e?.statusCode ||
-      e?.response?.status ||
-      e?.$metadata?.httpStatusCode ||
-      e?.data?.$metadata?.httpStatusCode ||
-      (e?.message?.match(/status[:\s]+(\d{3})/i)?.[1] ? Number(e.message.match(/status[:\s]+(\d{3})/i)?.[1]) : null);
-
-    // Check if this is a parsing/deserialization error (usually indicates HTML response from server)
-    const isParseError =
-      e?.message?.includes("Deserialization error") ||
-      e?.message?.includes("Expected closing tag") ||
-      e?.message?.includes("to see the raw response") ||
-      (e?.$metadata && httpStatus >= 500);
-
-    // Check if error response contains HTML (Cloudflare error page)
-    const errorText = String(e?.message || e?.response?.data || e?.data || e || "");
-    if (isParseError || errorText.includes("<!DOCTYPE html>") || errorText.includes("Internal server error")) {
-      errorMessage = "Replicate service is temporarily unavailable (server error). Please try again in a few minutes.";
-    } else if (httpStatus === 500 || e?.statusCode === 500 || e?.response?.status === 500) {
-      errorMessage = "Replicate service encountered an internal error. Please try again in a few minutes.";
-    } else if (httpStatus === 502 || e?.statusCode === 502 || e?.response?.status === 502) {
-      errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
-    } else if (httpStatus === 503 || e?.statusCode === 503 || e?.response?.status === 503) {
-      errorMessage = "Replicate service is temporarily overloaded. Please try again in a few minutes.";
-    } else if (httpStatus === 504 || e?.statusCode === 504 || e?.response?.status === 504) {
-      errorMessage = "Replicate service request timed out. Please try again.";
-    } else if (e?.message?.includes("timeout")) {
-      errorMessage = "The upscale operation timed out. Please try again with a smaller image or lower scale factor.";
-    } else if (e?.message?.includes("No output URL")) {
-      errorMessage = "The upscale model did not return a result. Please try again or use a different model.";
-    } else if (e?.response?.data?.detail) {
-      errorMessage = e.response.data.detail;
-    } else if (e?.response?.data?.message) {
-      errorMessage = e.response.data.message;
-    } else if (e?.message) {
-      errorMessage = e.message;
-    }
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: mappedError.message,
+    } as any);
 
     try {
       await replicateRepository.updateGenerationRecord(legacyId, {
         status: "failed",
-        error: errorMessage,
+        error: mappedError.message,
       });
     } catch { }
-    await generationHistoryRepository.update(uid, historyId, {
-      status: "failed",
-      error: errorMessage,
-    } as any);
-    throw new ApiError(errorMessage, 502, e);
+
+    throw new ApiError(mappedError.message, 502, { 
+      title: mappedError.title, 
+      code: mappedError.code,
+      technical: e?.message 
+    });
   }
 
   // Upload possibly multiple output URLs
@@ -3168,25 +3146,10 @@ export const replicateService = {
   upscale,
   generateImage,
   multiangle,
-  wanI2V,
-  wanT2V,
+  wanI2V: wanI2vSubmit,
+  wanT2V: wanT2vSubmit,
   nextScene,
   qwenImageEditSubmit,
-};
-// Wan 2.5 Image-to-Video via Replicate
-
-
-// Image functions (removeBackground, upscale, generateImage, multiangle, nextScene)
-// have been moved to ./replicate/replicateImageService.ts
-// They are re-exported from ./replicate/index.ts for backward compatibility
-
-// Video and queue functions are defined below
-export const replicateService = {
-  removeBackground,
-  upscale,
-  generateImage,
-  multiangle,
-  nextScene,
 };
 
 // All duplicate functions removed. Queue functions continue below.
@@ -5929,3 +5892,6 @@ Object.assign(replicateService, { pixverseT2vSubmit, pixverseI2vSubmit });
 
 
 // ... existing code ...
+
+
+

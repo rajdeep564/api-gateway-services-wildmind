@@ -17,6 +17,39 @@ type FalErrorOptions = {
   extraData?: Record<string, unknown>;
 };
 
+const FAL_ERROR_TITLES: Record<string, string> = {
+  internal_server_error: 'System Error',
+  generation_timeout: 'Generation Timeout',
+  downstream_service_error: 'Provider Error',
+  downstream_service_unavailable: 'Service Unavailable',
+  content_policy_violation: 'Safety Check Failed',
+  image_too_small: 'Image Too Small',
+  image_too_large: 'Image Too Large',
+  image_load_error: 'Image Load Error',
+  file_download_error: 'Download Failed',
+  face_detection_error: 'No Face Detected',
+  file_too_large: 'File Too Large',
+  greater_than: 'Invalid Parameter',
+  greater_than_equal: 'Invalid Parameter',
+  less_than: 'Invalid Parameter',
+  less_than_equal: 'Invalid Parameter',
+  multiple_of: 'Invalid Dimension',
+  sequence_too_short: 'Input Too Short',
+  sequence_too_long: 'Input Too Long',
+  one_of: 'Invalid Option',
+  feature_not_supported: 'Not Supported',
+  invalid_archive: 'Invalid Archive',
+  archive_file_count_below_minimum: 'Not Enough Files',
+  archive_file_count_exceeds_maximum: 'Too Many Files',
+  audio_duration_too_long: 'Audio Too Long',
+  audio_duration_too_short: 'Audio Too Short',
+  unsupported_audio_format: 'Unsupported Audio',
+  unsupported_image_format: 'Unsupported Image',
+  unsupported_video_format: 'Unsupported Video',
+  video_duration_too_long: 'Video Too Long',
+  video_duration_too_short: 'Video Too Short',
+};
+
 const FAL_ERROR_HINTS: Record<string, string> = {
   internal_server_error: 'FAL encountered an internal issue. Please retry shortly.',
   generation_timeout: 'Generation timed out. Try simplifying the prompt or retrying.',
@@ -145,10 +178,16 @@ export const normalizeFalError = (
     response?.requestId ||
     err?.requestId;
   const url = primaryDetail?.url || parsedData?.url;
+  
+  // Resolve title using FAL_ERROR_TITLES map, preferring explicit toastTitle option if provided
+  const resolvedTitle = options?.toastTitle || (type && FAL_ERROR_TITLES[type]) || 'Generation Failed';
 
   const data: Record<string, unknown> = {
     provider: 'fal',
     context: options?.context,
+    // Add title and code at root for frontend InputBox compatibility
+    title: resolvedTitle,
+    code: type || 'UNKNOWN_ERROR',
     type,
     detail: detailArray,
     url,
@@ -158,7 +197,7 @@ export const normalizeFalError = (
     input: primaryDetail?.input ?? parsedData?.input,
     toast: {
       type: 'error',
-      title: options?.toastTitle || 'FAL request failed',
+      title: resolvedTitle,
       message,
       retryable,
       docUrl: url,

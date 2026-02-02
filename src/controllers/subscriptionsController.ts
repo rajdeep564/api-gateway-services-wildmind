@@ -170,3 +170,26 @@ export const verifyPayment = async (req: Request, res: Response) => {
     }
   }
 };
+  /**
+   * Check for expired subscriptions (Admin/Cron)
+   */
+  export const checkExpiry = async (req: Request, res: Response) => {
+    try {
+      const response = await axios.post(
+        `${CREDIT_SERVICE_URL}/subscriptions/check-expiry`
+      );
+  
+      res.json(response.data);
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        console.error("Check expiry error:", error.response?.data || error.message);
+        res
+          .status(error.response?.status || 500)
+          .json(error.response?.data || { error: "Failed to check expiry" });
+      } else {
+        console.error("Check expiry error:", error);
+        res.status(500).json({ error: "Failed to check expiry" });
+      }
+    }
+  };
+   

@@ -5,7 +5,7 @@ import path from 'path';
 import os from 'os';
 import { pipeline } from 'stream/promises';
 import { createWriteStream, createReadStream } from 'fs';
-import { uploadStreamToZata, getZataSignedGetUrl } from '../utils/storage/zataUpload';
+import { uploadBufferToZata, getZataSignedGetUrl } from '../utils/storage/zataUpload';
 import { adminDb } from '../config/firebaseAdmin';
 import { logger } from '../utils/logger';
 import { generationsMirrorRepository } from '../repository/generationsMirrorRepository';
@@ -209,7 +209,7 @@ export async function optimizeImage(
   try {
     console.log('[ImageOptimization] Starting streaming optimization (AVIF only):', { originalUrl, basePath, filename });
 
-    // Stream download to temp file
+// Stream download to temp file
     tempFilePath = await downloadImageToTemp(originalUrl);
     const originalSize = await getFileSize(tempFilePath);
 
@@ -234,21 +234,23 @@ export async function optimizeImage(
       });
     }
     
-    const avifStream = avifPipeline
+    // Buffer the AVIF output instead of streaming to avoid missing Content-Length headers for AWS SDK
+    const avifBuffer = await avifPipeline
       .avif({ 
         quality: avifQuality, 
         effort: 6,
         chromaSubsampling: '4:4:4'
-      });
+      })
+      .toBuffer();
 
     const avifPath = `${basePath}/${filename}_optimized.avif`;
-    // Upload stream directly to S3
-    const { publicUrl: avifUrl } = await uploadStreamToZata(avifPath, avifStream, 'image/avif');
+    // Upload buffer directly to S3
+    const { publicUrl: avifUrl } = await uploadBufferToZata(avifPath, avifBuffer, 'image/avif');
 
-    console.log('[ImageOptimization] AVIF streamed to storage:', { url: avifUrl });
+    console.log('[ImageOptimization] AVIF buffered upload to storage:', { url: avifUrl, size: avifBuffer.length });
 
     // --- Generate Thumbnail ---
-    const thumbStream = sharp(tempFilePath)
+    const thumbBuffer = await sharp(tempFilePath)
       .resize(thumbnailSize, thumbnailSize, {
         fit: 'cover',
         position: 'center',
@@ -256,12 +258,13 @@ export async function optimizeImage(
       .avif({ 
         quality: thumbnailQuality,
         effort: 5
-      });
+      })
+      .toBuffer();
 
     const thumbnailPath = `${basePath}/${filename}_thumb.avif`;
-    const { publicUrl: thumbnailUrl } = await uploadStreamToZata(thumbnailPath, thumbStream, 'image/avif');
+    const { publicUrl: thumbnailUrl } = await uploadBufferToZata(thumbnailPath, thumbBuffer, 'image/avif');
 
-    console.log('[ImageOptimization] Thumbnail streamed to storage:', { url: thumbnailUrl });
+    console.log('[ImageOptimization] Thumbnail buffered upload to storage:', { url: thumbnailUrl, size: thumbBuffer.length });
 
     // --- Generate Blur Placeholder ---
     const blurDataUrl = await generateBlurPlaceholder(tempFilePath);

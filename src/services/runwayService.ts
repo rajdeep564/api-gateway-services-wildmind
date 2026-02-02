@@ -1,4 +1,5 @@
 import { ApiError } from "../utils/errorHandler";
+import { mapRunwayError } from "../utils/errors/runwayErrors";
 import {
   RunwayTextToImageRequest,
   RunwayTextToImageResponse,
@@ -119,10 +120,15 @@ async function textToImage(
         }
         : {}),
     });
+
   } catch (error: any) {
     console.error('[RunwayService] SDK Error:', error);
-    console.error('[RunwayService] SDK Error Details:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
-    throw new ApiError(`Runway SDK Error: ${error.message}`, 400);
+    const mapped = mapRunwayError(error);
+    throw new ApiError(mapped.message, 502, { 
+      title: mapped.title, 
+      code: mapped.code,
+      technical: error?.message 
+    });
   }
   // Create authoritative history first
   const creator = await authRepository.getUserById(uid);
@@ -265,10 +271,19 @@ async function getStatus(uid: string, id: string): Promise<any> {
       }
     }
     return task;
+    return task;
   } catch (e: any) {
     if (e?.status === 404)
       throw new ApiError("Task not found or was deleted/canceled", 404);
-    throw new ApiError("Runway API request failed", 500, e);
+    
+    // Use mapped error for getStatus too
+    const mapped = mapRunwayError(e);
+    // Silent handling for getStatus might be preferred in some cases, but throwing helps UI show error state
+    throw new ApiError(mapped.message, 502, { 
+      title: mapped.title, 
+      code: mapped.code, 
+      technical: e?.message 
+    });
   }
 }
 
@@ -578,8 +593,8 @@ async function characterPerformance(
       throw new ApiError("Runway SDK returned the payload unchanged. This usually means the method doesn't exist or the SDK version doesn't support Act-Two. Please update @runwayml/sdk.", 500);
     }
 
-    if (!created || !created.id) {
-      console.error('[Runway Act-Two] Invalid response - missing task ID. Response:', created);
+
+    if (!created?.id) {
       throw new ApiError(`Invalid response from Runway SDK: missing task ID. Response: ${JSON.stringify(created)}`, 500);
     }
   } catch (error: any) {
@@ -593,20 +608,22 @@ async function characterPerformance(
     if (error instanceof ApiError) {
       throw error;
     }
-    // Check if it's a method not found error
+    
+    // Check if it's a method not found error (specific legacy case)
     if (error?.message?.includes('characterPerformance') ||
       error?.message?.includes('not a function') ||
       error?.code === 'ERR_METHOD_NOT_FOUND' ||
       error?.name === 'TypeError') {
-      throw new ApiError(`Runway SDK method 'characterPerformance' not found or not supported. Error: ${error?.message}. Please ensure @runwayml/sdk is updated to the latest version that supports Act-Two API (act_two model).`, 500);
+      throw new ApiError(`Runway SDK method 'characterPerformance' not found or not supported. Please update @runwayml/sdk.`, 500, { title: 'SDK Error', code: 'SDK_VERSION_MISMATH' });
     }
-    // Check for API errors
-    if (error?.status || error?.response) {
-      const status = error.status || error.response?.status;
-      const message = error.response?.data?.message || error.message || 'Unknown error';
-      throw new ApiError(`Runway Act-Two API error (${status}): ${message}`, status || 500, error);
-    }
-    throw new ApiError(`Runway Act-Two API error: ${error?.message || 'Unknown error'}`, 500, error);
+
+    // Use centralized mapper
+    const mapped = mapRunwayError(error);
+    throw new ApiError(mapped.message, 502, { 
+      title: mapped.title, 
+      code: mapped.code, 
+      technical: error?.message 
+    });
   }
 
   const prompt = body?.promptText || 'Act-Two generation';

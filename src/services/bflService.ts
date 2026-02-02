@@ -94,6 +94,8 @@ async function normalizeToBase64(src: string): Promise<{ base64: string; mime?: 
   }
 }
 
+import { mapBflError } from "../utils/errors/bflErrors";
+
 async function pollForResults(
   pollingUrl: string,
   apiKey: string
@@ -105,35 +107,34 @@ async function pollForResults(
     // OPTIMIZED: Exponential backoff - start at 2s, gradually increase to max 10s
     const backoffInterval = Math.min(baseIntervalMs * (1 + Math.floor(i / 20)), 10000);
     await new Promise((resolve) => setTimeout(resolve, backoffInterval));
-    const pollResponse = await axios.get(pollingUrl, {
-      headers: { accept: "application/json", "x-key": apiKey },
-      validateStatus: () => true,
-    });
+    
+    let pollResponse;
+    try {
+      pollResponse = await axios.get(pollingUrl, {
+        headers: { accept: "application/json", "x-key": apiKey },
+        validateStatus: () => true,
+      });
+    } catch (networkErr) {
+       const mapped = mapBflError(networkErr);
+       throw new ApiError(mapped.message, 500, { title: mapped.title, code: mapped.code, originalError: mapped.originalError });
+    }
+
     if (pollResponse.status < 200 || pollResponse.status >= 300) {
-      let errorPayload: any = undefined;
-      try {
-        errorPayload = pollResponse.data;
-      } catch (_) {
-        try {
-          const text = String(pollResponse.data);
-          errorPayload = { message: text };
-        } catch {}
-      }
-      const reason =
-        (errorPayload && (errorPayload.message || errorPayload.error)) ||
-        "Unknown error";
-      throw new ApiError(
-        `Polling failed: ${reason}`,
-        pollResponse.status,
-        errorPayload
-      );
+      const mapped = mapBflError({ response: pollResponse });
+      throw new ApiError(mapped.message, pollResponse.status, { title: mapped.title, code: mapped.code, originalError: mapped.originalError });
     }
     const result = pollResponse.data;
+    
     if (result.status === "Ready") {
       return result.result.sample as string;
     }
-    if (result.status === "Error" || result.status === "Failed") {
-      throw new ApiError("Generation failed", 500, result);
+    
+    // Handle explicitly moderated or failed statuses
+    if (result.status === "Request Moderated" || result.status === "Content Moderated" || result.status === "Error" || result.status === "Failed" || result.status === "Task not found") {
+       const mapped = mapBflError({ status: result.status, result }); // Pass result for extra context if needed
+       // Use 400 for moderation/bad request, 500 for generic errors
+       const code = (result.status.includes('Moderated') || result.status.includes('not found')) ? 400 : 500;
+       throw new ApiError(mapped.message, code, { title: mapped.title, code: mapped.code, originalError: result });
     }
   }
   throw new ApiError("Timeout waiting for image generation", 504);
@@ -266,7 +267,7 @@ async function generate(
           body.prompt_upsampling = (payload as any).prompt_upsampling;
       }
 
-      const response = await axios.post(endpoint, body, {
+    const response = await axios.post(endpoint, body, {
         headers: {
           accept: "application/json",
           "x-key": apiKey,
@@ -274,40 +275,23 @@ async function generate(
         },
         validateStatus: () => true,
       });
+
       if (response.status < 200 || response.status >= 300) {
-        let errorPayload: any = undefined;
-        try {
-          errorPayload = response.data;
-        } catch (_) {
-          try {
-            const text = String(response.data);
-            errorPayload = { message: text };
-          } catch {}
-        }
-        
         // Enhanced error logging for 403 Forbidden
         if (response.status === 403) {
-          console.error(`[BFL Service] 403 Forbidden Error Details:`, {
-            endpoint,
-            model: normalizedModel,
-            apiKeyPresent: !!apiKey,
-            apiKeyLength: apiKey?.length || 0,
-            apiKeyPrefix: apiKey ? `${apiKey.substring(0, 8)}...` : 'missing',
-            errorPayload,
-            responseHeaders: response.headers,
-          });
+           console.error(`[BFL Service] 403 Forbidden Error Details:`, {
+             endpoint,
+             model: normalizedModel,
+             apiKeyPresent: !!apiKey,
+             apiKeyLength: apiKey?.length || 0,
+             apiKeyPrefix: apiKey ? `${apiKey.substring(0, 8)}...` : 'missing',
+             errorPayload: response.data,
+             responseHeaders: response.headers,
+           });
         }
         
-        const reason =
-          (errorPayload && (errorPayload.message || errorPayload.error || errorPayload.detail)) ||
-          (response.status === 403 
-            ? "API key may be invalid, expired, or lacks access to this model. Please check your BFL_API_KEY environment variable."
-            : "Unknown error");
-        throw new ApiError(
-          `Failed to initiate image generation: ${reason}`,
-          response.status,
-          errorPayload
-        );
+        const mapped = mapBflError({ response });
+        throw new ApiError(mapped.message, response.status, { title: mapped.title, code: mapped.code, originalError: response.data });
       }
       const data = response.data;
       if (!data.polling_url) throw new ApiError("No polling URL received", 502);
@@ -406,7 +390,30 @@ async function generate(
     }
     return returnData as any;
   } catch (err: any) {
-    const message = err?.message || "Failed to generate images";
+    // Check if it's already an ApiError (handled by pollForResults or our axios block)
+    // If it's a raw error (e.g. timeout or unexpected), wrap it
+    if (!(err instanceof ApiError)) {
+        const mapped = mapBflError(err);
+        const newError = new ApiError(mapped.message, 500, { title: mapped.title, code: mapped.code, originalError: err });
+        // Use the new error message for DB updates
+        const message = newError.message;
+        // eslint-disable-next-line no-console
+        console.error("[BFL] Generation error:", message, err?.data || "");
+        await bflRepository.updateGenerationRecord(legacyId, {
+          status: "failed",
+          error: message,
+        });
+        // Update history and mirror with error state
+        await generationHistoryRepository.update(uid, historyId, {
+          status: "failed",
+          error: message,
+        } as any);
+        await updateMirror(uid, historyId, { status: "failed" as any, error: message });
+        throw newError;
+    }
+
+    // Existing ApiErrors just pass through but we still need to update DB
+    const message = err.message;
     // eslint-disable-next-line no-console
     console.error("[BFL] Generation error:", message, err?.data || "");
     await bflRepository.updateGenerationRecord(legacyId, {
@@ -461,8 +468,10 @@ async function fill(uid: string, body: any) {
     },
     validateStatus: () => true,
   });
-  if (response.status < 200 || response.status >= 300)
-    throw new ApiError("Failed to start fill", response.status, response.data);
+  if (response.status < 200 || response.status >= 300) {
+      const mapped = mapBflError({ response });
+      throw new ApiError(mapped.message, response.status, { title: mapped.title, code: mapped.code, originalError: mapped.originalError });
+  }
   const { polling_url, id } = response.data || {};
   if (!polling_url) throw new ApiError("No polling URL received", 502);
   const imageUrl = await pollForResults(polling_url, apiKey);
@@ -540,12 +549,10 @@ async function expand(uid: string, body: any) {
     },
     validateStatus: () => true,
   });
-  if (response.status < 200 || response.status >= 300)
-    throw new ApiError(
-      "Failed to start expand",
-      response.status,
-      response.data
-    );
+  if (response.status < 200 || response.status >= 300) {
+      const mapped = mapBflError({ response });
+      throw new ApiError(mapped.message, response.status, { title: mapped.title, code: mapped.code, originalError: mapped.originalError });
+  }
   const { polling_url, id } = response.data || {};
   if (!polling_url) throw new ApiError("No polling URL received", 502);
   const imageUrl = await pollForResults(polling_url, apiKey);
@@ -623,8 +630,10 @@ async function canny(uid: string, body: any) {
     },
     validateStatus: () => true,
   });
-  if (response.status < 200 || response.status >= 300)
-    throw new ApiError("Failed to start canny", response.status, response.data);
+  if (response.status < 200 || response.status >= 300) {
+      const mapped = mapBflError({ response });
+      throw new ApiError(mapped.message, response.status, { title: mapped.title, code: mapped.code, originalError: mapped.originalError });
+  }
   const { polling_url, id } = response.data || {};
   if (!polling_url) throw new ApiError("No polling URL received", 502);
   const imageUrl = await pollForResults(polling_url, apiKey);
@@ -702,8 +711,10 @@ async function depth(uid: string, body: any) {
     },
     validateStatus: () => true,
   });
-  if (response.status < 200 || response.status >= 300)
-    throw new ApiError("Failed to start depth", response.status, response.data);
+  if (response.status < 200 || response.status >= 300) {
+      const mapped = mapBflError({ response });
+      throw new ApiError(mapped.message, response.status, { title: mapped.title, code: mapped.code, originalError: mapped.originalError });
+  }
   const { polling_url, id } = response.data || {};
   if (!polling_url) throw new ApiError("No polling URL received", 502);
   const imageUrl = await pollForResults(polling_url, apiKey);
@@ -883,8 +894,10 @@ async function expandWithFill(uid: string, body: any) {
     validateStatus: () => true,
   });
   
-  if (response.status < 200 || response.status >= 300)
-    throw new ApiError("Failed to start fill expansion", response.status, response.data);
+  if (response.status < 200 || response.status >= 300) {
+      const mapped = mapBflError({ response });
+      throw new ApiError(mapped.message, response.status, { title: mapped.title, code: mapped.code, originalError: mapped.originalError });
+  }
   
   const { polling_url, id } = response.data || {};
   if (!polling_url) throw new ApiError("No polling URL received", 502);
