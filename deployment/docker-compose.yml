@@ -72,7 +72,8 @@ services:
     expose:
       - "5000"
     depends_on:
-      - redis
+      redis:
+        condition: service_started
       credit-service:
         condition: service_healthy
     networks:
