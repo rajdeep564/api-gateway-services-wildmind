@@ -27,6 +27,9 @@ import { contentModerationMiddleware } from '../middlewares/contentModeration';
 const router = Router();
 
 router.use('/auth', authRoutes);
+import templateRoutes from './templateRoutes';
+
+router.use('/templates', templateRoutes);
 // Apply prompt-level moderation to generation-capable services
 router.use(
   [

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Template Renderer</title>
+    <!-- fabric.js will be injected by Puppeteer -->
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: transparent;
+        }
+
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="canvas-container">
+        <canvas id="c"></canvas>
+    </div>
+    <script>
+        // Helper to normalize Editor Elements to Fabric Objects
+        function normalizeElement(el) {
+            // Default options
+            const options = {
+                left: el.transform?.x || 0,
+                top: el.transform?.y || 0,
+                scaleX: el.transform?.scaleX || 1,
+                scaleY: el.transform?.scaleY || 1,
+                angle: el.transform?.rotation || 0,
+                skewX: el.transform?.skewX || 0,
+                skewY: el.transform?.skewY || 0,
+                originX: el.transform?.originX || 'center',
+                originY: el.transform?.originY || 'center',
+
+                width: el.transform?.width || 100,
+                height: el.transform?.height || 100,
+
+                fill: el.style?.fill === null ? 'transparent' : (el.style?.fill || '#000000'),
+                stroke: el.style?.stroke || undefined,
+                strokeWidth: el.style?.strokeWidth || 0,
+                opacity: el.style?.opacity ?? 1,
+
+                // Common ID/Name
+                id: el.id,
+                name: el.name
+            };
+
+            // Type Conversion
+            let type = el.type;
+
+            if (type === 'shape') {
+                const shapeType = el.shapeType || 'rectangle';
+                if (shapeType === 'rectangle') type = 'rect';
+                else if (shapeType === 'circle') {
+                    type = 'circle';
+                    // Fabric circle uses radius
+                    options.radius = options.width / 2;
+                }
+                else if (shapeType === 'triangle') type = 'triangle';
+                else type = 'rect'; // fallback
+            } else if (type === 'text' || type === 'i-text') {
+                type = 'textbox'; // Use textbox for better wrapping/sizing
+                options.text = el.content || 'Text';
+                options.fontFamily = el.textStyle?.fontFamily || 'Arial';
+                options.fontSize = el.textStyle?.fontSize || 24;
+                options.fontWeight = el.textStyle?.fontWeight || 'normal';
+                options.fontStyle = el.textStyle?.fontStyle || 'normal';
+                options.textAlign = el.textStyle?.textAlign || 'left';
+                options.lineHeight = el.textStyle?.lineHeight || 1.2;
+                options.fill = el.style?.fill || '#000000'; // Ensure text has fill
+            } else if (type === 'image') {
+                type = 'image';
+                options.src = el.src;
+                options.crossOrigin = 'anonymous';
+            }
+
+            return { type, ...options };
+        }
+
+        window.renderTemplate = function (templateData, width, height, background) {
+            console.log('Rendering template start', { width, height });
+
+            // Check if fabric is loaded (injected by Puppeteer)
+            if (typeof fabric === 'undefined') {
+                return Promise.reject(new Error('Fabric.js is not loaded'));
+            }
+            // Disable retina scaling for consistent screenshot size
+            fabric.devicePixelRatio = 1;
+
+            return new Promise((resolve, reject) => {
+                try {
+                    console.log('Fabric version:', fabric.version);
+
+                    const canvas = new fabric.Canvas('c', {
+                        width: width,
+                        height: height,
+                        backgroundColor: (background && background.type === 'solid') ? background.color : '#ffffff',
+                        preserveObjectStacking: true
+                    });
+
+                    // Prepare Fabric JSON
+                    let rawObjects = [];
+                    if (templateData.elements) rawObjects = templateData.elements;
+                    else if (templateData.objects) rawObjects = templateData.objects;
+                    else if (Array.isArray(templateData)) rawObjects = templateData;
+
+                    // Normalize Objects
+                    console.log(`Normalizing ${rawObjects.length} objects...`);
+                    const fabricObjects = rawObjects.map(normalizeElement);
+
+                    const fabricJson = {
+                        objects: fabricObjects,
+                        background: (background && background.type === 'solid') ? background.color : undefined
+                    };
+
+                    console.log('First object normalized:', JSON.stringify(fabricObjects[0]));
+
+                    // Handle Background Image manually if needed
+                    if (background && background.type === 'image' && background.url) {
+                        fabric.Image.fromURL(background.url, function (img) {
+                            if (!img) { console.warn('Failed to load bg image'); return; }
+                            canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas), {
+                                scaleX: canvas.width / img.width,
+                                scaleY: canvas.height / img.height
+                            });
+                        }, { crossOrigin: 'anonymous' });
+                    }
+
+                    canvas.loadFromJSON(fabricJson, function () {
+                        console.log('JSON loaded, rendering...');
+                        canvas.renderAll();
+                        setTimeout(() => {
+                            console.log('Resolving render promise');
+                            resolve(true);
+                        }, 1000);
+                    });
+
+                } catch (e) {
+                    console.error('Render error:', e);
+                    reject(e);
+                }
+            });
+        };
+    </script>
+</body>
+
+</html>
