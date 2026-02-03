@@ -65,9 +65,11 @@ const corsOptions: any = {
 
     // Explicitly allow known production domains (Hardcoded safeguard)
     const hardcodedAllowed = [
-      'https://studio.wildmindai.com',
+      'https://style.wildmindai.com',
       'https://www.wildmindai.com',
-      'https://wildmindai.com'
+      'https://wildmindai.com',
+      'https://onstaging.wildmindai.com',
+      'https://onstaging-studios.wildmindai.com'
     ];
     if (hardcodedAllowed.includes(origin)) return callback(null, true);
 
