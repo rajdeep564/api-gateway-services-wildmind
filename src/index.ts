@@ -27,6 +27,8 @@ const PORT = env.port || 5000;
 const server: HttpServer = app.listen(PORT, () => {
   logger.info({ port: PORT }, 'API Gateway running');
 });
+// Increase timeout to 5 minutes (300s) to match Nginx
+server.setTimeout(300000);
 
 // Start WebSocket server on the same HTTP server at /realtime
 try {
