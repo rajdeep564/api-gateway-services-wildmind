@@ -228,6 +228,99 @@ app.use('/api', apiLimiter);
 
 console.log('[Security] ✅ All security middlewares applied');
 
+// Debug CORS endpoint (Added to help diagnose origin issues)
+app.get('/debug-cors', (req, res) => {
+  const origin = req.headers.origin;
+  const host = req.headers.host;
+  const forwardedProto = req.headers['x-forwarded-proto'];
+  
+  // Re-calculate effective allowed origins to show what the server is using
+  const effectiveAllowedOrigins = [
+    // Production hosts (always include these for live site)
+    env.productionWwwDomain,
+    env.productionDomain,
+    env.productionStudioDomain, // Canvas subdomain
+    // Development origins (only in dev)
+    ...(!isProdEnv ? [
+      env.devFrontendUrl,
+      env.devCanvasUrl,
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:3001',
+      wildmindImageOrigin,
+    ] : []),
+    ...env.frontendOrigins,
+    ...env.allowedOrigins
+  ].filter(Boolean);
+
+   // Explicitly allow known production domains (Hardcoded safeguard)
+   const hardcodedAllowed = [
+    'https://style.wildmindai.com',
+    'https://www.wildmindai.com',
+    'https://wildmindai.com',
+    'https://onstaging.wildmindai.com',
+    'https://onstaging-studios.wildmindai.com'
+  ];
+
+  res.json({
+    message: 'CORS Debug Info',
+    request: {
+      origin,
+      host,
+      forwardedProto,
+      headers: req.headers
+    },
+    serverConfig: {
+      nodeEnv: env.nodeEnv,
+      isProdEnv,
+      frontendOriginsEnv: env.frontendOrigins,
+      allowedOriginsEnv: env.allowedOrigins,
+      effectiveAllowedOrigins,
+      hardcodedAllowed
+    },
+    analysis: {
+      isOriginInEffectiveList: origin ? effectiveAllowedOrigins.includes(origin) : false,
+      isOriginInHardcodedList: origin ? hardcodedAllowed.includes(origin) : false,
+      // Replicate the logic from the CORS function
+      wouldPassSubdomainCheck: (() => {
+        if (!origin) return true;
+        try {
+          // Check allowedOrigins include
+          if (effectiveAllowedOrigins.includes(origin)) return true;
+    
+          // Check hardcoded include
+          if (hardcodedAllowed.includes(origin)) return true;
+    
+          // Check subdomains
+          const originUrl = new URL(origin);
+          const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
+          const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
+          
+          // Production subdomain check
+          if (prodDomain && (originUrl.hostname === prodWwwDomain ||
+            originUrl.hostname === prodDomain ||
+            originUrl.hostname.endsWith(`.${prodDomain}`))) {
+            return true;
+          }
+          
+          // Frontend origins subdomain check
+          for (const frontendOrigin of env.frontendOrigins) {
+            try {
+              const allowHost = new URL(frontendOrigin).hostname;
+              const reqHost = originUrl.hostname;
+              if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) {
+                return true;
+              }
+            } catch {}
+          }
+        } catch (e) { return false; }
+        return false;
+      })()
+    }
+  });
+});
+
 
 
 // Health endpoint
