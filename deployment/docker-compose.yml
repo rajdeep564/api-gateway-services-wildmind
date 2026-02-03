@@ -73,7 +73,8 @@ services:
       - "5000"
     depends_on:
       - redis
-      - credit-service
+      credit-service:
+        condition: service_healthy
     networks:
       - wildmind-network
     restart: unless-stopped
@@ -115,6 +116,11 @@ services:
       - "3000"
     depends_on:
       - credit-redis
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/health', (res) => { if (res.statusCode !== 200) { console.error('Status: ' + res.statusCode); process.exit(1); } else { process.exit(0); } }).on('error', (err) => { console.error(err); process.exit(1); })\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - wildmind-network
     restart: unless-stopped
