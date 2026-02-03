@@ -65,7 +65,6 @@ const corsOptions: any = {
 
     // Explicitly allow known production domains (Hardcoded safeguard)
     const hardcodedAllowed = [
-      'https://style.wildmindai.com',
       'https://www.wildmindai.com',
       'https://wildmindai.com',
       'https://onstaging.wildmindai.com',
@@ -101,8 +100,8 @@ const corsOptions: any = {
       console.warn('[CORS] Error checking origin:', origin, e);
     }
     // Log blocked origin for debugging
-    console.warn('[CORS] Blocked origin:', origin, 'Allowed:', allowedOrigins);
-    return callback(new Error('CORS blocked: origin not allowed'));
+    console.warn('[CORS] Blocked origin:', origin, 'Allowed:', allowedOrigins, 'Hardcoded:', hardcodedAllowed);
+    return callback(new Error(`CORS blocked: origin ${origin} not allowed`));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
