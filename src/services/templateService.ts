@@ -147,6 +147,14 @@ export class TemplateService {
     async createTheme(theme: TemplateTheme): Promise<void> {
         await adminDb.collection(COLLECTION_THEMES).doc(theme.id).set(theme);
     }
+
+    async deleteCategory(id: string): Promise<void> {
+        await adminDb.collection(COLLECTION_CATEGORIES).doc(id).delete();
+    }
+
+    async deleteTheme(id: string): Promise<void> {
+        await adminDb.collection(COLLECTION_THEMES).doc(id).delete();
+    }
 }
 
 export const templateService = new TemplateService();

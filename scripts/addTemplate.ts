@@ -7,7 +7,7 @@ import { templateService } from '../src/services/templateService';
 import { adminDb } from '../src/config/firebaseAdmin';
 
 async function addTemplate() {
-    console.log('Adding new template...');
+    console.log('Adding new template.....');
 
     const categoryId = 'ecommerce';
     const themeId = 'sale';
