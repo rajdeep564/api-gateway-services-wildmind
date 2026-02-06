@@ -25,6 +25,7 @@ import { validatePixverseT2V } from '../middlewares/validators/replicate/validat
 import { validatePixverseI2V } from '../middlewares/validators/replicate/validatePixverseI2V';
 import { validateWanAnimateReplace } from '../middlewares/validators/replicate/validateWanAnimateReplace';
 import { validateWanAnimateAnimation } from '../middlewares/validators/replicate/validateWanAnimateAnimation';
+import { validateStorage } from '../middlewares/validators/validateStorageMiddleware';
 
 console.log('[ReplicateRoutes] Reloading routes...'); // Force refresh log
 
@@ -36,6 +37,7 @@ router.post(
   requireAuth,
   validateRemoveBg,
   makeCreditCost('replicate', 'bg-remove', computeReplicateBgRemoveCost),
+  validateStorage('image'),
   replicateController.removeBackground as any
 );
 
@@ -45,6 +47,7 @@ router.post(
   requireAuth,
   validateUpscale,
   makeCreditCost('replicate', 'upscale', computeReplicateUpscaleCost),
+  validateStorage('image'),
   replicateController.upscale as any
 );
 
@@ -63,6 +66,7 @@ router.post(
   requireAuth,
   validateWan25T2V,
   makeCreditCost('replicate', 'wan-t2v', computeWanVideoCost),
+  validateStorage('video'),
   replicateController.wanT2vSubmit as any
 );
 
@@ -72,6 +76,7 @@ router.post(
   requireAuth,
   validateWan25T2V,
   makeCreditCost('replicate', 'wan-t2v', computeWanVideoCost),
+  validateStorage('video'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       // Force fast mode; prefer explicit -fast slug if not provided
@@ -93,6 +98,7 @@ router.post(
   requireAuth,
   validateReplicateGenerate,
   makeCreditCost('replicate', 'generate', computeReplicateImageGenCost),
+  validateStorage('image'),
   replicateController.generateImage as any
 );
 
@@ -101,6 +107,7 @@ router.post(
   requireAuth,
   validateWan25I2V,
   makeCreditCost('replicate', 'wan-i2v', computeWanVideoCost),
+  validateStorage('video'),
   replicateController.wanI2vSubmit as any
 );
 
@@ -110,6 +117,7 @@ router.post(
   requireAuth,
   validateWan25I2V,
   makeCreditCost('replicate', 'wan-i2v', computeWanVideoCost),
+  validateStorage('video'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       // Force fast mode; prefer explicit -fast slug if not provided
@@ -131,6 +139,7 @@ router.post(
   requireAuth,
   validateKlingT2V,
   makeCreditCost('replicate', 'kling-t2v', computeKlingVideoCost),
+  validateStorage('video'),
   (replicateController as any).klingT2vSubmit
 );
 
@@ -139,6 +148,7 @@ router.post(
   requireAuth,
   validateKlingI2V,
   makeCreditCost('replicate', 'kling-i2v', computeKlingVideoCost),
+  validateStorage('video'),
   (replicateController as any).klingI2vSubmit
 );
 
@@ -147,6 +157,7 @@ router.post(
   requireAuth,
   validateKlingLipsync,
   makeCreditCost('replicate', 'kling-lipsync', computeKlingLipsyncCost),
+  validateStorage('video'),
   (replicateController as any).klingLipsyncSubmit
 );
 
@@ -175,6 +186,7 @@ router.post(
   requireAuth,
   validateSeedanceT2V,
   makeCreditCost('replicate', 'seedance-t2v', computeSeedanceVideoCost),
+  validateStorage('video'),
   (replicateController as any).seedanceT2vSubmit
 );
 
@@ -183,6 +195,7 @@ router.post(
   requireAuth,
   validateSeedanceI2V,
   makeCreditCost('replicate', 'seedance-i2v', computeSeedanceVideoCost),
+  validateStorage('video'),
   (replicateController as any).seedanceI2vSubmit
 );
 
@@ -192,6 +205,7 @@ router.post(
   requireAuth,
   validateSeedanceProFastT2V,
   makeCreditCost('replicate', 'seedance-pro-fast-t2v', computeSeedanceVideoCost),
+  validateStorage('video'),
   (replicateController as any).seedanceProFastT2vSubmit
 );
 
@@ -200,6 +214,7 @@ router.post(
   requireAuth,
   validateSeedanceProFastI2V,
   makeCreditCost('replicate', 'seedance-pro-fast-i2v', computeSeedanceVideoCost),
+  validateStorage('video'),
   (replicateController as any).seedanceProFastI2vSubmit
 );
 
@@ -209,6 +224,7 @@ router.post(
   requireAuth,
   validatePixverseT2V,
   makeCreditCost('replicate', 'pixverse-t2v', computePixverseVideoCost),
+  validateStorage('video'),
   (replicateController as any).pixverseT2vSubmit
 );
 
@@ -217,6 +233,7 @@ router.post(
   requireAuth,
   validatePixverseI2V,
   makeCreditCost('replicate', 'pixverse-i2v', computePixverseVideoCost),
+  validateStorage('video'),
   (replicateController as any).pixverseI2vSubmit
 );
 
@@ -226,6 +243,7 @@ router.post(
   requireAuth,
   validateReplicateGenerate,
   makeCreditCost('replicate', 'qwen-image-edit', computeQwenImageEditCost),
+  validateStorage('image'),
   (replicateController as any).qwenImageEditSubmit
 );
 

@@ -2,6 +2,7 @@ import { generationHistoryRepository } from "../repository/generationHistoryRepo
 import { generationsMirrorRepository } from "../repository/generationsMirrorRepository";
 import { mirrorQueueRepository } from "../repository/mirrorQueueRepository";
 import { generationStatsRepository } from "../repository/generationStatsRepository";
+import { creditsRepository } from "../repository/creditsRepository";
 import { imageOptimizationService } from "./imageOptimizationService";
 // CACHING REMOVED: Redis generationCache disabled due to stale list items not reflecting newly started generations promptly.
 // If reintroducing, ensure immediate inclusion of generating items and robust invalidation on create/complete/fail/update.
@@ -230,6 +231,7 @@ export async function markGenerationCompleted(
         console.warn('[markGenerationCompleted] Failed to refresh cache for item:', e);
       }
       
+      
       // Invalidate library cache when generation is completed (new items may appear in library)
       try {
         await invalidateLibraryCache(uid);
@@ -237,6 +239,63 @@ export async function markGenerationCompleted(
         console.warn('[markGenerationCompleted] Failed to invalidate library cache:', e);
       }
     } catch {}
+  }
+
+  // Calculate total storage usage change
+  // We sum:
+  // 1. Optimized images: original size + avif size + thumbnail size
+  // 2. Videos: try to get size from URL if not present
+  try {
+    let totalStorageDelta = 0;
+    
+    // Sum images
+    if (Array.isArray(optimizedImages)) {
+      for (const img of optimizedImages as any[]) {
+        if (img.optimized) {
+           // If optimized, we have precise sizes
+           totalStorageDelta += (img.size || 0); // Original
+           totalStorageDelta += (img.avifSize || 0);
+           totalStorageDelta += (img.thumbnailSize || 0);
+        } else {
+           // If not optimized/skippable, just count original if known
+           totalStorageDelta += (img.size || 0);
+        }
+      }
+    }
+
+    // Sum videos
+    const videos = next.videos; // The hydrated videos list
+    if (Array.isArray(videos) && videos.length > 0) {
+      for (const video of videos as any[]) {
+        // If size is already known, use it
+        if (typeof video.size === 'number' && video.size > 0) {
+          totalStorageDelta += video.size;
+        } else if (video.url) {
+          // Try to fetch size via HEAD
+          try {
+            const size = await getFileSizeFromUrl(video.url);
+            if (size > 0) {
+              totalStorageDelta += size;
+              // Optionally update the video object with size? 
+              // We'd need to re-persist, but maybe later. For now just track usage.
+            }
+          } catch (e) {
+            console.warn('[markGenerationCompleted] Failed to get video size:', video.url, e);
+          }
+        }
+      }
+    }
+
+    if (totalStorageDelta > 0) {
+      console.log('[markGenerationCompleted] Updating storage usage', { uid, delta: totalStorageDelta });
+      // Fire and forget - don't block completion on this
+      creditsRepository.updateStorageUsage(uid, totalStorageDelta).catch(e => {
+        console.error('[markGenerationCompleted] Failed to update storage usage:', e);
+      });
+    }
+
+  } catch (e) {
+    console.warn('[markGenerationCompleted] Error calculating storage usage:', e);
   }
 
   // Enqueue mirror upsert with optimized fields
@@ -261,6 +320,25 @@ export async function markGenerationCompleted(
     }
   } catch (e) {
     console.warn('[markGenerationCompleted] Failed to enqueue mirror upsert:', e);
+  }
+}
+
+async function getFileSizeFromUrl(url: string): Promise<number> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+    const res = await fetch(url, { 
+      method: 'HEAD',
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    if (res.ok) {
+      const len = res.headers.get('content-length');
+      if (len) return parseInt(len, 10);
+    }
+    return 0;
+  } catch {
+    return 0;
   }
 }
 

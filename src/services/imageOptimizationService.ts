@@ -19,6 +19,8 @@ export interface OptimizedImageResult {
   width: number;
   height: number;
   size: number;
+  avifSize?: number;
+  thumbnailSize?: number;
 }
 
 /**
@@ -279,6 +281,8 @@ export async function optimizeImage(
       width,
       height,
       size: originalSize,
+      avifSize: avifBuffer.length,
+      thumbnailSize: thumbBuffer.length,
     };
   } catch (error) {
     console.error('[ImageOptimization] Optimization failed:', error);

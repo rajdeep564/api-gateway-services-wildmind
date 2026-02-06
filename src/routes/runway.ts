@@ -4,13 +4,14 @@ import { validateRunwayTextToImage, validateRunwayStatus, validateRunwayImageToV
 import { requireAuth } from '../middlewares/authMiddleware';
 import { makeCreditCost } from '../middlewares/creditCostFactory';
 import { computeRunwayImageCost, computeRunwayVideoCost } from '../utils/pricing/runwayPricing';
+import { validateStorage } from '../middlewares/validators/validateStorageMiddleware';
 
 const router = Router();
 
-router.post('/generate', requireAuth, validateRunwayTextToImage, makeCreditCost('runway','generate', computeRunwayImageCost), runwayController.textToImage);
+router.post('/generate', requireAuth, validateRunwayTextToImage, makeCreditCost('runway','generate', computeRunwayImageCost), validateStorage('image'), runwayController.textToImage);
 router.get('/status/:id', requireAuth, validateRunwayStatus, runwayController.getStatus);
-router.post('/video', requireAuth, makeCreditCost('runway','video', computeRunwayVideoCost), runwayController.videoGenerate);
-router.post('/character-performance', requireAuth, validateRunwayCharacterPerformance, makeCreditCost('runway','video', computeRunwayVideoCost), runwayController.characterPerformance);
+router.post('/video', requireAuth, makeCreditCost('runway','video', computeRunwayVideoCost), validateStorage('video'), runwayController.videoGenerate);
+router.post('/character-performance', requireAuth, validateRunwayCharacterPerformance, makeCreditCost('runway','video', computeRunwayVideoCost), validateStorage('video'), runwayController.characterPerformance);
 // optional granular endpoints if needed later:
 // router.post('/image_to_video', validateRunwayImageToVideo, runwayController.imageToVideo)
 // router.post('/text_to_video', validateRunwayTextToVideo, runwayController.textToVideo)

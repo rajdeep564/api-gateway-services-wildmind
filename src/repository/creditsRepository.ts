@@ -318,5 +318,18 @@ export const creditsRepository = {
   initUser,
   validateGeneration,
   listInvoices,
-  listPayments
+  listPayments,
+  updateStorageUsage
 };
+
+export async function updateStorageUsage(uid: string, deltaBytes: number): Promise<void> {
+  try {
+    await axios.post(`${CREDIT_SERVICE_URL}/users/storage/usage`, {
+      userId: uid,
+      deltaBytes
+    });
+  } catch (e: any) {
+    // Non-blocking log, don't throw
+    logger.warn({ uid, deltaBytes, err: e.message }, '[CREDITS_REPO] Failed to update storage usage');
+  }
+}

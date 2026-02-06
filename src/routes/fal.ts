@@ -77,6 +77,7 @@ import {
   validateFalNanoBananaPro,
   validateFalQwenMultipleAngles,
 } from "../middlewares/validators/fal/validateFalGenerate";
+import { validateStorage } from "../middlewares/validators/validateStorageMiddleware";
 
 const router = Router();
 
@@ -85,6 +86,7 @@ router.post(
   requireAuth,
   validateFalGenerate,
   makeCreditCost("fal", "generate", computeFalImageCost),
+  validateStorage("image"),
   falController.generate
 );
 
@@ -94,6 +96,7 @@ router.post(
   requireAuth,
   validateFalElevenDialogue as any,
   makeCreditCost("fal", "generate", computeFalElevenDialogueCost) as any,
+  validateStorage("audio") as any,
   falController.generate as any
 );
 
@@ -103,6 +106,7 @@ router.post(
   requireAuth,
   validateFalElevenTts as any,
   makeCreditCost("fal", "generate", computeFalElevenTtsCost) as any,
+  validateStorage("audio") as any,
   falController.generate as any
 );
 
@@ -112,6 +116,7 @@ router.post(
   requireAuth,
   validateFalElevenSfx as any,
   makeCreditCost("fal", "generate", computeFalElevenSfxCost) as any,
+  validateStorage("audio") as any,
   falController.generate as any
 );
 
@@ -121,6 +126,7 @@ router.post(
   requireAuth,
   validateFalMayaTts as any,
   makeCreditCost("fal", "generate", computeFalMayaTtsCost) as any,
+  validateStorage("audio") as any,
   falController.generate as any
 );
 
@@ -130,6 +136,7 @@ router.post(
   requireAuth,
   validateFalChatterboxMultilingual as any,
   makeCreditCost("fal", "generate", computeFalChatterboxMultilingualCost) as any,
+  validateStorage("audio") as any,
   falController.generate as any
 );
 
@@ -139,6 +146,7 @@ router.post(
   requireAuth,
   validateFalChatterboxSts as any,
   makeCreditCost("fal", "generate", computeFalImageCost) as any,
+  validateStorage("audio") as any,
   falController.generate as any
 );
 
@@ -169,6 +177,7 @@ router.post(
   requireAuth as any,
   validateFalImage2Svg as any,
   makeCreditCost("fal", "image2svg", computeFalImage2SvgCost) as any,
+  validateStorage("image") as any,
   (falController as any).image2svg
 );
 router.post(
@@ -176,6 +185,7 @@ router.post(
   requireAuth as any,
   validateFalOutpaint as any,
   makeCreditCost("fal", "outpaint", (req) => computeFalOutpaintCost(req)) as any,
+  validateStorage("image") as any,
   (falController as any).outpaintImage
 );
 // Bria Expand (image outpaint with resizing)
@@ -253,6 +263,7 @@ router.post(
   makeCreditCost("fal", "veo_t2v_submit", (req) =>
     computeFalVeoTtvSubmitCost(req, false)
   ) as any,
+  validateStorage("video") as any,
   falController.veoTtvSubmit as any
 );
 router.post(
@@ -262,6 +273,7 @@ router.post(
   makeCreditCost("fal", "veo_t2v_fast_submit", (req) =>
     computeFalVeoTtvSubmitCost(req, true)
   ) as any,
+  validateStorage("video") as any,
   falController.veoTtvFastSubmit as any
 );
 router.post(
