@@ -29,7 +29,8 @@ const upload = multer({
 
 // POST /api/uploads/upload-file
 // Uploads a local file (multipart/form-data) and stores it in storage.
-router.post('/upload-file', requireAuth, upload.single('file'), mediaLibraryController.uploadMediaFile);
+import { validateFileContent } from '../middlewares/fileValidation';
+router.post('/upload-file', requireAuth, upload.single('file'), validateFileContent, mediaLibraryController.uploadMediaFile);
 
 /**
  * GET /api/uploads

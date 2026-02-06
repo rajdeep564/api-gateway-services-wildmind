@@ -7,10 +7,9 @@ import { postSuccessDebit, issueRefund } from '../utils/creditDebit';
 async function removeBackground(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
-    const data = await replicateService.removeBackground(uid, req.body || {});
-    (res as any).locals = { ...(res as any).locals, success: true };
     const ctx = (req as any).context || {};
-    try { await postSuccessDebit(uid, data, ctx, 'replicate', 'bg-remove'); } catch { }
+    const data = await replicateService.removeBackground(uid, req.body || {}, ctx);
+    (res as any).locals = { ...(res as any).locals, success: true };
     res.json({ responseStatus: 'success', message: 'OK', data });
   } catch (e) {
     next(e);
@@ -21,10 +20,9 @@ async function removeBackground(req: Request, res: Response, next: NextFunction)
 async function upscale(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
-    const data = await replicateService.upscale(uid, req.body || {});
-    (res as any).locals = { ...(res as any).locals, success: true };
     const ctx = (req as any).context || {};
-    try { await postSuccessDebit(uid, data, ctx, 'replicate', 'upscale'); } catch { }
+    const data = await replicateService.upscale(uid, req.body || {}, ctx);
+    (res as any).locals = { ...(res as any).locals, success: true };
     res.json({ responseStatus: 'success', message: 'OK', data });
   } catch (e) {
     next(e);
@@ -36,10 +34,9 @@ async function upscale(req: Request, res: Response, next: NextFunction) {
 export async function multiangle(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
-    const data = await replicateService.multiangle(uid, req.body || {});
-    (res as any).locals = { ...(res as any).locals, success: true };
     const ctx = (req as any).context || {};
-    try { await postSuccessDebit(uid, data, ctx, 'replicate', 'multiangle'); } catch { }
+    const data = await replicateService.multiangle(uid, req.body || {}, ctx);
+    (res as any).locals = { ...(res as any).locals, success: true };
     res.json({ responseStatus: 'success', message: 'OK', data });
   } catch (e: any) {
     console.error('[ReplicateController] Multiangle error:', e);
@@ -56,16 +53,16 @@ export async function multiangle(req: Request, res: Response, next: NextFunction
 async function generateImage(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = (req as any).uid as string;
-    const data = await replicateService.generateImage(uid, req.body || {});
-    (res as any).locals = { ...(res as any).locals, success: true };
     const ctx = (req as any).context || {};
-    // Perform debit and include credit info in response, similar to FAL image generation
-    const debitOutcome = await postSuccessDebit(uid, data, ctx, 'replicate', 'generate');
+    const data = await replicateService.generateImage(uid, req.body || {}, ctx);
+    (res as any).locals = { ...(res as any).locals, success: true };
+    
+    // Debit handled atomically in service
     res.json(
       formatApiResponse('success', 'OK', {
         ...data,
         debitedCredits: ctx.creditCost,
-        debitStatus: debitOutcome,
+        debitStatus: 'processed',
       })
     );
   } catch (e) {

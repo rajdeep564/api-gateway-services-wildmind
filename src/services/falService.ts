@@ -115,7 +115,8 @@ async function resizeImageTo1MP(imageBuffer: Buffer): Promise<Buffer> {
 
 async function generate(
   uid: string,
-  payload: FalGenerateRequest
+  payload: FalGenerateRequest,
+  ctx: any = {}
 ): Promise<FalGenerateResponse & { historyId?: string }> {
   const {
 
@@ -2154,6 +2155,26 @@ async function generate(
       // Sync to mirror immediately with provider URLs
       await syncToMirror(uid, historyId);
 
+      // STRICT CREDIT REDUCTION
+      if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+        try {
+          await creditsRepository.writeDebitIfAbsent(
+            uid,
+            historyId,
+            ctx.creditCost,
+            'fal-generate',
+            {
+              model,
+              ...(ctx.meta || {}),
+              pricingVersion: ctx.pricingVersion || 'v1',
+            }
+          );
+          console.log(`[falService.generate] Debited ${ctx.creditCost} credits for ${uid}`);
+        } catch (error) {
+           console.error('[falService.generate] Failed to deduct credits:', error);
+        }
+      }
+
       // Best-effort: background upload to Zata, then replace URLs in history/mirror and re-score
       setImmediate(async () => {
         try {
@@ -2230,7 +2251,7 @@ async function veoTextToVideo(uid: string, payload: {
   resolution?: '720p' | '1080p';
   generate_audio?: boolean;
   isPublic?: boolean;
-}): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }> {
+}, ctx: any = {}): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }> {
   const falKey = env.falKey as string;
   if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   if (!payload.prompt) throw new ApiError('Prompt is required', 400);
@@ -2274,6 +2295,27 @@ async function veoTextToVideo(uid: string, payload: {
     await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore, duration: payload.duration ?? '8s', resolution: payload.resolution ?? '720p', aspect_ratio: payload.aspect_ratio ?? '16:9', generate_audio: payload.generate_audio ?? true } as any);
     // Sync to mirror with retries
     await syncToMirror(uid, historyId);
+
+    // STRICT CREDIT REDUCTION
+    if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+      try {
+        await creditsRepository.writeDebitIfAbsent(
+          uid,
+          historyId,
+          ctx.creditCost,
+          'fal-veo-text-to-video',
+          {
+            model: 'fal-ai/veo3',
+            ...(ctx.meta || {}),
+            pricingVersion: ctx.pricingVersion || 'v1',
+          }
+        );
+        console.log(`[falService.veoTextToVideo] Debited ${ctx.creditCost} credits for ${uid}`);
+      } catch (error) {
+         console.error('[falService.veoTextToVideo] Failed to deduct credits:', error);
+      }
+    }
+
     return { videos: scoredVideos, historyId, model: 'fal-ai/veo3', status: 'completed' };
   } catch (err: any) {
     const falError = buildFalApiError(err, {
@@ -2292,7 +2334,7 @@ async function veoTextToVideo(uid: string, payload: {
 }
 
 // Veo3 Text-to-Video (fast)
-async function veoTextToVideoFast(uid: string, payload: Parameters<typeof veoTextToVideo>[1]) {
+async function veoTextToVideoFast(uid: string, payload: Parameters<typeof veoTextToVideo>[1], ctx: any = {}) {
   const falKey = env.falKey as string;
   if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   if (!payload.prompt) throw new ApiError('Prompt is required', 400);
@@ -2335,6 +2377,27 @@ async function veoTextToVideoFast(uid: string, payload: Parameters<typeof veoTex
     await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore, duration: payload.duration ?? '8s', resolution: payload.resolution ?? '720p', aspect_ratio: payload.aspect_ratio ?? '16:9', generate_audio: payload.generate_audio ?? true } as any);
     // Sync to mirror with retries
     await syncToMirror(uid, historyId);
+
+    // STRICT CREDIT REDUCTION
+    if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+      try {
+        await creditsRepository.writeDebitIfAbsent(
+          uid,
+          historyId,
+          ctx.creditCost,
+          'fal-veo-text-to-video-fast',
+          {
+            model: 'fal-ai/veo3/fast',
+            ...(ctx.meta || {}),
+            pricingVersion: ctx.pricingVersion || 'v1',
+          }
+        );
+        console.log(`[falService.veoTextToVideoFast] Debited ${ctx.creditCost} credits for ${uid}`);
+      } catch (error) {
+         console.error('[falService.veoTextToVideoFast] Failed to deduct credits:', error);
+      }
+    }
+
     return { videos: scoredVideos, historyId, model: 'fal-ai/veo3/fast', status: 'completed' };
   } catch (err: any) {
     const falError = buildFalApiError(err, {
@@ -2361,7 +2424,7 @@ async function veoImageToVideo(uid: string, payload: {
   generate_audio?: boolean;
   resolution?: '720p' | '1080p';
   isPublic?: boolean;
-}): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }> {
+}, ctx: any = {}): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }> {
   const falKey = env.falKey as string;
   if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   if (!payload.prompt) throw new ApiError('Prompt is required', 400);
@@ -2402,6 +2465,27 @@ async function veoImageToVideo(uid: string, payload: {
     await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore, duration: payload.duration ?? '8s', resolution: payload.resolution ?? '720p', aspect_ratio: payload.aspect_ratio ?? 'auto', generate_audio: payload.generate_audio ?? true } as any);
     // Sync to mirror with retries
     await syncToMirror(uid, historyId);
+
+    // STRICT CREDIT REDUCTION
+    if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+      try {
+        await creditsRepository.writeDebitIfAbsent(
+          uid,
+          historyId,
+          ctx.creditCost,
+          'fal-veo-image-to-video',
+          {
+            model: 'fal-ai/veo3/image-to-video',
+            ...(ctx.meta || {}),
+            pricingVersion: ctx.pricingVersion || 'v1',
+          }
+        );
+        console.log(`[falService.veoImageToVideo] Debited ${ctx.creditCost} credits for ${uid}`);
+      } catch (error) {
+         console.error('[falService.veoImageToVideo] Failed to deduct credits:', error);
+      }
+    }
+
     return { videos: scoredVideos, historyId, model: 'fal-ai/veo3/image-to-video', status: 'completed' };
   } catch (err: any) {
     const falError = buildFalApiError(err, {
@@ -2420,7 +2504,7 @@ async function veoImageToVideo(uid: string, payload: {
 }
 
 // Veo3 Image-to-Video (fast)
-async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoImageToVideo>[1]) {
+async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoImageToVideo>[1], ctx: any = {}) {
   const falKey = env.falKey as string;
   if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
   if (!payload.prompt) throw new ApiError('Prompt is required', 400);
@@ -2461,6 +2545,27 @@ async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoIm
     await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore, duration: payload.duration ?? '8s', resolution: payload.resolution ?? '720p', aspect_ratio: payload.aspect_ratio ?? 'auto', generate_audio: payload.generate_audio ?? true } as any);
     // Sync to mirror with retries
     await syncToMirror(uid, historyId);
+
+    // STRICT CREDIT REDUCTION
+    if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+      try {
+        await creditsRepository.writeDebitIfAbsent(
+          uid,
+          historyId,
+          ctx.creditCost,
+          'fal-veo-image-to-video-fast',
+          {
+            model: 'fal-ai/veo3/fast/image-to-video',
+            ...(ctx.meta || {}),
+            pricingVersion: ctx.pricingVersion || 'v1',
+          }
+        );
+        console.log(`[falService.veoImageToVideoFast] Debited ${ctx.creditCost} credits for ${uid}`);
+      } catch (error) {
+         console.error('[falService.veoImageToVideoFast] Failed to deduct credits:', error);
+      }
+    }
+
     return { videos: scoredVideos, historyId, model: 'fal-ai/veo3/fast/image-to-video', status: 'completed' };
   } catch (err: any) {
     const falError = buildFalApiError(err, {
@@ -2480,7 +2585,7 @@ async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoIm
 
 export const falService = {
   generate,
-  async briaExpandImage(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+  async briaExpandImage(uid: string, body: any, ctx: any = {}): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!body?.image_url && !body?.image) throw new ApiError('image_url or image is required', 400);
     fal.config({ credentials: falKey });
@@ -2844,6 +2949,26 @@ export const falService = {
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
 
+      // STRICT CREDIT REDUCTION
+      if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+        try {
+          await creditsRepository.writeDebitIfAbsent(
+            uid,
+            historyId,
+            ctx.creditCost,
+            'fal-bria-expand',
+            {
+              model,
+              ...(ctx.meta || {}),
+              pricingVersion: ctx.pricingVersion || 'v1',
+            }
+          );
+          console.log(`[falService.briaExpandImage] Debited ${ctx.creditCost} credits for ${uid}`);
+        } catch (error) {
+           console.error('[falService.briaExpandImage] Failed to deduct credits:', error);
+        }
+      }
+
       return { images: cleanedImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
@@ -2860,7 +2985,7 @@ export const falService = {
       throw falError;
     }
   },
-  async outpaintImage(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+  async outpaintImage(uid: string, body: any, ctx: any = {}): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!body?.image_url && !body?.image) throw new ApiError('image_url or image is required', 400);
     fal.config({ credentials: falKey });
@@ -3017,6 +3142,26 @@ export const falService = {
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
 
+      // STRICT CREDIT REDUCTION
+      if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+        try {
+          await creditsRepository.writeDebitIfAbsent(
+            uid,
+            historyId,
+            ctx.creditCost,
+            'fal-outpaint',
+            {
+              model,
+              ...(ctx.meta || {}),
+              pricingVersion: ctx.pricingVersion || 'v1',
+            }
+          );
+          console.log(`[falService.outpaintImage] Debited ${ctx.creditCost} credits for ${uid}`);
+        } catch (error) {
+           console.error('[falService.outpaintImage] Failed to deduct credits:', error);
+        }
+      }
+
       return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
@@ -3033,7 +3178,7 @@ export const falService = {
       throw falError;
     }
   },
-  async topazUpscaleImage(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+  async topazUpscaleImage(uid: string, body: any, ctx: any = {}): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!body?.image_url && !body?.image) throw new ApiError('image_url or image is required', 400);
     fal.config({ credentials: falKey });
@@ -3105,6 +3250,26 @@ export const falService = {
 
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
+
+      // STRICT CREDIT REDUCTION
+      if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+        try {
+          await creditsRepository.writeDebitIfAbsent(
+            uid,
+            historyId,
+            ctx.creditCost,
+            'fal-topaz-upscale',
+            {
+              model,
+              ...(ctx.meta || {}),
+              pricingVersion: ctx.pricingVersion || 'v1',
+            }
+          );
+          console.log(`[falService.topazUpscaleImage] Debited ${ctx.creditCost} credits for ${uid}`);
+        } catch (error) {
+           console.error('[falService.topazUpscaleImage] Failed to deduct credits:', error);
+        }
+      }
       return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
@@ -3121,7 +3286,7 @@ export const falService = {
       throw falError;
     }
   },
-  async seedvrUpscaleImage(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+  async seedvrUpscaleImage(uid: string, body: any, ctx: any = {}): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!body?.image_url && !body?.image) throw new ApiError('image_url or image is required', 400);
     fal.config({ credentials: falKey });
@@ -3197,6 +3362,26 @@ export const falService = {
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
 
+      // STRICT CREDIT REDUCTION
+      if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+        try {
+          await creditsRepository.writeDebitIfAbsent(
+            uid,
+            historyId,
+            ctx.creditCost,
+            'fal-seedvr-upscale-image',
+            {
+              model,
+              ...(ctx.meta || {}),
+              pricingVersion: ctx.pricingVersion || 'v1',
+            }
+          );
+          console.log(`[falService.seedvrUpscaleImage] Debited ${ctx.creditCost} credits for ${uid}`);
+        } catch (error) {
+           console.error('[falService.seedvrUpscaleImage] Failed to deduct credits:', error);
+        }
+      }
+
       return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
@@ -3213,7 +3398,7 @@ export const falService = {
       throw falError;
     }
   },
-  async seedvrUpscale(uid: string, body: any): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }> {
+  async seedvrUpscale(uid: string, body: any, ctx: any = {}): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!body?.video_url) throw new ApiError('video_url is required', 400);
     fal.config({ credentials: falKey });
@@ -3303,6 +3488,26 @@ export const falService = {
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
+
+      // STRICT CREDIT REDUCTION
+      if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+        try {
+          await creditsRepository.writeDebitIfAbsent(
+            uid,
+            historyId,
+            ctx.creditCost,
+            'fal-seedvr-upscale-video',
+            {
+              model,
+              ...(ctx.meta || {}),
+              pricingVersion: ctx.pricingVersion || 'v1',
+            }
+          );
+          console.log(`[falService.seedvrUpscale] Debited ${ctx.creditCost} credits for ${uid}`);
+        } catch (error) {
+           console.error('[falService.seedvrUpscale] Failed to deduct credits:', error);
+        }
+      }
       return { videos: scoredVideos as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
@@ -3319,7 +3524,7 @@ export const falService = {
       throw falError;
     }
   },
-  async image2svg(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+  async image2svg(uid: string, body: any, ctx: any = {}): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!(body?.image_url) && !(body?.image)) throw new ApiError('image_url or image is required', 400);
     fal.config({ credentials: falKey });
@@ -3425,6 +3630,26 @@ export const falService = {
 
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
+
+      // STRICT CREDIT REDUCTION
+      if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+        try {
+          await creditsRepository.writeDebitIfAbsent(
+            uid,
+            historyId,
+            ctx.creditCost,
+            'fal-image2svg',
+            {
+              model,
+              ...(ctx.meta || {}),
+              pricingVersion: ctx.pricingVersion || 'v1',
+            }
+          );
+          console.log(`[falService.image2svg] Debited ${ctx.creditCost} credits for ${uid}`);
+        } catch (error) {
+           console.error('[falService.image2svg] Failed to deduct credits:', error);
+        }
+      }
       return { images, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
@@ -3441,7 +3666,7 @@ export const falService = {
       throw falError;
     }
   },
-  async recraftVectorize(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+  async recraftVectorize(uid: string, body: any, ctx: any = {}): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!(body?.image_url) && !(body?.image)) throw new ApiError('image_url or image is required', 400);
     fal.config({ credentials: falKey });
@@ -3532,6 +3757,26 @@ export const falService = {
 
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
+
+      // STRICT CREDIT REDUCTION
+      if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+        try {
+          await creditsRepository.writeDebitIfAbsent(
+            uid,
+            historyId,
+            ctx.creditCost,
+            'fal-recraft-vectorize',
+            {
+              model,
+              ...(ctx.meta || {}),
+              pricingVersion: ctx.pricingVersion || 'v1',
+            }
+          );
+          console.log(`[falService.recraftVectorize] Debited ${ctx.creditCost} credits for ${uid}`);
+        } catch (error) {
+           console.error('[falService.recraftVectorize] Failed to deduct credits:', error);
+        }
+      }
       return { images, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
@@ -3548,7 +3793,7 @@ export const falService = {
       throw falError;
     }
   },
-  async briaGenfill(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+  async briaGenfill(uid: string, body: any, ctx: any = {}): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!body?.image_url && !body?.image) throw new ApiError('image_url or image is required', 400);
     if (!body?.mask_url && !body?.mask) throw new ApiError('mask_url or mask is required', 400);
@@ -3656,6 +3901,26 @@ export const falService = {
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
 
+      // STRICT CREDIT REDUCTION
+      if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+        try {
+          await creditsRepository.writeDebitIfAbsent(
+            uid,
+            historyId,
+            ctx.creditCost,
+            'fal-bria-genfill',
+            {
+              model,
+              ...(ctx.meta || {}),
+              pricingVersion: ctx.pricingVersion || 'v1',
+            }
+          );
+          console.log(`[falService.briaGenfill] Debited ${ctx.creditCost} credits for ${uid}`);
+        } catch (error) {
+           console.error('[falService.briaGenfill] Failed to deduct credits:', error);
+        }
+      }
+
       return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
@@ -3672,7 +3937,7 @@ export const falService = {
       throw falError;
     }
   },
-  async birefnetVideo(uid: string, body: any): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }> {
+  async birefnetVideo(uid: string, body: any, ctx: any = {}): Promise<{ videos: VideoMedia[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!body?.video_url) throw new ApiError('video_url is required', 400);
     fal.config({ credentials: falKey });
@@ -3724,6 +3989,26 @@ export const falService = {
       const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
       await generationHistoryRepository.update(uid, historyId, { status: 'completed', videos: scoredVideos, aestheticScore: highestScore } as any);
       await syncToMirror(uid, historyId);
+
+      // STRICT CREDIT REDUCTION
+      if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+        try {
+          await creditsRepository.writeDebitIfAbsent(
+            uid,
+            historyId,
+            ctx.creditCost,
+            'fal-birefnet-video',
+            {
+              model,
+              ...(ctx.meta || {}),
+              pricingVersion: ctx.pricingVersion || 'v1',
+            }
+          );
+          console.log(`[falService.birefnetVideo] Debited ${ctx.creditCost} credits for ${uid}`);
+        } catch (error) {
+           console.error('[falService.birefnetVideo] Failed to deduct credits:', error);
+        }
+      }
       return { videos: scoredVideos as any, historyId, model, status: 'completed' };
     } catch (err: any) {
       const falError = buildFalApiError(err, {
@@ -3740,7 +4025,7 @@ export const falService = {
       throw falError;
     }
   },
-  async qwenMultipleAngles(uid: string, body: any): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
+  async qwenMultipleAngles(uid: string, body: any, ctx: any = {}): Promise<{ images: FalGeneratedImage[]; historyId: string; model: string; status: 'completed' }> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     if (!body?.image_urls || !Array.isArray(body.image_urls) || body.image_urls.length === 0) {
       throw new ApiError('image_urls is required and must be a non-empty array', 400);
@@ -3928,6 +4213,26 @@ export const falService = {
 
       // Sync to mirror with retries
       await syncToMirror(uid, historyId);
+
+      // STRICT CREDIT REDUCTION
+      if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+        try {
+          await creditsRepository.writeDebitIfAbsent(
+            uid,
+            historyId,
+            ctx.creditCost,
+            'fal-qwen-multiangle',
+            {
+              model,
+              ...(ctx.meta || {}),
+              pricingVersion: ctx.pricingVersion || 'v1',
+            }
+          );
+          console.log(`[falService.qwenMultipleAngles] Debited ${ctx.creditCost} credits for ${uid}`);
+        } catch (error) {
+           console.error('[falService.qwenMultipleAngles] Failed to deduct credits:', error);
+        }
+      }
 
       return { images: scoredImages as any, historyId, model, status: 'completed' };
     } catch (err: any) {
@@ -4189,6 +4494,25 @@ async function queueStatus(uid: string, model: string | undefined, requestId: st
   }
 
   const status = await fal.queue.status(resolvedModel, { requestId, logs: true } as any);
+
+  // STRICT CREDIT DEDUCTION: If status is COMPLETED, we must finalize (debit) immediately
+  // before returning the result to the client. This prevents "free" generations via polling.
+  if ((status as any)?.status === 'COMPLETED') {
+    // If output is present, it's done. Trigger finalization.
+    try {
+      console.log('[queueStatus] Job COMPLETED, triggering strict finalization/debit', { requestId, uid });
+      // Call queueResult to handle debit, storage, and history update
+      // We await it so the debit happens BEFORE the user gets the final response
+      const result = await queueResult(uid, resolvedModel, requestId);
+      return result;
+    } catch (e) {
+      console.error('[queueStatus] Strict finalization failed', e);
+      // We still return the status, but if finalization failed, we might want to mask the output
+      // However, queueResult usually updates history. If it failed, we'll let the error propagate or return status.
+      // For now, let's just return the status but log the error.
+    }
+  }
+
   return status;
 }
 

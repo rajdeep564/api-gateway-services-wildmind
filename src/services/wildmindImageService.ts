@@ -5,6 +5,8 @@ import { ApiError } from '../utils/errorHandler';
 import { getZataSignedGetUrl, uploadDataUriToZata } from '../utils/storage/zataUpload';
 import { startGeneration, markGenerationCompleted, markGenerationFailed } from './generationHistoryService';
 
+import { creditsRepository } from '../repository/creditsRepository';
+
 export interface WildmindImageGenerateRequest {
   prompt: string;
   model?: string;
@@ -16,7 +18,7 @@ export interface WildmindImageGenerateRequest {
   isPublic?: boolean;
 }
 
-export async function generateWildmindImage(uid: string, body: WildmindImageGenerateRequest): Promise<{ historyId: string; images: any[] }> {
+export async function generateWildmindImage(uid: string, body: WildmindImageGenerateRequest, ctx: any = {}): Promise<{ historyId: string; images: any[] }> {
   const prompt = String(body.prompt || '').trim();
   if (!prompt) throw new ApiError('prompt is required', 400);
 
@@ -130,6 +132,27 @@ export async function generateWildmindImage(uid: string, body: WildmindImageGene
       ...(body.frameSize ? { frameSize: body.frameSize } : {}),
       ...(body.style ? { style: body.style } : {}),
     } as any);
+
+    // STRICT CREDIT DEDUCTION
+    if (ctx && ctx.creditCost) {
+      try {
+        await creditsRepository.writeDebitIfAbsent(
+          uid,
+          historyId,
+           ctx.creditCost,
+          ctx.reason || 'wildmindimage.generate',
+          {
+            ...(ctx.meta || {}),
+            historyId,
+            provider: 'wildmindimage',
+            pricingVersion: ctx.pricingVersion,
+          }
+        );
+         console.log('[WildmindImage] Strict debit successful', { uid, historyId, cost: ctx.creditCost });
+      } catch (debitError) {
+        console.error('[WildmindImage] Strict debit failed', { uid, historyId, error: debitError });
+      }
+    }
 
     return { historyId, images: responseImages };
   } catch (err: any) {

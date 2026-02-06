@@ -21,9 +21,26 @@ async function generate(req: Request, res: Response, next: NextFunction) {
     logger.info({ uid, ctx }, '[CREDITS][MINIMAX] Enter generate with context');
     // Log incoming public/visibility flags for debugging
     logger.info({ uid, isPublic: Boolean((payload as any).isPublic), visibility: (payload as any).visibility }, '[MINIMAX] Generate request flags');
-    const result = await minimaxService.generate(uid, payload as any);
-    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'minimax', 'generate');
-    res.json(formatApiResponse('success', 'Images generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
+    
+    // Strict Credit Deduction: Debit is handled inside service
+    const result = await minimaxService.generate(uid, payload as any, ctx);
+    
+    res.json(formatApiResponse('success', 'Images generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: 'WRITTEN_IN_SERVICE' }));
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ... (video functions remain unchanged for now)
+
+// Music
+async function musicGenerate(req: Request, res: Response, next: NextFunction) {
+  try {
+    const ctx = (req as any).context || {};
+    // Strict Credit Deduction: Debit is handled inside service
+    const result = await minimaxService.musicGenerateAndStore(req.uid, req.body, ctx);
+    
+    res.json(formatApiResponse('success', 'Music generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: 'WRITTEN_IN_SERVICE' }));
   } catch (err) {
     next(err);
   }
@@ -104,7 +121,7 @@ async function videoStatus(req: Request, res: Response, next: NextFunction) {
   try {
     const apiKey = env.minimaxApiKey as string;
     const taskId = String(req.query.task_id || '');
-    const result = await minimaxService.getVideoStatus(apiKey, taskId);
+    const result = await minimaxService.getVideoStatus(apiKey, taskId, req.uid);
     res.json(formatApiResponse('success', 'Status', result));
   } catch (err) {
     next(err);
@@ -122,19 +139,7 @@ async function videoFile(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-// Music
-async function musicGenerate(req: Request, res: Response, next: NextFunction) {
-  try {
-    const ctx = (req as any).context || {};
-    const result = await minimaxService.musicGenerateAndStore(req.uid, req.body);
-    // musicGenerateAndStore updates history; we'll perform debit here if historyId present
-    let debitOutcome: any = null;
-    try { debitOutcome = await postSuccessDebit(req.uid, result, ctx, 'minimax', 'music'); } catch {}
-    res.json(formatApiResponse('success', 'Music generated', { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
-  } catch (err) {
-    next(err);
-  }
-}
+
 
 export const minimaxController = {
   generate,

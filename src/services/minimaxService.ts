@@ -86,7 +86,8 @@ function assertMiniMaxOk(baseResp?: {
 
 async function generate(
   uid: string,
-  payload: MinimaxGenerateRequest
+  payload: MinimaxGenerateRequest,
+  ctx: any = {}
 ): Promise<MinimaxGenerateResponse & { historyId?: string }> {
   const {
     prompt,
@@ -117,31 +118,6 @@ async function generate(
   // Debug log incoming payload flags (visibility/isPublic) to help trace public generation flow
   console.log('[MiniMax] generate() payload flags:', { uid, isPublic: (payload as any).isPublic, visibility: (payload as any).visibility, generationType: payload.generationType });
 
-  // Validate storage and credits BEFORE creating generation
-  try {
-    // MiniMax image generation cost: Assume generic image cost
-    const estimatedCost = 50; // Placeholder - should use actual pricing
-    
-    const validation = await validateGenerationRequest(
-      uid,
-      estimatedCost,
-      estimateFileSize('image', { width: width || 1024, height: height || 1024, quality: 'high' })
-    );
-
-    if (!validation.valid) {
-      console.log('[minimaxService.generate] Validation failed', { uid, reason: validation.reason, code: validation.code });
-      throw new ApiError(
-        validation.reason || 'Validation failed',
-        validation.code === 'STORAGE_QUOTA_EXCEEDED' ? 507 : 402
-      );
-    }
-  } catch (e: any) {
-    // If validation throws ApiError, propagate it
-    if (e instanceof ApiError) throw e;
-    // Otherwise, log and continue
-    console.warn('[minimaxService.generate] Validation check failed, continuing:', e?.message);
-  }
-
   const legacyId = await minimaxRepository.createGenerationRecord(
     { ...payload, isPublic: (payload as any).isPublic === true },
     createdBy
@@ -160,32 +136,7 @@ async function generate(
   // Persist subject_reference (if provided) as inputImages
   try {
     const keyPrefix = `users/${creator?.username || uid}/input/${historyId}`;
-    const inputPersisted: any[] = [];
-    let idx = 0;
-    if (Array.isArray(subject_reference)) {
-      for (const ref of subject_reference as any[]) {
-        const file = ref?.image_file || (Array.isArray(ref?.image) ? ref.image[0] : undefined);
-        if (!file || typeof file !== 'string') continue;
-        try {
-          if (/^data:/i.test(file)) {
-            // Inline data URIs need to be converted to Buffer; uploadBufferToZata requires content-type
-            const match = /^data:([^;]+);base64,(.*)$/.exec(file);
-            if (match) {
-              const contentType = match[1];
-              const base64 = match[2];
-              const buffer = Buffer.from(base64, 'base64');
-              const name = `input-${++idx}.${contentType.includes('png') ? 'png' : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'bin'}`;
-              const { key, publicUrl } = await uploadBufferToZata(`${keyPrefix}/${name}`, buffer, contentType);
-              inputPersisted.push({ id: `in-${idx}`, url: publicUrl, storagePath: key, originalUrl: file });
-            }
-          } else {
-            const stored = await uploadFromUrlToZata({ sourceUrl: file, keyPrefix, fileName: `input-${++idx}` });
-            inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: file });
-          }
-        } catch {}
-      }
-    }
-    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+    await persistInputImages(uid, historyId, subject_reference, keyPrefix);
   } catch {}
 
   const requestPayload: any = {
@@ -251,7 +202,7 @@ async function generate(
     );
 
     // Upload to Zata and preserve originalUrl
-      const storedImages = await Promise.all(
+    const storedImages = await Promise.all(
       images.map(async (img, index) => {
         try {
           const username = creator?.username || uid;
@@ -262,15 +213,15 @@ async function generate(
           });
           return { id: img.id, url: publicUrl, storagePath: key, originalUrl: img.originalUrl || img.url };
         } catch (e: any) {
-            // eslint-disable-next-line no-console
-            console.warn('[MiniMax] Zata upload failed, using provider URL:', e?.message || e);
+          // eslint-disable-next-line no-console
+          console.warn('[MiniMax] Zata upload failed, using provider URL:', e?.message || e);
           return { id: img.id, url: img.url, originalUrl: img.originalUrl || img.url } as any;
         }
       })
     );
 
-      // Log what was stored (useful to ensure storagePath/publicUrl exist and will be optimized)
-      try { console.log('[MiniMax] storedImages:', storedImages.map(s => ({ id: s.id, url: s.url, storagePath: (s as any).storagePath }))); } catch {}
+    // Log what was stored (useful to ensure storagePath/publicUrl exist and will be optimized)
+    try { console.log('[MiniMax] storedImages:', storedImages.map(s => ({ id: s.id, url: s.url, storagePath: (s as any).storagePath }))); } catch {}
 
     // Score the images for aesthetic quality
     const scoredImages = await aestheticScoreService.scoreImages(storedImages);
@@ -295,6 +246,27 @@ async function generate(
       images: scoredImages,
       isPublic: (payload as any).isPublic === true,
     }).catch(err => console.error('[MiniMax] Image optimization failed:', err));
+
+    // STRICT CREDIT DEDUCTION (Atomic)
+    if (ctx && ctx.creditCost) {
+      try {
+        await creditsRepository.writeDebitIfAbsent(
+          uid,
+          historyId,
+           ctx.creditCost,
+          ctx.reason || 'minimax.generate',
+          {
+            ...(ctx.meta || {}),
+            historyId,
+            provider: 'minimax',
+            pricingVersion: ctx.pricingVersion,
+          }
+        );
+         console.log('[MiniMax] Image Strict debit successful', { uid, historyId, cost: ctx.creditCost });
+      } catch (debitError) {
+        console.error('[MiniMax] Image Strict debit failed', { uid, historyId, error: debitError });
+      }
+    }
     
     // Robust mirror sync with retry logic
     await syncToMirror(uid, historyId);
@@ -315,6 +287,36 @@ async function generate(
     if (err instanceof ApiError) throw err;
     throw new ApiError(message, 502, { title: mapped.title, code: mapped.code, technical: err?.message });
   }
+}
+
+// Helper to persist input images
+async function persistInputImages(uid: string, historyId: string, subject_reference: any, keyPrefix: string) {
+  const inputPersisted: any[] = [];
+  let idx = 0;
+  if (Array.isArray(subject_reference)) {
+    for (const ref of subject_reference as any[]) {
+      const file = ref?.image_file || (Array.isArray(ref?.image) ? ref.image[0] : undefined);
+      if (!file || typeof file !== 'string') continue;
+      try {
+        if (/^data:/i.test(file)) {
+          // Inline data URIs need to be converted to Buffer; uploadBufferToZata requires content-type
+          const match = /^data:([^;]+);base64,(.*)$/.exec(file);
+          if (match) {
+            const contentType = match[1];
+            const base64 = match[2];
+            const buffer = Buffer.from(base64, 'base64');
+            const name = `input-${++idx}.${contentType.includes('png') ? 'png' : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'bin'}`;
+            const { key, publicUrl } = await uploadBufferToZata(`${keyPrefix}/${name}`, buffer, contentType);
+            inputPersisted.push({ id: `in-${idx}`, url: publicUrl, storagePath: key, originalUrl: file });
+          }
+        } else {
+          const stored = await uploadFromUrlToZata({ sourceUrl: file, keyPrefix, fileName: `input-${++idx}` });
+          inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: stored.key, originalUrl: file });
+        }
+      } catch {}
+    }
+  }
+  if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
 }
 
 // Video
@@ -344,7 +346,7 @@ async function generateVideo(
   return { taskId };
 }
 
-async function getVideoStatus(apiKey: string, taskId: string): Promise<any> {
+async function getVideoStatus(apiKey: string, taskId: string, uid?: string): Promise<any> {
   const res = await axios.get(
     `${MINIMAX_API_BASE}/query/video_generation?task_id=${taskId}`,
     {
@@ -362,6 +364,30 @@ async function getVideoStatus(apiKey: string, taskId: string): Promise<any> {
   const data = res.data || {};
   // Some responses embed base_resp at root
   assertMiniMaxOk(data.base_resp || (data.result && data.result.base_resp));
+
+  // STRICT CREDIT DEDUCTION: If status is Success, we must finalize (debit) immediately
+  if ((data?.status === 'Success' || data?.result?.status === 'Success') && uid) {
+    const fileId = data?.file_id || data?.result?.file_id;
+    if (fileId) {
+      try {
+        console.log('[getVideoStatus] Job Success, triggering strict finalization/debit', { taskId, uid, fileId });
+        // Call processVideoFile to handle debit, storage, and history update
+        // We assume we can look up historyId from fileId or taskId if needed, currently passing undefined historyId
+        // to processVideoFile, but we need to find it properly.
+        
+        // Find history ID by providerTaskId
+        const located = await generationHistoryRepository.findByProviderTaskId(uid, 'minimax', taskId);
+        if (located) {
+          const result = await processVideoFile(uid, fileId, located.id);
+          // Return the processed result (which includes the final Zata URL) instead of the raw provider response
+          return { ...data, ...result, status: 'Success' }; 
+        }
+      } catch (e) {
+        console.error('[getVideoStatus] Strict finalization failed', e);
+      }
+    }
+  }
+
   return data;
 }
 
@@ -601,7 +627,8 @@ async function processVideoFile(
 
 async function musicGenerateAndStore(
   uid: string,
-  body: MinimaxMusicRequest & { prompt?: string; isPublic?: boolean; visibility?: string }
+  body: MinimaxMusicRequest & { prompt?: string; isPublic?: boolean; visibility?: string },
+  ctx: any = {}
 ): Promise<any> {
   const apiKey = env.minimaxApiKey as string;
   if (!apiKey) throw new ApiError('MiniMax API not configured', 500);
@@ -630,7 +657,6 @@ async function musicGenerateAndStore(
   } as any);
   
   try {
-    // Clean the body to only include fields that the MiniMax API expects
     const cleanBody: MinimaxMusicRequest = {
       model: body.model || 'music-2.0',
       prompt: body.prompt,
@@ -638,7 +664,7 @@ async function musicGenerateAndStore(
       output_format: body.output_format,
       stream: body.stream,
       audio_setting: body.audio_setting,
-      generationType: body.generationType, // Keep for internal use, but won't be sent to API
+      generationType: body.generationType,
     };
     
     const result = await generateMusic(apiKey, cleanBody);
@@ -655,6 +681,8 @@ async function musicGenerateAndStore(
     
     // Handle hex-encoded audio (default)
     const hexAudio: string | undefined = (result as any)?.data?.audio;
+    let audioItem: any;
+
     if (hexAudio && typeof hexAudio === 'string') {
       const format: string = body.audio_setting?.format || 'mp3';
       const ext = format.toLowerCase() === 'wav' ? 'wav' : format.toLowerCase() === 'pcm' ? 'pcm' : 'mp3';
@@ -663,77 +691,77 @@ async function musicGenerateAndStore(
       const username = creator?.username || uid;
       const key = `users/${username}/audio/${historyId}/music-1.${ext}`;
       const { publicUrl } = await uploadBufferToZata(key, buffer, contentType);
-      const audioItem: any = { 
+      audioItem = { 
         id: 'music-1', 
         url: publicUrl, 
         storagePath: key,
         originalUrl: publicUrl 
       };
-      
-      // Store in multiple formats for frontend compatibility
-      const audiosArray = [audioItem];
-      const imagesArray = [{ ...audioItem, type: 'audio' }];
-      
-      await generationHistoryRepository.update(uid, historyId, { 
-        status: 'completed', 
-        audio: audioItem,
-        audios: audiosArray,
-        images: imagesArray,
-        provider: 'minimax' 
-      } as any);
-      await syncToMirror(uid, historyId);
-      return { audio: audioItem, audios: audiosArray, images: imagesArray, historyId, status: 'completed' };
-    }
-    
-    // Fallback: try to extract URL
-    const providerUrl = extractDownloadUrl(result);
-    if (providerUrl) {
-      try {
-        const username = creator?.username || uid;
-        const { key, publicUrl } = await uploadFromUrlToZata({
-          sourceUrl: providerUrl,
-          keyPrefix: `users/${username}/audio/${historyId}`,
-          fileName: 'music-1',
-        });
-        const audioItem: any = { 
-          id: 'music-1', 
-          url: publicUrl, 
-          storagePath: key, 
-          originalUrl: providerUrl 
-        };
-        const audiosArray = [audioItem];
-        const imagesArray = [{ ...audioItem, type: 'audio' }];
-        await generationHistoryRepository.update(uid, historyId, { 
-          status: 'completed', 
-          audio: audioItem,
-          audios: audiosArray,
-          images: imagesArray,
-          provider: 'minimax' 
+    } else {
+      // Fallback: try to extract URL
+      const providerUrl = extractDownloadUrl(result);
+      if (providerUrl) {
+         try {
+          const username = creator?.username || uid;
+          const { key, publicUrl } = await uploadFromUrlToZata({
+            sourceUrl: providerUrl,
+            keyPrefix: `users/${username}/audio/${historyId}`,
+            fileName: 'music-1',
+          });
+          audioItem = { 
+            id: 'music-1', 
+            url: publicUrl, 
+            storagePath: key, 
+            originalUrl: providerUrl 
+          };
+        } catch (e) {
+          console.warn('[MiniMax] Music Zata upload failed; using provider URL', e);
+          audioItem = { id: 'music-1', url: providerUrl, originalUrl: providerUrl };
+        }
+      } else {
+         await generationHistoryRepository.update(uid, historyId, { 
+          status: 'failed', 
+          error: 'No audio data returned from MiniMax' 
         } as any);
-        await syncToMirror(uid, historyId);
-        return { audio: audioItem, audios: audiosArray, images: imagesArray, historyId, status: 'completed' };
-      } catch (e) {
-        console.warn('[MiniMax] Music Zata upload failed; using provider URL', e);
-        const audioItem: any = { id: 'music-1', url: providerUrl, originalUrl: providerUrl };
-        const audiosArray = [audioItem];
-        const imagesArray = [{ ...audioItem, type: 'audio' }];
-        await generationHistoryRepository.update(uid, historyId, { 
-          status: 'completed', 
-          audio: audioItem,
-          audios: audiosArray,
-          images: imagesArray,
-          provider: 'minimax' 
-        } as any);
-        await syncToMirror(uid, historyId);
-        return { audio: audioItem, audios: audiosArray, images: imagesArray, historyId, status: 'completed' };
+        throw new ApiError('MiniMax music response missing audio data', 502, result);
       }
     }
+
+    const audiosArray = [audioItem];
+    const imagesArray = [{ ...audioItem, type: 'audio' }];
     
     await generationHistoryRepository.update(uid, historyId, { 
-      status: 'failed', 
-      error: 'No audio data returned from MiniMax' 
+      status: 'completed', 
+      audio: audioItem,
+      audios: audiosArray,
+      images: imagesArray,
+      provider: 'minimax' 
     } as any);
-    throw new ApiError('MiniMax music response missing audio data', 502, result);
+
+    // STRICT CREDIT DEDUCTION
+    if (ctx && ctx.creditCost) {
+      try {
+        await creditsRepository.writeDebitIfAbsent(
+          uid,
+          historyId,
+          ctx.creditCost,
+          ctx.reason || 'minimax.music',
+          {
+            ...(ctx.meta || {}),
+            historyId,
+            provider: 'minimax',
+            pricingVersion: ctx.pricingVersion,
+          }
+        );
+         console.log('[MiniMax] Music Strict debit successful', { uid, historyId, cost: ctx.creditCost });
+      } catch (debitError) {
+        console.error('[MiniMax] Music Strict debit failed', { uid, historyId, error: debitError });
+      }
+    }
+
+    await syncToMirror(uid, historyId);
+    return { audio: audioItem, audios: audiosArray, images: imagesArray, historyId, status: 'completed' };
+
   } catch (err: any) {
     // Use centralized mapper
     const mapped = mapMinimaxError(err);

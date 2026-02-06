@@ -9,7 +9,7 @@ export interface CreativelyUpscaleRequest {
 /**
  * Service to handle Creatively Upscale workflow using SeedVR
  */
-export async function creativelyUpscale(uid: string, request: CreativelyUpscaleRequest) {
+export async function creativelyUpscale(uid: string, request: CreativelyUpscaleRequest, ctx: any = {}) {
     if (!request.imageUrl) {
         throw new ApiError('Image URL is required', 400);
     }
@@ -21,5 +21,5 @@ export async function creativelyUpscale(uid: string, request: CreativelyUpscaleR
         image: request.imageUrl,
         upscale_factor: upscaleFactor,
         upscale_mode: 'factor'
-    });
+    }, ctx);
 }

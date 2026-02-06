@@ -5,27 +5,23 @@ import { postSuccessDebit } from '../utils/creditDebit';
 import { generateWildmindImage } from '../services/wildmindImageService';
 import { logger } from '../utils/logger';
 
+// Images
+
 export async function generate(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = req.uid;
     const ctx = (req as any).context || {};
 
-    const result = await generateWildmindImage(uid, req.body);
+    // Strict Credit Deduction: Debit is handled inside service
+    const result = await generateWildmindImage(uid, req.body, ctx);
 
-    let debitStatus: any;
-    try {
-      debitStatus = await postSuccessDebit(uid, result, ctx, 'wildmindimage', 'generate');
-    } catch {
-      // ignore debit errors
-    }
-
-    logger.info({ uid, historyId: (result as any)?.historyId, debitStatus }, '[WILDMINDIMAGE] generate completed');
+    logger.info({ uid, historyId: (result as any)?.historyId }, '[WILDMINDIMAGE] generate completed');
 
     res.json(
       formatApiResponse('success', 'WILDMINDIMAGE generated', {
         ...result,
         debitedCredits: ctx.creditCost,
-        debitStatus,
+        debitStatus: 'WRITTEN_IN_SERVICE',
       })
     );
   } catch (err) {

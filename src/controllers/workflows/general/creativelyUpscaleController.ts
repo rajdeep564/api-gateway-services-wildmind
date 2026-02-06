@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { creativelyUpscale, CreativelyUpscaleRequest } from '../../../services/workflows/general/creativelyUpscaleService';
 import { ApiError } from '../../../utils/errorHandler';
-import { postSuccessDebit } from '../../../utils/creditDebit';
 import { probeImageMeta } from '../../../utils/media/imageProbe';
 import { creditsService } from '../../../services/creditsService';
 import { creditsRepository } from '../../../repository/creditsRepository';
@@ -106,9 +105,6 @@ export async function creativelyUpscaleController(req: Request, res: Response, n
             upscaleFactor: safeFactor,
         };
 
-        // Service call
-        const result = await creativelyUpscale(uid, requestPayload);
-
         const ctx: any = {
             creditCost,
             pricingVersion: 'seedvr_upscale_image_mp_v1_x5',
@@ -123,7 +119,11 @@ export async function creativelyUpscaleController(req: Request, res: Response, n
             },
         };
 
-        const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'creatively-upscale');
+        // Service call
+        const result = await creativelyUpscale(uid, requestPayload, ctx);
+
+        // const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'creatively-upscale');
+        // Credits are now deducted in the service layer using writeDebitIfAbsent
 
         const responseData = {
             images: [

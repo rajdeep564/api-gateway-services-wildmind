@@ -2,6 +2,8 @@ import express from 'express';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { generateReplicateTextResponse } from '../services/genai/replicateTextService';
 import { WILDMIND_COMPANION_SYSTEM_PROMPT } from '../services/prompts/companionSystemPrompt';
+import { creditsRepository } from '../repository/creditsRepository';
+import { ApiError } from '../utils/errorHandler';
 
 const router = express.Router();
 
@@ -22,6 +24,21 @@ interface ChatRequest {
 router.post('/companion', async (req, res) => {
   try {
     const { message, conversationHistory = [] }: ChatRequest = req.body;
+    const uid = (req as any).user?.uid;
+
+    if (!uid) {
+      return res.status(401).json(formatApiResponse('error', 'Authentication required', null));
+    }
+
+    // Cost logic: 1 credit per message
+    const creditCost = 1;
+    
+    // Check balance
+    try {
+      await creditsRepository.validateGeneration(uid, creditCost);
+    } catch (e: any) {
+      return res.status(402).json(formatApiResponse('error', e.message || 'Insufficient credits', null));
+    }
 
     // Validation
     if (!message || typeof message !== 'string' || !message.trim()) {
@@ -58,6 +75,21 @@ router.post('/companion', async (req, res) => {
       systemInstruction: WILDMIND_COMPANION_SYSTEM_PROMPT,
       maxOutputTokens: 800, // Keep responses concise
     });
+
+    // Deduct credits on success
+    const requestId = `chat-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        requestId,
+        creditCost,
+        'chat-companion',
+        { messageLength: sanitizedMessage.length }
+      );
+    } catch (err) {
+      console.error('[ChatCompanion] Failed to debit credits:', err);
+      // Non-blocking but logged
+    }
 
     console.log('[ChatCompanion] Generated response', {
       responseLength: response.length,

@@ -207,7 +207,8 @@ export async function removeBackground(
     background_type?: string;
     isPublic?: boolean;
     prompt?: string;
-  }
+  },
+  ctx: any = {}
 ) {
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
@@ -414,6 +415,27 @@ export async function removeBackground(
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
 
+  // STRICT CREDIT REDUCTION
+  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        ctx.creditCost,
+        'replicate-remove-bg',
+        {
+          model: modelBase,
+          ...(ctx.meta || {}),
+          pricingVersion: ctx.pricingVersion || 'v1',
+        }
+      );
+      console.log(`[replicateService.removeBackground] Debited ${ctx.creditCost} credits for ${uid}`);
+    } catch (error) {
+       console.error('[replicateService.removeBackground] Failed to deduct credits:', error);
+       // We log but do not fail the request since service was delivered
+    }
+  }
+
   return {
     images: scoredImages,
     aestheticScore: highestScore,
@@ -423,7 +445,7 @@ export async function removeBackground(
   } as any;
 }
 
-export async function upscale(uid: string, body: any) {
+export async function upscale(uid: string, body: any, ctx: any = {}) {
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
   if (!key) {
@@ -922,6 +944,27 @@ export async function upscale(uid: string, body: any) {
   }
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
+
+  // STRICT CREDIT REDUCTION
+  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        ctx.creditCost,
+        'replicate-upscale',
+        {
+          model: modelBase,
+          ...(ctx.meta || {}),
+          pricingVersion: ctx.pricingVersion || 'v1',
+        }
+      );
+      console.log(`[replicateService.upscale] Debited ${ctx.creditCost} credits for ${uid}`);
+    } catch (error) {
+       console.error('[replicateService.upscale] Failed to deduct credits:', error);
+    }
+  }
+
   return {
     images: scoredImages,
     aestheticScore: highestScore,
@@ -931,7 +974,7 @@ export async function upscale(uid: string, body: any) {
   } as any;
 }
 
-export async function multiangle(uid: string, body: any) {
+export async function multiangle(uid: string, body: any, ctx: any = {}) {
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
   if (!key) {
@@ -1169,6 +1212,26 @@ export async function multiangle(uid: string, body: any) {
 
   await syncToMirror(uid, historyId);
 
+  // STRICT CREDIT REDUCTION
+  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        ctx.creditCost,
+        'replicate-multiangle',
+        {
+          model: modelBase,
+          ...(ctx.meta || {}),
+          pricingVersion: ctx.pricingVersion || 'v1',
+        }
+      );
+      console.log(`[replicateService.multiangle] Debited ${ctx.creditCost} credits for ${uid}`);
+    } catch (error) {
+       console.error('[replicateService.multiangle] Failed to deduct credits:', error);
+    }
+  }
+
   return {
     images: scoredImages,
     aestheticScore: highestScore,
@@ -1206,7 +1269,7 @@ The grid showcases the specific subjects/scene from the input image in a compreh
 **Bottom Row:** Macro detail, Low Angle, High Angle.
 All frames feature photorealistic textures, consistent cinematic color grading, and correct framing for the specific number of subjects or objects analyzed.`;
 
-export async function nextScene(uid: string, body: any) {
+export async function nextScene(uid: string, body: any, ctx: any = {}) {
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
   if (!key) {
@@ -1444,6 +1507,26 @@ export async function nextScene(uid: string, body: any) {
 
   await syncToMirror(uid, historyId);
 
+  // STRICT CREDIT REDUCTION
+  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        ctx.creditCost,
+        'replicate-next-scene',
+        {
+          model: modelBase,
+          ...(ctx.meta || {}),
+          pricingVersion: ctx.pricingVersion || 'v1',
+        }
+      );
+      console.log(`[replicateService.nextScene] Debited ${ctx.creditCost} credits for ${uid}`);
+    } catch (error) {
+       console.error('[replicateService.nextScene] Failed to deduct credits:', error);
+    }
+  }
+
   return {
     images: scoredImages,
     aestheticScore: highestScore,
@@ -1453,7 +1536,7 @@ export async function nextScene(uid: string, body: any) {
   } as any;
 }
 
-export async function generateImage(uid: string, body: any) {
+export async function generateImage(uid: string, body: any, ctx: any = {}) {
   console.log('[DEBUG-DEPLOY-CHECK-V1] generateImage called', { model: body?.model });
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
@@ -2962,6 +3045,27 @@ export async function generateImage(uid: string, body: any) {
   }
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
+
+  // STRICT CREDIT REDUCTION
+  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        ctx.creditCost,
+        'replicate-generate',
+        {
+          model: modelBase,
+          ...(ctx.meta || {}),
+          pricingVersion: ctx.pricingVersion || 'v1',
+        }
+      );
+      console.log(`[replicateService.generateImage] Debited ${ctx.creditCost} credits for ${uid}`);
+    } catch (error) {
+       console.error('[replicateService.generateImage] Failed to deduct credits:', error);
+    }
+  }
+
   return {
     images: scoredImages,
     aestheticScore: highestScore,
@@ -3477,12 +3581,27 @@ export async function wanI2vSubmit(
 }
 
 export async function replicateQueueStatus(
-  _uid: string,
+  uid: string,
   requestId: string
 ): Promise<any> {
   const replicate = ensureReplicate();
   try {
     const status = await replicate.predictions.get(requestId);
+    console.log('[replicateQueueStatus] prediction status', { requestId, status: status.status });
+
+    // STRICT CREDIT DEDUCTION: If status is succeeded, we must finalize (debit) immediately
+    if (status.status === 'succeeded') {
+      try {
+        console.log('[replicateQueueStatus] Job succeeded, triggering strict finalization/debit', { requestId, uid });
+        // Call replicateQueueResult to handle debit, storage, and history update
+        const result = await replicateQueueResult(uid, requestId);
+        return result;
+      } catch (e) {
+        console.error('[replicateQueueStatus] Strict finalization failed', e);
+        // Fallback to returning raw status if finalization fails (though logic might be disconnected)
+      }
+    }
+
     return status;
   } catch (e: any) {
     // eslint-disable-next-line no-console

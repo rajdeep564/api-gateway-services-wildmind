@@ -1,0 +1,4 @@
+﻿
+> api-gateway-services@1.0.0 build
+> tsc
+

@@ -27,8 +27,51 @@ const PORT = env.port || 5000;
 const server: HttpServer = app.listen(PORT, () => {
   logger.info({ port: PORT }, 'API Gateway running');
 });
-// Increase timeout to 5 minutes (300s) to match Nginx
-server.setTimeout(300000);
+// Increase timeout to 7.5 minutes (450s) to match application timeout
+server.setTimeout(450000);
+
+// Graceful shutdown handler
+let isShuttingDown = false;
+
+const gracefulShutdown = (signal: string) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  logger.warn({ signal }, `Received ${signal}, starting graceful shutdown...`);
+
+  // Stop accepting new connections
+  server.close((err) => {
+    if (err) {
+      logger.error({ err }, 'Error during server close');
+      process.exit(1);
+    }
+    
+    logger.info('Server closed, all connections drained');
+    process.exit(0);
+  });
+
+  // Force exit after 30 seconds if graceful shutdown hangs
+  setTimeout(() => {
+    logger.error('Graceful shutdown timeout, forcing exit');
+    process.exit(1);
+  }, 30000);
+};
+
+// Handle termination signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Handle uncaught errors
+process.on('uncaughtException', (error) => {
+  logger.fatal({ err: error }, 'Uncaught exception, shutting down');
+  gracefulShutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.fatal({ reason }, 'Unhandled rejection, shutting down');
+  gracefulShutdown('unhandledRejection');
+});
+
 
 // Start WebSocket server on the same HTTP server at /realtime
 try {

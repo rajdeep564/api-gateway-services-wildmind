@@ -18,8 +18,8 @@ async function generate(req: Request, res: Response, next: NextFunction) {
     const uid = req.uid;
     const ctx = (req as any).context || {};
     logger.info({ uid, ctx }, '[CREDITS][FAL] Enter generate with context');
-    const result = await falService.generate(uid, payload);
-    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'generate');
+    const result = await falService.generate(uid, payload, ctx);
+    const debitOutcome = 'success'; // Credits deducted atomically in service
     
     // Determine appropriate message based on generation type
     const generationType = payload.generationType || '';

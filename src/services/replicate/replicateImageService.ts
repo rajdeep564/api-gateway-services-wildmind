@@ -13,6 +13,7 @@ import { ApiError } from "../../utils/errorHandler";
 import { env } from "../../config/env";
 import { generationHistoryRepository } from "../../repository/generationHistoryRepository";
 import { authRepository } from "../../repository/auth/authRepository";
+import { creditsRepository } from "../../repository/creditsRepository";
 import {
   uploadFromUrlToZata,
   uploadDataUriToZata,
@@ -75,7 +76,8 @@ export async function removeBackground(
     threshold?: number;
     background_type?: string;
     isPublic?: boolean;
-  }
+  },
+  ctx: any = {}
 ) {
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
@@ -198,7 +200,7 @@ export async function removeBackground(
       status: "failed",
       error: e?.message || "Replicate failed",
     } as any);
-    throw new ApiError("Replicate generation failed", 502, e);
+    throw new ApiError(e?.message || "Replicate generation failed", 502, e);
   }
 
   // Upload to Zata
@@ -269,6 +271,27 @@ export async function removeBackground(
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
 
+  // STRICT CREDIT REDUCTION
+  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        ctx.creditCost,
+        'replicate-remove-bg',
+        {
+          model: modelBase,
+          ...(ctx.meta || {}),
+          pricingVersion: ctx.pricingVersion || 'v1',
+        }
+      );
+      console.log(`[replicateService.removeBackground] Debited ${ctx.creditCost} credits for ${uid}`);
+    } catch (error) {
+       console.error('[replicateService.removeBackground] Failed to deduct credits:', error);
+       // We log but do not fail the request since service was delivered
+    }
+  }
+
   return {
     images: scoredImages,
     aestheticScore: highestScore,
@@ -281,7 +304,7 @@ export async function removeBackground(
 /**
  * Upscale an image using Replicate
  */
-export async function upscale(uid: string, body: any) {
+export async function upscale(uid: string, body: any, ctx: any = {}) {
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
   if (!key) {
@@ -813,7 +836,29 @@ export async function upscale(uid: string, body: any) {
     );
   }
   // Robust mirror sync with retry logic
+  // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
+
+  // STRICT CREDIT REDUCTION
+  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        ctx.creditCost,
+        'replicate-upscale',
+        {
+          model: modelBase,
+          ...(ctx.meta || {}),
+          pricingVersion: ctx.pricingVersion || 'v1',
+        }
+      );
+      console.log(`[replicateService.upscale] Debited ${ctx.creditCost} credits for ${uid}`);
+    } catch (error) {
+       console.error('[replicateService.upscale] Failed to deduct credits:', error);
+    }
+  }
+
   return {
     images: scoredImages,
     aestheticScore: highestScore,
@@ -827,7 +872,7 @@ export async function upscale(uid: string, body: any) {
  * Generate image using Replicate
  * Supports multiple models: Seedream, Leonardo Phoenix, Ideogram, P-Image, GPT Image 1.5, etc.
  */
-export async function generateImage(uid: string, body: any) {
+export async function generateImage(uid: string, body: any, ctx: any = {}) {
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
   if (!key) {
@@ -1891,7 +1936,29 @@ export async function generateImage(uid: string, body: any) {
     );
   }
   // Robust mirror sync with retry logic
+  // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
+
+  // STRICT CREDIT REDUCTION
+  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        ctx.creditCost,
+        'replicate-generate',
+        {
+          model: modelBase,
+          ...(ctx.meta || {}),
+          pricingVersion: ctx.pricingVersion || 'v1',
+        }
+      );
+      console.log(`[replicateService.generateImage] Debited ${ctx.creditCost} credits for ${uid}`);
+    } catch (error) {
+       console.error('[replicateService.generateImage] Failed to deduct credits:', error);
+    }
+  }
+
   return {
     images: scoredImages,
     aestheticScore: highestScore,
@@ -1904,7 +1971,7 @@ export async function generateImage(uid: string, body: any) {
 /**
  * Generate multiple angles of an image using Replicate
  */
-export async function multiangle(uid: string, body: any) {
+export async function multiangle(uid: string, body: any, ctx: any = {}) {
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
   if (!key) {
@@ -2142,6 +2209,26 @@ export async function multiangle(uid: string, body: any) {
 
   await syncToMirror(uid, historyId);
 
+  // STRICT CREDIT REDUCTION
+  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        ctx.creditCost,
+        'replicate-multiangle',
+        {
+          model: modelBase,
+          ...(ctx.meta || {}),
+          pricingVersion: ctx.pricingVersion || 'v1',
+        }
+      );
+      console.log(`[replicateService.multiangle] Debited ${ctx.creditCost} credits for ${uid}`);
+    } catch (error) {
+       console.error('[replicateService.multiangle] Failed to deduct credits:', error);
+    }
+  }
+
   return {
     images: scoredImages,
     aestheticScore: highestScore,
@@ -2154,7 +2241,7 @@ export async function multiangle(uid: string, body: any) {
 /**
  * Generate next scene from an image using Replicate
  */
-export async function nextScene(uid: string, body: any) {
+export async function nextScene(uid: string, body: any, ctx: any = {}) {
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
   if (!key) {
@@ -2391,6 +2478,26 @@ export async function nextScene(uid: string, body: any) {
   }).catch(console.error);
 
   await syncToMirror(uid, historyId);
+
+  // STRICT CREDIT REDUCTION
+  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        ctx.creditCost,
+        'replicate-next-scene',
+        {
+          model: modelBase,
+          ...(ctx.meta || {}),
+          pricingVersion: ctx.pricingVersion || 'v1',
+        }
+      );
+      console.log(`[replicateService.nextScene] Debited ${ctx.creditCost} credits for ${uid}`);
+    } catch (error) {
+       console.error('[replicateService.nextScene] Failed to deduct credits:', error);
+    }
+  }
 
   return {
     images: scoredImages,

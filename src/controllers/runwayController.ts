@@ -114,5 +114,3 @@ export const runwayController = {
   videoGenerate,
   characterPerformance,
 };
-
-

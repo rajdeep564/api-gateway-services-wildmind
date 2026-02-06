@@ -226,9 +226,12 @@ async function processWithSeedream4K(
   }
 }
 
+import { creditsRepository } from '../repository/creditsRepository';
+
 export async function reimagineImage(
   uid: string,
-  request: ReimagineRequest
+  request: ReimagineRequest,
+  ctx: any = {}
 ): Promise<ReimagineResponse> {
   const { image_url, selection_bounds, prompt, isPublic } = request;
 
@@ -476,6 +479,27 @@ export async function reimagineImage(
     await syncToMirror(uid, historyId);
 
     console.log('[reimagineService] Reimagine completed successfully:', publicUrl);
+
+    // STRICT CREDIT DEDUCTION (Atomic)
+    if (ctx && ctx.creditCost) {
+      try {
+        await creditsRepository.writeDebitIfAbsent(
+          uid,
+          historyId,
+           ctx.creditCost,
+          ctx.reason || 'reimagine.generate',
+          {
+            ...(ctx.meta || {}),
+            historyId,
+            provider: 'google', // Or 'seedream' based on selectedModel?
+            pricingVersion: ctx.pricingVersion,
+          }
+        );
+         console.log('[Reimagine] Strict debit successful', { uid, historyId, cost: ctx.creditCost });
+      } catch (debitError) {
+        console.error('[Reimagine] Strict debit failed', { uid, historyId, error: debitError });
+      }
+    }
 
     return {
       reimagined_image: publicUrl,

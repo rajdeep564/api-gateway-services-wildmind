@@ -20,36 +20,16 @@ export async function generate(req: Request, res: Response, next: NextFunction) 
       isPublic,
       model,
       referenceImage,
-    });
+    }, ctx);
 
-    // Handle credit debit if configured
-    let debitOutcome: 'SKIPPED' | 'WRITTEN' | undefined;
-    try {
-      const requestId = result.historyId || ctx.idempotencyKey;
-      logger.info({ uid, requestId, cost: ctx.creditCost }, '[CREDITS][REIMAGINE] Attempt debit after success');
-      if (requestId && typeof ctx.creditCost === 'number') {
-        debitOutcome = await creditsRepository.writeDebitIfAbsent(
-          uid,
-          requestId,
-          ctx.creditCost,
-          ctx.reason || 'reimagine.generate',
-          {
-            ...(ctx.meta || {}),
-            historyId: result.historyId,
-            provider: 'google',
-            pricingVersion: ctx.pricingVersion,
-          }
-        );
-      }
-    } catch (_e) {
-      // Ignore debit errors
-    }
+    // Debit is handled inside service
+    // const debitOutcome = ... (removed)
 
     res.json(
       formatApiResponse('success', 'Reimagine completed successfully', {
         ...result,
         debitedCredits: ctx.creditCost,
-        debitStatus: debitOutcome,
+        debitStatus: 'WRITTEN_IN_SERVICE',
       })
     );
   } catch (err) {

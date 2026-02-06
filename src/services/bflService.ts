@@ -20,6 +20,8 @@ import { syncToMirror, updateMirror } from "../utils/mirrorHelper";
 import { aestheticScoreService } from "./aestheticScoreService";
 import { publicVisibilityEnforcer } from "../utils/publicVisibilityEnforcer";
 import { markGenerationCompleted } from "./generationHistoryService";
+import { postSuccessDebit } from "../utils/creditDebit";
+import { creditsRepository } from "../repository/creditsRepository";
 
 // Normalize input (URL | data URI | raw base64) to a base64 string without a data URI prefix
 // Returns base64 plus metadata (mime, width, height)
@@ -142,7 +144,8 @@ async function pollForResults(
 
 async function generate(
   uid: string,
-  payload: BflGenerateRequest
+  payload: BflGenerateRequest,
+  ctx: any = {}
 ): Promise<BflGenerateResponse & { historyId?: string }> {
   const {
     prompt,
@@ -388,6 +391,30 @@ async function generate(
     if (highestScore !== undefined) {
       returnData.aestheticScore = highestScore;
     }
+
+    // STRICT CREDIT DEDUCTION
+    if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+      try {
+        await creditsRepository.writeDebitIfAbsent(
+          uid,
+          historyId,
+          ctx.creditCost,
+          'bfl-generate',
+          {
+            model,
+            ...(ctx.meta || {}),
+            pricingVersion: ctx.pricingVersion || 'v1',
+          }
+        );
+        console.log(`[bflService.generate] Debited ${ctx.creditCost} credits for ${uid}`);
+        returnData.debitedCredits = ctx.creditCost;
+        returnData.debitStatus = 'success';
+      } catch (error) {
+         console.error('[bflService.generate] Failed to deduct credits:', error);
+         returnData.debitStatus = 'failed';
+      }
+    }
+    
     return returnData as any;
   } catch (err: any) {
     // Check if it's already an ApiError (handled by pollForResults or our axios block)
@@ -430,7 +457,7 @@ async function generate(
   }
 }
 
-async function fill(uid: string, body: any) {
+async function fill(uid: string, body: any, ctx: any) {
   const apiKey = env.bflApiKey as string;
   if (!apiKey) throw new ApiError("API key not configured", 500);
   const creator = await authRepository.getUserById(uid);
@@ -528,14 +555,36 @@ async function fill(uid: string, body: any) {
     createdBy,
     images: cleanedImages,
     status: "completed",
+    aestheticScore: highestScore,
   };
-  if (highestScore !== undefined) {
-    returnData.aestheticScore = highestScore;
+  
+  // STRICT CREDIT DEDUCTION
+  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        ctx.creditCost,
+        'bfl-fill',
+        {
+          model: "flux-pro-1.0-fill",
+          ...(ctx.meta || {}),
+          pricingVersion: ctx.pricingVersion || 'v1',
+        }
+      );
+      console.log(`[bflService.fill] Debited ${ctx.creditCost} credits for ${uid}`);
+      returnData.debitedCredits = ctx.creditCost;
+      returnData.debitStatus = 'success';
+    } catch (error) {
+       console.error('[bflService.fill] Failed to deduct credits:', error);
+       returnData.debitStatus = 'failed';
+    }
   }
+  
   return returnData as any;
 }
 
-async function expand(uid: string, body: any) {
+async function expand(uid: string, body: any, ctx: any) {
   const apiKey = env.bflApiKey as string;
   if (!apiKey) throw new ApiError("API key not configured", 500);
   const creator = await authRepository.getUserById(uid);
@@ -609,14 +658,36 @@ async function expand(uid: string, body: any) {
     createdBy,
     images: cleanedImages,
     status: "completed",
+    aestheticScore: highestScore,
   };
-  if (highestScore !== undefined) {
-    returnData.aestheticScore = highestScore;
+  
+  // STRICT CREDIT DEDUCTION
+  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        ctx.creditCost,
+        'bfl-expand',
+        {
+          model: "flux-pro-1.0-expand",
+          ...(ctx.meta || {}),
+          pricingVersion: ctx.pricingVersion || 'v1',
+        }
+      );
+      console.log(`[bflService.expand] Debited ${ctx.creditCost} credits for ${uid}`);
+      returnData.debitedCredits = ctx.creditCost;
+      returnData.debitStatus = 'success';
+    } catch (error) {
+       console.error('[bflService.expand] Failed to deduct credits:', error);
+       returnData.debitStatus = 'failed';
+    }
   }
+  
   return returnData as any;
 }
 
-async function canny(uid: string, body: any) {
+async function canny(uid: string, body: any, ctx: any) {
   const apiKey = env.bflApiKey as string;
   if (!apiKey) throw new ApiError("API key not configured", 500);
   const creator = await authRepository.getUserById(uid);
@@ -690,14 +761,36 @@ async function canny(uid: string, body: any) {
     createdBy,
     images: cleanedImages,
     status: "completed",
+    aestheticScore: highestScore,
   };
-  if (highestScore !== undefined) {
-    returnData.aestheticScore = highestScore;
+  
+  // STRICT CREDIT DEDUCTION
+  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        ctx.creditCost,
+        'bfl-canny',
+        {
+          model: "flux-pro-1.0-canny",
+          ...(ctx.meta || {}),
+          pricingVersion: ctx.pricingVersion || 'v1',
+        }
+      );
+      console.log(`[bflService.canny] Debited ${ctx.creditCost} credits for ${uid}`);
+      returnData.debitedCredits = ctx.creditCost;
+      returnData.debitStatus = 'success';
+    } catch (error) {
+       console.error('[bflService.canny] Failed to deduct credits:', error);
+       returnData.debitStatus = 'failed';
+    }
   }
+  
   return returnData as any;
 }
 
-async function depth(uid: string, body: any) {
+async function depth(uid: string, body: any, ctx: any) {
   const apiKey = env.bflApiKey as string;
   if (!apiKey) throw new ApiError("API key not configured", 500);
   const creator = await authRepository.getUserById(uid);
@@ -771,15 +864,37 @@ async function depth(uid: string, body: any) {
     createdBy,
     images: cleanedImages,
     status: "completed",
+    aestheticScore: highestScore,
   };
-  if (highestScore !== undefined) {
-    returnData.aestheticScore = highestScore;
+  
+  // STRICT CREDIT DEDUCTION
+  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+    try {
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        ctx.creditCost,
+        'bfl-depth',
+        {
+          model: "flux-pro-1.0-depth",
+          ...(ctx.meta || {}),
+          pricingVersion: ctx.pricingVersion || 'v1',
+        }
+      );
+      console.log(`[bflService.depth] Debited ${ctx.creditCost} credits for ${uid}`);
+      returnData.debitedCredits = ctx.creditCost;
+      returnData.debitStatus = 'success';
+    } catch (error) {
+       console.error('[bflService.depth] Failed to deduct credits:', error);
+       returnData.debitStatus = 'failed';
+    }
   }
+  
   return returnData as any;
 }
 
 // Expansion using FLUX Fill - generates mask from expansion margins
-async function expandWithFill(uid: string, body: any) {
+async function expandWithFill(uid: string, body: any, ctx: any) {
   const apiKey = env.bflApiKey as string;
   if (!apiKey) throw new ApiError("API key not configured", 500);
   const creator = await authRepository.getUserById(uid);
@@ -957,10 +1072,14 @@ async function expandWithFill(uid: string, body: any) {
     createdBy,
     images: cleanedImages,
     status: "completed",
+    aestheticScore: highestScore,
   };
-  if (highestScore !== undefined) {
-    returnData.aestheticScore = highestScore;
-  }
+  
+  // STRICT CREDIT DEDUCTION
+  const debitOutcome = await postSuccessDebit(uid, returnData, ctx, 'bfl', 'expand');
+  returnData.debitedCredits = (ctx as any)?.creditCost;
+  returnData.debitStatus = debitOutcome;
+  
   return returnData as any;
 }
 

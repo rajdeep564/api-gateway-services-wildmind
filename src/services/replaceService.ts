@@ -323,12 +323,15 @@ async function processSeedream4(
   }
 }
 
+import { creditsRepository } from '../repository/creditsRepository';
+
 /**
  * Main replace service function
  */
 export async function replaceImage(
   uid: string,
-  request: ReplaceRequest
+  request: ReplaceRequest,
+  ctx: any = {}
 ): Promise<ReplaceResponse> {
   const { input_image, masked_image, prompt, model } = request;
 
@@ -433,6 +436,27 @@ export async function replaceImage(
 
     // Sync to mirror
     await syncToMirror(uid, historyId);
+    
+    // STRICT CREDIT DEDUCTION (Atomic)
+    if (ctx && ctx.creditCost) {
+      try {
+        await creditsRepository.writeDebitIfAbsent(
+          uid,
+          historyId,
+           ctx.creditCost,
+          ctx.reason || 'replace.edit',
+          {
+            ...(ctx.meta || {}),
+            historyId,
+            provider: model === 'google_nano_banana' ? 'google' : 'seedream',
+            pricingVersion: ctx.pricingVersion,
+          }
+        );
+         console.log('[Replace] Strict debit successful', { uid, historyId, cost: ctx.creditCost });
+      } catch (debitError) {
+        console.error('[Replace] Strict debit failed', { uid, historyId, error: debitError });
+      }
+    }
 
     return {
       edited_image: editedImageResult.publicUrl,
