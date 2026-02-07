@@ -669,10 +669,10 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
       imageUrl: body.image?.substring?.(0, 100) || body.image, // Log first 100 chars of URL
     });
 
-    // Add timeout wrapper for Replicate API call (5 minutes max)
-    const REPLICATE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+    // Add timeout wrapper for Replicate API call (7 minutes max)
+    const REPLICATE_TIMEOUT = 7 * 60 * 1000; // 7 minutes
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Replicate API call timed out after 5 minutes")), REPLICATE_TIMEOUT);
+      setTimeout(() => reject(new Error("Replicate API call timed out after 7 minutes")), REPLICATE_TIMEOUT);
     });
 
     // Retry logic with exponential backoff for transient errors (500, 502, 503, 504)
