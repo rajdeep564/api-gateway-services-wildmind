@@ -1,5 +1,7 @@
 import { Request } from 'express';
 import { creditDistributionData } from '../../data/creditDistribution';
+import { probeImageMeta } from '../media/imageProbe';
+import { ApiError } from '../errorHandler';
 
 export const REPLICATE_PRICING_VERSION = 'replicate-v1';
 
@@ -41,37 +43,120 @@ export async function computeReplicateBgRemoveCost(req: Request): Promise<{ cost
 
 export async function computeReplicateUpscaleCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { model } = req.body || {};
-  const normalized = String(model || '').toLowerCase();
+  // Mirror replicateService.upscale default: Crystal Upscaler when model is omitted.
+  const normalized = String(model || 'philz1337x/crystal-upscaler').toLowerCase();
   let display = '';
   let meta: Record<string, any> = { model: normalized };
 
-  // Crystal Upscaler has resolution-based pricing
+  // Crystal Upscaler: pixel-tier pricing (based on output pixels)
+  // Tiers (total pixels):
+  //  <= 4 MP    -> $0.05
+  //  <= 8 MP    -> $0.10
+  //  <= 16 MP   -> $0.20
+  //  <= 25 MP   -> $0.40
+  //  <= 50 MP   -> $0.80
+  //  <= 100 MP  -> $1.60
+  //  else       -> $3.20
+  // User cost adds fixed $0.01 overcharge.
+  // Credit cost MUST match the sheet exactly (fixed credits per tier).
   if (normalized.includes('crystal')) {
-    const resRaw = String((req.body as any)?.resolution || '').toLowerCase();
-    // Normalize a few common forms
-    const res = ((): string => {
-      if (!resRaw) return '1080p';
-      if (resRaw.includes('1080')) return '1080p';
-      if (resRaw.includes('1440')) return '1440p';
-      if (resRaw.includes('2160') || resRaw.includes('4k')) return '2160p';
-      if (resRaw.includes('6k')) return '6K'; // Sheet uses 6K (uppercase K?)
-      if (resRaw.includes('8k')) return '8K';
-      if (resRaw.includes('12k')) return '12K';
+    const getNum = (v: any): number | undefined => {
+      const n = typeof v === 'number' ? v : Number(v);
+      if (!Number.isFinite(n)) return undefined;
+      return n;
+    };
 
-      const m = resRaw.match(/(\d{3,4})p/);
-      if (m) {
-        const p = Number(m[1]);
-        if (p <= 1080) return '1080p';
-        if (p <= 1440) return '1440p';
-        if (p <= 2160) return '2160p';
+    const width =
+      getNum((req.body as any)?.width) ??
+      getNum((req.body as any)?.inputWidth) ??
+      getNum((req.body as any)?.w);
+    const height =
+      getNum((req.body as any)?.height) ??
+      getNum((req.body as any)?.inputHeight) ??
+      getNum((req.body as any)?.h);
+
+    let inW = width;
+    let inH = height;
+
+    if (!inW || !inH) {
+      const imageUrl = String((req.body as any)?.image || '');
+      if (imageUrl) {
+        const probed = await probeImageMeta(imageUrl);
+        if (probed.width && probed.height) {
+          inW = probed.width;
+          inH = probed.height;
+          meta.probed = true;
+        }
       }
-      return '1080p';
+    }
+
+    if (!inW || !inH || inW <= 0 || inH <= 0) {
+      throw new ApiError('Unable to determine image dimensions for Crystal Upscaler pricing', 400);
+    }
+
+    const rawScale = getNum((req.body as any)?.scale_factor);
+    const scaleFactor = Math.max(1, Math.min(4, rawScale ?? 2));
+
+    const outW = Math.max(1, Math.round(inW * scaleFactor));
+    const outH = Math.max(1, Math.round(inH * scaleFactor));
+    const totalPixels = outW * outH;
+
+    const baseCents = ((): number => {
+      // Match credit sheet tiers (MP = million pixels)
+      if (totalPixels <= 4_000_000) return 5;
+      if (totalPixels <= 8_000_000) return 10;
+      if (totalPixels <= 16_000_000) return 20;
+      if (totalPixels <= 25_000_000) return 40;
+      if (totalPixels <= 50_000_000) return 80;
+      if (totalPixels <= 100_000_000) return 160;
+      return 320;
     })();
 
-    // Map to sheet names: "replicate/crystal-upscaler 1080p", etc.
-    // Sheet uses "6K", "8K", "12K", "2160p", "1440p", "1080p"
-    display = `replicate/crystal-upscaler ${res}`;
-    meta.resolution = res;
+    const overchargeCents = 1;
+    const userCostCents = baseCents + overchargeCents;
+    const cost = ((): number => {
+      // Sheet mapping: MP tier => credits per generation
+      if (totalPixels <= 4_000_000) return 120;
+      if (totalPixels <= 8_000_000) return 220;
+      if (totalPixels <= 16_000_000) return 420;
+      if (totalPixels <= 25_000_000) return 820;
+      if (totalPixels <= 50_000_000) return 1620;
+      if (totalPixels <= 100_000_000) return 3220;
+      return 6420;
+    })();
+
+    meta = {
+      ...meta,
+      model: 'replicate/crystal-upscaler',
+      inputWidth: Math.round(inW),
+      inputHeight: Math.round(inH),
+      scaleFactor,
+      outputWidth: outW,
+      outputHeight: outH,
+      totalPixels,
+      totalMP: Math.round((totalPixels / 1_000_000) * 100) / 100,
+      baseCents,
+      overchargeCents,
+      userCostCents,
+      computedCredits: cost,
+    };
+
+    // Detailed debug logs to verify real requests against the pricing sheet
+    // eslint-disable-next-line no-console
+    console.log('[pricing][replicate.upscale][crystal] computed', {
+      input: { w: meta.inputWidth, h: meta.inputHeight },
+      scaleFactor,
+      output: { w: outW, h: outH },
+      totalPixels,
+      totalMP: meta.totalMP,
+      baseCents,
+      overchargeCents,
+      userCostCents,
+      credits: cost,
+      probed: meta.probed === true,
+    });
+
+    return { cost, pricingVersion: 'replicate-upscale-v2', meta };
   }
   else if (normalized.includes('philz1337x/clarity-upscaler')) display = 'replicate/philz1337x/clarity-upscaler';
   else if (normalized.includes('fermatresearch/magic-image-refiner')) display = 'replicate/fermatresearch/magic-image-refiner';

@@ -14,7 +14,7 @@ const LAUNCH_FIXED_CREDITS = 2000;
 // Can be overridden via LAUNCH_PLAN_CUTOFF_DATE environment variable (ISO string format)
 const LAUNCH_PLAN_CUTOFF_DATE = process.env.LAUNCH_PLAN_CUTOFF_DATE 
   ? new Date(process.env.LAUNCH_PLAN_CUTOFF_DATE)
-  : new Date('2026-01-10T23:59:59.999Z');
+  : new Date('2026-01-20T23:59:59.999Z');
 
 /**
  * Check if the current date is on or before the launch plan cutoff date

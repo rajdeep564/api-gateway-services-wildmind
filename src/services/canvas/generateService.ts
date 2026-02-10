@@ -253,7 +253,7 @@ export async function generateForCanvas(
   });
 
   const imageCount = request.imageCount || 1;
-  const clampedImageCount = Math.max(1, Math.min(4, imageCount)); // Limit to 1-4 images
+  const clampedImageCount = Math.max(1, Math.min(6, imageCount)); // Limit to 1-6 images
 
   let imageUrl: string;
   let imageStoragePath: string | undefined;

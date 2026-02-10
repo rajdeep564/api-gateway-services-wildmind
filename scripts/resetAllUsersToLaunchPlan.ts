@@ -27,10 +27,10 @@ import { creditsService } from '../src/services/creditsService';
 const LAUNCH_PLAN_CODE = 'LAUNCH_4000_FIXED';
 const LAUNCH_FIXED_CREDITS = 2000;
 
-// Launch plan cutoff date: January 10, 2026 (end of day UTC)
+// Launch plan cutoff date: January 20, 2026 (end of day UTC)
 const LAUNCH_PLAN_CUTOFF_DATE = process.env.LAUNCH_PLAN_CUTOFF_DATE 
   ? new Date(process.env.LAUNCH_PLAN_CUTOFF_DATE)
-  : new Date('2026-01-10T23:59:59.999Z');
+  : new Date('2026-01-20T23:59:59.999Z');
 
 function isWithinLaunchPlanPeriod(): boolean {
   const now = new Date();
@@ -53,7 +53,7 @@ async function resetAllUsersToLaunchPlan(options: { dryRun?: boolean; limit?: nu
   console.log('  - FORCE reset ALL users (even if already on launch plan)');
   console.log('  - Clear ALL ledger entries for each user');
   console.log('  - Set all users → LAUNCH_4000_FIXED plan');
-  console.log('  - Set all users → 4000 credits');
+  console.log(`  - Set all users → ${LAUNCH_FIXED_CREDITS} credits`);
   console.log('  - Create GRANT ledger entry for proper reconciliation');
   console.log('  - Set launchTrialStartDate with proper date logic');
   console.log('  - Mark launchMigrationDone = true');
@@ -160,7 +160,7 @@ async function resetAllUsersToLaunchPlan(options: { dryRun?: boolean; limit?: nu
             });
             console.log(`     ✅ Plan and launch date set`);
 
-            // Step 4: Create GRANT ledger entry (this will increment from 0 to 4000)
+            // Step 4: Create GRANT ledger entry (this will increment from 0 to launch fixed credits)
             console.log(`  💰 Creating GRANT ledger entry...`);
             try {
               const migrationGrantId = `LAUNCH_MIGRATION_GRANT_${uid}_${Date.now()}`;

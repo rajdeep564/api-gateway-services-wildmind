@@ -5,6 +5,8 @@ import { postSuccessDebit } from '../../../utils/creditDebit';
 import { probeImageMeta } from '../../../utils/media/imageProbe';
 import { creditsService } from '../../../services/creditsService';
 import { creditsRepository } from '../../../repository/creditsRepository';
+import { uploadDataUriToZata } from '../../../utils/storage/zataUpload';
+import { authRepository } from '../../../repository/auth/authRepository';
 
 /**
  * Controller for Creatively Upscale feature
@@ -45,7 +47,23 @@ export async function creativelyUpscaleController(req: Request, res: Response, n
             return s;
         };
 
-        const normalizedImage = normalizeToZataUrl(String(image));
+        let normalizedImage = normalizeToZataUrl(String(image));
+
+        // Handle Base64 Data URI upload
+        if (normalizedImage.startsWith('data:')) {
+            const creator = await authRepository.getUserById(uid);
+            const username = creator?.username || uid;
+            // Use a temporary folder or predicted history ID logic. 
+            // Since we don't have historyId yet, we can use a timestamp or 'uploads'.
+            // falService will likely create the history record, but ideally we link this input.
+            // For now, just ensuring it's a URL is enough for probing and execution.
+            const upload = await uploadDataUriToZata({
+                dataUri: normalizedImage,
+                keyPrefix: `users/${username}/uploads/upscale`,
+                fileName: `input-${Date.now()}`
+            });
+            normalizedImage = upload.publicUrl;
+        }
 
         const factor = upscaleFactor ? Number(upscaleFactor) : 2;
         const safeFactor = Math.max(1, Math.min(8, Math.round(Number.isFinite(factor) ? factor : 2)));

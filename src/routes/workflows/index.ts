@@ -9,12 +9,39 @@ import removeWatermarkRoutes from './general/removeWatermark';
 import creativelyUpscaleRoutes from './general/creativelyUpscale';
 import becomeCelebrityRoutes from './fun/becomeCelebrity';
 import replaceElementRoutes from './general/replaceElement';
-import photographyRoutes from './photography';
+import expressionSheetRoutes from './photography/expressionSheet';
+import poseControlRoutes from './photography/poseControl';
+import characterSheetRoutes from './photography/characterSheet';
+import productPhotographyRoutes from './photography/productPhotography';
+import reimagineProductRoutes from './photography/reimagineProduct';
+import famousPhotographerRoutes from './photography/famousPhotographer';
+import automotiveRoutes from './photography/automotive';
+import createLogoRoutes from './branding/createLogo';
+import mockupGenerationRoutes from './branding/mockupGeneration';
+import logoVariationsRoutes from './branding/logoVariations';
+import storyboardRoutes from './filmIndustry/storyboard';
 
 const router = Router();
 
 // Selfie Video workflow
 router.use('/selfie-video', selfieVideoRoutes);
+
+// Photography workflows
+router.use('/photography/expression-sheet', expressionSheetRoutes);
+router.use('/photography/character-sheet', characterSheetRoutes);
+router.use('/photography/product-photography', productPhotographyRoutes);
+router.use('/photography/dynamic-camera-angle', reimagineProductRoutes);
+router.use('/photography/famous-photographer', famousPhotographerRoutes);
+router.use('/photography/pose-control', poseControlRoutes);
+router.use('/photography/automotive', automotiveRoutes);
+
+// Branding workflows
+router.use('/branding/create-logo', createLogoRoutes);
+router.use('/branding/mockup-generation', mockupGenerationRoutes);
+router.use('/branding/logo-variations', logoVariationsRoutes);
+
+// Film Industry workflows
+router.use('/film-industry', storyboardRoutes);
 
 // General workflows
 // removeBackgroundRoutes defines: router.post('/remove-background', ...)
@@ -35,7 +62,5 @@ router.use('/general/replace-element', replaceElementRoutes);
 // Fun workflows
 router.use('/fun/become-celebrity', becomeCelebrityRoutes);
 
-// Photography workflows
-router.use('/photography', photographyRoutes);
 
 export default router;

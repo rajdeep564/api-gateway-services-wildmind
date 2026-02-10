@@ -28,7 +28,7 @@ export async function restoreOldPhotoController(req: Request, res: Response, nex
         const result = await restoreOldPhoto(uid, requestPayload);
 
         // Credit deduction logic
-        const CREDIT_COST = 80;
+        const CREDIT_COST = 90;
         const ctx: any = { creditCost: CREDIT_COST };
 
         await postSuccessDebit(uid, result, ctx, 'replicate', 'restore-old-photo');
