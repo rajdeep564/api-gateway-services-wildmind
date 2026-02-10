@@ -9,11 +9,11 @@ import { logger } from '../utils/logger';
 
 async function generate(req: Request, res: Response, next: NextFunction) {
   try {
-    const { prompt, userPrompt, model, n, frameSize, style, uploadedImages, width, height , generationType , tags , nsfw , visibility , isPublic } = req.body || {};
+    const { prompt, userPrompt, model, n, frameSize, style, uploadedImages, width, height, generationType, tags, nsfw, visibility, isPublic } = req.body || {};
     const uid = req.uid;
     const ctx = (req as any).context || {};
     logger.info({ uid, ctx }, '[CREDITS] Enter generate controller with context');
-    const result = await bflService.generate(uid, { prompt, userPrompt, model, n, frameSize, style, uploadedImages, width, height , generationType , tags , nsfw , visibility , isPublic }, ctx);
+    const result = await bflService.generate(uid, { prompt, userPrompt, model, n, frameSize, style, uploadedImages, width, height, generationType, tags, nsfw, visibility, isPublic }, ctx);
     res.json(formatApiResponse('success', 'Images generated', result));
   } catch (err) {
     logger.error({ err }, '[CREDITS] Generate controller error');
