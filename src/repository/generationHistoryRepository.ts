@@ -27,7 +27,7 @@ const normalizeTypeValue = (value?: string): string => {
   return String(value).replace(/[_-]/g, '-').toLowerCase();
 };
 
-const filterItemsByMode = <T extends { generationType?: string }>(
+const filterItemsByMode = <T extends { generationType?: string; videos?: any[] }>(
   items: T[],
   mode?: 'video' | 'image' | 'music' | 'branding' | 'all'
 ): { filtered: T[]; removed: number } => {
@@ -39,9 +39,17 @@ const filterItemsByMode = <T extends { generationType?: string }>(
   if (!allowedSet || allowedSet.size === 0) {
     return { filtered: items, removed: 0 };
   }
-  const filtered = items.filter((item) =>
-    allowedSet.has(normalizeTypeValue(item?.generationType))
-  );
+  const hasVideoMedia = (item: any): boolean => {
+    if (!item || !Array.isArray(item.videos) || item.videos.length === 0) return false;
+    return item.videos.some((v: any) => v && (v.url || v.originalUrl || v.storagePath || v.firebaseUrl));
+  };
+  const filtered = items.filter((item) => {
+    const normalizedType = normalizeTypeValue(item?.generationType);
+    if (allowedSet.has(normalizedType)) return true;
+    // Backfill video mode when generationType is missing/mislabeled but videos exist.
+    if (normalizedMode === 'video' && hasVideoMedia(item)) return true;
+    return false;
+  });
   return { filtered, removed: items.length - filtered.length };
 };
 
@@ -527,12 +535,20 @@ export async function list(uid: string, params: {
         lastRawDoc = snap.docs[snap.docs.length - 1];
         const newCursorMs = getCreatedAtMillisFromDoc(lastRawDoc);
         
-        // Ensure cursor advances forward (not backward)
+        // Ensure cursor advances in the correct direction for the current sort order.
         if (newCursorMs && cursorMs !== undefined) {
-          if (newCursorMs <= cursorMs) {
-            // Cursor didn't advance or went backward - we've hit the end
-            ended = true;
-            break;
+          if (sortOrder === 'desc') {
+            if (newCursorMs >= cursorMs) {
+              // Cursor didn't advance toward older items (smaller ms) - we've hit the end
+              ended = true;
+              break;
+            }
+          } else {
+            if (newCursorMs <= cursorMs) {
+              // Cursor didn't advance toward newer items (larger ms) - we've hit the end
+              ended = true;
+              break;
+            }
           }
         }
         cursorMs = newCursorMs || cursorMs;

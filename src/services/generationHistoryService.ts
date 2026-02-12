@@ -535,11 +535,19 @@ export async function listUserGenerations(
   }
 
   // If no explicit generationType filter provided, derive from mode
+  let derivedFromMode = false;
   if ((!generationTypeParam || (Array.isArray(generationTypeParam) && generationTypeParam.length === 0)) && normalizedMode && normalizedMode !== 'all') {
     const mapped = mapModeToGenerationTypes(normalizedMode);
     if (mapped && mapped.length > 0) {
       generationTypeParam = mapped;
+      derivedFromMode = true;
     }
+  }
+
+  // For video mode, avoid forcing generationType when it was derived from mode.
+  // This allows repository scan-based pagination to fill pages when video items are sparse.
+  if (normalizedMode === 'video' && derivedFromMode) {
+    generationTypeParam = undefined;
   }
 
   const effectiveParams = {
@@ -550,12 +558,15 @@ export async function listUserGenerations(
     // status left as-is (undefined means no status filter at repository level)
   } as any;
 
+  const shouldUseListCache = normalizedMode !== 'video';
   // Try cache for list results using effective params so key matches actual query semantics
-  try {
-    const cached = await getCachedList(uid, effectiveParams);
-    if (cached) return cached;
-  } catch (e) {
-    console.warn('[listUserGenerations] Cache read failed, falling back to DB:', e);
+  if (shouldUseListCache) {
+    try {
+      const cached = await getCachedList(uid, effectiveParams);
+      if (cached) return cached;
+    } catch (e) {
+      console.warn('[listUserGenerations] Cache read failed, falling back to DB:', e);
+    }
   }
 
   const result = await generationHistoryRepository.list(uid, effectiveParams as any);
@@ -653,10 +664,12 @@ export async function listUserGenerations(
     };
   }
 
-  try {
-    await setCachedList(uid, effectiveParams, response);
-  } catch (e) {
-    console.warn('[listUserGenerations] Failed to set list cache:', e);
+  if (shouldUseListCache) {
+    try {
+      await setCachedList(uid, effectiveParams, response);
+    } catch (e) {
+      console.warn('[listUserGenerations] Failed to set list cache:', e);
+    }
   }
 
   return response;
