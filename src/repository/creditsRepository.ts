@@ -33,6 +33,13 @@ export async function readUserCredits(uid: string): Promise<number> {
     return 0;
   } catch (e: any) {
     if (e.response?.status === 404) return 0;
+
+    // DEV FALLBACK: If service is unreachable in dev, return mock credits
+    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
+      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, returning mock credits');
+      return 1000;
+    }
+
     handleAxiosError(e, 'readUserCredits');
     return 0; // Unreachable
   }
@@ -54,6 +61,18 @@ export async function readUserInfo(uid: string): Promise<{ creditBalance: number
     return null;
   } catch (e: any) {
     if (e.response?.status === 404) return null;
+
+    // DEV FALLBACK: If service is unreachable in dev, return mock user
+    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
+      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, returning mock user info');
+      return {
+        creditBalance: 1000,
+        planCode: 'FREE',
+        storageQuotaBytes: '1073741824', // 1GB
+        storageUsedBytes: '0'
+      };
+    }
+
     handleAxiosError(e, 'readUserInfo');
     return null;
   }
@@ -77,28 +96,38 @@ export async function listRecentLedgers(uid: string, limit: number = 10): Promis
     }
     return [];
   } catch (e: any) {
+    // DEV FALLBACK: If service is unreachable in dev, return empty list
+    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
+      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, returning empty ledgers');
+      return [];
+    }
     handleAxiosError(e, 'listRecentLedgers');
     return [];
   }
 }
 
 export async function reconcileBalanceFromLedgers(uid: string): Promise<{ calculatedBalance: number; totalGrants: number; totalDebits: number; ledgerCount: number }> {
-    try {
-        const res = await axios.post(`${CREDIT_SERVICE_URL}/credits/reconcile/${uid}`);
-        if(res.data.success && res.data.data) {
-            return res.data.data; 
-        }
-        throw new Error('Reconcile failed');
-    } catch (e) {
-        handleAxiosError(e, 'reconcileBalanceFromLedgers');
-        return { calculatedBalance: 0, totalGrants: 0, totalDebits: 0, ledgerCount: 0 };
+  try {
+    const res = await axios.post(`${CREDIT_SERVICE_URL}/credits/reconcile/${uid}`);
+    if (res.data.success && res.data.data) {
+      return res.data.data;
     }
+    throw new Error('Reconcile failed');
+  } catch (e: any) {
+    // DEV FALLBACK: If service is unreachable in dev, return default
+    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
+      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, skipping reconcile');
+      return { calculatedBalance: 1000, totalGrants: 1000, totalDebits: 0, ledgerCount: 0 };
+    }
+    handleAxiosError(e, 'reconcileBalanceFromLedgers');
+    return { calculatedBalance: 0, totalGrants: 0, totalDebits: 0, ledgerCount: 0 };
+  }
 }
 
 // Deprecated in microservice architecture (service handles it or specific endpoint needed)
 export async function clearAllLedgersForUser(uid: string): Promise<number> {
-    logger.warn({ uid }, '[CREDITS_REPO] clearAllLedgersForUser called - operation not supported safely in microservice mode. Skipping.');
-    return 0;
+  logger.warn({ uid }, '[CREDITS_REPO] clearAllLedgersForUser called - operation not supported safely in microservice mode. Skipping.');
+  return 0;
 }
 
 export async function writeDebitIfAbsent(uid: string, requestId: string, amount: number, reason: string, meta?: Record<string, any>): Promise<'SKIPPED' | 'WRITTEN'> {
@@ -110,18 +139,24 @@ export async function writeDebitIfAbsent(uid: string, requestId: string, amount:
       reason,
       meta
     });
-    
+
     // If service returns 'alreadyProcessed: true', we verify response. 
     // The service returns: { success: true, data: { alreadyProcessed: boolean, ... } }
     if (res.data.success) {
-        if (res.data.data?.alreadyProcessed) {
-            logger.info({ uid, requestId }, '[CREDITS_REPO] Debit skipped (idempotent)');
-            return 'SKIPPED';
-        }
-        return 'WRITTEN';
+      if (res.data.data?.alreadyProcessed) {
+        logger.info({ uid, requestId }, '[CREDITS_REPO] Debit skipped (idempotent)');
+        return 'SKIPPED';
+      }
+      return 'WRITTEN';
     }
     throw new Error('Debit failed');
   } catch (e: any) {
+    // DEV FALLBACK: If service is unreachable in dev, assume written
+    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
+      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, skipping debit');
+      return 'WRITTEN';
+    }
+
     // If it's an API error (e.g. 400 Insufficient credits), we propagate it
     handleAxiosError(e, 'writeDebitIfAbsent');
     return 'SKIPPED'; // Unreachable
@@ -135,27 +170,32 @@ export async function writeGrantIncrement(
   reason: string,
   meta?: Record<string, any>
 ): Promise<'SKIPPED' | 'WRITTEN'> {
-    try {
-        const res = await axios.post(`${CREDIT_SERVICE_URL}/credits/grant`, {
-          userId: uid,
-          transactionId: requestId,
-          amount: Math.abs(grantAmount),
-          reason,
-          meta
-        });
-        
-        if (res.data.success) {
-            if (res.data.data?.alreadyProcessed) {
-                logger.info({ uid, requestId }, '[CREDITS_REPO] Grant skipped (idempotent)');
-                return 'SKIPPED';
-            }
-            return 'WRITTEN';
-        }
-        throw new Error('Grant failed');
-      } catch (e: any) {
-        handleAxiosError(e, 'writeGrantIncrement');
+  try {
+    const res = await axios.post(`${CREDIT_SERVICE_URL}/credits/grant`, {
+      userId: uid,
+      transactionId: requestId,
+      amount: Math.abs(grantAmount),
+      reason,
+      meta
+    });
+
+    if (res.data.success) {
+      if (res.data.data?.alreadyProcessed) {
+        logger.info({ uid, requestId }, '[CREDITS_REPO] Grant skipped (idempotent)');
         return 'SKIPPED';
       }
+      return 'WRITTEN';
+    }
+    throw new Error('Grant failed');
+  } catch (e: any) {
+    // DEV FALLBACK: If service is unreachable in dev, assume written
+    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
+      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, skipping grant');
+      return 'WRITTEN';
+    }
+    handleAxiosError(e, 'writeGrantIncrement');
+    return 'SKIPPED';
+  }
 }
 
 /**
@@ -185,33 +225,38 @@ export async function writeGrantAndSetPlanIfAbsent(
   reason: string,
   meta?: Record<string, any>
 ): Promise<'SKIPPED' | 'WRITTEN'> {
-    // In legacy, this updated map and set balance.
-    // In new service, POST /users/plan does exactly that (sets plan, sets balance default).
-    
-    // IDEMPOTENCY CHECK Hack: 
-    // We can't easily check if *this specific request* was done without a ledger.
-    // But usually plan switches change the plan code.
-    const currentUser = await readUserInfo(uid);
-    if (currentUser?.planCode === newPlanCode && currentUser.creditBalance === credits) {
-        // Simple heuristic: if already on plan and balance matches, skip.
-        // This isn't perfect idempotency for monthly resets but close enough for now.
-        logger.info({ uid, newPlanCode }, '[CREDITS_REPO] Plan matches, skipping update (heuristic)');
-        return 'SKIPPED'; 
-    }
+  // In legacy, this updated map and set balance.
+  // In new service, POST /users/plan does exactly that (sets plan, sets balance default).
 
-    try {
-        const res = await axios.post(`${CREDIT_SERVICE_URL}/users/plan`, {
-            userId: uid,
-            planCode: newPlanCode
-        });
-        if (res.data.success) {
-             return 'WRITTEN';
-        }
-        throw new Error('Plan update failed');
-    } catch (e) {
-        handleAxiosError(e, 'writeGrantAndSetPlanIfAbsent');
-        return 'SKIPPED';
+  // IDEMPOTENCY CHECK Hack: 
+  // We can't easily check if *this specific request* was done without a ledger.
+  // But usually plan switches change the plan code.
+  const currentUser = await readUserInfo(uid);
+  if (currentUser?.planCode === newPlanCode && currentUser.creditBalance === credits) {
+    // Simple heuristic: if already on plan and balance matches, skip.
+    // This isn't perfect idempotency for monthly resets but close enough for now.
+    logger.info({ uid, newPlanCode }, '[CREDITS_REPO] Plan matches, skipping update (heuristic)');
+    return 'SKIPPED';
+  }
+
+  try {
+    const res = await axios.post(`${CREDIT_SERVICE_URL}/users/plan`, {
+      userId: uid,
+      planCode: newPlanCode
+    });
+    if (res.data.success) {
+      return 'WRITTEN';
     }
+    throw new Error('Plan update failed');
+  } catch (e: any) {
+    // DEV FALLBACK: If service is unreachable in dev, assume written
+    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
+      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, skipping plan update');
+      return 'WRITTEN';
+    }
+    handleAxiosError(e, 'writeGrantAndSetPlanIfAbsent');
+    return 'SKIPPED';
+  }
 }
 
 export async function writeRefund(
@@ -221,24 +266,34 @@ export async function writeRefund(
   reason: string,
   meta?: Record<string, any>
 ): Promise<'SKIPPED' | 'WRITTEN'> {
-    // Refund is just a Grant with a different type? Service has GRANT.
-    // The service doesn't have explicit REFUND type exposed in Controller, but 'grant' adds credits.
-    // We'll use grant but maybe add 'REFUND' to reason or meta.
-    // Ideally we update service to support REFUND type, but 'grant' (ADD) is functionally correct.
-    return writeGrantIncrement(uid, `refund-${requestId}`, amount, `REFUND: ${reason}`, meta);
+  // Refund is just a Grant with a different type? Service has GRANT.
+  // The service doesn't have explicit REFUND type exposed in Controller, but 'grant' adds credits.
+  // We'll use grant but maybe add 'REFUND' to reason or meta.
+  // Ideally we update service to support REFUND type, but 'grant' (ADD) is functionally correct.
+  return writeGrantIncrement(uid, `refund-${requestId}`, amount, `REFUND: ${reason}`, meta);
 }
 
 // NEW METHOD: Initialize User
 export async function initUser(uid: string, email: string): Promise<any> {
-    try {
-        const res = await axios.post(`${CREDIT_SERVICE_URL}/users/init`, {
-            userId: uid,
-            email
-        });
-        return res.data.data;
-    } catch (e) {
-        handleAxiosError(e, 'initUser');
+  try {
+    const res = await axios.post(`${CREDIT_SERVICE_URL}/users/init`, {
+      userId: uid,
+      email
+    });
+    return res.data.data;
+  } catch (e: any) {
+    // DEV FALLBACK: If service is unreachable in dev, return mock user
+    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
+      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, returning mock init user');
+      return {
+        creditBalance: 1000,
+        planCode: 'FREE',
+        storageQuotaBytes: '1073741824',
+        storageUsedBytes: '0'
+      };
     }
+    handleAxiosError(e, 'initUser');
+  }
 }
 
 /**
@@ -257,7 +312,7 @@ export async function validateGeneration(
       creditCost,
       estimatedSizeBytes,
     });
-    
+
     if (res.data.success) {
       return { valid: true };
     }
@@ -270,6 +325,13 @@ export async function validateGeneration(
       error.statusCode = e.response.status;
       throw error;
     }
+
+    // DEV FALLBACK: If service is unreachable in dev, allow generation
+    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
+      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, allowing generation');
+      return { valid: true };
+    }
+
     handleAxiosError(e, 'validateGeneration');
     return { valid: false }; // Unreachable
   }
@@ -285,7 +347,12 @@ export async function listInvoices(uid: string): Promise<any[]> {
   } catch (e: any) {
     // If 404, just return empty list
     if (e.response?.status === 404) return [];
-    
+
+    // DEV FALLBACK: If service is unreachable in dev, return empty list
+    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
+      return [];
+    }
+
     handleAxiosError(e, 'listInvoices');
     return [];
   }
@@ -299,7 +366,13 @@ export async function listPayments(uid: string): Promise<any[]> {
     }
     return [];
   } catch (e: any) {
-     if (e.response?.status === 404) return [];
+    if (e.response?.status === 404) return [];
+
+    // DEV FALLBACK: If service is unreachable in dev, return empty list
+    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
+      return [];
+    }
+
     handleAxiosError(e, 'listPayments');
     return [];
   }

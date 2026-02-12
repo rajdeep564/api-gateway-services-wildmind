@@ -39,15 +39,17 @@ const allowedOrigins = [
   env.productionWwwDomain,
   env.productionDomain,
   env.productionStudioDomain, // Canvas subdomain
-  // Development origins (only in dev)
+
+  // ALWAYS allow localhost for local development (regardless of NODE_ENV)
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+
+  // Development origins (only in dev, if specified)
   ...(!isProdEnv ? [
-    env.devFrontendUrl, // Main project dev (usually :3000)
-    env.devCanvasUrl, // Canvas dev (usually :3001)
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:3001',
-    // Optional: allow local browser testing against the ngrok WILDMINDIMAGE service in dev only
+    env.devFrontendUrl,
+    env.devCanvasUrl,
     wildmindImageOrigin,
   ] : []),
   ...env.frontendOrigins,
@@ -233,7 +235,7 @@ app.get('/debug-cors', (req, res) => {
   const origin = req.headers.origin;
   const host = req.headers.host;
   const forwardedProto = req.headers['x-forwarded-proto'];
-  
+
   // Re-calculate effective allowed origins to show what the server is using
   const effectiveAllowedOrigins = [
     // Production hosts (always include these for live site)
@@ -254,8 +256,8 @@ app.get('/debug-cors', (req, res) => {
     ...env.allowedOrigins
   ].filter(Boolean);
 
-   // Explicitly allow known production domains (Hardcoded safeguard)
-   const hardcodedAllowed = [
+  // Explicitly allow known production domains (Hardcoded safeguard)
+  const hardcodedAllowed = [
     'https://style.wildmindai.com',
     'https://www.wildmindai.com',
     'https://wildmindai.com',
@@ -288,22 +290,22 @@ app.get('/debug-cors', (req, res) => {
         try {
           // Check allowedOrigins include
           if (effectiveAllowedOrigins.includes(origin)) return true;
-    
+
           // Check hardcoded include
           if (hardcodedAllowed.includes(origin)) return true;
-    
+
           // Check subdomains
           const originUrl = new URL(origin);
           const prodDomain = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
           const prodWwwDomain = env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname : (prodDomain ? `www.${prodDomain}` : undefined);
-          
+
           // Production subdomain check
           if (prodDomain && (originUrl.hostname === prodWwwDomain ||
             originUrl.hostname === prodDomain ||
             originUrl.hostname.endsWith(`.${prodDomain}`))) {
             return true;
           }
-          
+
           // Frontend origins subdomain check
           for (const frontendOrigin of env.frontendOrigins) {
             try {
@@ -312,7 +314,7 @@ app.get('/debug-cors', (req, res) => {
               if (reqHost === allowHost || reqHost.endsWith(`.${allowHost}`)) {
                 return true;
               }
-            } catch {}
+            } catch { }
           }
         } catch (e) { return false; }
         return false;
