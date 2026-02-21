@@ -1,0 +1,27 @@
+# ============================================================
+# STAGE 1 — HTTP ONLY (use this BEFORE you have SSL certs)
+#
+# Purpose: Bootstrap nginx so Certbot can issue certificates.
+# Usage:
+#   cp nginx/default.conf.http-only nginx/default.conf
+#   docker compose restart nginx
+#   sudo certbot certonly --webroot -w /path/to/certbot/www ...
+#   cp nginx/default.conf.ssl nginx/default.conf
+#   docker compose restart nginx
+# ============================================================
+
+server {
+    listen 80;
+    server_name dev-api.wildmindai.com onstaging.wildmindai.com onstaging-studios.wildmindai.com;
+
+    # ACME challenge for Certbot
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # Temporary: serve a basic 200 so Cloudflare doesn't show 521
+    location / {
+        return 200 'WildMind AI - SSL setup in progress';
+        add_header Content-Type text/plain;
+    }
+}
