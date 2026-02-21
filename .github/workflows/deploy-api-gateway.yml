@@ -1,31 +1,60 @@
-name: Deploy API Gateway
+name: Build & Deploy — API Gateway
 
 on:
   push:
     branches:
       - staging
 
+env:
+  ECR_REGISTRY: 213128717650.dkr.ecr.ap-south-1.amazonaws.com
+  ECR_REPOSITORY: api-gateway
+  IMAGE_TAG: staging
+
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
+    environment: staging
+
     steps:
-      - name: Trigger Deployment
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & Push to ECR
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "✅ Pushed $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: SSH Deploy — API Gateway
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.CONTABO_HOST }}
-          username: ${{ secrets.CONTABO_USER }}
-          key: ${{ secrets.CONTABO_SSH_KEY }}
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          username: ${{ secrets.LIGHTSAIL_USER }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
           port: 22
           script: |
-            cd wildmind-staging/api-gateway-services-wildmind/deployment || exit 1
-            
-            # Update source code (gateway is in the parent of deployment)
-            cd ..
-            git fetch origin staging
-            git reset --hard origin/staging
-            git pull origin staging
-            
-            # Redeploy
-            cd deployment
+            cd ~/wildmind-staging/api-gateway-services-wildmind/deployment
             chmod +x deploy.sh
             ./deploy.sh api-gateway
+
+      - name: SSH Deploy — Mirror Worker
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.LIGHTSAIL_HOST }}
+          username: ${{ secrets.LIGHTSAIL_USER }}
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          port: 22
+          script: |
+            cd ~/wildmind-staging/api-gateway-services-wildmind/deployment
+            ./deploy.sh mirror-worker

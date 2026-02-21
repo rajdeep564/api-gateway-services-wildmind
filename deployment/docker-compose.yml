@@ -1,174 +1,238 @@
+version: "3.9"
 
-version: '3.8' # Forced Update for Staging
+# ============================================================
+# WildMind AI — Lightsail Production Stack
+# ECR Region : ap-south-1
+# ECR Account : 213128717650
+# Tag         : staging
+# Server      : AWS Lightsail Ubuntu 22.04 — 8 GB RAM / 2 vCPU
+#
+# HOW TO DEPLOY:
+#   aws ecr get-login-password --region ap-south-1 | \
+#     docker login --username AWS --password-stdin \
+#     213128717650.dkr.ecr.ap-south-1.amazonaws.com
+#   docker compose pull
+#   docker compose up -d
+#
+# NEVER run "docker compose build" on the server.
+# Images are pre-built by GitHub Actions and pushed to ECR.
+# ============================================================
+
+x-ecr: &ecr-base
+  213128717650.dkr.ecr.ap-south-1.amazonaws.com
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
-  # --- Reverse Proxy ---
+
+  # ─────────────────────────────────────────
+  # Reverse Proxy
+  # ─────────────────────────────────────────
   nginx:
-    image: nginx:stable-alpine
+    image: nginx:alpine
     container_name: wildmind-nginx
+    restart: always
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
-      - ../../certbot/conf:/etc/letsencrypt
-      - ../../certbot/www:/var/www/certbot
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../../certbot/conf:/etc/letsencrypt:ro
+      - ../../certbot/www:/var/www/certbot:ro
     depends_on:
       - wild
       - wildmindcanvas
       - api-gateway
     networks:
       - wildmind-network
-    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging: *default-logging
 
-  # --- Frontend 1: Wild ---
+  # ─────────────────────────────────────────
+  # Frontend — Wild (main app)
+  # ─────────────────────────────────────────
   wild:
-    build:
-      context: ../../wild
-      dockerfile: Dockerfile
-      args:
-        - NEXT_PUBLIC_CANVAS_URL=https://onstaging-studios.wildmindai.com
-        - NEXT_PUBLIC_API_BASE_URL=https://dev-api.wildmindai.com
+    image: 213128717650.dkr.ecr.ap-south-1.amazonaws.com/wild:staging
     container_name: wild
-    environment:
-      - NEXT_PUBLIC_API_BASE_URL=https://dev-api.wildmindai.com
-      - NEXT_PUBLIC_CANVAS_URL=https://onstaging-studios.wildmindai.com
+    restart: unless-stopped
     expose:
       - "3000"
-    networks:
-      - wildmind-network
-    restart: unless-stopped
-
-  # --- Frontend 2: Studios ---
-  wildmindcanvas:
-    build:
-      context: ../../wildmindcanvas
-      dockerfile: Dockerfile
-      args:
-        - NEXT_PUBLIC_API_URL=https://dev-api.wildmindai.com
-    container_name: wildmindcanvas
     environment:
-      - NEXT_PUBLIC_API_URL=https://dev-api.wildmindai.com
-    expose:
-      - "3000"
-    networks:
-      - wildmind-network
-    restart: unless-stopped
-
-  # --- Backend: API Gateway ---
-  api-gateway:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-    container_name: api-gateway
-    environment:
-      - PORT=5000
       - NODE_ENV=production
-      - CREDIT_SERVICE_URL=http://credit-service:3000
-      - REDIS_URL=redis://wildmind-redis:6379
-      # Add other secrets via .env file on server
+      - NODE_OPTIONS=--max-old-space-size=384
     env_file:
       - .env.production
+    depends_on:
+      - api-gateway
+    networks:
+      - wildmind-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *default-logging
+
+  # ─────────────────────────────────────────
+  # Frontend — Wildmind Canvas (studio)
+  # ─────────────────────────────────────────
+  wildmindcanvas:
+    image: 213128717650.dkr.ecr.ap-south-1.amazonaws.com/wildmindcanvas:staging
+    container_name: wildmindcanvas
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      - NODE_ENV=production
+      - NODE_OPTIONS=--max-old-space-size=384
+    env_file:
+      - .env.production
+    networks:
+      - wildmind-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *default-logging
+
+  # ─────────────────────────────────────────
+  # Backend — API Gateway (Express)
+  # ─────────────────────────────────────────
+  api-gateway:
+    image: 213128717650.dkr.ecr.ap-south-1.amazonaws.com/api-gateway:staging
+    container_name: wildmind-api-gateway
+    restart: unless-stopped
     expose:
       - "5000"
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - NODE_OPTIONS=--max-old-space-size=384
+      - REDIS_URL=redis://wildmind-redis:6379
+      - CREDIT_SERVICE_URL=http://wildmind-credit-service:3000
+    env_file:
+      - .env.production
     depends_on:
       redis:
-        condition: service_started
+        condition: service_healthy
       credit-service:
         condition: service_healthy
     networks:
       - wildmind-network
-    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *default-logging
 
-  # --- Worker: Mirror Queue ---
-  mirror-worker:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-    container_name: mirror-worker
-    command: npm run mirror:worker:prod
-    environment:
-      - NODE_ENV=production
-      - REDIS_URL=redis://wildmind-redis:6379
-      # Worker likely needs same env vars as API
-      - CREDIT_SERVICE_URL=http://credit-service:3000
-    env_file:
-      - .env.production
-    depends_on:
-      - redis
-      - api-gateway
-    networks:
-      - wildmind-network
-    restart: unless-stopped
-
-  # --- Microservice: Credit Service ---
+  # ─────────────────────────────────────────
+  # Microservice — Credit Service (NestJS)
+  # ─────────────────────────────────────────
   credit-service:
-    build:
-      context: ../../credit-service
-      dockerfile: Dockerfile
-    container_name: credit-service
-    environment:
-      - PORT=3000
-      - NODE_ENV=production
-      # DATABASE_URL and REDIS_URL loaded from .env.production
-    env_file:
-      - .env.production
+    image: 213128717650.dkr.ecr.ap-south-1.amazonaws.com/credit-service:staging
+    container_name: wildmind-credit-service
+    restart: unless-stopped
     expose:
       - "3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - NODE_OPTIONS=--max-old-space-size=256
+      - REDIS_URL=redis://wildmind-redis:6379
+      # DATABASE_URL must be set in .env.production (Neon PostgreSQL)
+    env_file:
+      - .env.production
     depends_on:
-      - credit-redis
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/health', (res) => { if (res.statusCode !== 200) { console.error('Status: ' + res.statusCode); process.exit(1); } else { process.exit(0); } }).on('error', (err) => { console.error(err); process.exit(1); })\""]
-      interval: 10s
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"require('http').get('http://localhost:3000/health', r => { process.exit(r.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1))\"",
+        ]
+      interval: 15s
       timeout: 5s
       retries: 5
+      start_period: 30s
     networks:
       - wildmind-network
-    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 320M
+    logging: *default-logging
 
-  # --- Databases ---
+  # ─────────────────────────────────────────
+  # Worker — Mirror Queue (Node.js)
+  # ─────────────────────────────────────────
+  mirror-worker:
+    image: 213128717650.dkr.ecr.ap-south-1.amazonaws.com/api-gateway:staging
+    container_name: wildmind-mirror-worker
+    restart: unless-stopped
+    command: node dist/workers/mirrorQueueWorker.js
+    environment:
+      - NODE_ENV=production
+      - NODE_OPTIONS=--max-old-space-size=192
+      - REDIS_URL=redis://wildmind-redis:6379
+      - CREDIT_SERVICE_URL=http://wildmind-credit-service:3000
+    env_file:
+      - .env.production
+    depends_on:
+      redis:
+        condition: service_healthy
+      api-gateway:
+        condition: service_started
+    networks:
+      - wildmind-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *default-logging
+
+  # ─────────────────────────────────────────
+  # Infrastructure — Redis
+  # ─────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: wildmind-redis
+    restart: always
     expose:
       - "6379"
+    command: redis-server --appendonly yes --maxmemory 192mb --maxmemory-policy allkeys-lru
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     networks:
       - wildmind-network
-    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *default-logging
 
-  credit-redis:
-    image: redis:7-alpine
-    container_name: credit-service-redis
-    expose:
-      - "6379"
-    volumes:
-      - credit-redis-data:/data
-    networks:
-      - wildmind-network
-    restart: always
+# ─────────────────────────────────────────
+# Named Volumes
+# ─────────────────────────────────────────
+volumes:
+  redis-data:
+    driver: local
 
-  credit-postgres:
-    image: postgres:15-alpine
-    container_name: credit-service-postgres
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=wildmind
-      - POSTGRES_DB=credit_service
-    expose:
-      - "5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    networks:
-      - wildmind-network
-    restart: always
-
+# ─────────────────────────────────────────
+# Network
+# ─────────────────────────────────────────
 networks:
   wildmind-network:
     driver: bridge
-
-volumes:
-  redis-data:
-  credit-redis-data:
-  postgres-data:
