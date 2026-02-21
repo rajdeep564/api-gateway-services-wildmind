@@ -58,3 +58,4 @@ echo "🧱 STEP 5: Reloading Nginx with Real Certs..."
 docker exec wildmind-nginx nginx -s reload
 
 echo "✅ SSL Setup Complete! Verify at https://dev-api.wildmindai.com"
+
