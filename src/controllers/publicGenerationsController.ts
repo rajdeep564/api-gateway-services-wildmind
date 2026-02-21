@@ -19,7 +19,7 @@ async function getPublicById(req: Request, res: Response, next: NextFunction) {
 		const { generationId } = req.params as any;
 		const item: GenerationHistoryItem | null = await publicGenerationsRepository.getPublicById(generationId);
 		if (!item) return res.status(404).json(formatApiResponse('error', 'Not found', {}));
-		
+
 		// Enrich createdBy with photoURL if missing
 		if (item.createdBy?.uid && !item.createdBy.photoURL) {
 			const { authRepository } = await import('../repository/auth/authRepository');
@@ -28,7 +28,7 @@ async function getPublicById(req: Request, res: Response, next: NextFunction) {
 				item.createdBy.photoURL = user.photoURL;
 			}
 		}
-		
+
 		return res.json(formatApiResponse('success', 'OK', { item }));
 	} catch (err) {
 		return next(err);
@@ -42,15 +42,15 @@ async function getRandomHighScoredImage(req: Request, res: Response, next: NextF
 	try {
 		// Use pre-computed cache from Firebase for INSTANT responses (< 1 second)
 		const { signupImageCache } = await import('../repository/signupImageCache');
-		
+
 		const cachedImage = await signupImageCache.getRandomSignupImage();
-		
+
 		if (cachedImage) {
 			// INSTANT response - no database queries! (< 100ms typically)
 			res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=3600'); // 1 hour
 			res.setHeader('X-Cache', 'HIT-FIREBASE');
 			res.setHeader('X-Cache-Source', 'pre-computed');
-			
+
 			return res.json(formatApiResponse('success', 'OK', {
 				imageUrl: cachedImage.imageUrl,
 				prompt: cachedImage.prompt,
@@ -58,7 +58,7 @@ async function getRandomHighScoredImage(req: Request, res: Response, next: NextF
 				creator: cachedImage.creator,
 			}));
 		}
-		
+
 		// Cache is empty - auto-populate in background (non-blocking)
 		// Return a quick fallback response while cache populates
 		if (!isRefreshingCache) {
@@ -70,21 +70,21 @@ async function getRandomHighScoredImage(req: Request, res: Response, next: NextF
 				isRefreshingCache = false;
 			});
 		}
-		
+
 		// Fallback: fetch one image from database (faster than waiting for full cache)
 		console.log('[getRandomHighScoredImage] Cache empty, using fast fallback');
 		const results = await publicGenerationsRepository.getRandomHighScoredImages(1);
-		
+
 		if (results.length === 0) {
 			return res.status(404).json(formatApiResponse('error', 'No high-scored images found', null));
 		}
-		
+
 		const result = results[0];
-		
+
 		// Skip enrichment for speed - just return the image
 		res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60');
 		res.setHeader('X-Cache', 'MISS-FALLBACK');
-		
+
 		return res.json(formatApiResponse('success', 'OK', result));
 	} catch (err) {
 		return next(err);
@@ -95,11 +95,21 @@ async function refreshSignupImageCache(req: Request, res: Response, next: NextFu
 	try {
 		// Admin endpoint to manually refresh the signup image cache
 		const { signupImageCache } = await import('../repository/signupImageCache');
-		
+
 		console.log('[refreshSignupImageCache] Manual refresh triggered');
 		const count = await signupImageCache.refreshSignupImageCache();
-		
+
 		return res.json(formatApiResponse('success', `Cache refreshed with ${count} images`, { count }));
+	} catch (err) {
+		return next(err);
+	}
+}
+
+async function getTopCreators(req: Request, res: Response, next: NextFunction) {
+	try {
+		const limit = parseInt(req.query.limit as string) || 10;
+		const result = await publicGenerationsRepository.getTopCreators(limit);
+		return res.json(formatApiResponse('success', 'OK', result));
 	} catch (err) {
 		return next(err);
 	}
@@ -110,6 +120,7 @@ const publicGenerationsController = {
 	getPublicById,
 	getRandomHighScoredImage,
 	refreshSignupImageCache,
+	getTopCreators,
 };
 
 export { publicGenerationsController };

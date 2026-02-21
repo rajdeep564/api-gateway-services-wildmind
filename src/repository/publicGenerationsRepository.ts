@@ -4,19 +4,19 @@ import { mapModeToGenerationTypes } from '../utils/modeTypeMap';
 
 function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
   const { uid, prompt, model, generationType, status, visibility, tags, nsfw, images, videos, audios, createdBy, isPublic, createdAt, updatedAt, isDeleted, aspectRatio, frameSize, aspect_ratio, aestheticScore, scoreUpdatedAt, lyrics, fileName } = data;
-  
+
   // Ensure isPublic is explicitly boolean true (not undefined, null, or false)
   // If isPublic is not explicitly true, set it to false to ensure proper filtering
   const normalizedIsPublic = isPublic === true;
-  
+
   // Normalize ID to ensure it's always a string
   const normalizedId = String(id || '');
-  
+
   // Normalize arrays to ensure they're always arrays
   const normalizedImages = Array.isArray(images) ? images : [];
   const normalizedVideos = Array.isArray(videos) ? videos : [];
   const normalizedAudios = Array.isArray(audios) ? audios : [];
-  
+
   // Normalize timestamps
   let normalizedCreatedAt = createdAt;
   if (createdAt) {
@@ -26,7 +26,7 @@ function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
       normalizedCreatedAt = new Date(createdAt.seconds * 1000);
     }
   }
-  
+
   let normalizedUpdatedAt = updatedAt || createdAt;
   if (normalizedUpdatedAt) {
     if (normalizedUpdatedAt.toDate && typeof normalizedUpdatedAt.toDate === 'function') {
@@ -35,7 +35,7 @@ function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
       normalizedUpdatedAt = new Date(normalizedUpdatedAt.seconds * 1000);
     }
   }
-  
+
   // Normalize createdBy object
   let normalizedCreatedBy = createdBy;
   if (createdBy && typeof createdBy === 'object') {
@@ -47,7 +47,7 @@ function normalizePublicItem(id: string, data: any): GenerationHistoryItem {
       displayName: createdBy.displayName || undefined,
     };
   }
-  
+
   return {
     id: normalizedId,
     uid: uid ? String(uid) : '',
@@ -91,34 +91,34 @@ export async function listPublic(params: {
   minScore?: number; // Minimum aesthetic score threshold
 }): Promise<{ items: GenerationHistoryItem[]; nextCursor?: string; totalCount?: number }> {
   const col = adminDb.collection('generations');
-  
+
   // Default sorting
   const sortBy = params.sortBy || 'createdAt';
   const sortOrder = params.sortOrder || 'desc';
-  
+
   // Projection: fetch only the fields needed for the feed to reduce payload size
   const projectionFields: Array<keyof GenerationHistoryItem | string> = [
     'prompt', 'model', 'generationType', 'status', 'visibility', 'tags', 'nsfw',
     'images', 'videos', 'audios', 'createdBy', 'isPublic', 'isDeleted', 'createdAt', 'updatedAt',
     'aspectRatio', 'frameSize', 'aspect_ratio', 'aestheticScore', 'scoreUpdatedAt'
   ];
-  
+
   // ========== DATABASE-LEVEL FILTERING FOR OPTIMAL PERFORMANCE ==========
   // All filtering is done at database level - NO in-memory filtering
-  
+
   // Use minScore if provided, otherwise default to 9.0 for backward compatibility
   const HIGH_AESTHETIC_SCORE = params.minScore !== undefined ? params.minScore : 9.0;
-  
+
   // Build base query with required filters
   let baseQuery = col
     .where('isPublic', '==', true)
     .where('isDeleted', '==', false);
-  
+
   // Apply minScore filter if provided
   if (params.minScore !== undefined) {
     baseQuery = baseQuery.where('aestheticScore', '>=', params.minScore);
   }
-  
+
   // Apply generationType filter if provided
   if (params.generationType) {
     if (Array.isArray(params.generationType)) {
@@ -130,15 +130,15 @@ export async function listPublic(params: {
       baseQuery = baseQuery.where('generationType', '==', String(params.generationType));
     }
   }
-  
+
   if (params.status) {
     baseQuery = baseQuery.where('status', '==', params.status);
   }
-  
+
   if (params.createdBy) {
     baseQuery = baseQuery.where('createdBy.uid', '==', params.createdBy);
   }
-  
+
   // Date filtering at database level
   if (params.dateStart && params.dateEnd) {
     const start = new Date(params.dateStart);
@@ -147,7 +147,7 @@ export async function listPublic(params: {
       .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(start))
       .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(end));
   }
-  
+
   // Handle mode-based filtering at database level
   if (params.mode && params.mode !== 'all') {
     const mappedTypes = mapModeToGenerationTypes(params.mode);
@@ -155,7 +155,7 @@ export async function listPublic(params: {
       baseQuery = baseQuery.where('generationType', 'in', mappedTypes);
     }
   }
-  
+
   // AESTHETIC SCORE PRIORITIZATION FOR ARTSTATION:
   // If minScore is provided, only fetch items >= minScore
   // Otherwise, use the two-tier approach (high-scored first, then lower-scored)
@@ -163,20 +163,20 @@ export async function listPublic(params: {
   // 2. If not enough results and minScore not set, fetch items with aestheticScore < threshold
   // 3. Combine with high-scored items first, then lower scored items
   // 4. Also include text-to-music items without score requirement (only if not already filtered)
-  
+
   // Query 1: High-scored items (>= threshold)
   // If minScore is provided, baseQuery already has the filter, so use it directly
   let queryHigh = params.minScore !== undefined ? baseQuery : baseQuery.where('aestheticScore', '>=', HIGH_AESTHETIC_SCORE);
-  
+
   // Query 2: Lower-scored items (< 9.0) - only if we need to fill
   let queryLow: FirebaseFirestore.Query | null = null;
-  
+
   // Query 3: Music items without score requirement (only if not already filtered)
   let queryMusic: FirebaseFirestore.Query | null = null;
   if (!params.generationType && (!params.mode || params.mode === 'all')) {
     queryMusic = baseQuery.where('generationType', '==', 'text-to-music');
   }
-  
+
   // Apply sorting, projection, and pagination
   const applyQueryOptions = (q: FirebaseFirestore.Query) => {
     // If sorting by aestheticScore, we need to order by that field (requires composite index)
@@ -189,12 +189,12 @@ export async function listPublic(params: {
     }
     return query;
   };
-  
+
   queryHigh = applyQueryOptions(queryHigh);
   if (queryMusic) {
     queryMusic = applyQueryOptions(queryMusic);
   }
-  
+
   // Handle cursor-based pagination
   // For cursor pagination, we continue from where we left off
   // The cursor represents the last item from the previous page
@@ -218,15 +218,15 @@ export async function listPublic(params: {
       // Continue without cursor if there's an error
     }
   }
-  
+
   // Execute high-scored query first - fetch more than needed to account for potential duplicates
   const snapHigh = await queryHigh.limit(params.limit * 2).get();
-  
+
   // Helper function to get aesthetic score (default to 0 if missing)
   const getAestheticScore = (item: GenerationHistoryItem, rawData?: any): number => {
     return typeof item.aestheticScore === 'number' ? item.aestheticScore : 0;
   };
-  
+
   // Helper function to get createdAt timestamp
   const getCreatedAtTime = (item: GenerationHistoryItem): number => {
     if (typeof item.createdAt === 'string') return new Date(item.createdAt).getTime();
@@ -239,7 +239,7 @@ export async function listPublic(params: {
     if (!rawData) return 0;
     const scoreUpdatedAt = rawData.scoreUpdatedAt;
     if (!scoreUpdatedAt) return 0;
-    
+
     // Handle Firestore Timestamp
     if (scoreUpdatedAt.seconds !== undefined) {
       return scoreUpdatedAt.seconds * 1000 + (scoreUpdatedAt.nanoseconds || 0) / 1000000;
@@ -247,18 +247,18 @@ export async function listPublic(params: {
     if (typeof scoreUpdatedAt.toMillis === 'function') {
       return scoreUpdatedAt.toMillis();
     }
-    
+
     // Handle string date
     if (typeof scoreUpdatedAt === 'string') {
       const parsed = new Date(scoreUpdatedAt).getTime();
       return isNaN(parsed) ? 0 : parsed;
     }
-    
+
     // Handle number (milliseconds)
     if (typeof scoreUpdatedAt === 'number') {
       return scoreUpdatedAt;
     }
-    
+
     return 0;
   };
 
@@ -269,7 +269,7 @@ export async function listPublic(params: {
     // Check both null and undefined (since Firestore projection omits missing fields)
     return rawData.scoreUpdatedAt !== null && rawData.scoreUpdatedAt !== undefined;
   };
-  
+
   // Convert high-scored results with proper sorting
   // Store raw data alongside normalized items for sorting
   // IMPORTANT: When using .select() projection, only selected fields are returned
@@ -284,7 +284,7 @@ export async function listPublic(params: {
         return null;
       }
       highScoredSeenIds.add(docId);
-      
+
       const rawData = d.data() as any;
       const normalizedItem = normalizePublicItem(docId, rawData);
       // Ensure ID is properly set
@@ -344,25 +344,25 @@ export async function listPublic(params: {
       return bCreated - aCreated;
     })
     .map(({ item }) => item);
-  
+
   // If we don't have enough high-scored items and minScore is not set, fetch lower-scored items
   // (If minScore is set, we only want items >= minScore, so skip lower-scored items)
   let lowScoredItems: GenerationHistoryItem[] = [];
   let lowScoredItemsWithData: Array<{ item: GenerationHistoryItem; rawData: any }> = [];
   if (params.minScore === undefined && highScoredItems.length < params.limit) {
     const needed = params.limit - highScoredItems.length;
-    
+
     // Build query for lower-scored items (exclude items already in high-scored)
     queryLow = baseQuery.where('aestheticScore', '<', HIGH_AESTHETIC_SCORE);
     queryLow = applyQueryOptions(queryLow);
-    
+
     if (params.cursor) {
       const cursorDoc = await col.doc(params.cursor).get();
       if (cursorDoc.exists) {
         queryLow = queryLow.startAfter(cursorDoc);
       }
     }
-    
+
     const snapLow = await queryLow.limit(needed * 2).get();
     // CRITICAL: Deduplicate by ID during mapping
     const lowScoredSeenIds = new Set<string>();
@@ -374,7 +374,7 @@ export async function listPublic(params: {
           return null;
         }
         lowScoredSeenIds.add(docId);
-        
+
         const rawData = d.data() as any;
         const normalizedItem = normalizePublicItem(docId, rawData);
         if (!normalizedItem.id) {
@@ -414,7 +414,7 @@ export async function listPublic(params: {
       })
       .map(({ item }) => item);
   }
-  
+
   // Fetch music items if needed (skip if minScore is set, as music items may not have scores)
   let musicItems: GenerationHistoryItem[] = [];
   let musicItemsWithData: Array<{ item: GenerationHistoryItem; rawData: any }> = [];
@@ -431,7 +431,7 @@ export async function listPublic(params: {
           return null;
         }
         musicSeenIds.add(docId);
-        
+
         const rawData = d.data() as any;
         const normalizedItem = normalizePublicItem(docId, rawData);
         if (!normalizedItem.id) {
@@ -471,7 +471,7 @@ export async function listPublic(params: {
       })
       .map(({ item }) => item);
   }
-  
+
   // Combine all items with their raw data for final sorting
   // We need to store raw data to do proper cross-group sorting
   const allItemsWithData: Array<{ item: GenerationHistoryItem; rawData: any }> = [];
@@ -555,22 +555,22 @@ export async function listPublic(params: {
   for (const { item } of allItemsWithData) {
     const itemId = String(item.id || '');
     if (!itemId) continue; // Skip items without IDs
-    
+
     // Skip duplicates
     if (seenIds.has(itemId)) {
       continue;
     }
-    
+
     // If we have a cursor, skip items that come before the cursor in sorted order
     // This handles the case where in-memory sorting changes the order
     if (cursorItem && itemId === cursorItem.id) {
       continue; // Skip the cursor item itself
     }
-    
+
     seenIds.add(itemId);
     items.push(item);
   }
-  
+
   // Handle search - Firestore doesn't support full-text search, so minimal in-memory filter
   // This is the ONLY in-memory filtering we do, and it's necessary for search functionality
   if (params.search && params.search.trim().length > 0) {
@@ -580,17 +580,17 @@ export async function listPublic(params: {
       return p.includes(needle);
     });
   }
-  
+
   // Return items up to limit
   const page = items.slice(0, params.limit);
-  
+
   // Compute next cursor for pagination
   // CRITICAL: Use the last item's ID from the page, ensuring it's valid
   let nextCursor: string | undefined;
   if (page.length > 0) {
     const lastItem = page[page.length - 1];
     const lastItemId = lastItem?.id ? String(lastItem.id) : undefined;
-    
+
     // Only set cursor if:
     // 1. We returned a full page (might have more)
     // 2. OR we have more items beyond the page
@@ -599,22 +599,22 @@ export async function listPublic(params: {
       nextCursor = lastItemId;
     }
   }
-  
+
   // Skip total count to reduce query cost/latency
   const totalCount: number | undefined = undefined;
-  
+
   return { items: page, nextCursor, totalCount };
 }
 
 export async function getPublicById(generationId: string): Promise<GenerationHistoryItem | null> {
   const ref = adminDb.collection('generations').doc(generationId);
   const snap = await ref.get();
-  
+
   if (!snap.exists) return null;
-  
+
   const data = snap.data() as any;
   if (data.isPublic !== true) return null; // Only return if public
-  
+
   return normalizePublicItem(snap.id, data);
 }
 
@@ -632,21 +632,21 @@ export async function getPublicById(generationId: string): Promise<GenerationHis
 export async function getRandomHighScoredImages(count: number = 20): Promise<Array<{ imageUrl: string; prompt?: string; generationId?: string; creator?: { username?: string; photoURL?: string } }>> {
   try {
     const col = adminDb.collection('generations');
-    
+
     // Pure image generation types only (exclude branding and edit types)
     const pureImageTypes = ['text-to-image', 'image-to-image', 'image-generation', 'image', 'text-to-character'];
-    
+
     // Excluded types: branding, edit, and related
     const excludedTypes = [
-      'logo', 'logo-generation', 'branding', 'branding-kit', 'sticker-generation', 
+      'logo', 'logo-generation', 'branding', 'branding-kit', 'sticker-generation',
       'product-generation', 'mockup-generation', 'ad-generation',
       'image-edit', 'image_edit', 'edit-image', 'edit_image', 'image-upscale',
-      'image-to-svg', 'image-vectorize', 'vectorize', 'remove-bg', 'resize', 
+      'image-to-svg', 'image-vectorize', 'vectorize', 'remove-bg', 'resize',
       'replace', 'fill', 'erase', 'expand', 'reimagine'
     ];
-    
+
     console.log('[getRandomHighScoredImages] Starting query with pureImageTypes:', pureImageTypes);
-    
+
     // Query without aestheticScore filter to avoid index requirement
     // Filter aestheticScore in memory instead
     // This avoids needing a composite index for: generationType (in) + isPublic + aestheticScore (range) + isDeleted
@@ -655,30 +655,30 @@ export async function getRandomHighScoredImages(count: number = 20): Promise<Arr
       .where('isDeleted', '!=', true)
       .where('generationType', 'in', pureImageTypes)
       .limit(100); // Fetch more to filter in memory
-    
+
     const snap = await q.get();
     console.log('[getRandomHighScoredImages] Query (without aestheticScore filter) returned:', snap.size, 'documents');
-    
+
     // Process primary query results - filter aestheticScore in memory
     let candidates: Array<{ item: GenerationHistoryItem; image: any; score: number }> = [];
-    
+
     if (!snap.empty) {
       snap.docs.forEach(doc => {
         const data = doc.data() as any;
         if (data.isDeleted === true) return;
-        
+
         const images = Array.isArray(data.images) ? data.images : [];
         if (images.length === 0) return;
-        
+
         // Check document-level aestheticScore
         const docScore = typeof data.aestheticScore === 'number' ? data.aestheticScore : null;
-        
+
         // Check image-level aestheticScore - prioritize high scores (>= 9.0), but accept >= 8.0
         for (const img of images) {
-          const imgScore = typeof img?.aestheticScore === 'number' ? img.aestheticScore : 
-                          (typeof img?.aesthetic?.score === 'number' ? img.aesthetic.score : null);
+          const imgScore = typeof img?.aestheticScore === 'number' ? img.aestheticScore :
+            (typeof img?.aesthetic?.score === 'number' ? img.aesthetic.score : null);
           const score = imgScore || docScore;
-          
+
           // Accept score >= 8.0, or no score (for older items without scores)
           if (score === null || score >= 8.0) {
             candidates.push({
@@ -691,7 +691,7 @@ export async function getRandomHighScoredImages(count: number = 20): Promise<Arr
         }
       });
     }
-    
+
     // If primary query didn't find enough candidates, try fallback without generationType filter
     if (candidates.length < 5) {
       console.log('[getRandomHighScoredImages] Primary query found', candidates.length, 'candidates, trying fallback');
@@ -701,11 +701,11 @@ export async function getRandomHighScoredImages(count: number = 20): Promise<Arr
         .limit(200); // Fetch more for in-memory filtering
       const fallbackSnap = await fallbackQ.get();
       console.log('[getRandomHighScoredImages] Fallback query returned:', fallbackSnap.size, 'documents');
-      
+
       fallbackSnap.docs.forEach(doc => {
         const data = doc.data() as any;
         if (data.isDeleted === true) return;
-        
+
         // Filter out branding and edit types
         const genType = String(data.generationType || '').toLowerCase().replace(/[_\s]/g, '-');
         if (excludedTypes.some(excluded => genType.includes(excluded) || genType === excluded)) {
@@ -714,19 +714,19 @@ export async function getRandomHighScoredImages(count: number = 20): Promise<Arr
         if (!pureImageTypes.includes(genType)) {
           return; // Only allow pure image generation types
         }
-        
+
         const images = Array.isArray(data.images) ? data.images : [];
         if (images.length === 0) return;
-        
+
         // Check document-level aestheticScore
         const docScore = typeof data.aestheticScore === 'number' ? data.aestheticScore : null;
-        
+
         // Check image-level aestheticScore - accept any score or no score
         for (const img of images) {
-          const imgScore = typeof img?.aestheticScore === 'number' ? img.aestheticScore : 
-                          (typeof img?.aesthetic?.score === 'number' ? img.aesthetic.score : null);
+          const imgScore = typeof img?.aestheticScore === 'number' ? img.aestheticScore :
+            (typeof img?.aesthetic?.score === 'number' ? img.aesthetic.score : null);
           const score = imgScore || docScore;
-          
+
           // Accept any score >= 8.0, or no score (for older items)
           if (score === null || score >= 8.0) {
             // Check if already added (avoid duplicates)
@@ -743,16 +743,16 @@ export async function getRandomHighScoredImages(count: number = 20): Promise<Arr
         }
       });
     }
-    
+
     console.log('[getRandomHighScoredImages] Total candidates found:', candidates.length);
     if (candidates.length === 0) {
       console.warn('[getRandomHighScoredImages] No candidates found');
       return [];
     }
-    
+
     // Sort by score (highest first) for better quality, then randomize
     candidates.sort((a, b) => (b.score || 0) - (a.score || 0));
-    
+
     // Better randomization: Fisher-Yates shuffle for true randomness
     // Shuffle top candidates (prioritize high scores but still randomize)
     const topCandidates = candidates.slice(0, Math.min(50, candidates.length));
@@ -760,19 +760,19 @@ export async function getRandomHighScoredImages(count: number = 20): Promise<Arr
       const j = Math.floor(Math.random() * (i + 1));
       [topCandidates[i], topCandidates[j]] = [topCandidates[j], topCandidates[i]];
     }
-    
+
     // Take up to 'count' images from shuffled top candidates
     const selected = topCandidates.slice(0, Math.min(count, topCandidates.length));
-    
+
     // Map to result format with optimized URLs - PRIORITIZE avifUrl first for fastest loading
     const results = selected
       .map(candidate => {
         // Prioritize avifUrl > thumbnailUrl > url for optimal performance
         const imageUrl = candidate.image?.avifUrl || candidate.image?.thumbnailUrl || candidate.image?.url;
         if (!imageUrl) return null;
-        
+
         const creator = candidate.item.createdBy || null;
-        
+
         return {
           imageUrl, // Already prioritized: avifUrl first
           prompt: candidate.item.prompt,
@@ -784,10 +784,54 @@ export async function getRandomHighScoredImages(count: number = 20): Promise<Arr
         };
       })
       .filter((item): item is NonNullable<typeof item> => item !== null);
-    
+
     return results;
   } catch (error) {
     console.error('[publicGenerationsRepository] Error getting random high-scored images:', error);
+    return [];
+  }
+}
+
+/**
+ * Get top creators based on total generation counts
+ * Uses generationStats collection for counts and joins with users collection for profile info
+ */
+export async function getTopCreators(limit: number = 10): Promise<Array<{ uid: string; username?: string; photoURL?: string; totalCreations: number }>> {
+  try {
+    const statsCol = adminDb.collection('generationStats');
+    const usersCol = adminDb.collection('users');
+
+    // 1. Fetch top stats by total creations
+    const statsSnap = await statsCol
+      .orderBy('total', 'desc')
+      .limit(limit)
+      .get();
+
+    if (statsSnap.empty) return [];
+
+    // 2. Map stats and fetch user profile for each
+    const topCreators = await Promise.all(
+      statsSnap.docs.map(async (doc) => {
+        const statsData = doc.data();
+        const uid = doc.id;
+        const totalCreations = statsData.total || 0;
+
+        // Fetch user profile
+        const userDoc = await usersCol.doc(uid).get();
+        const userData = userDoc.exists ? userDoc.data() : null;
+
+        return {
+          uid,
+          username: userData?.username || userData?.displayName || 'Unknown Creator',
+          photoURL: userData?.photoURL || userData?.photoUrl || undefined,
+          totalCreations
+        };
+      })
+    );
+
+    return topCreators;
+  } catch (error) {
+    console.error('[publicGenerationsRepository] Error getting top creators:', error);
     return [];
   }
 }
@@ -796,4 +840,5 @@ export const publicGenerationsRepository = {
   listPublic,
   getPublicById,
   getRandomHighScoredImages,
+  getTopCreators,
 };

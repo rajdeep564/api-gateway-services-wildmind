@@ -17,6 +17,36 @@ export interface LedgerEntry {
 
 const CREDIT_SERVICE_URL = env.creditServiceUrl;
 
+// Simple in-memory cache for pricing
+const costCache = new Map<string, { cost: number; expiry: number }>();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+export async function getModelCost(modelName: string, params?: any): Promise<number> {
+  const cacheKey = `${modelName}_${JSON.stringify(params || {})}`;
+  const now = Date.now();
+  const cached = costCache.get(cacheKey);
+
+  if (cached && cached.expiry > now) {
+    return cached.cost;
+  }
+
+  try {
+    const res = await axios.get(`${CREDIT_SERVICE_URL}/pricing/cost`, {
+      params: { model: modelName, ...params }
+    });
+
+    if (res.data.success) {
+      const cost = res.data.data.creditsPerGeneration;
+      costCache.set(cacheKey, { cost, expiry: now + CACHE_TTL });
+      return cost;
+    }
+    throw new Error(`Pricing fetch failed for ${modelName}`);
+  } catch (e: any) {
+    logger.error({ modelName, err: e.message }, '[CREDITS_REPO] getModelCost failed');
+    throw e;
+  }
+}
+
 // Helper for Axios errors
 function handleAxiosError(e: any, context: string): never {
   const msg = e.response?.data?.message || e.message;
@@ -130,18 +160,26 @@ export async function clearAllLedgersForUser(uid: string): Promise<number> {
   return 0;
 }
 
-export async function writeDebitIfAbsent(uid: string, requestId: string, amount: number, reason: string, meta?: Record<string, any>): Promise<'SKIPPED' | 'WRITTEN'> {
+export async function writeDebitIfAbsent(
+  uid: string,
+  requestId: string,
+  amount?: number,
+  reason?: string,
+  meta?: Record<string, any>,
+  modelName?: string,
+  params?: { resolution?: string; duration?: number }
+): Promise<'SKIPPED' | 'WRITTEN'> {
   try {
     const res = await axios.post(`${CREDIT_SERVICE_URL}/credits/debit`, {
       userId: uid,
       transactionId: requestId,
-      amount: Math.abs(amount), // Service expects positive amount for debit
+      amount: amount ? Math.abs(amount) : undefined,
       reason,
-      meta
+      meta,
+      modelName,
+      params
     });
 
-    // If service returns 'alreadyProcessed: true', we verify response. 
-    // The service returns: { success: true, data: { alreadyProcessed: boolean, ... } }
     if (res.data.success) {
       if (res.data.data?.alreadyProcessed) {
         logger.info({ uid, requestId }, '[CREDITS_REPO] Debit skipped (idempotent)');
@@ -151,15 +189,13 @@ export async function writeDebitIfAbsent(uid: string, requestId: string, amount:
     }
     throw new Error('Debit failed');
   } catch (e: any) {
-    // DEV FALLBACK: If service is unreachable in dev, assume written
     if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
       logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, skipping debit');
       return 'WRITTEN';
     }
 
-    // If it's an API error (e.g. 400 Insufficient credits), we propagate it
     handleAxiosError(e, 'writeDebitIfAbsent');
-    return 'SKIPPED'; // Unreachable
+    return 'SKIPPED';
   }
 }
 

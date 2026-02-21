@@ -10,20 +10,20 @@ router.options('/', (_req, res) => res.sendStatus(204));
 router.options('/:generationId', (_req, res) => res.sendStatus(204));
 
 // Optional HEAD handlers (some proxies send HEAD and expect 200)
-router.head('/', 
+router.head('/',
   validatePublicListGenerations as any,
   handleValidationErrors,
   publicGenerationsController.listPublic as any
 );
-router.head('/:generationId', 
+router.head('/:generationId',
   validateGenerationId as any,
   handleValidationErrors,
   publicGenerationsController.getPublicById as any
 );
 
-router.get('/', 
-  validatePublicListGenerations as any, 
-  handleValidationErrors, 
+router.get('/',
+  validatePublicListGenerations as any,
+  handleValidationErrors,
   publicGenerationsController.listPublic
 );
 
@@ -35,9 +35,13 @@ router.options('/random/high-scored', (_req, res) => res.sendStatus(204));
 // Admin endpoint to refresh signup image cache (no auth for now - can add later if needed)
 router.post('/refresh-signup-cache', publicGenerationsController.refreshSignupImageCache);
 
-router.get('/:generationId', 
-  validateGenerationId as any, 
-  handleValidationErrors, 
+// Top Creators leaderboard
+router.get('/top-creators', publicGenerationsController.getTopCreators);
+router.options('/top-creators', (_req, res) => res.sendStatus(204));
+
+router.get('/:generationId',
+  validateGenerationId as any,
+  handleValidationErrors,
   publicGenerationsController.getPublicById
 );
 

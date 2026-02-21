@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { ApiError } from '../utils/errorHandler';
-import { bflutils } from '../utils/bflutils';
+import { getModelCost } from '../repository/creditsRepository';
 import { PRICING_VERSION } from '../data/creditDistribution';
 import { v4 as uuidv4 } from 'uuid';
 import { creditsService } from '../services/creditsService';
@@ -19,8 +19,8 @@ export async function creditCost(req: Request, res: Response, next: NextFunction
     const { model, n = 1, frameSize, width, height, output_format } = req.body || {};
     if (!model) throw new ApiError('model is required', 400);
 
-    // Pricing rules (simple first-cut using creditsPerGeneration from matrix)
-    const basePerImage = bflutils.getCreditsPerImage(model);
+    // Pricing rules (dynamic lookup from credit-service)
+    const basePerImage = await getModelCost(model);
     if (basePerImage == null) throw new ApiError('Unsupported model', 400);
 
     const count = Math.max(1, Math.min(10, Number(n)));
