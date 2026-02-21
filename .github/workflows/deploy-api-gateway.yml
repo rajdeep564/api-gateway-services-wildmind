@@ -58,3 +58,5 @@ jobs:
           script: |
             cd ~/wildmind-staging/api-gateway-services-wildmind/deployment
             ./deploy.sh mirror-worker
+
+            
