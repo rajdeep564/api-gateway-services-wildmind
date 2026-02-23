@@ -72,7 +72,6 @@ process.on('unhandledRejection', (reason) => {
   gracefulShutdown('unhandledRejection');
 });
 
-
 // Start WebSocket server on the same HTTP server at /realtime
 try {
   startRealtimeServer(server);
