@@ -3,15 +3,23 @@
  * All templates share the same professional dark theme with the brand banner.
  */
 
+import { env } from '../config/env';
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-const BANNER_URL = 'https://www.wildmindai.com/emailBanner/Email_Banner%20(1).jpg';
 const FONT_STACK = "'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
 
-/** Shared outer wrapper: dark background, centred 600-px column */
+/** Resolve the banner URL dynamically at call time so it uses the correct domain */
+function getBannerUrl(): string {
+  const base = (env.productionWwwDomain || 'https://www.wildmindai.com').replace(/\/$/, '');
+  return `${base}/emailBanner/email-banner.jpg`;
+}
+
+/** Shared outer wrapper: dark background, centred 600-px column, banner at top */
 function wrapEmail(bodyContent: string, subject: string): string {
+  const bannerUrl = getBannerUrl();
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -31,8 +39,9 @@ function wrapEmail(bodyContent: string, subject: string): string {
 
         <!-- BANNER -->
         <tr>
-          <td style="padding:0;line-height:0;">
-            <img src="${BANNER_URL}" width="600" alt="Wild Mind AI" style="display:block;width:100%;max-width:600px;border:0;" />
+          <td style="padding:0;margin:0;line-height:0;font-size:0;">
+            <img src="${bannerUrl}" width="600" height="auto" alt="Wild Mind AI" border="0"
+                 style="display:block;width:100%;max-width:600px;border:0;outline:none;text-decoration:none;" />
           </td>
         </tr>
 
@@ -265,11 +274,10 @@ export function generateWelcomeEmailHTML(data: WelcomeEmailData): string {
     email,
     username,
     companyName = 'Wild Mind AI',
-    dashboardUrl = 'https://www.wildmindai.com',
+    dashboardUrl = (env.productionWwwDomain || 'https://www.wildmindai.com'),
   } = data;
 
   const displayName = username || email.split('@')[0] || 'there';
-  const year = new Date().getFullYear();
 
   const body = `
         <!-- HERO -->
@@ -291,7 +299,7 @@ export function generateWelcomeEmailHTML(data: WelcomeEmailData): string {
               Start exploring AI-powered image generation, video creation, and brand scaling tools — all in one place.
             </p>
             <p style="margin:0;font-size:14px;color:#6666aa;font-family:${FONT_STACK};">
-              You have <strong style="color:#c8c8ee;">4,120 free credits</strong> ready to use.
+              You have <strong style="color:#c8c8ee;">2,000 free images</strong> ready to use.
             </p>
           </td>
         </tr>
@@ -349,7 +357,7 @@ export function generateWelcomeEmailText(data: WelcomeEmailData): string {
     username,
     companyName = 'Wild Mind AI',
     supportEmail = 'support@wildmindai.com',
-    dashboardUrl = 'https://www.wildmindai.com',
+    dashboardUrl = (env.productionWwwDomain || 'https://www.wildmindai.com'),
   } = data;
 
   const displayName = username || email.split('@')[0] || 'there';
@@ -359,7 +367,7 @@ export function generateWelcomeEmailText(data: WelcomeEmailData): string {
 Your account has been successfully created.
 
 Start exploring AI-powered image generation, video creation, and brand-scaling tools — all in one place.
-You have 4,120 free credits ready to use.
+You have 2,000 free images ready to use.
 
 Start creating: ${dashboardUrl}
 
