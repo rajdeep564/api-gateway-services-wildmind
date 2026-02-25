@@ -319,13 +319,11 @@ async function verifyEmailOtpAndCreateUser(
     console.log(`[AUTH] Updated existing user in Firestore: ${user.username}`);
   } catch {
     console.log(`[AUTH] Creating new Firebase user for email: ${email}`);
-    const created = await admin
-      .auth()
-      .createUser({
-        email,
-        emailVerified: true,
-        ...(password ? { password } : {}),
-      });
+    const created = await admin.auth().createUser({
+      email,
+      emailVerified: true,
+      ...(password ? { password } : {}),
+    });
     console.log(`[AUTH] Created Firebase user with UID: ${created.uid}`);
 
     firebaseUser = created;
@@ -346,8 +344,16 @@ async function verifyEmailOtpAndCreateUser(
         await sendEmail(
           email,
           `🎉 Welcome to Wild Mind AI — You're In!`,
-          generateWelcomeEmailText({ email, username: user.username }),
-          generateWelcomeEmailHTML({ email, username: user.username }),
+          generateWelcomeEmailText({
+            email,
+            username: user.username,
+            dashboardUrl: env.productionWwwDomain,
+          }),
+          generateWelcomeEmailHTML({
+            email,
+            username: user.username,
+            dashboardUrl: env.productionWwwDomain,
+          }),
         );
         console.log(`[AUTH] Welcome email sent to new user: ${email}`);
       } catch (err: any) {
@@ -880,10 +886,12 @@ async function googleSignIn(
             generateWelcomeEmailText({
               email,
               username: displayName || undefined,
+              dashboardUrl: env.productionWwwDomain,
             }),
             generateWelcomeEmailHTML({
               email,
               username: displayName || undefined,
+              dashboardUrl: env.productionWwwDomain,
             }),
           );
           console.log(`[AUTH] Welcome email sent to new Google user: ${email}`);
@@ -893,6 +901,7 @@ async function googleSignIn(
           );
         }
       })();
+      
 
       return {
         user: newUser,
