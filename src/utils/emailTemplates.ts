@@ -3,7 +3,7 @@
  * All templates share the same professional dark theme with the brand banner.
  */
 
-import { env } from '../config/env';
+import { env } from "../config/env";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -11,9 +11,13 @@ import { env } from '../config/env';
 
 const FONT_STACK = "'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
 
-/** Resolve the banner URL dynamically at call time so it uses the correct domain */
+// Resolves to the correct domain per environment via PRODUCTION_WWW_DOMAIN env var:
+//   staging:    https://onstaging.wildmindai.com/emailBanner/email-banner.jpg
+//   production: https://www.wildmindai.com/emailBanner/email-banner.jpg
 function getBannerUrl(): string {
-  const base = (env.productionWwwDomain || 'https://www.wildmindai.com').replace(/\/$/, '');
+  const base = (
+    env.productionWwwDomain || "https://www.wildmindai.com"
+  ).replace(/\/$/, "");
   return `${base}/emailBanner/email-banner.jpg`;
 }
 
@@ -84,11 +88,7 @@ export interface OTPEmailData {
 }
 
 export function generateOTPEmailHTML(data: OTPEmailData): string {
-  const {
-    code,
-    expiresInMinutes = 10,
-    companyName = 'Wild Mind AI',
-  } = data;
+  const { code, expiresInMinutes = 10, companyName = "Wild Mind AI" } = data;
 
   const body = `
         <!-- HEADING -->
@@ -144,8 +144,8 @@ export function generateOTPEmailText(data: OTPEmailData): string {
   const {
     code,
     expiresInMinutes = 10,
-    companyName = 'Wild Mind AI',
-    supportEmail = 'support@wildmindai.com',
+    companyName = "Wild Mind AI",
+    supportEmail = "support@wildmindai.com",
   } = data;
 
   return `${companyName} — Email Verification
@@ -174,11 +174,10 @@ export interface PasswordResetEmailData {
   supportEmail?: string;
 }
 
-export function generatePasswordResetEmailHTML(data: PasswordResetEmailData): string {
-  const {
-    resetLink,
-    companyName = 'Wild Mind AI',
-  } = data;
+export function generatePasswordResetEmailHTML(
+  data: PasswordResetEmailData,
+): string {
+  const { resetLink, companyName = "Wild Mind AI" } = data;
 
   const body = `
         <!-- HEADING -->
@@ -234,11 +233,13 @@ export function generatePasswordResetEmailHTML(data: PasswordResetEmailData): st
   return wrapEmail(body, `Reset Your Password — ${companyName}`);
 }
 
-export function generatePasswordResetEmailText(data: PasswordResetEmailData): string {
+export function generatePasswordResetEmailText(
+  data: PasswordResetEmailData,
+): string {
   const {
     resetLink,
-    companyName = 'Wild Mind AI',
-    supportEmail = 'support@wildmindai.com',
+    companyName = "Wild Mind AI",
+    supportEmail = "support@wildmindai.com",
   } = data;
 
   return `${companyName} — Password Reset
@@ -273,11 +274,11 @@ export function generateWelcomeEmailHTML(data: WelcomeEmailData): string {
   const {
     email,
     username,
-    companyName = 'Wild Mind AI',
-    dashboardUrl = (env.productionWwwDomain || 'https://www.wildmindai.com'),
+    companyName = "Wild Mind AI",
+    dashboardUrl = "https://www.wildmindai.com",
   } = data;
 
-  const displayName = username || email.split('@')[0] || 'there';
+  const displayName = username || email.split("@")[0] || "there";
 
   const body = `
         <!-- HERO -->
@@ -355,12 +356,12 @@ export function generateWelcomeEmailText(data: WelcomeEmailData): string {
   const {
     email,
     username,
-    companyName = 'Wild Mind AI',
-    supportEmail = 'support@wildmindai.com',
-    dashboardUrl = (env.productionWwwDomain || 'https://www.wildmindai.com'),
+    companyName = "Wild Mind AI",
+    supportEmail = "support@wildmindai.com",
+    dashboardUrl = "https://www.wildmindai.com",
   } = data;
 
-  const displayName = username || email.split('@')[0] || 'there';
+  const displayName = username || email.split("@")[0] || "there";
 
   return `Welcome to ${companyName}, ${displayName}!
 
