@@ -240,7 +240,8 @@ export async function sendEmail(to: string, subject: string, text: string, html?
     hasEmailUser: !!env.emailUser,
     hasEmailAppPassword: !!env.emailAppPassword
   });
-  
+
+
   const resendSuccess = await sendEmailViaResend(to, subject, text, html);
   if (resendSuccess) {
     return;
