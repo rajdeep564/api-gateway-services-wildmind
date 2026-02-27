@@ -1,5 +1,5 @@
 import { admin } from "../../config/firebaseAdmin";
-import { env } from "../../config/env";
+import { env, getAppBaseUrl } from "../../config/env";
 import { authRepository } from "../../repository/auth/authRepository"; // Updated with updateUserByEmail
 import { AppUser, ProviderId } from "../../types/authTypes";
 import { ApiError } from "../../utils/errorHandler";
@@ -347,12 +347,12 @@ async function verifyEmailOtpAndCreateUser(
           generateWelcomeEmailText({
             email,
             username: user.username,
-            dashboardUrl: env.productionWwwDomain,
+            dashboardUrl: getAppBaseUrl(),
           }),
           generateWelcomeEmailHTML({
             email,
             username: user.username,
-            dashboardUrl: env.productionWwwDomain,
+            dashboardUrl: getAppBaseUrl(),
           }),
         );
         console.log(`[AUTH] Welcome email sent to new user: ${email}`);
@@ -678,14 +678,44 @@ async function loginWithEmailPassword(
   return { user: updatedUser, customToken, passwordLoginIdToken };
 }
 
+// In-memory per-email cooldown for password reset (60 seconds)
+// Keyed by normalized email, value is the Unix timestamp (ms) when the email was last sent.
+// Entries are cleaned up automatically after the cooldown window to avoid unbounded growth.
+const PASSWORD_RESET_COOLDOWN_MS = 60 * 1000; // 60 seconds
+const passwordResetCooldown = new Map<string, number>();
+
 /**
  * Send password reset email to user
  * Returns result object with status and message for proper error handling
  */
-async function sendPasswordResetEmail(
-  email: string,
-): Promise<{ success: boolean; message: string; reason?: string }> {
+async function sendPasswordResetEmail(email: string): Promise<{
+  success: boolean;
+  message: string;
+  reason?: string;
+  retryAfterSeconds?: number;
+}> {
   console.log(`[AUTH] Password reset request for email: ${email}`);
+
+  // Step 0: Enforce per-email cooldown to prevent email spam
+  const now = Date.now();
+  const lastSent = passwordResetCooldown.get(email);
+  if (lastSent !== undefined) {
+    const elapsed = now - lastSent;
+    if (elapsed < PASSWORD_RESET_COOLDOWN_MS) {
+      const retryAfterSeconds = Math.ceil(
+        (PASSWORD_RESET_COOLDOWN_MS - elapsed) / 1000,
+      );
+      console.log(
+        `[AUTH] Password reset cooldown active for ${email}: ${retryAfterSeconds}s remaining`,
+      );
+      return {
+        success: false,
+        message: `Please wait ${retryAfterSeconds} seconds before requesting another reset email.`,
+        reason: "TOO_MANY_REQUESTS",
+        retryAfterSeconds,
+      };
+    }
+  }
 
   // Step 1: Check if user exists in Firebase Auth
   let firebaseUser;
@@ -721,12 +751,9 @@ async function sendPasswordResetEmail(
   }
 
   // Step 3: Generate password reset link using Firebase Admin SDK
-  const frontendUrl =
-    env.productionWwwDomain ||
-    env.productionDomain ||
-    env.devFrontendUrl ||
-    "http://localhost:3000";
-  const resetRedirectUrl = `${frontendUrl}/auth/reset-password`;
+  // Uses getAppBaseUrl() so staging emails redirect to onstaging.wildmindai.com
+  // and production emails redirect to www.wildmindai.com
+  const resetRedirectUrl = `${getAppBaseUrl()}/auth/reset-password`;
 
   console.log(`[AUTH] Using reset redirect URL: ${resetRedirectUrl}`);
 
@@ -772,6 +799,14 @@ async function sendPasswordResetEmail(
     await sendEmail(email, emailSubject, emailText, emailHTML);
 
     console.log(`[AUTH] Password reset email sent successfully to: ${email}`);
+
+    // Record send time for cooldown — cleaned up automatically after the window
+    passwordResetCooldown.set(email, Date.now());
+    setTimeout(
+      () => passwordResetCooldown.delete(email),
+      PASSWORD_RESET_COOLDOWN_MS + 1000,
+    );
+
     return {
       success: true,
       message: "Password reset link has been sent to your email.",
@@ -886,12 +921,12 @@ async function googleSignIn(
             generateWelcomeEmailText({
               email,
               username: displayName || undefined,
-              dashboardUrl: env.productionWwwDomain,
+              dashboardUrl: getAppBaseUrl(),
             }),
             generateWelcomeEmailHTML({
               email,
               username: displayName || undefined,
-              dashboardUrl: env.productionWwwDomain,
+              dashboardUrl: getAppBaseUrl(),
             }),
           );
           console.log(`[AUTH] Welcome email sent to new Google user: ${email}`);
@@ -901,7 +936,6 @@ async function googleSignIn(
           );
         }
       })();
-      
 
       return {
         user: newUser,

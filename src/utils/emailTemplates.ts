@@ -3,7 +3,7 @@
  * All templates share the same professional dark theme with the brand banner.
  */
 
-import { env } from "../config/env";
+import { getAppBaseUrl } from "../config/env";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -15,10 +15,7 @@ const FONT_STACK = "'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
 //   staging:    https://onstaging.wildmindai.com/emailBanner/email-banner.jpg
 //   production: https://www.wildmindai.com/emailBanner/email-banner.jpg
 function getBannerUrl(): string {
-  const base = (
-    env.productionWwwDomain || "https://www.wildmindai.com"
-  ).replace(/\/$/, "");
-  return `${base}/emailBanner/email-banner.jpg`;
+  return `${getAppBaseUrl()}/emailBanner/email-banner.jpg`;
 }
 
 /** Shared outer wrapper: dark background, centred 600-px column, banner at top */
@@ -58,7 +55,7 @@ function wrapEmail(bodyContent: string, subject: string): string {
               Wild Mind AI &nbsp;&bull;&nbsp; 511, Satyamev Eminence, Ahmedabad
             </p>
             <p style="margin:0 0 10px;font-size:12px;font-family:${FONT_STACK};">
-              <a href="https://www.wildmindai.com/privacy" style="color:#5566aa;text-decoration:none;">Privacy</a>
+              <a href="${getAppBaseUrl()}/privacy" style="color:#5566aa;text-decoration:none;">Privacy</a>
               &nbsp;&bull;&nbsp;
               <a href="mailto:support@wildmindai.com" style="color:#5566aa;text-decoration:none;">Support</a>
             </p>
@@ -275,7 +272,7 @@ export function generateWelcomeEmailHTML(data: WelcomeEmailData): string {
     email,
     username,
     companyName = "Wild Mind AI",
-    dashboardUrl = "https://www.wildmindai.com",
+    dashboardUrl = getAppBaseUrl(),
   } = data;
 
   const displayName = username || email.split("@")[0] || "there";
@@ -358,7 +355,7 @@ export function generateWelcomeEmailText(data: WelcomeEmailData): string {
     username,
     companyName = "Wild Mind AI",
     supportEmail = "support@wildmindai.com",
-    dashboardUrl = "https://www.wildmindai.com",
+    dashboardUrl = getAppBaseUrl(),
   } = data;
 
   const displayName = username || email.split("@")[0] || "there";
