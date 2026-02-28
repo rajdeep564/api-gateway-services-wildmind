@@ -64,10 +64,19 @@ async function getModerationStatus(uid: string): Promise<ModerationStatus> {
   const data = snap.data() || {};
 
   const status: ModerationStatus = {
-    isBanned: !!data.isBanned,
-    banReason: data.banReason,
-    isSuspended: !!data.isSuspended,
-    suspendReason: data.suspendReason,
+    isBanned: !!data.isBanned || data.metadata?.accountStatus === "banned",
+    banReason:
+      data.banReason ||
+      (data.metadata?.accountStatus === "banned"
+        ? "Account permanently banned"
+        : undefined),
+    isSuspended:
+      !!data.isSuspended || data.metadata?.accountStatus === "suspended",
+    suspendReason:
+      data.suspendReason ||
+      (data.metadata?.accountStatus === "suspended"
+        ? "Account temporarily suspended"
+        : undefined),
     suspendedUntil: data.suspendedUntil,
     isUnderReview: !!data.isUnderReview,
     checkedAt: Date.now(),

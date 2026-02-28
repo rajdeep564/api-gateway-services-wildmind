@@ -689,6 +689,17 @@ async function loginWithEmailPassword(
     );
   }
 
+  // Check if account is suspended or banned
+  if (user.metadata?.accountStatus === "suspended") {
+    throw new ApiError(
+      "Your account has been suspended. Please contact support.",
+      403,
+    );
+  }
+  if (user.metadata?.accountStatus === "banned") {
+    throw new ApiError("Your account has been permanently banned.", 403);
+  }
+
   // Step 6: Update login tracking
   const updatedUser = await authRepository.updateUser(firebaseUser.uid, {
     lastLoginAt: new Date().toISOString(),
@@ -896,14 +907,26 @@ async function googleSignIn(
 
     if (existingUser) {
       console.log(
-        `[AUTH][authService.googleSignIn] Existing Google user found in Firestore`,
+        "[AUTH][authService.googleSignIn] Existing Google user found in Firestore",
         {
           firestoreUid: existingUser.uid,
           tokenUid: uid,
           username: existingUser.username,
           email: existingUser.email,
+          accountStatus: existingUser.metadata?.accountStatus || "active",
         },
       );
+
+      // Check if account is suspended or banned before issuing tokens
+      if (existingUser.metadata?.accountStatus === "suspended") {
+        throw new ApiError(
+          "Your account has been suspended. Please contact support.",
+          403,
+        );
+      }
+      if (existingUser.metadata?.accountStatus === "banned") {
+        throw new ApiError("Your account has been permanently banned.", 403);
+      }
 
       // Update login tracking for existing user
       const updatedUser = await authRepository.updateUser(uid, {
