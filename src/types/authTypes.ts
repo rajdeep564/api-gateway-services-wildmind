@@ -15,6 +15,8 @@ export interface AppUser {
   provider: ProviderId;
   emailVerified: boolean;
   isActive: boolean;
+  isSuspended?: boolean;
+  isBanned?: boolean;
   createdAt: string; // ISO string
   lastLoginAt: string; // ISO string
   loginCount: number;

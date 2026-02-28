@@ -690,13 +690,13 @@ async function loginWithEmailPassword(
   }
 
   // Check if account is suspended or banned
-  if (user.metadata?.accountStatus === "suspended") {
+  if (user.isSuspended) {
     throw new ApiError(
       "Your account has been suspended. Please contact support.",
       403,
     );
   }
-  if (user.metadata?.accountStatus === "banned") {
+  if (user.isBanned) {
     throw new ApiError("Your account has been permanently banned.", 403);
   }
 
@@ -913,18 +913,19 @@ async function googleSignIn(
           tokenUid: uid,
           username: existingUser.username,
           email: existingUser.email,
-          accountStatus: existingUser.metadata?.accountStatus || "active",
+          isSuspended: existingUser.isSuspended,
+          isBanned: existingUser.isBanned,
         },
       );
 
       // Check if account is suspended or banned before issuing tokens
-      if (existingUser.metadata?.accountStatus === "suspended") {
+      if (existingUser.isSuspended) {
         throw new ApiError(
           "Your account has been suspended. Please contact support.",
           403,
         );
       }
-      if (existingUser.metadata?.accountStatus === "banned") {
+      if (existingUser.isBanned) {
         throw new ApiError("Your account has been permanently banned.", 403);
       }
 
