@@ -30,6 +30,7 @@ interface ModerationStatus {
   isSuspended: boolean;
   suspendReason?: string;
   suspendedUntil?: string; // ISO date
+  isUnderReview?: boolean;
   checkedAt: number; // epoch ms
 }
 
@@ -68,6 +69,7 @@ async function getModerationStatus(uid: string): Promise<ModerationStatus> {
     isSuspended: !!data.isSuspended,
     suspendReason: data.suspendReason,
     suspendedUntil: data.suspendedUntil,
+    isUnderReview: !!data.isUnderReview,
     checkedAt: Date.now(),
   };
 
@@ -335,6 +337,33 @@ export async function moderationGuard(
           "[MOD] Failed to check device block (allowing through):",
           err?.message,
         );
+      }
+    }
+
+    // ── 4. Enforce "Under Review" limits ─────────────────────────────────
+    // Allow read-only/base navigation but restrict generation/purchases
+    if (modStatus.isUnderReview) {
+      const restrictedPrefixes = [
+        "/api/generations",
+        "/api/credits/execute",
+        "/api/video-generations",
+        "/api/music",
+      ];
+      const isRestricted =
+        restrictedPrefixes.some((prefix) => req.path.startsWith(prefix)) ||
+        req.path.includes("/generate");
+
+      if (isRestricted) {
+        console.warn(
+          `[MOD] ⚠️ Under-review user attempted restricted action: ${uid} on path ${req.path}`,
+        );
+        return res.status(403).json({
+          status: "error",
+          code: "ACCOUNT_UNDER_REVIEW",
+          message:
+            "Your account is temporarily under review. Some features are limited until the review is complete.",
+          reason: "Unusual activity detected.",
+        });
       }
     }
 

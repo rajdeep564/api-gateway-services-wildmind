@@ -16,6 +16,7 @@ import {
   invalidateAllUserSessions,
 } from "../../utils/sessionStore";
 import { isRedisEnabled } from "../../config/redisClient";
+import { trackDevice } from "../../services/deviceTrackingService";
 
 // Module-level log to confirm file is loaded
 console.log(
@@ -195,6 +196,16 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
     }
 
     console.log("[AUTH][createSession] ========== SUCCESS ==========");
+
+    // Async Device Tracking
+    const deviceHash = req.header("x-device-hash");
+    const ip = req.ip || req.connection?.remoteAddress || "";
+    if (user?.uid && deviceHash) {
+      trackDevice(user.uid, deviceHash, ip).catch((err) =>
+        console.error("[DeviceTracking] Error:", err.message),
+      );
+    }
+
     res.json(
       formatApiResponse("success", "Session created successfully", { user }),
     );
@@ -429,6 +440,15 @@ async function verifyEmailOtp(req: Request, res: Response, next: NextFunction) {
         uid: (result.user as any)?.uid,
         err: e?.message,
       });
+    }
+
+    // Async Device Tracking
+    const deviceHash = req.header("x-device-hash");
+    const ip = req.ip || req.connection?.remoteAddress || "";
+    if (result.user?.uid && deviceHash) {
+      trackDevice(result.user.uid, deviceHash, ip).catch((err) =>
+        console.error("[DeviceTracking] Error:", err.message),
+      );
     }
 
     // Return user data and Firebase custom token
@@ -1103,6 +1123,16 @@ async function loginWithEmailPassword(
     // For normal login, don't invalidate - let /session endpoint handle it
 
     console.log("[AUTH][loginWithEmailPassword] ========== SUCCESS ==========");
+
+    // Async Device Tracking
+    const deviceHash = req.header("x-device-hash");
+    const ip = req.ip || req.connection?.remoteAddress || "";
+    if (result.user?.uid && deviceHash) {
+      trackDevice(result.user.uid, deviceHash, ip).catch((err) =>
+        console.error("[DeviceTracking] Error:", err.message),
+      );
+    }
+
     // Return user data and custom token (frontend can signInWithCustomToken to sync Firebase client state)
     res.json(
       formatApiResponse("success", "Login successful", {
@@ -1204,6 +1234,15 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
       // OPTIMIZATION: Only invalidate sessions when necessary (provider change, suspicious activity)
       // For normal Google sign-in, don't invalidate - let /session endpoint handle it
       // This improves performance and avoids logging out user from other devices unnecessarily
+
+      // Async Device Tracking
+      const deviceHash = req.header("x-device-hash");
+      const ip = req.ip || req.connection?.remoteAddress || "";
+      if (result.user?.uid && deviceHash) {
+        trackDevice(result.user.uid, deviceHash, ip).catch((err) =>
+          console.error("[DeviceTracking] Error:", err.message),
+        );
+      }
 
       res.json(
         formatApiResponse("success", "Google sign-in successful", {
