@@ -860,7 +860,12 @@ async function googleSignIn(
   try {
     // Verify Google ID token with Firebase Admin
     const decoded = await admin.auth().verifyIdToken(idToken, true);
-    console.log(`[AUTH] Google token verified for UID: ${decoded.uid}`);
+    console.log(`[AUTH][authService.googleSignIn] Google token decoded`, {
+      uid: decoded.uid,
+      email: decoded.email,
+      email_verified: decoded.email_verified,
+      firebase: decoded.firebase,
+    });
 
     const {
       uid,
@@ -891,7 +896,13 @@ async function googleSignIn(
 
     if (existingUser) {
       console.log(
-        `[AUTH] Existing Google user found: ${existingUser.username}`,
+        `[AUTH][authService.googleSignIn] Existing Google user found in Firestore`,
+        {
+          firestoreUid: existingUser.uid,
+          tokenUid: uid,
+          username: existingUser.username,
+          email: existingUser.email,
+        },
       );
 
       // Update login tracking for existing user
@@ -906,6 +917,9 @@ async function googleSignIn(
 
       // Generate session token for existing user
       const sessionToken = await admin.auth().createCustomToken(uid);
+      console.log(
+        `[AUTH][authService.googleSignIn] Generated customToken for UID: ${uid}`,
+      );
 
       return {
         user: updatedUser,

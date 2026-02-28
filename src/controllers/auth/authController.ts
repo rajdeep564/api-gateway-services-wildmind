@@ -1166,6 +1166,7 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
       origin: req.headers.origin,
       hostname: req.hostname,
       timestamp: new Date().toISOString(),
+      rawBodyKeys: Object.keys(req.body),
     });
 
     const deviceInfo = extractDeviceInfo(req);
@@ -1178,8 +1179,16 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
       username: result.user?.username,
       email: result.user?.email,
       hasSessionToken: !!result.sessionToken,
-      sessionTokenLength: result.sessionToken?.length || 0,
+      sessionTokenPrefix: result.sessionToken
+        ? result.sessionToken.substring(0, 20)
+        : "N/A",
     });
+
+    if (result.user?.uid !== req.uid && req.uid) {
+      console.warn(
+        `[AUTH][googleSignIn] MISMATCH WARNING! Request UID from middleware (${req.uid}) does NOT match decoded Google UID (${result.user?.uid}).`,
+      );
+    }
 
     // OPTIMIZATION: Google sign-in only creates/updates user - NO session cookie here
     // Frontend must call /session endpoint separately to create session cookie
@@ -1252,7 +1261,9 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
         }),
       );
     }
-    console.log("[AUTH][googleSignIn] ========== SUCCESS ==========");
+    console.log(
+      `[AUTH][googleSignIn] ========== SUCCESS FOR ${result.user?.email} (${result.user?.uid}) ==========`,
+    );
   } catch (error: any) {
     console.error("[AUTH][googleSignIn] ========== ERROR ==========");
     console.error(`[AUTH][googleSignIn] Google sign-in error:`, {
