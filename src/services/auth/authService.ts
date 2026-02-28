@@ -407,11 +407,39 @@ async function upsertUserFromFirebase(decoded: any): Promise<AppUser> {
   const providerId: ProviderId =
     (decoded.firebase?.sign_in_provider as ProviderId) || "unknown";
 
-  const username =
+  let username =
     (displayName || email.split("@")[0] || "user")
       .toLowerCase()
       .replace(/[^a-z0-9_.-]/g, "")
-      .slice(0, 30) || `user_${uid.slice(0, 6)}`;
+      .slice(0, 28) || `user_${uid.slice(0, 6)}`;
+
+  // SECURITY FIX: Check for username collision with a DIFFERENT user.
+  // Two Google users with identical display names (e.g. "John Smith" → "johnsmith")
+  // would previously share a username, causing getUserByUsername to return the wrong user.
+  try {
+    const existingByUsername = await authRepository.getUserByUsername(username);
+    if (existingByUsername && existingByUsername.uid !== uid) {
+      // Collision detected — append short UID suffix to ensure global uniqueness
+      const suffix = uid.slice(0, 5);
+      const original = username;
+      username = `${username.slice(0, 23)}_${suffix}`;
+      console.warn(
+        "[AUTH][upsertUserFromFirebase] Username collision resolved",
+        {
+          originalUsername: original,
+          resolvedUsername: username,
+          collidingUid: existingByUsername.uid,
+          newUid: uid,
+        },
+      );
+    }
+  } catch (checkErr: any) {
+    // Non-fatal — if check fails, proceed with original username
+    console.warn(
+      "[AUTH][upsertUserFromFirebase] Username collision check failed (non-fatal):",
+      checkErr?.message,
+    );
+  }
 
   return await authRepository.upsertUser(uid, {
     email,
