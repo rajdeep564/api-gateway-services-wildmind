@@ -37,31 +37,31 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
       url: req.url,
       timestamp: new Date().toISOString()
     });
-    
+
     const { idToken } = req.body;
-    
+
     if (!idToken) {
       console.error('[AUTH][createSession] ERROR: No idToken provided in request body');
       console.log('[AUTH][createSession] Request body keys:', Object.keys(req.body || {}));
       throw new ApiError('Missing idToken in request body', 400);
     }
-    
+
     console.log('[AUTH][createSession] idToken received:', {
       length: idToken.length,
       prefix: idToken.substring(0, 30),
       suffix: idToken.substring(idToken.length - 20),
       isString: typeof idToken === 'string'
     });
-    
+
     console.log('[AUTH][createSession] Creating session with authService...');
-    
+
     let user;
     try {
       user = await authService.createSession(idToken);
-      console.log('[AUTH][createSession] Session created successfully, user:', { 
-        uid: user?.uid, 
+      console.log('[AUTH][createSession] Session created successfully, user:', {
+        uid: user?.uid,
         username: user?.username,
-        email: user?.email 
+        email: user?.email
       });
     } catch (authServiceError: any) {
       console.error('[AUTH][createSession] ERROR in authService.createSession:', {
@@ -110,7 +110,7 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
         // CRITICAL FIX: Pass current session token to ensure it's never invalidated
         // BUG FIX #13: Keep newest session if under limit, otherwise remove oldest
         await invalidateAllUserSessions(user.uid, true, sessionCookie);
-        
+
         if (env.revokeFirebaseTokens) {
           // BUG FIX #10: Revoke all refresh tokens for this user to force re-authentication on other devices
           // This ensures Firebase auth state is synced across devices
@@ -124,7 +124,7 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
         } else {
           console.log('[AUTH][createSession] Skipping Firebase refresh token revocation (disabled via env). REVOKE_FIREBASE_TOKENS=', env.revokeFirebaseTokens);
         }
-        
+
         console.log('[AUTH][createSession] Invalidated old sessions for user', { uid: user.uid });
       } catch (error) {
         console.warn('[AUTH][createSession] Failed to invalidate old sessions (non-fatal):', error);
@@ -144,7 +144,7 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
           console.log('[AUTH][Redis] SET (createSession)', { uid, exp });
         }
       }
-    } catch {}
+    } catch { }
 
     // Initialize credits for this user (FREE plan on first use)
     try {
@@ -231,7 +231,7 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
       const canToggle = planCode === 'PLAN_C' || planCode === 'PLAN_D';
       (user as any).canTogglePublicGenerations = canToggle;
       (user as any).forcePublicGenerations = !canToggle;
-    } catch {}
+    } catch { }
 
     res.json(
       formatApiResponse("success", "User retrieved successfully", { user })
@@ -274,24 +274,24 @@ async function logout(req: Request, res: Response, next: NextFunction) {
       console.warn('[AUTH][logout] Failed to delete cached session:', e);
       // Non-fatal - continue with cookie clearing
     }
-    
+
     // Clear session cookie (handles all variants)
     clearSessionCookie(res);
-    
+
     // Log successful logout
     console.log('[AUTH][logout] Logout successful', {
       hasToken: !!(req.cookies as any)?.['app_session'],
       origin: req.headers.origin,
       userAgent: req.headers['user-agent']?.substring(0, 50),
     });
-    
+
     res.json(formatApiResponse("success", "Logged out successfully", {}));
   } catch (error) {
     console.error('[AUTH][logout] Logout error:', error);
     // Even on error, try to clear cookies
     try {
       clearSessionCookie(res);
-    } catch {}
+    } catch { }
     next(error);
   }
 }
@@ -424,10 +424,10 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     origin: req.headers.origin,
     timestamp: new Date().toISOString()
   });
-  
+
   const isProd = env.nodeEnv === "production";
   const cookieDomain = env.cookieDomain; // e.g., .wildmindai.com when API runs on api.wildmindai.com
-  
+
   // BUG FIX #11: Check ID token expiration first to prevent mismatch
   let decodedToken: any;
   console.log('[AUTH][setSessionCookie] Verifying ID token with Firebase Admin...');
@@ -454,34 +454,34 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
       idTokenLength: idToken?.length,
       idTokenPrefix: idToken?.substring(0, 30)
     });
-    
+
     // Check if it's a TOKEN_EXPIRED error specifically
-    if (verifyError?.code === 'auth/id-token-expired' || 
-        verifyError?.errorInfo?.code === 'auth/id-token-expired' ||
-        verifyError?.message?.includes('TOKEN_EXPIRED') ||
-        verifyError?.message?.includes('expired')) {
+    if (verifyError?.code === 'auth/id-token-expired' ||
+      verifyError?.errorInfo?.code === 'auth/id-token-expired' ||
+      verifyError?.message?.includes('TOKEN_EXPIRED') ||
+      verifyError?.message?.includes('expired')) {
       console.error('[AUTH][setSessionCookie] TOKEN_EXPIRED detected!', {
         currentTime: new Date().toISOString(),
         currentTimestamp: Date.now(),
         errorDetails: verifyError
       });
     }
-    
+
     throw new ApiError(`Invalid ID token: ${verifyError?.message || 'Token verification failed'}`, 401);
   }
-  
+
   // CRITICAL FIX: Always use a FIXED 14-day expiration for session cookies
   // NEVER derive expiresIn from the ID token expiration time
   // ID tokens expire in ~60 minutes, but session cookies should last 14 days
   // This ensures the cookie persists regardless of when the ID token was issued
   const SESSION_COOKIE_DURATION_MS = 14 * 24 * 60 * 60 * 1000; // 14 days in milliseconds
   const expiresIn = SESSION_COOKIE_DURATION_MS; // ALWAYS use fixed 14 days
-  
+
   // Log ID token expiration for debugging (but don't use it for cookie expiration)
   const idTokenExp = decodedToken.exp * 1000; // Convert to milliseconds
   const now = Date.now();
   const idTokenExpiresIn = Math.max(0, idTokenExp - now);
-  
+
   console.log('[AUTH][setSessionCookie] Session cookie expiration (FIXED 14 DAYS):', {
     expiresIn,
     expiresInMs: expiresIn,
@@ -498,7 +498,7 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     now: new Date(now).toISOString(),
     note: 'Session cookie uses FIXED 14 days, independent of ID token expiration'
   });
-  
+
   // Validate that ID token is still valid (must have at least 1 minute remaining)
   // This ensures we can create a session cookie before the ID token expires
   // Note: We use FIXED 14 days for session cookie, but ID token must still be valid
@@ -518,7 +518,7 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     });
     throw new ApiError('ID token expires too soon. Please refresh and try again.', 401);
   }
-  
+
   // Check if token is already expired
   if (idTokenExp < now) {
     console.error('[AUTH][setSessionCookie] ERROR: ID token is already expired!', {
@@ -531,7 +531,7 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     });
     throw new ApiError('ID token has expired. Please refresh and try again.', 401);
   }
-  
+
   // BUG FIX #4: Mobile cookie compatibility - SameSite=None requires Secure=true
   // BUG FIX #22: Android WebView detection
   const userAgent = req.get('user-agent') || '';
@@ -546,7 +546,7 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     isProd ||
     isHttpsRequest ||
     (!isLocalhostHost && (isMobile || isWebView));
-  
+
   console.log('[AUTH][setSessionCookie] Creating session cookie with FIXED 14-day expiration:', {
     isProd,
     cookieDomain: cookieDomain || '(not set in env)',
@@ -562,7 +562,7 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     idTokenExpiresInMinutes: Math.floor(idTokenExpiresIn / (1000 * 60)),
     note: 'Session cookie expiration is FIXED at 14 days, independent of ID token expiration'
   });
-  
+
   let sessionCookie: string;
   try {
     console.log('[AUTH][setSessionCookie] Calling admin.auth().createSessionCookie...', {
@@ -575,7 +575,7 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     sessionCookie = await admin
       .auth()
       .createSessionCookie(idToken, { expiresIn });
-    
+
     // Decode the session cookie to verify its expiration
     let decodedSessionCookie: any = null;
     try {
@@ -594,7 +594,7 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
           expiresInHours: Math.floor(sessionExpiresIn / (1000 * 60 * 60)),
           requestedDays: Math.floor(expiresIn / (1000 * 60 * 60 * 24))
         });
-        
+
         // Warn if Firebase limited the expiration
         const requestedDays = Math.floor(expiresIn / (1000 * 60 * 60 * 24));
         const actualDays = Math.floor(sessionExpiresIn / (1000 * 60 * 60 * 24));
@@ -609,7 +609,7 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     } catch (decodeError) {
       console.warn('[AUTH][setSessionCookie] Could not decode session cookie for verification:', decodeError);
     }
-    
+
     console.log('[AUTH][setSessionCookie] Session cookie created successfully', {
       cookieLength: sessionCookie?.length || 0,
       hasCookie: !!sessionCookie,
@@ -629,23 +629,23 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
       expiresInSeconds: Math.floor(expiresIn / 1000)
     });
 
-  
-    
+
+
     // Check if it's a TOKEN_EXPIRED error
-    if (createError?.code === 'auth/id-token-expired' || 
-        createError?.errorInfo?.code === 'auth/id-token-expired' ||
-        createError?.message?.includes('TOKEN_EXPIRED') ||
-        createError?.message?.includes('expired')) {
+    if (createError?.code === 'auth/id-token-expired' ||
+      createError?.errorInfo?.code === 'auth/id-token-expired' ||
+      createError?.message?.includes('TOKEN_EXPIRED') ||
+      createError?.message?.includes('expired')) {
       console.error('[AUTH][setSessionCookie] TOKEN_EXPIRED in createSessionCookie!', {
         currentTime: new Date().toISOString(),
         currentTimestamp: Date.now(),
         errorDetails: createError
       });
     }
-    
+
     throw new ApiError(`Failed to create session cookie: ${createError?.message || 'Unknown error'}`, 500);
   }
-  
+
   // In production, always use the cookie domain if set (for cross-subdomain sharing)
   // In development, only use domain if it matches the current host
   const host = reqHost;
@@ -654,45 +654,29 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
   const dom = (cookieDomain || '').toLowerCase();
   let shouldSetDomain = false;
   let finalCookieDomain = cookieDomain; // Default to .wildmindai.com
-  
+
   // Check if we're in a production-like environment:
   // 1. NODE_ENV === 'production', OR
   // 2. Origin is a production domain subdomain, OR
   // 3. Host matches the cookie domain
   const prodDomainHost = env.productionDomain ? new URL(env.productionDomain).hostname : (env.productionWwwDomain ? new URL(env.productionWwwDomain).hostname.replace(/^www\./, '') : undefined);
   const studioDomainHost = env.productionStudioDomain ? new URL(env.productionStudioDomain).hostname : undefined;
-  const isProductionLike = isProd || 
+  const isProductionLike = isProd ||
     (origin && prodDomainHost && (origin.includes(prodDomainHost) || (studioDomainHost && origin.includes(studioDomainHost)))) ||
     (host && prodDomainHost && (host.includes(prodDomainHost) || (studioDomainHost && host.includes(studioDomainHost))));
-  
-  // Determine cookie domain based on how user accessed the site:
-  // - If coming from www.wildmindai.com (via referer/origin), use www.wildmindai.com
-  // - If direct access to studio.wildmindai.com, use .wildmindai.com
+
+  // CRITICAL FIX: Always use the configured COOKIE_DOMAIN (e.g., .wildmindai.com)
+  // Do NOT dynamically switch to www.wildmindai.com or other subdomains
+  // This prevents "Cookie Shadowing" where users end up with two cookies:
+  // 1. .wildmindai.com (correct)
+  // 2. www.wildmindai.com (duplicate/conflicting)
+
   if (isProductionLike && cookieDomain) {
-    const isFromWww = 
-      (origin && origin.includes('www.wildmindai.com')) ||
-      (referer && referer.includes('www.wildmindai.com')) ||
-      (host && host.includes('www.wildmindai.com'));
-    
-    const isStudioDirect = 
-      (origin && origin.includes('studio.wildmindai.com')) ||
-      (host && host.includes('studio.wildmindai.com'));
-    
-    if (isFromWww) {
-      // User came from www.wildmindai.com - use www.wildmindai.com as domain
-      finalCookieDomain = 'www.wildmindai.com';
-      shouldSetDomain = true;
-      console.log('[AUTH][setSessionCookie] User accessed from www.wildmindai.com - using www.wildmindai.com cookie domain');
-    } else if (isStudioDirect) {
-      // Direct access to studio.wildmindai.com - use .wildmindai.com as domain
-      finalCookieDomain = cookieDomain; // .wildmindai.com
-      shouldSetDomain = true;
-      console.log('[AUTH][setSessionCookie] Direct access to studio.wildmindai.com - using .wildmindai.com cookie domain');
-    } else {
-      // Default: use .wildmindai.com for cross-subdomain sharing
-      finalCookieDomain = cookieDomain;
-      shouldSetDomain = true;
-    }
+    // PROD: Always use the root domain (e.g. .wildmindai.com)
+    // This ensures ONE cookie works across all subdomains (www, studio, etc.)
+    finalCookieDomain = cookieDomain;
+    shouldSetDomain = true;
+    console.log('[AUTH][setSessionCookie] Enforcing consistent domain:', finalCookieDomain);
   } else if (cookieDomain) {
     // Development: only use domain if it matches the host (localhost won't match .wildmindai.com)
     const domainMatches = !!(dom && (host === dom.replace(/^\./, '') || host.endsWith(dom)));
@@ -707,7 +691,7 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
       console.error('[AUTH][setSessionCookie] Then restart the backend service and have users log in again');
     }
   }
-  
+
   // CRITICAL: Log domain setting decision for debugging cross-subdomain issues
   console.log('[AUTH][setSessionCookie] Domain setting decision:', {
     cookieDomain: cookieDomain || '(NOT SET - COOKIES WILL NOT SHARE ACROSS SUBDOMAINS!)',
@@ -719,23 +703,23 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     referer,
     shouldSetDomain,
     willSetDomain: shouldSetDomain ? finalCookieDomain : '(NOT SETTING - COOKIES WON\'T SHARE!)',
-    warning: !cookieDomain ? '⚠️⚠️⚠️ COOKIE_DOMAIN env var is NOT SET! Set it to ".wildmindai.com" in Render.com ⚠️⚠️⚠️' : 
-             !shouldSetDomain ? '⚠️ Domain will NOT be set - cookies won\'t share across subdomains' :
-             '✅ Domain will be set - cookies will share across subdomains'
+    warning: !cookieDomain ? '⚠️⚠️⚠️ COOKIE_DOMAIN env var is NOT SET! Set it to ".wildmindai.com" in Render.com ⚠️⚠️⚠️' :
+      !shouldSetDomain ? '⚠️ Domain will NOT be set - cookies won\'t share across subdomains' :
+        '✅ Domain will be set - cookies will share across subdomains'
   });
 
   // Determine sameSite: use "none" for cross-subdomain cookies in production-like environments
   // This allows cookies to work between www.wildmindai.com and studio.wildmindai.com
   const useSameSiteNone = isProductionLike && !isWebView && shouldUseSecureCookie;
-  
+
   // Calculate expiration date (14 days from now) - FIXED value, not derived from ID token
   const expirationDate = new Date(Date.now() + expiresIn);
-  
+
   // CRITICAL: maxAge must be in SECONDS (not milliseconds)
   // expiresIn is in milliseconds (14 days = 1,209,600,000 ms)
   // maxAge needs to be in seconds (14 days = 1,209,600 seconds)
   const maxAgeInSeconds = Math.floor(expiresIn / 1000); // Convert milliseconds to seconds
-  
+
   const cookieOptions = {
     httpOnly: true,
     // BUG FIX #4: Cookies must be Secure when SameSite=None per Chrome requirements
@@ -776,7 +760,7 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
       note: 'Cookie expiration is FIXED at 14 days, independent of ID token expiration'
     }
   };
-  
+
   // Use console.log (always visible) and logger (structured logging)
   console.log('[AUTH][setSessionCookie] Setting cookie', JSON.stringify(logData, null, 2));
   try {
@@ -790,32 +774,58 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
   // Express res.cookie() may truncate or miscalculate maxAge, so we set it manually
   // This ensures Max-Age is always exactly 1,209,600 seconds (14 days)
   let setCookieValue = `app_session=${sessionCookie}; Path=${cookieOptions.path}`;
-  
+
   // Set Max-Age (in seconds) - FIXED at 1,209,600 seconds (14 days)
   setCookieValue += `; Max-Age=${maxAgeInSeconds}`;
-  
+
   // Add Expires header (RFC 1123 format) - 14 days from now
   setCookieValue += `; Expires=${expirationDate.toUTCString()}`;
-  
+
   // Add domain if set
   if (cookieOptions.domain) {
     setCookieValue += `; Domain=${cookieOptions.domain}`;
   }
-  
+
   // Add SameSite
   setCookieValue += `; SameSite=${cookieOptions.sameSite === 'none' ? 'None' : cookieOptions.sameSite === 'lax' ? 'Lax' : 'Strict'}`;
-  
+
   // Add Secure if needed
   if (cookieOptions.secure) {
     setCookieValue += `; Secure`;
   }
-  
+
   // Add HttpOnly
   setCookieValue += `; HttpOnly`;
-  
+
+  // CRITICAL FIX: Clear potential "shadow" cookies on specific domains
+  // If we are setting a cookie on .wildmindai.com, we must DELETE any cookie on www.wildmindai.com
+  // otherwise the browser sends both and the server might read the wrong one.
+  const hostName = req.hostname;
+  const expired = 'Thu, 01 Jan 1970 00:00:00 GMT';
+  const clearVariants: string[] = [];
+
+  // 1. Clear cookie on the specific hostname (e.g., www.wildmindai.com) without domain attribute
+  // This targets cookies set specifically on the host
+  clearVariants.push(`app_session=; Path=/; Max-Age=0; Expires=${expired}; SameSite=None; Secure`);
+
+  if (hostName.startsWith('www.')) {
+    // If on www, explicitly try to clear with domain=www.wildmindai.com just in case
+    clearVariants.push(`app_session=; Domain=${hostName}; Path=/; Max-Age=0; Expires=${expired}; SameSite=None; Secure`);
+  }
+
+  // Set the clean-up cookies FIRST
+  // Note: We're appending to any existing Set-Cookie headers or creating a new array 
+  // Express handles multiple Set-Cookie headers by allowing an array
+
   // Set the header manually
-  res.setHeader('Set-Cookie', setCookieValue);
-  
+  if (clearVariants.length > 0) {
+    // Combine cleanup cookies with the new valid cookie
+    // We send the cleanup instructions AND the new cookie in the same response
+    res.setHeader('Set-Cookie', [...clearVariants, setCookieValue]);
+  } else {
+    res.setHeader('Set-Cookie', setCookieValue);
+  }
+
   // Log what we set (for verification)
   console.log('[AUTH][setSessionCookie] Set-Cookie header set manually:', {
     maxAge: maxAgeInSeconds,
@@ -826,7 +836,7 @@ async function setSessionCookie(req: Request, res: Response, idToken: string) {
     fullHeader: setCookieValue.substring(0, 200) + '...' // Truncate for logging
   });
   console.log('[AUTH][setSessionCookie] ========== SUCCESS ==========');
-  
+
   return sessionCookie;
 }
 
@@ -837,7 +847,7 @@ function clearSessionCookie(res: Response) {
 
   const variants: string[] = [];
   const cookiesToClear = ['app_session', 'app_session.sig', 'auth_hint'];
-  
+
   // Generate all cookie clearing variants
   cookiesToClear.forEach(cookieName => {
     // SameSite=None; Secure variants (for cross-site cookies)
@@ -845,13 +855,13 @@ function clearSessionCookie(res: Response) {
     if (cookieDomain) {
       variants.push(`${cookieName}=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=None; Secure`);
     }
-    
+
     // SameSite=Lax variants (for same-site cookies)
     variants.push(`${cookieName}=; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
     if (cookieDomain) {
       variants.push(`${cookieName}=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`);
     }
-    
+
     // SameSite=Strict variants (for strict cookies)
     variants.push(`${cookieName}=; Path=/; Max-Age=0; Expires=${expired}; SameSite=Strict`);
     if (cookieDomain) {
@@ -861,7 +871,7 @@ function clearSessionCookie(res: Response) {
 
   // Set all cookie clearing variants
   res.setHeader('Set-Cookie', variants);
-  
+
   console.log('[AUTH][clearSessionCookie] Cleared cookies', {
     cookieCount: variants.length,
     cookieDomain: cookieDomain || '(not set)',
@@ -916,7 +926,7 @@ async function loginWithEmailPassword(
     // OPTIMIZATION: Login endpoint only authenticates - NO session cookie here
     // Frontend should use Firebase SDK: signInWithEmailAndPassword() → getIdToken() → POST /session
     // This ensures single cookie creation point and better performance
-    
+
     // Only invalidate sessions when necessary (password reset, suspicious activity)
     // For normal login, don't invalidate - let /session endpoint handle it
 
@@ -962,13 +972,13 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
 
     console.log(
       `[AUTH][googleSignIn] Google sign-in result`, {
-        needsUsername: result.needsUsername,
-        uid: result.user?.uid,
-        username: result.user?.username,
-        email: result.user?.email,
-        hasSessionToken: !!result.sessionToken,
-        sessionTokenLength: result.sessionToken?.length || 0
-      }
+      needsUsername: result.needsUsername,
+      uid: result.user?.uid,
+      username: result.user?.username,
+      email: result.user?.email,
+      hasSessionToken: !!result.sessionToken,
+      sessionTokenLength: result.sessionToken?.length || 0
+    }
     );
 
     // OPTIMIZATION: Google sign-in only creates/updates user - NO session cookie here
@@ -986,7 +996,7 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
       }
       // OPTIMIZATION: New user needs username - NO session cookie here
       // Frontend must call /session endpoint after username is set
-      
+
       // New user needs to set username
       res.json(
         formatApiResponse(
@@ -1010,7 +1020,7 @@ async function googleSignIn(req: Request, res: Response, next: NextFunction) {
       // OPTIMIZATION: Only invalidate sessions when necessary (provider change, suspicious activity)
       // For normal Google sign-in, don't invalidate - let /session endpoint handle it
       // This improves performance and avoids logging out user from other devices unnecessarily
-      
+
       res.json(
         formatApiResponse("success", "Google sign-in successful", {
           user: result.user,
@@ -1110,13 +1120,13 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
     const oldToken = req.cookies?.['app_session'];
     const cookieDomain = env.cookieDomain;
     const isProd = env.nodeEnv === "production";
-    
+
     if (oldToken) {
       // Delete old session from Redis cache
       try {
         await deleteCachedSession(oldToken);
-      } catch {}
-      
+      } catch { }
+
       // Clear old cookie explicitly
       try {
         const expired = 'Thu, 01 Jan 1970 00:00:00 GMT';
@@ -1126,7 +1136,7 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
           { domain: undefined, sameSite: 'Lax', secure: false },
           { domain: cookieDomain, sameSite: 'Lax', secure: false },
         ];
-        
+
         cookieVariants.forEach(variant => {
           let cookieString = `app_session=; Path=/; Max-Age=0; Expires=${expired}`;
           if (variant.domain) cookieString += `; Domain=${variant.domain}`;
@@ -1134,22 +1144,22 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
           if (variant.secure || isProd) cookieString += '; Secure';
           res.setHeader('Set-Cookie', cookieString);
         });
-      } catch {}
+      } catch { }
     }
-    
+
     // Create new session cookie with extended expiration (14 days / 2 weeks)
     const newSessionCookie = await setSessionCookie(req, res, idToken);
-    
+
     // Update Redis cache with new session
     try {
       const payload: any = decodeJwtPayload(newSessionCookie) || {};
       const exp = typeof payload?.exp === 'number' ? payload.exp : undefined;
       if (uid && exp) {
-        
+
         // Cache new session
-        await cacheSession(newSessionCookie, { 
-          uid, 
-          exp, 
+        await cacheSession(newSessionCookie, {
+          uid,
+          exp,
           issuedAt: payload?.iat,
           userAgent: req.get('user-agent') || undefined,
           ip: req.ip,
@@ -1224,7 +1234,7 @@ export async function debugSession(req: Request, res: Response, _next: NextFunct
     const allCookies = cookieHeader.split(';').map(c => c.trim());
     const hasAppSessionInHeader = cookieHeader.includes('app_session=');
     const appSessionCookie = allCookies.find(c => c.startsWith('app_session='));
-    
+
     console.log('[AUTH][debugSession] Cookie debug info:', {
       hasCookieHeader: !!req.headers.cookie,
       cookieHeaderLength: cookieHeader.length,
@@ -1236,21 +1246,21 @@ export async function debugSession(req: Request, res: Response, _next: NextFunct
       origin: req.headers.origin,
       referer: req.headers.referer
     });
-    
+
     const token = (req.cookies as any)?.['app_session'];
     const hasToken = !!token;
-    
+
     let decoded: any = null;
     let verificationStatus = 'not_verified';
     let verificationError: any = null;
     let isSessionCookie = false;
-    
+
     // Try to verify the token
     if (token) {
       try {
         const { admin } = await import('../../config/firebaseAdmin');
         const { env } = await import('../../config/env');
-        
+
         // CRITICAL FIX: Detect token type before verification to avoid issuer mismatch errors
         let tokenType: 'idToken' | 'sessionCookie' | 'unknown' = 'unknown';
         try {
@@ -1268,7 +1278,7 @@ export async function debugSession(req: Request, res: Response, _next: NextFunct
         } catch (decodeError) {
           // If we can't decode, we'll try both verification methods
         }
-        
+
         try {
           // If we detected it's an ID token, verify as ID token first
           if (tokenType === 'idToken') {
@@ -1283,10 +1293,10 @@ export async function debugSession(req: Request, res: Response, _next: NextFunct
           }
         } catch (sessionError: any) {
           // Check if error is about issuer mismatch
-          const isIssuerMismatch = sessionError?.message?.includes('iss') || 
-                                   sessionError?.message?.includes('issuer') ||
-                                   sessionError?.message?.includes('securetoken.google.com');
-          
+          const isIssuerMismatch = sessionError?.message?.includes('iss') ||
+            sessionError?.message?.includes('issuer') ||
+            sessionError?.message?.includes('securetoken.google.com');
+
           // If it's an issuer mismatch, try ID token verification
           if (isIssuerMismatch) {
             try {
@@ -1319,7 +1329,7 @@ export async function debugSession(req: Request, res: Response, _next: NextFunct
         verificationError = verifyErr?.message || 'Unknown verification error';
       }
     }
-    
+
     // Check Redis cache
     let cacheStatus: any = null;
     try {
@@ -1344,7 +1354,7 @@ export async function debugSession(req: Request, res: Response, _next: NextFunct
     } catch (cacheErr: any) {
       cacheStatus = { error: cacheErr?.message };
     }
-    
+
     // Decode JWT payload to get expiration info
     let jwtInfo: any = null;
     if (token && decoded) {
@@ -1359,7 +1369,7 @@ export async function debugSession(req: Request, res: Response, _next: NextFunct
         auth_timeDate: decoded.auth_time ? new Date(decoded.auth_time * 1000).toISOString() : null,
         isSessionCookie,
       };
-      
+
       if (decoded.exp) {
         const nowSec = Math.floor(Date.now() / 1000);
         const expiresInSec = decoded.exp - nowSec;
@@ -1390,9 +1400,9 @@ export async function debugSession(req: Request, res: Response, _next: NextFunct
             jwtInfo.isExpired = expiresInSec <= 0;
           }
         }
-      } catch {}
+      } catch { }
     }
-    
+
     return res.json(formatApiResponse('success', 'Session debug info', {
       timestamp: new Date().toISOString(),
       hasToken,
@@ -1443,15 +1453,15 @@ export async function debugSession(req: Request, res: Response, _next: NextFunct
           status: 'OK'
         }
       },
-      recommendations: !hasToken 
+      recommendations: !hasToken
         ? ['No session token found - user is not logged in']
         : verificationStatus === 'verification_failed'
-        ? ['Session token verification failed - user may be logged out', 'Check backend logs for detailed error']
-        : jwtInfo?.isExpired
-        ? ['Session token is expired - user needs to log in again']
-        : jwtInfo?.expiresInDays !== undefined && jwtInfo.expiresInDays < 1
-        ? ['Session expires soon - refresh may be needed']
-        : ['Session appears valid', `Expires in ${jwtInfo?.expiresInDays || 'unknown'} days`],
+          ? ['Session token verification failed - user may be logged out', 'Check backend logs for detailed error']
+          : jwtInfo?.isExpired
+            ? ['Session token is expired - user needs to log in again']
+            : jwtInfo?.expiresInDays !== undefined && jwtInfo.expiresInDays < 1
+              ? ['Session expires soon - refresh may be needed']
+              : ['Session appears valid', `Expires in ${jwtInfo?.expiresInDays || 'unknown'} days`],
     }));
   } catch (error: any) {
     return res.json(formatApiResponse('error', 'Debug endpoint error', {
@@ -1469,19 +1479,19 @@ async function forgotPassword(
   try {
     console.log('[AUTH][forgotPassword] ========== START ==========');
     const { email } = req.body;
-    
+
     if (!email || typeof email !== 'string' || !email.trim()) {
       throw new ApiError('Email is required', 400);
     }
-    
+
     const normalizedEmail = email.trim().toLowerCase();
     console.log(`[AUTH][forgotPassword] Password reset request for: ${normalizedEmail}`);
-    
+
     // Send password reset email - now returns detailed result
     const result = await authService.sendPasswordResetEmail(normalizedEmail);
-    
+
     console.log('[AUTH][forgotPassword] Result:', result);
-    
+
     if (result.success) {
       console.log('[AUTH][forgotPassword] ========== SUCCESS ==========');
       res.json(
