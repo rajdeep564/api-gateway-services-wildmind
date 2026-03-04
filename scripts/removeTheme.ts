@@ -8,7 +8,7 @@ import { adminDb } from '../src/config/firebaseAdmin';
 
 async function removeTheme() {
     // ⚠️ CHANGE THIS ID to the theme you want to remove
-    const themeId = 'outdoor-games';
+    const themeId = 'cyber_future';
 
     console.log(`Attempting to remove theme: ${themeId}...`);
 

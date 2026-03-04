@@ -10,18 +10,11 @@ async function addThemes() {
 
     const themesToAdd = [
         {
-            id: 'indoor-games',
-            categoryId: 'sports',
-            name: 'Indoor Games',
-            description: 'Templates for indoor sports like Badminton, Table Tennis, etc.',
+            id: 'cyber_future',
+            categoryId: 'technology',
+            name: 'Cyber Future',
+            description: 'Futuristic and tech-focused design theme.',
             order: 1
-        },
-        {
-            id: 'outdoor-games',
-            categoryId: 'sports',
-            name: 'Outdoor Games',
-            description: 'Templates for outdoor sports like Football, Cricket, etc.',
-            order: 2
         }
     ];
 
