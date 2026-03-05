@@ -1020,37 +1020,41 @@ function clearSessionCookie(res: Response) {
   const variants: string[] = [];
   const cookiesToClear = ["app_session", "app_session.sig", "auth_hint"];
 
+  // Aggressively clear base domains to prevent cross-subdomain stale cookie collisions
+  const domainsToClear = [
+    cookieDomain,
+    ".wildmindai.com",
+    "wildmindai.com",
+  ].filter(Boolean) as string[];
+
+  // Deduplicate domains
+  const uniqueDomains = [...new Set(domainsToClear)];
+
   // Generate all cookie clearing variants
   cookiesToClear.forEach((cookieName) => {
-    // SameSite=None; Secure variants (for cross-site cookies)
+    // 1. Host-only variants (no domain specified)
     variants.push(
       `${cookieName}=; Path=/; Max-Age=0; Expires=${expired}; SameSite=None; Secure`,
     );
-    if (cookieDomain) {
-      variants.push(
-        `${cookieName}=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=None; Secure`,
-      );
-    }
-
-    // SameSite=Lax variants (for same-site cookies)
     variants.push(
       `${cookieName}=; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`,
     );
-    if (cookieDomain) {
-      variants.push(
-        `${cookieName}=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`,
-      );
-    }
-
-    // SameSite=Strict variants (for strict cookies)
     variants.push(
       `${cookieName}=; Path=/; Max-Age=0; Expires=${expired}; SameSite=Strict`,
     );
-    if (cookieDomain) {
+
+    // 2. Domain-specific variants
+    uniqueDomains.forEach((domain) => {
       variants.push(
-        `${cookieName}=; Domain=${cookieDomain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=Strict`,
+        `${cookieName}=; Domain=${domain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=None; Secure`,
       );
-    }
+      variants.push(
+        `${cookieName}=; Domain=${domain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`,
+      );
+      variants.push(
+        `${cookieName}=; Domain=${domain}; Path=/; Max-Age=0; Expires=${expired}; SameSite=Strict`,
+      );
+    });
   });
 
   // Set all cookie clearing variants
