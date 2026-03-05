@@ -1588,6 +1588,9 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     if (lr === 'seedream-5-lite') {
       return 'bytedance/seedream-5-lite';
     }
+    if (lr === 'nano-banana-2') {
+      return 'google/nano-banana-2';
+    }
 
     return trimmed;
   };
@@ -2687,6 +2690,75 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         // This avoids accidental multiplication if the provider starts honoring number_of_images.
         input.number_of_images = 1;
       }
+    }
+
+    // Google Nano Banana 2 mapping
+    if (modelBase === "google/nano-banana-2") {
+      // resolution: 1K, 2K, 4K (default 1K)
+      if (rest.resolution && ["1K", "2K", "4K"].includes(String(rest.resolution))) {
+        input.resolution = String(rest.resolution);
+      } else {
+        input.resolution = "1K";
+      }
+
+      // aspect_ratio: match_input_image, 1:1, etc.
+      if (rest.aspect_ratio) {
+        input.aspect_ratio = String(rest.aspect_ratio);
+      } else if (rest.frameSize) {
+        input.aspect_ratio = String(rest.frameSize);
+      }
+
+      // grounding booleans
+      if (rest.google_search != null) input.google_search = !!rest.google_search;
+      if (rest.image_search != null) input.image_search = !!rest.image_search;
+
+      // output format
+      if (rest.output_format && ["jpg", "png"].includes(String(rest.output_format).toLowerCase())) {
+        input.output_format = String(rest.output_format).toLowerCase();
+      }
+
+      // image_input: supports up to 14 images.
+      const username = creator?.username || uid;
+      let images: string[] = Array.isArray(rest.image_input) ? rest.image_input.slice(0, 14) : [];
+      if (!images.length && typeof rest.image === "string" && rest.image.length) images = [rest.image];
+
+      if (images.length > 0) {
+        const resolved: string[] = [];
+        const inputPersisted: any[] = [];
+        for (let i = 0; i < images.length; i++) {
+          const img = images[i];
+          try {
+            if (typeof img === "string" && img.startsWith("data:")) {
+              const uploaded = await uploadDataUriToZata({
+                dataUri: img,
+                keyPrefix: `users/${username}/input/${historyId}`,
+                fileName: `nano-banana-2-ref-${i + 1}`,
+              });
+              resolved.push(uploaded.publicUrl);
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: uploaded.publicUrl,
+                storagePath: (uploaded as any).key,
+                originalUrl: img,
+              });
+            } else {
+              resolved.push(img);
+              inputPersisted.push({ id: `in-${i + 1}`, url: img, originalUrl: img });
+            }
+          } catch {
+            resolved.push(img);
+          }
+        }
+        if (resolved.length > 0) input.image_input = resolved;
+        if (inputPersisted.length > 0) {
+          try {
+            await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+          } catch (e) {
+            console.warn("[replicateService] failed to persist nano-banana-2 inputs", e);
+          }
+        }
+      }
+      replicateModelBase = "google/nano-banana-2";
     }
     // Final safety: never pass a bare alias to Replicate.
     replicateModelBase = ensureValidReplicateModelRef(replicateModelBase);

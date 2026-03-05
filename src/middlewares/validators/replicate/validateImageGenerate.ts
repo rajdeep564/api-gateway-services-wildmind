@@ -17,6 +17,7 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
   const isPImageEdit = m.includes('p-image-edit');
   const isPImage = m.includes('p-image') && !isPImageEdit; // avoid double-validating p-image-edit
   const isGptImage15 = m.includes('openai/gpt-image-1.5') || m.includes('gpt-image-1.5');
+  const isNanoBanana2 = m.includes('google/nano-banana-2') || m.includes('nano-banana-2');
 
   // Seedream 4.5 branch removed: model is now handled by FAL backend.
 
@@ -318,6 +319,29 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
     }
     if (req.body.input_fidelity != null && !['low', 'high'].includes(String(req.body.input_fidelity))) {
       return next(new ApiError('input_fidelity must be one of: low, high', 400));
+    }
+  }
+
+  // Google Nano Banana 2 validations
+  if (isNanoBanana2) {
+    const allowedAspect = new Set([
+      "match_input_image", "1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"
+    ]);
+    const allowedResolution = new Set(["1K", "2K", "4K"]);
+    const allowedOutputFormat = new Set(["jpg", "png"]);
+
+    if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio).trim())) return next(new ApiError('invalid aspect_ratio for Nano Banana 2', 400));
+    if (req.body.resolution != null && !allowedResolution.has(String(req.body.resolution))) return next(new ApiError('invalid resolution for Nano Banana 2', 400));
+    if (req.body.google_search != null && typeof req.body.google_search !== 'boolean') return next(new ApiError('google_search must be boolean', 400));
+    if (req.body.image_search != null && typeof req.body.image_search !== 'boolean') return next(new ApiError('image_search must be boolean', 400));
+    if (req.body.output_format != null && !allowedOutputFormat.has(String(req.body.output_format).toLowerCase())) return next(new ApiError('invalid output_format for Nano Banana 2', 400));
+
+    if (image_input != null) {
+      if (!Array.isArray(image_input)) return next(new ApiError('image_input must be array of urls', 400));
+      if (image_input.length > 14) return next(new ApiError('image_input supports up to 14 images', 400));
+      for (const u of image_input) {
+        if (typeof u !== 'string') return next(new ApiError('image_input must contain url strings', 400));
+      }
     }
   }
 

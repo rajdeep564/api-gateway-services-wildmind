@@ -234,6 +234,11 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   else if (normalized.includes('seedream-5-lite')) {
     display = 'replicate/bytedance/seedream-5-lite';
   }
+  else if (normalized.includes('google/nano-banana-2') || normalized.includes('nano-banana-2')) {
+    const resValue = String((req.body as any)?.resolution || '1K').toUpperCase();
+    display = `Google nano banana 2 ${resValue}`;
+    meta.resolution = resValue;
+  }
 
   // Lookup base cost (per image)
   let baseCost = 0;
