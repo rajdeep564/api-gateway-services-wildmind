@@ -231,6 +231,9 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
     // Keep pricing keyed to the creditDistributionData modelName.
     display = normalized.includes('2512') ? 'qwen-image-edit-2512' : 'qwen-image-edit-2511';
   }
+  else if (normalized.includes('seedream-5-lite')) {
+    display = 'replicate/bytedance/seedream-5-lite';
+  }
 
   // Lookup base cost (per image)
   let baseCost = 0;

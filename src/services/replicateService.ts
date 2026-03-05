@@ -327,7 +327,7 @@ export async function removeBackground(
       original: e?.message || e,
       mapped: mappedError
     });
-    
+
     try {
       await replicateRepository.updateGenerationRecord(legacyId, {
         status: "failed",
@@ -338,12 +338,12 @@ export async function removeBackground(
       status: "failed",
       error: mappedError.message,
     } as any);
-    
+
     // Return standard ApiError with user-friendly message and data
-    throw new ApiError(mappedError.message, 502, { 
-      title: mappedError.title, 
+    throw new ApiError(mappedError.message, 502, {
+      title: mappedError.title,
       code: mappedError.code,
-      technical: e?.message 
+      technical: e?.message
     });
   }
 
@@ -431,8 +431,8 @@ export async function removeBackground(
       );
       console.log(`[replicateService.removeBackground] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.removeBackground] Failed to deduct credits:', error);
-       // We log but do not fail the request since service was delivered
+      console.error('[replicateService.removeBackground] Failed to deduct credits:', error);
+      // We log but do not fail the request since service was delivered
     }
   }
 
@@ -829,10 +829,10 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
       });
     } catch { }
 
-    throw new ApiError(mappedError.message, 502, { 
-      title: mappedError.title, 
+    throw new ApiError(mappedError.message, 502, {
+      title: mappedError.title,
       code: mappedError.code,
-      technical: e?.message 
+      technical: e?.message
     });
   }
 
@@ -961,7 +961,7 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
       );
       console.log(`[replicateService.upscale] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.upscale] Failed to deduct credits:', error);
+      console.error('[replicateService.upscale] Failed to deduct credits:', error);
     }
   }
 
@@ -1228,7 +1228,7 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
       );
       console.log(`[replicateService.multiangle] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.multiangle] Failed to deduct credits:', error);
+      console.error('[replicateService.multiangle] Failed to deduct credits:', error);
     }
   }
 
@@ -1523,7 +1523,7 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
       );
       console.log(`[replicateService.nextScene] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.nextScene] Failed to deduct credits:', error);
+      console.error('[replicateService.nextScene] Failed to deduct credits:', error);
     }
   }
 
@@ -1583,6 +1583,10 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     if (lr.includes('qwen-image-251')) {
       // Generic fallback: keep the 2511 base unless 2512 is explicitly mentioned.
       return lr.includes('2512') ? 'qwen/qwen-image-2512' : 'qwen/qwen-image-2511';
+    }
+
+    if (lr === 'seedream-5-lite') {
+      return 'bytedance/seedream-5-lite';
     }
 
     return trimmed;
@@ -1912,10 +1916,10 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
 
     // Seedream 4.5 mapping removed – model now handled via FAL.
     // Seedream schema mapping
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       // size handling
       const size = rest.size || "2K";
-      if (["1K", "2K", "4K", "custom"].includes(String(size)))
+      if (["1K", "2K", "3K", "4K", "custom"].includes(String(size)))
         input.size = size;
       if (input.size === "custom") {
         if (rest.width) input.width = clamp(rest.width, 1024, 4096);
@@ -3062,7 +3066,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       );
       console.log(`[replicateService.generateImage] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.generateImage] Failed to deduct credits:', error);
+      console.error('[replicateService.generateImage] Failed to deduct credits:', error);
     }
   }
 
