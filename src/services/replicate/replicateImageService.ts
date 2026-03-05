@@ -287,8 +287,8 @@ export async function removeBackground(
       );
       console.log(`[replicateService.removeBackground] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.removeBackground] Failed to deduct credits:', error);
-       // We log but do not fail the request since service was delivered
+      console.error('[replicateService.removeBackground] Failed to deduct credits:', error);
+      // We log but do not fail the request since service was delivered
     }
   }
 
@@ -855,7 +855,7 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
       );
       console.log(`[replicateService.upscale] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.upscale] Failed to deduct credits:', error);
+      console.error('[replicateService.upscale] Failed to deduct credits:', error);
     }
   }
 
@@ -1282,7 +1282,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
       if (typeof rest.prompt_upsampling === 'boolean') input.prompt_upsampling = rest.prompt_upsampling;
       if (typeof rest.disable_safety_checker === 'boolean') input.disable_safety_checker = rest.disable_safety_checker;
-      
+
       // Handle image-to-image: P-Image supports image_input parameter for image-to-image generation
       if (rest.image_input && Array.isArray(rest.image_input) && rest.image_input.length > 0) {
         // P-Image uses 'image' parameter (single image) for image-to-image, not 'image_input'
@@ -1503,7 +1503,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
               const isProxyUrl = /^\/api\/proxy\/resource\//i.test(img) || /^\/proxy\/resource\//i.test(img);
               const isZataUrl = env.zataPrefix && img.startsWith(env.zataPrefix);
               const isAbsoluteUrl = img.startsWith("http://") || img.startsWith("https://");
-              
+
               if (isProxyUrl) {
                 // Extract storage path from proxy URL and construct Zata URL
                 try {
@@ -1513,7 +1513,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
                   if (storagePathMatch && storagePathMatch[1]) {
                     // Decode URL-encoded path (e.g., users%2Fvivek -> users/vivek)
                     const storagePath = decodeURIComponent(storagePathMatch[1]);
-                    
+
                     // Construct Zata URL using zataPrefix
                     if (env.zataPrefix) {
                       const zataUrl = env.zataPrefix.replace(/\/$/, '') + '/' + storagePath;
@@ -1581,7 +1581,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         }
       }
       replicateModelBase = "openai/gpt-image-1.5";
-      
+
       // Handle num_images for multiple image generation
       const numImages = input.number_of_images || 1;
       if (numImages > 1) {
@@ -1600,7 +1600,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       inputKeys: Object.keys(input),
       modelSpecIncludesVersion: modelSpec.includes(':'),
     });
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       try {
         const preDump = {
           incoming_image_input_count: Array.isArray(rest.image_input)
@@ -1617,7 +1617,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         );
       } catch { }
     }
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       try {
         // Deep print for Seedream I2I debugging
         const dump = {
@@ -1675,7 +1675,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       Array.isArray(output) ? output.length : "n/a"
     );
     console.log("[replicateService.generateImage] output", output);
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       try {
         if (Array.isArray(output)) {
           const first = output[0];
@@ -1725,7 +1725,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       outputUrls = await resolveOutputUrls(output);
     }
     // If fewer images returned than requested, fall back to sequential reruns
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       const requested =
         typeof input.max_images === "number" ? input.max_images : 1;
       if (requested > 1 && outputUrls.length < requested) {
@@ -1955,7 +1955,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       );
       console.log(`[replicateService.generateImage] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.generateImage] Failed to deduct credits:', error);
+      console.error('[replicateService.generateImage] Failed to deduct credits:', error);
     }
   }
 
@@ -2225,7 +2225,7 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
       );
       console.log(`[replicateService.multiangle] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.multiangle] Failed to deduct credits:', error);
+      console.error('[replicateService.multiangle] Failed to deduct credits:', error);
     }
   }
 
@@ -2495,7 +2495,7 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
       );
       console.log(`[replicateService.nextScene] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.nextScene] Failed to deduct credits:', error);
+      console.error('[replicateService.nextScene] Failed to deduct credits:', error);
     }
   }
 

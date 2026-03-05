@@ -1932,9 +1932,10 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         input.sequential_image_generation = String(
           rest.sequential_image_generation
         );
-      // max_images
-      if (rest.max_images != null)
-        input.max_images = Math.max(1, Math.min(15, Number(rest.max_images)));
+      // max_images mapping (UI often sends `n` or `imageCount`)
+      const requestedSeedreamCountRaw = rest.max_images != null ? rest.max_images : rest.num_images != null ? rest.num_images : rest.n != null ? rest.n : undefined;
+      if (requestedSeedreamCountRaw != null)
+        input.max_images = Math.max(1, Math.min(15, Number(requestedSeedreamCountRaw)));
       // If user requests multiple images, Seedream requires sequential generation to be 'auto'
       if (
         (input.max_images ?? 1) > 1 &&
@@ -2700,7 +2701,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       inputKeys: Object.keys(input),
       modelSpecIncludesVersion: modelSpec.includes(':'),
     });
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       try {
         const preDump = {
           incoming_image_input_count: Array.isArray(rest.image_input)
@@ -2717,7 +2718,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         );
       } catch { }
     }
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       try {
         // Deep print for Seedream I2I debugging
         const dump = {
@@ -2778,7 +2779,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       Array.isArray(output) ? output.length : "n/a"
     );
     console.log("[replicateService.generateImage] output", output);
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       try {
         if (Array.isArray(output)) {
           const first = output[0];
@@ -2828,7 +2829,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       outputUrls = await resolveOutputUrls(output);
     }
     // If fewer images returned than requested, fall back to sequential reruns
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       const requested =
         typeof input.max_images === "number" ? input.max_images : 1;
       if (requested > 1 && outputUrls.length < requested) {
