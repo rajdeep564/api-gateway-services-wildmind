@@ -48,7 +48,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       }
     }
     
-    // No token found - return 401 with detailed error
+    // No token found - return 401 with detailed error (or for optionalAuth, next with uid undefined)
     if (!token) {
       const cookieHeader = req.headers.cookie || '';
       const hasAppSessionInHeader = cookieHeader.includes('app_session=');
@@ -84,6 +84,50 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       throw new ApiError(errorMessage, 401);
     }
 
+    return await verifyTokenAndAttach(req, res, next, token);
+  } catch (error) {
+    // Handle ApiError instances
+    if (error instanceof ApiError) {
+      return next(error);
+    }
+    
+    // Handle unexpected errors
+    console.error('[AUTH][requireAuth] Unexpected error:', error);
+    return next(new ApiError('Unauthorized - Authentication failed', 401));
+  }
+}
+
+/**
+ * Middleware for routes that work with or without auth (e.g. GET /api/auth/me).
+ * When no token/cookie is present, sets req.uid = undefined and continues so the handler can return 200 with no user.
+ * Fixes 401 on localhost when the browser does not send app_session (e.g. different port or cookie domain).
+ */
+export async function optionalAuth(req: Request, res: Response, next: NextFunction) {
+  try {
+    let token = req.cookies?.[COOKIE_NAME];
+    if (!token) {
+      const authHeader = req.headers.authorization || (req.headers.Authorization as string | undefined);
+      if (authHeader && /^Bearer\s+/i.test(authHeader)) {
+        token = authHeader.replace(/^Bearer\s+/i, '').trim();
+      }
+    }
+    if (!token) {
+      (req as any).uid = undefined;
+      return next();
+    }
+    return await verifyTokenAndAttach(req, res, next, token);
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return next(error);
+    }
+    console.error('[AUTH][optionalAuth] Unexpected error:', error);
+    return next(new ApiError('Unauthorized - Authentication failed', 401));
+  }
+}
+
+/** Shared token verification and req.uid attachment; used by requireAuth and optionalAuth. */
+async function verifyTokenAndAttach(req: Request, res: Response, next: NextFunction, token: string): Promise<void> {
+  try {
     // Try Redis cache first for performance (avoids Firebase Admin API calls)
     // CRITICAL FIX: Check cache expiration before using it
     try {
@@ -489,13 +533,10 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
     return next();
   } catch (error) {
-    // Handle ApiError instances
     if (error instanceof ApiError) {
       return next(error);
     }
-    
-    // Handle unexpected errors
-    console.error('[AUTH][requireAuth] Unexpected error:', error);
+    console.error('[AUTH][verifyTokenAndAttach] Unexpected error:', error);
     return next(new ApiError('Unauthorized - Authentication failed', 401));
   }
 }
