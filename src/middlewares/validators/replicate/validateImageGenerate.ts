@@ -18,6 +18,7 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
   const isPImage = m.includes('p-image') && !isPImageEdit; // avoid double-validating p-image-edit
   const isGptImage15 = m.includes('openai/gpt-image-1.5') || m.includes('gpt-image-1.5');
   const isNanoBanana2 = m.includes('google/nano-banana-2') || m.includes('nano-banana-2');
+  const isQwen2 = m.includes('qwen/qwen-image-2');
 
   // Seedream 4.5 branch removed: model is now handled by FAL backend.
 
@@ -342,6 +343,29 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
       for (const u of image_input) {
         if (typeof u !== 'string') return next(new ApiError('image_input must contain url strings', 400));
       }
+    }
+  }
+
+  // Qwen Image 2 (qwen/qwen-image-2) validations
+  if (isQwen2) {
+    const allowedAspect = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '2:1', '1:2']);
+    if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio))) {
+      return next(new ApiError('invalid aspect_ratio for Qwen Image 2', 400));
+    }
+    if (req.body.seed != null && (!Number.isInteger(req.body.seed) || req.body.seed < 0 || req.body.seed > 2147483647)) {
+      return next(new ApiError('seed must be an integer between 0 and 2147483647', 400));
+    }
+    if (req.body.image != null && typeof req.body.image !== 'string') {
+      return next(new ApiError('image must be a uri string', 400));
+    }
+    if (req.body.negative_prompt != null && typeof req.body.negative_prompt !== 'string') {
+      return next(new ApiError('negative_prompt must be a string', 400));
+    }
+    if (req.body.match_input_image != null && typeof req.body.match_input_image !== 'boolean') {
+      return next(new ApiError('match_input_image must be a boolean', 400));
+    }
+    if (req.body.enable_prompt_expansion != null && typeof req.body.enable_prompt_expansion !== 'boolean') {
+      return next(new ApiError('enable_prompt_expansion must be a boolean', 400));
     }
   }
 

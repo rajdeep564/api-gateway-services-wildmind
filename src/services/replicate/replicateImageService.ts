@@ -1589,6 +1589,57 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         (body as any).__num_images = numImages;
       }
     }
+    // Qwen Image 2 mapping
+    if (modelBase === "qwen/qwen-image-2") {
+      replicateModelBase = "qwen/qwen-image-2";
+      if (rest.seed != null) input.seed = Number(rest.seed);
+      if (rest.aspect_ratio) input.aspect_ratio = String(rest.aspect_ratio);
+      if (rest.negative_prompt) input.negative_prompt = String(rest.negative_prompt);
+      if (typeof rest.match_input_image === 'boolean') input.match_input_image = rest.match_input_image;
+      if (typeof rest.enable_prompt_expansion === 'boolean') input.enable_prompt_expansion = rest.enable_prompt_expansion;
+    }
+    // Qwen Image 2 Pro mapping
+    if (modelBase === "qwen/qwen-image-2-pro") {
+      replicateModelBase = "qwen/qwen-image-2-pro";
+      if (rest.seed != null) input.seed = Number(rest.seed);
+      if (rest.aspect_ratio) input.aspect_ratio = String(rest.aspect_ratio);
+      if (rest.negative_prompt) input.negative_prompt = String(rest.negative_prompt);
+      if (typeof rest.match_input_image === "boolean") input.match_input_image = rest.match_input_image;
+      if (typeof rest.enable_prompt_expansion === "boolean") input.enable_prompt_expansion = rest.enable_prompt_expansion;
+    }
+    // Handle image input for I2I / editing
+    if (rest.image && typeof rest.image === 'string') {
+      try {
+        const username = creator?.username || uid;
+        const keyPrefix = `users/${username}/input/${historyId}`;
+        const inputPersisted: any[] = [];
+        const stored = /^data:/i.test(rest.image)
+          ? await uploadDataUriToZata({ dataUri: rest.image, keyPrefix, fileName: 'qwen2-input' })
+          : await uploadFromUrlToZata({ sourceUrl: rest.image, keyPrefix, fileName: 'qwen2-input' });
+
+        input.image = stored.publicUrl;
+        inputPersisted.push({
+          id: 'in-1',
+          url: stored.publicUrl,
+          storagePath: (stored as any).key,
+          originalUrl: rest.image
+        });
+
+        if (inputPersisted.length > 0) {
+          await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+        }
+      } catch (e) {
+        console.warn('[replicateService.generateImage] Failed to process input image for Qwen 2:', e);
+        // If upload fails, try to use the original if it's a valid URL
+        if (!/^data:/i.test(rest.image)) {
+          input.image = rest.image;
+        }
+      }
+    }
+    // Replicate's Qwen Image 2 and Pro expect a single URI string for input.image
+    if ((modelBase === "qwen/qwen-image-2" || modelBase === "qwen/qwen-image-2-pro") && Array.isArray(input.image) && input.image.length > 0) {
+      input.image = input.image[0];
+    }
     const modelSpec = composeModelSpec(replicateModelBase, body.version);
     // eslint-disable-next-line no-console
     console.log("[replicateService.generateImage] run", {

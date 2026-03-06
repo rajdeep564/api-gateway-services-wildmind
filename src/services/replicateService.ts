@@ -1628,6 +1628,8 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
   const isQwenImageEdit = lowerModelBase.includes('qwen-image-edit');
   // Treat any qwen image model (edit or non-edit, 2511/2512) as supporting an input image.
   const isQwenImageModel = lowerModelBase.includes('qwen-image');
+  const isQwen2 = modelBase === 'qwen/qwen-image-2';
+  const isQwen2Pro = modelBase === 'qwen/qwen-image-2-pro';
   const hasUploadedImages = Array.isArray((body as any)?.uploadedImages) && (body as any).uploadedImages.length > 0;
 
   const rawGenerationType = typeof (body as any)?.generationType === 'string'
@@ -1674,6 +1676,10 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       if (lowerModelBase.includes('2512')) {
         // If the user selected an "edit" alias but is doing text-to-image, route to the non-edit T2I model.
         replicateModelBase = (!isTextToImage && isQwenImageEdit) ? 'qwen/qwen-image-edit-2512' : 'qwen/qwen-image-2512';
+      } else if (isQwen2) {
+        replicateModelBase = 'qwen/qwen-image-2';
+      } else if (isQwen2Pro) {
+        replicateModelBase = 'qwen/qwen-image-2-pro';
       } else {
         // IMPORTANT: Replicate does not expose a working "qwen/qwen-image-2511" in our usage;
         // qwen-image-edit-2511 should always route to the edit model to avoid 404s.
@@ -1809,8 +1815,9 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       }
 
       // Replicate's Qwen image models validate `input.image` as an array.
+      // Qwen Image 2 and Pro take a single URI string.
       if (resolvedImages.length > 0) {
-        input.image = resolvedImages;
+        input.image = (isQwen2 || isQwen2Pro) ? resolvedImages[0] : resolvedImages;
 
         // Persist reference images so the frontend preview modal can show "Your Upload".
         // (Many UI flows read entry.inputImages; without this, Qwen edits appear to have no upload.)
@@ -1826,10 +1833,12 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       // Prefer explicit aspect_ratio; fallback to frameSize mapping
       const aspect = rest.aspect_ratio ?? aspectRatio ?? ((!isTextToImage && isQwenImageEdit) ? 'match_input_image' : '16:9');
       const requestedAspect = String(aspect || '').trim();
-      const allowedQwenAspect = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', 'match_input_image']);
+      const allowedQwenAspect = (isQwen2 || isQwen2Pro)
+        ? new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '2:1', '1:2'])
+        : new Set(['1:1', '16:9', '9:16', '4:3', '3:4', 'match_input_image']);
       input.aspect_ratio = allowedQwenAspect.has(requestedAspect)
         ? requestedAspect
-        : ((!isTextToImage && isQwenImageEdit) ? 'match_input_image' : '16:9');
+        : ((isQwen2 || isQwen2Pro) ? '1:1' : ((!isTextToImage && isQwenImageEdit) ? 'match_input_image' : '16:9'));
 
       // Qwen schema uses output_format values: webp | jpg | png
       if (rest.output_format != null) {
@@ -1853,6 +1862,12 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       }
       if (rest.strength != null && Number.isFinite(Number(rest.strength))) {
         input.strength = Math.max(0, Math.min(1, Number(rest.strength)));
+      }
+      // Support matching input image and prompt expansion for Qwen 2 and Pro
+      if (isQwen2 || isQwen2Pro) {
+        if (typeof rest.match_input_image === 'boolean') input.match_input_image = rest.match_input_image;
+        if (typeof rest.enable_prompt_expansion === 'boolean') input.enable_prompt_expansion = rest.enable_prompt_expansion;
+        if (rest.negative_prompt != null) input.negative_prompt = String(rest.negative_prompt);
       }
       // Support frontend size presets (e.g. "1K", "2K") mapped to explicit width/height
       // when an aspect ratio is selected. This ensures consistent output sizes
