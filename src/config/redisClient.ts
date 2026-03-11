@@ -1,5 +1,5 @@
-import { createClient, RedisClientType } from 'redis';
-import { env } from './env';
+import { createClient, RedisClientType } from "redis";
+import { env } from "./env";
 
 let client: RedisClientType | null = null;
 let lastErrorLog = 0;
@@ -15,25 +15,28 @@ export function getRedisClient(): RedisClientType | null {
   if (!env.redisUrl) return null;
   if (client) return client;
   client = createClient({ url: env.redisUrl });
-  if (env.redisDebug) {
+  if (false) {
     // eslint-disable-next-line no-console
-    console.log('[Redis] Creating client', { url: env.redisUrl, prefix: env.redisPrefix });
+    console.log("[Redis] Creating client", {
+      url: env.redisUrl,
+      prefix: env.redisPrefix,
+    });
   }
-  client.on('error', (err: unknown) => {
+  client.on("error", (err: unknown) => {
     const now = Date.now();
     if (now - lastErrorLog > ERROR_THROTTLE_MS) {
       lastErrorLog = now;
       // eslint-disable-next-line no-console
-      console.error('[Redis] Client error:', (err as any)?.message || err);
+      console.error("[Redis] Client error:", (err as any)?.message || err);
     }
   });
   // Best-effort connect, do not crash app if redis is not available
   client
     .connect()
     .then(() => {
-      if (env.redisDebug) {
+      if (false) {
         // eslint-disable-next-line no-console
-        console.log('[Redis] Connected');
+        console.log("[Redis] Connected");
       }
     })
     .catch((e: unknown) => {
@@ -41,26 +44,38 @@ export function getRedisClient(): RedisClientType | null {
       if (now - lastErrorLog > ERROR_THROTTLE_MS) {
         lastErrorLog = now;
         // eslint-disable-next-line no-console
-        console.warn('[Redis] Connect failed (continuing without cache):', (e as any)?.message || e);
+        console.warn(
+          "[Redis] Connect failed (continuing without cache):",
+          (e as any)?.message || e,
+        );
       }
     });
   return client;
 }
 
-export async function redisSetSafe(key: string, value: any, ttlSeconds?: number): Promise<void> {
+export async function redisSetSafe(
+  key: string,
+  value: any,
+  ttlSeconds?: number,
+): Promise<void> {
   if (!env.redisUrl) return; // disabled
   try {
     const c = getRedisClient();
     if (!c) return;
-    const serialized = typeof value === 'string' ? value : JSON.stringify(value);
+    const serialized =
+      typeof value === "string" ? value : JSON.stringify(value);
     if (ttlSeconds && ttlSeconds > 0) {
       await c.set(key, serialized, { EX: ttlSeconds });
     } else {
       await c.set(key, serialized);
     }
-    if (env.redisDebug) {
+    if (false) {
       // eslint-disable-next-line no-console
-      console.log('[Redis][SET]', { key, ttlSeconds: ttlSeconds ?? null, bytes: serialized.length });
+      console.log("[Redis][SET]", {
+        key,
+        ttlSeconds: ttlSeconds ?? null,
+        bytes: serialized.length,
+      });
     }
   } catch {
     // swallow: non-fatal cache failure
@@ -73,9 +88,13 @@ export async function redisGetSafe<T = any>(key: string): Promise<T | null> {
     const c = getRedisClient();
     if (!c) return null;
     const val = await c.get(key);
-    if (env.redisDebug) {
+    if (false) {
       // eslint-disable-next-line no-console
-      console.log('[Redis][GET]', { key, hit: Boolean(val), bytes: val ? val.length : 0 });
+      console.log("[Redis][GET]", {
+        key,
+        hit: Boolean(val),
+        bytes: val ? (val as string).length : 0,
+      });
     }
     if (!val) return null;
     try {
@@ -94,9 +113,9 @@ export async function redisDelSafe(key: string): Promise<void> {
     const c = getRedisClient();
     if (!c) return;
     await c.del(key);
-    if (env.redisDebug) {
+    if (false) {
       // eslint-disable-next-line no-console
-      console.log('[Redis][DEL]', { key });
+      console.log("[Redis][DEL]", { key });
     }
   } catch {
     // swallow

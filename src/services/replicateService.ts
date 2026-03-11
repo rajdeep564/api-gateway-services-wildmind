@@ -327,7 +327,7 @@ export async function removeBackground(
       original: e?.message || e,
       mapped: mappedError
     });
-    
+
     try {
       await replicateRepository.updateGenerationRecord(legacyId, {
         status: "failed",
@@ -338,12 +338,12 @@ export async function removeBackground(
       status: "failed",
       error: mappedError.message,
     } as any);
-    
+
     // Return standard ApiError with user-friendly message and data
-    throw new ApiError(mappedError.message, 502, { 
-      title: mappedError.title, 
+    throw new ApiError(mappedError.message, 502, {
+      title: mappedError.title,
       code: mappedError.code,
-      technical: e?.message 
+      technical: e?.message
     });
   }
 
@@ -431,8 +431,8 @@ export async function removeBackground(
       );
       console.log(`[replicateService.removeBackground] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.removeBackground] Failed to deduct credits:', error);
-       // We log but do not fail the request since service was delivered
+      console.error('[replicateService.removeBackground] Failed to deduct credits:', error);
+      // We log but do not fail the request since service was delivered
     }
   }
 
@@ -829,10 +829,10 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
       });
     } catch { }
 
-    throw new ApiError(mappedError.message, 502, { 
-      title: mappedError.title, 
+    throw new ApiError(mappedError.message, 502, {
+      title: mappedError.title,
       code: mappedError.code,
-      technical: e?.message 
+      technical: e?.message
     });
   }
 
@@ -961,7 +961,7 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
       );
       console.log(`[replicateService.upscale] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.upscale] Failed to deduct credits:', error);
+      console.error('[replicateService.upscale] Failed to deduct credits:', error);
     }
   }
 
@@ -1228,7 +1228,7 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
       );
       console.log(`[replicateService.multiangle] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.multiangle] Failed to deduct credits:', error);
+      console.error('[replicateService.multiangle] Failed to deduct credits:', error);
     }
   }
 
@@ -1523,7 +1523,7 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
       );
       console.log(`[replicateService.nextScene] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.nextScene] Failed to deduct credits:', error);
+      console.error('[replicateService.nextScene] Failed to deduct credits:', error);
     }
   }
 
@@ -1585,6 +1585,13 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       return lr.includes('2512') ? 'qwen/qwen-image-2512' : 'qwen/qwen-image-2511';
     }
 
+    if (lr === 'seedream-5-lite') {
+      return 'bytedance/seedream-5-lite';
+    }
+    if (lr === 'nano-banana-2') {
+      return 'google/nano-banana-2';
+    }
+
     return trimmed;
   };
 
@@ -1621,6 +1628,8 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
   const isQwenImageEdit = lowerModelBase.includes('qwen-image-edit');
   // Treat any qwen image model (edit or non-edit, 2511/2512) as supporting an input image.
   const isQwenImageModel = lowerModelBase.includes('qwen-image');
+  const isQwen2 = modelBase === 'qwen/qwen-image-2';
+  const isQwen2Pro = modelBase === 'qwen/qwen-image-2-pro';
   const hasUploadedImages = Array.isArray((body as any)?.uploadedImages) && (body as any).uploadedImages.length > 0;
 
   const rawGenerationType = typeof (body as any)?.generationType === 'string'
@@ -1667,6 +1676,10 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       if (lowerModelBase.includes('2512')) {
         // If the user selected an "edit" alias but is doing text-to-image, route to the non-edit T2I model.
         replicateModelBase = (!isTextToImage && isQwenImageEdit) ? 'qwen/qwen-image-edit-2512' : 'qwen/qwen-image-2512';
+      } else if (isQwen2) {
+        replicateModelBase = 'qwen/qwen-image-2';
+      } else if (isQwen2Pro) {
+        replicateModelBase = 'qwen/qwen-image-2-pro';
       } else {
         // IMPORTANT: Replicate does not expose a working "qwen/qwen-image-2511" in our usage;
         // qwen-image-edit-2511 should always route to the edit model to avoid 404s.
@@ -1802,8 +1815,9 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       }
 
       // Replicate's Qwen image models validate `input.image` as an array.
+      // Qwen Image 2 and Pro take a single URI string.
       if (resolvedImages.length > 0) {
-        input.image = resolvedImages;
+        input.image = (isQwen2 || isQwen2Pro) ? resolvedImages[0] : resolvedImages;
 
         // Persist reference images so the frontend preview modal can show "Your Upload".
         // (Many UI flows read entry.inputImages; without this, Qwen edits appear to have no upload.)
@@ -1819,10 +1833,12 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       // Prefer explicit aspect_ratio; fallback to frameSize mapping
       const aspect = rest.aspect_ratio ?? aspectRatio ?? ((!isTextToImage && isQwenImageEdit) ? 'match_input_image' : '16:9');
       const requestedAspect = String(aspect || '').trim();
-      const allowedQwenAspect = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', 'match_input_image']);
+      const allowedQwenAspect = (isQwen2 || isQwen2Pro)
+        ? new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '2:1', '1:2'])
+        : new Set(['1:1', '16:9', '9:16', '4:3', '3:4', 'match_input_image']);
       input.aspect_ratio = allowedQwenAspect.has(requestedAspect)
         ? requestedAspect
-        : ((!isTextToImage && isQwenImageEdit) ? 'match_input_image' : '16:9');
+        : ((isQwen2 || isQwen2Pro) ? '1:1' : ((!isTextToImage && isQwenImageEdit) ? 'match_input_image' : '16:9'));
 
       // Qwen schema uses output_format values: webp | jpg | png
       if (rest.output_format != null) {
@@ -1846,6 +1862,12 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       }
       if (rest.strength != null && Number.isFinite(Number(rest.strength))) {
         input.strength = Math.max(0, Math.min(1, Number(rest.strength)));
+      }
+      // Support matching input image and prompt expansion for Qwen 2 and Pro
+      if (isQwen2 || isQwen2Pro) {
+        if (typeof rest.match_input_image === 'boolean') input.match_input_image = rest.match_input_image;
+        if (typeof rest.enable_prompt_expansion === 'boolean') input.enable_prompt_expansion = rest.enable_prompt_expansion;
+        if (rest.negative_prompt != null) input.negative_prompt = String(rest.negative_prompt);
       }
       // Support frontend size presets (e.g. "1K", "2K") mapped to explicit width/height
       // when an aspect ratio is selected. This ensures consistent output sizes
@@ -1912,10 +1934,10 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
 
     // Seedream 4.5 mapping removed – model now handled via FAL.
     // Seedream schema mapping
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       // size handling
       const size = rest.size || "2K";
-      if (["1K", "2K", "4K", "custom"].includes(String(size)))
+      if (["1K", "2K", "3K", "4K", "custom"].includes(String(size)))
         input.size = size;
       if (input.size === "custom") {
         if (rest.width) input.width = clamp(rest.width, 1024, 4096);
@@ -1928,9 +1950,10 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         input.sequential_image_generation = String(
           rest.sequential_image_generation
         );
-      // max_images
-      if (rest.max_images != null)
-        input.max_images = Math.max(1, Math.min(15, Number(rest.max_images)));
+      // max_images mapping (UI often sends `n` or `imageCount`)
+      const requestedSeedreamCountRaw = rest.max_images != null ? rest.max_images : rest.num_images != null ? rest.num_images : rest.n != null ? rest.n : undefined;
+      if (requestedSeedreamCountRaw != null)
+        input.max_images = Math.max(1, Math.min(15, Number(requestedSeedreamCountRaw)));
       // If user requests multiple images, Seedream requires sequential generation to be 'auto'
       if (
         (input.max_images ?? 1) > 1 &&
@@ -2683,6 +2706,75 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         input.number_of_images = 1;
       }
     }
+
+    // Google Nano Banana 2 mapping
+    if (modelBase === "google/nano-banana-2") {
+      // resolution: 1K, 2K, 4K (default 1K)
+      if (rest.resolution && ["1K", "2K", "4K"].includes(String(rest.resolution))) {
+        input.resolution = String(rest.resolution);
+      } else {
+        input.resolution = "1K";
+      }
+
+      // aspect_ratio: match_input_image, 1:1, etc.
+      if (rest.aspect_ratio) {
+        input.aspect_ratio = String(rest.aspect_ratio);
+      } else if (rest.frameSize) {
+        input.aspect_ratio = String(rest.frameSize);
+      }
+
+      // grounding booleans
+      if (rest.google_search != null) input.google_search = !!rest.google_search;
+      if (rest.image_search != null) input.image_search = !!rest.image_search;
+
+      // output format
+      if (rest.output_format && ["jpg", "png"].includes(String(rest.output_format).toLowerCase())) {
+        input.output_format = String(rest.output_format).toLowerCase();
+      }
+
+      // image_input: supports up to 14 images.
+      const username = creator?.username || uid;
+      let images: string[] = Array.isArray(rest.image_input) ? rest.image_input.slice(0, 14) : [];
+      if (!images.length && typeof rest.image === "string" && rest.image.length) images = [rest.image];
+
+      if (images.length > 0) {
+        const resolved: string[] = [];
+        const inputPersisted: any[] = [];
+        for (let i = 0; i < images.length; i++) {
+          const img = images[i];
+          try {
+            if (typeof img === "string" && img.startsWith("data:")) {
+              const uploaded = await uploadDataUriToZata({
+                dataUri: img,
+                keyPrefix: `users/${username}/input/${historyId}`,
+                fileName: `nano-banana-2-ref-${i + 1}`,
+              });
+              resolved.push(uploaded.publicUrl);
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: uploaded.publicUrl,
+                storagePath: (uploaded as any).key,
+                originalUrl: img,
+              });
+            } else {
+              resolved.push(img);
+              inputPersisted.push({ id: `in-${i + 1}`, url: img, originalUrl: img });
+            }
+          } catch {
+            resolved.push(img);
+          }
+        }
+        if (resolved.length > 0) input.image_input = resolved;
+        if (inputPersisted.length > 0) {
+          try {
+            await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+          } catch (e) {
+            console.warn("[replicateService] failed to persist nano-banana-2 inputs", e);
+          }
+        }
+      }
+      replicateModelBase = "google/nano-banana-2";
+    }
     // Final safety: never pass a bare alias to Replicate.
     replicateModelBase = ensureValidReplicateModelRef(replicateModelBase);
     const modelSpec = composeModelSpec(replicateModelBase, body.version);
@@ -2696,7 +2788,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       inputKeys: Object.keys(input),
       modelSpecIncludesVersion: modelSpec.includes(':'),
     });
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       try {
         const preDump = {
           incoming_image_input_count: Array.isArray(rest.image_input)
@@ -2713,7 +2805,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         );
       } catch { }
     }
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       try {
         // Deep print for Seedream I2I debugging
         const dump = {
@@ -2774,7 +2866,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       Array.isArray(output) ? output.length : "n/a"
     );
     console.log("[replicateService.generateImage] output", output);
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       try {
         if (Array.isArray(output)) {
           const first = output[0];
@@ -2824,7 +2916,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       outputUrls = await resolveOutputUrls(output);
     }
     // If fewer images returned than requested, fall back to sequential reruns
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       const requested =
         typeof input.max_images === "number" ? input.max_images : 1;
       if (requested > 1 && outputUrls.length < requested) {
@@ -3062,7 +3154,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       );
       console.log(`[replicateService.generateImage] Debited ${ctx.creditCost} credits for ${uid}`);
     } catch (error) {
-       console.error('[replicateService.generateImage] Failed to deduct credits:', error);
+      console.error('[replicateService.generateImage] Failed to deduct credits:', error);
     }
   }
 

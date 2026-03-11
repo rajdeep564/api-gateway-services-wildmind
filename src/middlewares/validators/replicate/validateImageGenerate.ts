@@ -7,7 +7,7 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
   if (model && typeof model !== 'string') return next(new ApiError('model must be string', 400));
 
   const m = String(model || '').toLowerCase();
-  const isSeedream = m.includes('bytedance/seedream-4');
+  const isSeedream = m.includes('bytedance/seedream-4') || m.includes('bytedance/seedream-5-lite') || m.includes('seedream-5-lite');
   const isSeedream45 = false; // Seedream 4.5 moved to FAL; no longer validated here
   const isIdeogram = m.includes('ideogram-ai/ideogram-v3');
   const isLucidOrigin = m.includes('leonardoai/lucid-origin');
@@ -17,16 +17,18 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
   const isPImageEdit = m.includes('p-image-edit');
   const isPImage = m.includes('p-image') && !isPImageEdit; // avoid double-validating p-image-edit
   const isGptImage15 = m.includes('openai/gpt-image-1.5') || m.includes('gpt-image-1.5');
+  const isNanoBanana2 = m.includes('google/nano-banana-2') || m.includes('nano-banana-2');
+  const isQwen2 = m.includes('qwen/qwen-image-2');
 
   // Seedream 4.5 branch removed: model is now handled by FAL backend.
 
   if (isSeedream && !isSeedream45) {
-    if (size != null && !['1K', '2K', '4K', 'custom'].includes(String(size))) return next(new ApiError("size must be one of '1K' | '2K' | '4K' | 'custom'", 400));
+    if (size != null && !['1K', '2K', '3K', '4K', 'custom'].includes(String(size))) return next(new ApiError("size must be one of '1K' | '2K' | '3K' | '4K' | 'custom'", 400));
     if (width != null && (typeof width !== 'number' || width < 1024 || width > 4096)) return next(new ApiError('width must be 1024-4096', 400));
     if (height != null && (typeof height !== 'number' || height < 1024 || height > 4096)) return next(new ApiError('height must be 1024-4096', 400));
-    if (aspect_ratio != null && !['match_input_image','1:1','4:3','3:4','16:9','9:16','3:2','2:3','21:9'].includes(String(aspect_ratio))) return next(new ApiError('invalid aspect_ratio', 400));
+    if (aspect_ratio != null && !['match_input_image', '1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'].includes(String(aspect_ratio))) return next(new ApiError('invalid aspect_ratio', 400));
     if (max_images != null && (typeof max_images !== 'number' || max_images < 1 || max_images > 15)) return next(new ApiError('max_images must be 1-15', 400));
-    if (sequential_image_generation != null && !['disabled','auto'].includes(String(sequential_image_generation))) return next(new ApiError("sequential_image_generation must be 'disabled' | 'auto'", 400));
+    if (sequential_image_generation != null && !['disabled', 'auto'].includes(String(sequential_image_generation))) return next(new ApiError("sequential_image_generation must be 'disabled' | 'auto'", 400));
     if (image_input != null) {
       if (!Array.isArray(image_input)) return next(new ApiError('image_input must be array of urls', 400));
       if (image_input.length > 10) return next(new ApiError('image_input supports up to 10 images', 400));
@@ -45,13 +47,13 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
 
   if (isIdeogram) {
     const allowedAspect = new Set([
-      '1:3','3:1','1:2','2:1','9:16','16:9','10:16','16:10','2:3','3:2','3:4','4:3','4:5','5:4','1:1'
+      '1:3', '3:1', '1:2', '2:1', '9:16', '16:9', '10:16', '16:10', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '1:1'
     ]);
     const allowedResolution = new Set([
-      'None','512x1536','576x1408','576x1472','576x1536','640x1344','640x1408','640x1472','640x1536','704x1152','704x1216','704x1280','704x1344','704x1408','704x1472','736x1312','768x1088','768x1216','768x1280','768x1344','800x1280','832x960','832x1024','832x1088','832x1152','832x1216','832x1248','864x1152','896x960','896x1024','896x1088','896x1120','896x1152','960x832','960x896','960x1024','960x1088','1024x832','1024x896','1024x960','1024x1024','1088x768','1088x832','1088x896','1088x960','1120x896','1152x704','1152x832','1152x864','1152x896','1216x704','1216x768','1216x832','1248x832','1280x704','1280x768','1280x800','1312x736','1344x640','1344x704','1344x768','1408x576','1408x640','1408x704','1472x576','1472x640','1472x704','1536x512','1536x576','1536x640'
+      'None', '512x1536', '576x1408', '576x1472', '576x1536', '640x1344', '640x1408', '640x1472', '640x1536', '704x1152', '704x1216', '704x1280', '704x1344', '704x1408', '704x1472', '736x1312', '768x1088', '768x1216', '768x1280', '768x1344', '800x1280', '832x960', '832x1024', '832x1088', '832x1152', '832x1216', '832x1248', '864x1152', '896x960', '896x1024', '896x1088', '896x1120', '896x1152', '960x832', '960x896', '960x1024', '960x1088', '1024x832', '1024x896', '1024x960', '1024x1024', '1088x768', '1088x832', '1088x896', '1088x960', '1120x896', '1152x704', '1152x832', '1152x864', '1152x896', '1216x704', '1216x768', '1216x832', '1248x832', '1280x704', '1280x768', '1280x800', '1312x736', '1344x640', '1344x704', '1344x768', '1408x576', '1408x640', '1408x704', '1472x576', '1472x640', '1472x704', '1536x512', '1536x576', '1536x640'
     ]);
-    const allowedStyleType = new Set(['None','Auto','General','Realistic','Design']);
-    const allowedMagic = new Set(['Auto','On','Off']);
+    const allowedStyleType = new Set(['None', 'Auto', 'General', 'Realistic', 'Design']);
+    const allowedMagic = new Set(['Auto', 'On', 'Off']);
 
     if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio))) return next(new ApiError('invalid aspect_ratio for ideogram v3', 400));
     if (req.body.resolution != null && !allowedResolution.has(String(req.body.resolution))) return next(new ApiError('invalid resolution for ideogram v3', 400));
@@ -73,13 +75,13 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
   // Lucid Origin (leonardoai/lucid-origin) validations
   if (isLucidOrigin) {
     const allowedAspect = new Set([
-      '1:1','16:9','9:16','3:2','2:3','4:5','5:4','3:4','4:3','2:1','1:2','3:1','1:3'
+      '1:1', '16:9', '9:16', '3:2', '2:3', '4:5', '5:4', '3:4', '4:3', '2:1', '1:2', '3:1', '1:3'
     ]);
     const allowedStyle = new Set([
-      'bokeh','cinematic','cinematic_close_up','creative','dynamic','fashion','film','food','hdr','long_exposure','macro','minimalist','monochrome','moody','neutral','none','portrait','retro','stock_photo','unprocessed','vibrant'
+      'bokeh', 'cinematic', 'cinematic_close_up', 'creative', 'dynamic', 'fashion', 'film', 'food', 'hdr', 'long_exposure', 'macro', 'minimalist', 'monochrome', 'moody', 'neutral', 'none', 'portrait', 'retro', 'stock_photo', 'unprocessed', 'vibrant'
     ]);
-    const allowedContrast = new Set(['low','medium','high']);
-    const allowedMode = new Set(['standard','ultra']);
+    const allowedContrast = new Set(['low', 'medium', 'high']);
+    const allowedMode = new Set(['standard', 'ultra']);
     if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio))) return next(new ApiError('invalid aspect_ratio for lucid-origin', 400));
     if (req.body.style != null && !allowedStyle.has(String(req.body.style))) return next(new ApiError('invalid style for lucid-origin', 400));
     if (req.body.contrast != null && !allowedContrast.has(String(req.body.contrast))) return next(new ApiError('invalid contrast for lucid-origin', 400));
@@ -92,13 +94,13 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
   // Phoenix 1.0 (leonardoai/phoenix-1.0) validations
   if (isPhoenix) {
     const allowedAspect = new Set([
-      '1:1','16:9','9:16','3:2','2:3','4:5','5:4','3:4','4:3','2:1','1:2','3:1','1:3'
+      '1:1', '16:9', '9:16', '3:2', '2:3', '4:5', '5:4', '3:4', '4:3', '2:1', '1:2', '3:1', '1:3'
     ]);
     const allowedStyle = new Set([
-      '3d_render','bokeh','cinematic','cinematic_concept','creative','dynamic','fashion','graphic_design_pop_art','graphic_design_vector','hdr','illustration','macro','minimalist','moody','none','portrait','pro_bw_photography','pro_color_photography','pro_film_photography','portrait_fashion','ray_traced','sketch_bw','sketch_color','stock_photo','vibrant'
+      '3d_render', 'bokeh', 'cinematic', 'cinematic_concept', 'creative', 'dynamic', 'fashion', 'graphic_design_pop_art', 'graphic_design_vector', 'hdr', 'illustration', 'macro', 'minimalist', 'moody', 'none', 'portrait', 'pro_bw_photography', 'pro_color_photography', 'pro_film_photography', 'portrait_fashion', 'ray_traced', 'sketch_bw', 'sketch_color', 'stock_photo', 'vibrant'
     ]);
-    const allowedContrast = new Set(['low','medium','high']);
-    const allowedMode = new Set(['fast','quality','ultra']);
+    const allowedContrast = new Set(['low', 'medium', 'high']);
+    const allowedMode = new Set(['fast', 'quality', 'ultra']);
     if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio))) return next(new ApiError('invalid aspect_ratio for phoenix-1.0', 400));
     if (req.body.style != null && !allowedStyle.has(String(req.body.style))) return next(new ApiError('invalid style for phoenix-1.0', 400));
     if (req.body.contrast != null && !allowedContrast.has(String(req.body.contrast))) return next(new ApiError('invalid contrast for phoenix-1.0', 400));
@@ -318,6 +320,52 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
     }
     if (req.body.input_fidelity != null && !['low', 'high'].includes(String(req.body.input_fidelity))) {
       return next(new ApiError('input_fidelity must be one of: low, high', 400));
+    }
+  }
+
+  // Google Nano Banana 2 validations
+  if (isNanoBanana2) {
+    const allowedAspect = new Set([
+      "match_input_image", "1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"
+    ]);
+    const allowedResolution = new Set(["1K", "2K", "4K"]);
+    const allowedOutputFormat = new Set(["jpg", "png"]);
+
+    if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio).trim())) return next(new ApiError('invalid aspect_ratio for Nano Banana 2', 400));
+    if (req.body.resolution != null && !allowedResolution.has(String(req.body.resolution))) return next(new ApiError('invalid resolution for Nano Banana 2', 400));
+    if (req.body.google_search != null && typeof req.body.google_search !== 'boolean') return next(new ApiError('google_search must be boolean', 400));
+    if (req.body.image_search != null && typeof req.body.image_search !== 'boolean') return next(new ApiError('image_search must be boolean', 400));
+    if (req.body.output_format != null && !allowedOutputFormat.has(String(req.body.output_format).toLowerCase())) return next(new ApiError('invalid output_format for Nano Banana 2', 400));
+
+    if (image_input != null) {
+      if (!Array.isArray(image_input)) return next(new ApiError('image_input must be array of urls', 400));
+      if (image_input.length > 14) return next(new ApiError('image_input supports up to 14 images', 400));
+      for (const u of image_input) {
+        if (typeof u !== 'string') return next(new ApiError('image_input must contain url strings', 400));
+      }
+    }
+  }
+
+  // Qwen Image 2 (qwen/qwen-image-2) validations
+  if (isQwen2) {
+    const allowedAspect = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '2:1', '1:2']);
+    if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio))) {
+      return next(new ApiError('invalid aspect_ratio for Qwen Image 2', 400));
+    }
+    if (req.body.seed != null && (!Number.isInteger(req.body.seed) || req.body.seed < 0 || req.body.seed > 2147483647)) {
+      return next(new ApiError('seed must be an integer between 0 and 2147483647', 400));
+    }
+    if (req.body.image != null && typeof req.body.image !== 'string') {
+      return next(new ApiError('image must be a uri string', 400));
+    }
+    if (req.body.negative_prompt != null && typeof req.body.negative_prompt !== 'string') {
+      return next(new ApiError('negative_prompt must be a string', 400));
+    }
+    if (req.body.match_input_image != null && typeof req.body.match_input_image !== 'boolean') {
+      return next(new ApiError('match_input_image must be a boolean', 400));
+    }
+    if (req.body.enable_prompt_expansion != null && typeof req.body.enable_prompt_expansion !== 'boolean') {
+      return next(new ApiError('enable_prompt_expansion must be a boolean', 400));
     }
   }
 
