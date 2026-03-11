@@ -196,7 +196,7 @@ async function startEmailOtp(
   }
 
   const code = Math.floor(100000 + Math.random() * 900000).toString();
-  const ttlSeconds = 60; // OTP valid for 60s
+  const ttlSeconds = 300; // OTP valid for 300s (5m)
   const expiresInMinutes = Math.ceil(ttlSeconds / 60); // Convert to minutes for email template
 
   console.log(
