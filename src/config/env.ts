@@ -275,3 +275,55 @@ export function getAppBaseUrl(): string {
     "http://localhost:3000"
   ).replace(/\/$/, "");
 }
+
+export function resolveSafeAppBaseUrl(requestOrigin?: string): string {
+  const candidates = new Set<string>();
+
+  if (env.devFrontendUrl) {
+    candidates.add(env.devFrontendUrl.replace(/\/$/, ""));
+  }
+  if (env.productionWwwDomain) {
+    candidates.add(env.productionWwwDomain.replace(/\/$/, ""));
+  }
+  if (env.productionDomain) {
+    candidates.add(env.productionDomain.replace(/\/$/, ""));
+  }
+  for (const origin of env.frontendOrigins) {
+    if (origin) {
+      candidates.add(origin.replace(/\/$/, ""));
+    }
+  }
+
+  if (requestOrigin) {
+    try {
+      const normalizedRequestOrigin = new URL(requestOrigin).origin.replace(
+        /\/$/,
+        "",
+      );
+      const requestHost = new URL(normalizedRequestOrigin).hostname;
+
+      for (const candidate of candidates) {
+        try {
+          const candidateUrl = new URL(candidate);
+          const candidateHost = candidateUrl.hostname;
+          const isExactHost = requestHost === candidateHost;
+          const isLocalRequest =
+            requestHost === "localhost" || requestHost === "127.0.0.1";
+          const isAllowedSubdomain =
+            requestHost.endsWith(`.${candidateHost.replace(/^www\./, "")}`) ||
+            candidateHost.endsWith(`.${requestHost.replace(/^www\./, "")}`);
+
+          if (isExactHost || isLocalRequest || isAllowedSubdomain) {
+            return normalizedRequestOrigin;
+          }
+        } catch {
+          // Ignore malformed candidate
+        }
+      }
+    } catch {
+      // Ignore malformed request origin
+    }
+  }
+
+  return getAppBaseUrl();
+}
