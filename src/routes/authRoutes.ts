@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { authController, sessionCacheStatus } from '../controllers/auth/authController';
 import { redeemCodeController } from '../controllers/redeemCodeController';
 import { publicVisibilityController } from '../controllers/auth/publicVisibilityController';
-import { requireAuth } from '../middlewares/authMiddleware';
+import { requireAuth, optionalAuth } from '../middlewares/authMiddleware';
 import { validateSession, validateOtpStart, validateOtpVerify, validateUsername, validateUpdateMe, validateLogin, validateGoogleSignIn, validateGoogleUsername, validateCheckUsername, validateForgotPassword, validateCompleteResetPassword } from '../middlewares/validateAuth';
 import { env } from '../config/env';
 
