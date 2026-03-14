@@ -6,6 +6,7 @@ import { URL } from 'url';
 import { opRepository } from '../repository/canvas/opRepository';
 import { elementRepository } from '../repository/canvas/elementRepository';
 import { registerCanvasSessionBroadcaster } from '../services/canvas/canvasSessionNotifier';
+import { startCanvasSessionRedisSubscriber } from '../services/canvas/canvasSessionRedis';
 
 // --- TYPES ---
 export type GeneratorOverlay = {
@@ -155,6 +156,7 @@ export function startRealtimeServer(server: HttpServer) {
   }
 
   registerCanvasSessionBroadcaster(broadcastProjectOpenedElsewhere);
+  startCanvasSessionRedisSubscriber(broadcastProjectOpenedElsewhere);
 
   // Helper to apply operations to server-side memory (Persistence)
   function applyOpToProject(state: ProjectState, op: CanvasOp) {
