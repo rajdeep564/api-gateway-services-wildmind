@@ -3,12 +3,20 @@ import { env, getAppBaseUrl, resolveSafeAppBaseUrl } from "../../config/env";
 import { authRepository } from "../../repository/auth/authRepository"; // Updated with updateUserByEmail
 import { AppUser, ProviderId } from "../../types/authTypes";
 import { ApiError } from "../../utils/errorHandler";
+import { validateEmail } from "../../utils/emailValidator";
 import { sendEmail, isEmailConfigured } from "../../utils/mailer";
+import {
+  appendPasswordHistory,
+  doesPasswordMatchHistory,
+  getPasswordHistoryLimit,
+} from "../../utils/passwordHistory";
 import {
   generateOTPEmailHTML,
   generateOTPEmailText,
   generatePasswordResetEmailHTML,
   generatePasswordResetEmailText,
+  generatePasswordResetSuccessEmailHTML,
+  generatePasswordResetSuccessEmailText,
   generateWelcomeEmailHTML,
   generateWelcomeEmailText,
 } from "../../utils/emailTemplates";
@@ -198,7 +206,7 @@ async function startEmailOtp(
 
     // User exists with email/password provider, ask to sign in instead
     throw new ApiError(
-      "Account already exists. Please use sign-in instead.",
+      "This email is already registered. Please login instead or try with other email.",
       400,
     );
   } catch (error: any) {
@@ -306,6 +314,18 @@ async function verifyEmailOtpAndCreateUser(
     throw new ApiError("Password must not contain your username.", 400);
   }
 
+  const existingUserRecord = await authRepository.getUserByEmail(email);
+  const existingPasswordHistory = existingUserRecord?.user?.passwordHistory || [];
+  if (
+    password &&
+    (await doesPasswordMatchHistory(password, existingPasswordHistory))
+  ) {
+    throw new ApiError(
+      `You cannot use any of your last ${getPasswordHistoryLimit()} passwords. Please choose a new password.`,
+      400,
+    );
+  }
+
   let firebaseUser;
   let user;
 
@@ -381,6 +401,24 @@ async function verifyEmailOtpAndCreateUser(
         );
       }
     })();
+  }
+
+  if (password) {
+    const passwordChangedAt = new Date().toISOString();
+    user = await authRepository.updateUser(firebaseUser.uid, {
+      passwordHistory: await appendPasswordHistory(
+        password,
+        existingPasswordHistory,
+      ),
+      metadata: {
+        ...(user.metadata || {
+          accountStatus: "active",
+          roles: ["user"],
+        }),
+        lastPasswordChange: passwordChangedAt,
+      },
+      updatedAt: passwordChangedAt,
+    });
   }
 
   // Generate custom token for the user, then convert to ID token
@@ -516,6 +554,17 @@ async function loginWithEmailPassword(
   passwordLoginIdToken?: string;
 }> {
   console.log(`[AUTH] Login attempt for email: ${email}`);
+
+  if (email.includes("@")) {
+    try {
+      await validateEmail(email);
+    } catch (error: any) {
+      if (error instanceof ApiError) {
+        throw new ApiError("Enter valid email", 400);
+      }
+      throw error;
+    }
+  }
 
   // Step 1: Check if user exists in Firebase Auth
   let firebaseUser;
@@ -720,12 +769,17 @@ async function loginWithEmailPassword(
   }
 
   // Step 6: Update login tracking
+  const nextPasswordHistory = await appendPasswordHistory(
+    password,
+    user.passwordHistory || [],
+  );
   const updatedUser = await authRepository.updateUser(firebaseUser.uid, {
     lastLoginAt: new Date().toISOString(),
     loginCount: (user.loginCount || 0) + 1,
     lastLoginIP: deviceInfo?.ip,
     userAgent: deviceInfo?.userAgent,
     deviceInfo: deviceInfo?.deviceInfo,
+    passwordHistory: nextPasswordHistory,
   });
 
   // Step 7: Generate custom token (frontend can signInWithCustomToken to sync Firebase client state)
@@ -949,6 +1003,129 @@ async function sendPasswordResetEmail(
   }
 }
 
+async function completePasswordReset(
+  oobCode: string,
+  newPassword: string,
+): Promise<{ success: true; email: string }> {
+  const firebaseApiKey = env.firebaseApiKey;
+  if (!firebaseApiKey) {
+    throw new ApiError(
+      "Authentication service misconfigured. Please contact support.",
+      500,
+    );
+  }
+
+  const firebaseAuthApiBase = env.firebaseAuthApiBase;
+  const resetEndpoint = `${firebaseAuthApiBase}/accounts:resetPassword?key=${firebaseApiKey}`;
+
+  const verifyResponse = await fetch(resetEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ oobCode }),
+  });
+
+  const verifyResult = await verifyResponse.json().catch(() => ({}));
+  if (!verifyResponse.ok || !verifyResult?.email) {
+    const errorMessage = String(verifyResult?.error?.message || "").toUpperCase();
+    if (errorMessage.includes("EXPIRED_OOB_CODE")) {
+      throw new ApiError(
+        "This password reset link has expired. Please request a new one.",
+        400,
+      );
+    }
+    if (errorMessage.includes("INVALID_OOB_CODE")) {
+      throw new ApiError(
+        "This password reset link is invalid or has already been used.",
+        400,
+      );
+    }
+    throw new ApiError("Invalid reset link", 400);
+  }
+
+  const email = String(verifyResult.email).trim().toLowerCase();
+  const firestoreUser = await authRepository.getUserByEmail(email);
+  const passwordHistory = firestoreUser?.user?.passwordHistory || [];
+
+  if (await doesPasswordMatchHistory(newPassword, passwordHistory)) {
+    throw new ApiError(
+      `You cannot use any of your last ${getPasswordHistoryLimit()} passwords. Please choose a new password.`,
+      400,
+    );
+  }
+
+  const applyResponse = await fetch(resetEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ oobCode, newPassword }),
+  });
+  const applyResult = await applyResponse.json().catch(() => ({}));
+
+  if (!applyResponse.ok) {
+    const errorMessage = String(applyResult?.error?.message || "").toUpperCase();
+    if (errorMessage.includes("WEAK_PASSWORD")) {
+      throw new ApiError(
+        "Password is too weak. Please choose a stronger password.",
+        400,
+      );
+    }
+    if (errorMessage.includes("EXPIRED_OOB_CODE")) {
+      throw new ApiError(
+        "This password reset link has expired. Please request a new one.",
+        400,
+      );
+    }
+    if (errorMessage.includes("INVALID_OOB_CODE")) {
+      throw new ApiError(
+        "This password reset link is invalid or has already been used.",
+        400,
+      );
+    }
+    throw new ApiError("Failed to reset password. Please try again.", 400);
+  }
+
+  const passwordChangedAt = new Date().toISOString();
+  if (firestoreUser) {
+    await authRepository.updateUser(firestoreUser.uid, {
+      passwordHistory: await appendPasswordHistory(newPassword, passwordHistory),
+      metadata: {
+        ...(firestoreUser.user.metadata || {
+          accountStatus: "active",
+          roles: ["user"],
+        }),
+        lastPasswordChange: passwordChangedAt,
+      },
+      updatedAt: passwordChangedAt,
+    });
+  }
+
+  try {
+    await sendEmail(
+      email,
+      "Password Reset Successful - WildMind AI",
+      generatePasswordResetSuccessEmailText({
+        email,
+        companyName: "Wild Mind AI",
+        supportEmail: "support@wildmindai.com",
+      }),
+      generatePasswordResetSuccessEmailHTML({
+        email,
+        companyName: "Wild Mind AI",
+        supportEmail: "support@wildmindai.com",
+      }),
+    );
+  } catch (error: any) {
+    console.log(
+      `[AUTH] Password reset success email failed (non-critical): ${error?.message}`,
+    );
+  }
+
+  return { success: true, email };
+}
+
 async function googleSignIn(
   idToken: string,
   deviceInfo?: any,
@@ -1168,4 +1345,5 @@ export const authService = {
   setGoogleUsername,
   checkUsernameAvailability,
   sendPasswordResetEmail,
+  completePasswordReset,
 };

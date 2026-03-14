@@ -1449,6 +1449,7 @@ export const authController = {
   resolveEmail,
   loginWithEmailPassword,
   googleSignIn,
+  completeResetPassword,
   setGoogleUsername,
   checkUsername,
   refreshSession,
@@ -1855,6 +1856,25 @@ async function forgotPassword(req: Request, res: Response, next: NextFunction) {
         );
       }
     }
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function completeResetPassword(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const { oobCode, newPassword } = req.body;
+    const result = await authService.completePasswordReset(oobCode, newPassword);
+
+    res.json(
+      formatApiResponse("success", "Password reset successfully", {
+        email: result.email,
+      }),
+    );
   } catch (error) {
     next(error);
   }
