@@ -5,8 +5,6 @@ import { logger } from '../utils/logger';
 import { URL } from 'url';
 import { opRepository } from '../repository/canvas/opRepository';
 import { elementRepository } from '../repository/canvas/elementRepository';
-import { registerCanvasSessionBroadcaster } from '../services/canvas/canvasSessionNotifier';
-import { startCanvasSessionRedisSubscriber } from '../services/canvas/canvasSessionRedis';
 
 // --- TYPES ---
 export type GeneratorOverlay = {
@@ -107,22 +105,9 @@ function getProjectId(reqUrl: string | undefined): string | null {
   }
 }
 
-function getSessionIdFromUrl(reqUrl: string | undefined): string | null {
-  if (!reqUrl) return null;
-  try {
-    const { env } = require('../config/env');
-    const defaultBase = env.devFrontendUrl;
-    const u = new URL(reqUrl, defaultBase);
-    return u.searchParams.get('sessionId');
-  } catch {
-    return null;
-  }
-}
-
 export function startRealtimeServer(server: HttpServer) {
   const wss = new WebSocketServer({ server, path: '/realtime' });
   const rooms = new Map<string, Set<WebSocket>>(); // projectId -> clients
-  const wsSessionIds = new Map<WebSocket, string | null>(); // ws -> sessionId (to exclude opener)
 
   // Helper to broadcast messages to clients
   function broadcast(projectId: string, payload: any, except?: WebSocket) {
@@ -138,25 +123,6 @@ export function startRealtimeServer(server: HttpServer) {
     }
     logger.info({ projectId, type: payload?.type || payload?.kind, recipients: sent }, 'Realtime broadcast');
   }
-
-  // Only notify *previous* tabs (exclude the one that just opened = opener). Popup shows on Safari, not on Chrome.
-  function broadcastProjectOpenedElsewhere(projectId: string, openerSessionId: string | null) {
-    const room = rooms.get(projectId);
-    if (!room) return;
-    const payload = { type: 'projectOpenedElsewhere', projectId };
-    const data = JSON.stringify(payload);
-    let sent = 0;
-    for (const ws of room) {
-      if (openerSessionId != null && wsSessionIds.get(ws) === openerSessionId) continue;
-      if (ws.readyState === WebSocket.OPEN) {
-        try { ws.send(data); sent++; } catch (e) { /* no-op */ }
-      }
-    }
-    logger.info({ projectId, openerSessionId, recipients: sent }, 'Realtime projectOpenedElsewhere');
-  }
-
-  registerCanvasSessionBroadcaster(broadcastProjectOpenedElsewhere);
-  startCanvasSessionRedisSubscriber(broadcastProjectOpenedElsewhere);
 
   // Helper to apply operations to server-side memory (Persistence)
   function applyOpToProject(state: ProjectState, op: CanvasOp) {
@@ -375,13 +341,11 @@ export function startRealtimeServer(server: HttpServer) {
 
   wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
     const projectId = getProjectId(req.url) || 'default';
-    const sessionId = getSessionIdFromUrl(req.url);
 
     if (!rooms.has(projectId)) rooms.set(projectId, new Set());
     rooms.get(projectId)!.add(ws);
-    wsSessionIds.set(ws, sessionId);
 
-    logger.info({ projectId, hasSessionId: !!sessionId }, 'Realtime WS connected');
+    logger.info({ projectId }, 'Realtime WS connected');
 
     // Send init state
     const state = getProjectState(projectId);
@@ -555,17 +519,7 @@ export function startRealtimeServer(server: HttpServer) {
 
     ws.on('close', () => {
       rooms.get(projectId)?.delete(ws);
-      wsSessionIds.delete(ws);
       logger.info({ projectId }, 'Realtime WS disconnected');
-      const room = rooms.get(projectId);
-      if (room && room.size === 1) {
-        const remaining = Array.from(room)[0];
-        if (remaining?.readyState === WebSocket.OPEN) {
-          try {
-            remaining.send(JSON.stringify({ type: 'projectSoleOwner', projectId }));
-          } catch (_e) { }
-        }
-      }
     });
 
     ws.on('error', (err: unknown) => {

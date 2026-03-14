@@ -7,8 +7,6 @@ import { ApiError } from '../../utils/errorHandler';
 import { CanvasSnapshot } from '../../types/canvas';
 import { admin } from '../../config/firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
-import { notifyProjectOpenedElsewhere } from '../../services/canvas/canvasSessionNotifier';
-import { publishProjectOpenedElsewhere } from '../../services/canvas/canvasSessionRedis';
 
 export async function getSnapshot(req: Request, res: Response) {
   try {
@@ -298,13 +296,6 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
     if (!hasAccess) {
       throw new ApiError('Access denied', 403);
     }
-
-    const clientSessionId = (req.headers['x-client-session-id'] as string) || null;
-
-    // Notify other tabs: local WebSocket + Redis pub-sub (so all instances get it when multi-server)
-    notifyProjectOpenedElsewhere(projectId, clientSessionId);
-    await publishProjectOpenedElsewhere(projectId, clientSessionId);
-    await new Promise((r) => setTimeout(r, 1500));
 
     // 1. Get the base snapshot (metadata + viewport)
     let snapshot = await projectRepository.getCurrentSnapshot(projectId);

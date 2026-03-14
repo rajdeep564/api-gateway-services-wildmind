@@ -1,6 +1,6 @@
 /**
  * Notify WebSocket subscribers that a project was opened elsewhere.
- * openerSessionId = the tab that just did GET (we exclude them so only the *previous* tab gets the popup).
+ * openerSessionId = the tab that just did GET (we exclude them so only the previous tab/device gets the popup).
  */
 
 let broadcaster: ((projectId: string, openerSessionId: string | null) => void) | null = null;
