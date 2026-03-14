@@ -48,6 +48,21 @@ Just write the story in clear, evocative prose.
 Keep the tone consistent with the user's prompt.
 Respond only with the story text.`;
 
+const REFERENCE_IMAGE_SYSTEM_INSTRUCTION = `You are a Universal Prompt Enhancer AI that can SEE reference images.
+
+The user has attached one or more reference images along with their message. Your tasks:
+
+1. Briefly describe what you see in the image(s): main subject(s), style, colors, composition, mood, and any text or notable details.
+2. Use that visual context to interpret the user's request. For example:
+   - "make the dress red" → you know what "the dress" refers to from the image.
+   - "same person, different background" → you understand "same person" from the reference.
+   - "turn this into a poster" → you know "this" from the image.
+3. Produce a single, detailed, optimized prompt suitable for image or video generation that incorporates both the visual reference and the user's intent. Maintain identity, style, and composition cues from the reference where relevant.
+4. If the user is asking a question (not requesting generation), answer based on what you see and their question.
+5. Output ONLY the enhanced prompt or answer—no preamble like "Here's..." or "Based on the image...".
+
+Keep everything in English unless the user writes in another language.`;
+
 let cachedClient: GoogleGenAI | null = null;
 
 function getGeminiClient(): GoogleGenAI {
@@ -196,6 +211,106 @@ export async function generateGeminiTextResponse(
   });
 
   return aggregatedText;
+}
+
+const MAX_IMAGE_SIZE_BYTES = 4 * 1024 * 1024; // 4MB per image
+const MAX_IMAGES_FOR_VISION = 4;
+const IMAGE_FETCH_TIMEOUT_MS = 15000;
+
+/**
+ * Fetch image from URL or parse data URL and return { base64, mimeType }.
+ */
+async function imageUrlToBase64(
+  urlOrDataUrl: string
+): Promise<{ data: string; mimeType: string } | null> {
+  const trimmed = (urlOrDataUrl || '').trim();
+  if (!trimmed) return null;
+
+  // Data URL: data:image/jpeg;base64,...
+  const dataUrlMatch = trimmed.match(/^data:(image\/[a-zA-Z+]+);base64,(.+)$/);
+  if (dataUrlMatch) {
+    const mimeType = dataUrlMatch[1].toLowerCase();
+    const base64 = dataUrlMatch[2].replace(/\s/g, '');
+    if (!base64 || base64.length > MAX_IMAGE_SIZE_BYTES * 1.4) return null;
+    return { data: base64, mimeType };
+  }
+
+  // HTTP(S) URL - fetch (use dynamic import for axios to avoid circular deps if needed)
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+    return null;
+  }
+  try {
+    const axios = (await import('axios')).default;
+    const res = await axios.get(trimmed, {
+      responseType: 'arraybuffer',
+      timeout: IMAGE_FETCH_TIMEOUT_MS,
+      maxContentLength: MAX_IMAGE_SIZE_BYTES,
+      maxBodyLength: MAX_IMAGE_SIZE_BYTES,
+      validateStatus: (status) => status === 200,
+    });
+    const buffer = res.data as Buffer;
+    if (!buffer || buffer.length > MAX_IMAGE_SIZE_BYTES) return null;
+    const mimeType = (res.headers['content-type'] || 'image/jpeg').split(';')[0].trim().toLowerCase();
+    const base64 = Buffer.from(buffer).toString('base64');
+    return { data: base64, mimeType: mimeType.startsWith('image/') ? mimeType : 'image/jpeg' };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Generate text using Gemini with reference images (vision). Use this when the user
+ * attaches images so the model can see them and produce a better prompt or answer.
+ */
+export async function generateGeminiTextWithReferenceImages(
+  prompt: string,
+  imageUrlsOrDataUrls: string[],
+  options?: { maxOutputTokens?: number }
+): Promise<string> {
+  if (!prompt || !prompt.trim()) {
+    throw new Error('Prompt must be a non-empty string');
+  }
+  const urls = (imageUrlsOrDataUrls || []).slice(0, MAX_IMAGES_FOR_VISION);
+  const imageParts: Array<{ inlineData: { mimeType: string; data: string } }> = [];
+  for (const u of urls) {
+    const img = await imageUrlToBase64(u);
+    if (img) imageParts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
+  }
+
+  const ai = getGeminiClient();
+  const maxOutputTokens = Math.min(Math.max(options?.maxOutputTokens ?? 512, 32), 4096);
+
+  const userParts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [
+    ...imageParts,
+    { text: prompt.trim() },
+  ];
+
+  const contents = [
+    { role: 'user', parts: userParts },
+  ];
+
+  console.log('[GeminiTextService] Vision request', {
+    model: GEMINI_MODEL,
+    imageCount: imageParts.length,
+    promptPreview: prompt.trim().slice(0, 80),
+  });
+
+  const result: any = await ai.models.generateContent({
+    model: GEMINI_MODEL,
+    config: {
+      systemInstruction: REFERENCE_IMAGE_SYSTEM_INSTRUCTION,
+      maxOutputTokens,
+    },
+    contents,
+  });
+
+  const text =
+    result?.text?.() ??
+    result?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text).filter(Boolean).join('') ??
+    '';
+  const out = (text || '').trim();
+  if (!out) throw new Error('Gemini vision returned an empty response');
+  return out;
 }
 
 
