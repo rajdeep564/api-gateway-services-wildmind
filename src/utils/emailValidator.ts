@@ -76,7 +76,7 @@ export async function validateEmail(email: string): Promise<void> {
   // Layer 3 – disposable domain (library-based)
   if (isTempEmail(email)) {
     throw new ApiError(
-      'Temporary or disposable email addresses are not allowed. Please use a permanent email address.',
+      'Temporary domain email are not allowed.',
       400
     );
   }

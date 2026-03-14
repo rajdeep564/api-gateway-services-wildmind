@@ -3,7 +3,7 @@ import { authController, sessionCacheStatus } from '../controllers/auth/authCont
 import { redeemCodeController } from '../controllers/redeemCodeController';
 import { publicVisibilityController } from '../controllers/auth/publicVisibilityController';
 import { requireAuth } from '../middlewares/authMiddleware';
-import { validateSession, validateOtpStart, validateOtpVerify, validateUsername, validateUpdateMe, validateLogin, validateGoogleSignIn, validateGoogleUsername, validateCheckUsername, validateForgotPassword } from '../middlewares/validateAuth';
+import { validateSession, validateOtpStart, validateOtpVerify, validateUsername, validateUpdateMe, validateLogin, validateGoogleSignIn, validateGoogleUsername, validateCheckUsername, validateForgotPassword, validateCompleteResetPassword } from '../middlewares/validateAuth';
 import { env } from '../config/env';
 
 const router = Router();
@@ -12,6 +12,7 @@ const router = Router();
 router.post('/session', validateSession, authController.createSession);
 router.post('/login', validateLogin, authController.loginWithEmailPassword);
 router.post('/forgot-password', validateForgotPassword, authController.forgotPassword);
+router.post('/reset-password/complete', validateCompleteResetPassword, authController.completeResetPassword);
 router.post('/google', validateGoogleSignIn, authController.googleSignIn);
 router.post('/google/username', validateGoogleUsername, authController.setGoogleUsername);
 router.post('/email/start', validateOtpStart, authController.startEmailOtp);

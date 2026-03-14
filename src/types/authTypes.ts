@@ -6,6 +6,12 @@ export type ProviderId =
   | "username"
   | "unknown";
 
+export interface PasswordHistoryEntry {
+  hash: string;
+  salt: string;
+  createdAt: string;
+}
+
 export interface AppUser {
   uid: string;
   email: string;
@@ -39,4 +45,5 @@ export interface AppUser {
   };
   isUsernameTemporary?: boolean; // For Google users who haven't set username yet
   updatedAt?: string; // ISO string
+  passwordHistory?: PasswordHistoryEntry[];
 }

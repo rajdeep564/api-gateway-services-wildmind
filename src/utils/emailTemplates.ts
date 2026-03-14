@@ -190,6 +190,12 @@ export interface PasswordResetEmailData {
   supportEmail?: string;
 }
 
+export interface PasswordResetSuccessEmailData {
+  email: string;
+  companyName?: string;
+  supportEmail?: string;
+}
+
 export function generatePasswordResetEmailHTML(
   data: PasswordResetEmailData,
 ): string {
@@ -270,6 +276,82 @@ This link expires in 1 hour.
 If you did not request a password reset, you can safely ignore this email.
 
 Need help? ${supportEmail}
+
+© ${new Date().getFullYear()} ${companyName}. All rights reserved.`.trim();
+}
+
+export function generatePasswordResetSuccessEmailHTML(
+  data: PasswordResetSuccessEmailData,
+): string {
+  const {
+    email,
+    companyName = "Wild Mind AI",
+    supportEmail = "support@wildmindai.com",
+  } = data;
+
+  const body = `
+        <tr>
+          <td style="padding:36px 40px 10px;text-align:center;">
+            <h1 style="margin:0 0 10px;font-size:26px;font-weight:700;color:#e8e8f0;font-family:${FONT_STACK};line-height:1.3;">
+              Password Reset Successful
+            </h1>
+            <p style="margin:0;font-size:15px;color:#8888aa;font-family:${FONT_STACK};line-height:1.6;">
+              Your password for ${companyName} was changed successfully.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:24px 40px 20px;text-align:center;">
+            <div style="display:inline-block;background-color:#16162a;border:1px solid #2a2a50;border-radius:12px;padding:18px 28px;">
+              <p style="margin:0;font-size:14px;color:#cfd6ff;font-family:${FONT_STACK};line-height:1.7;">
+                Account: <strong style="color:#ffffff;">${email}</strong>
+              </p>
+            </div>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:0 40px 28px;text-align:center;">
+            <p style="margin:0;font-size:14px;color:#aaaacc;font-family:${FONT_STACK};line-height:1.7;">
+              If you made this change, no further action is needed.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:8px 40px 32px;">
+            <div style="background-color:#16162a;border-left:3px solid #3a3a6a;border-radius:6px;padding:14px 18px;">
+              <p style="margin:0 0 6px;font-size:13px;color:#8888cc;font-family:${FONT_STACK};">
+                Security notice
+              </p>
+              <p style="margin:0;font-size:13px;color:#6666aa;font-family:${FONT_STACK};line-height:1.7;">
+                If you did not reset your password, contact <a href="mailto:${supportEmail}" style="color:#7b8cde;text-decoration:none;">${supportEmail}</a> immediately.
+              </p>
+            </div>
+          </td>
+        </tr>`;
+
+  return wrapEmail(body, `Password Reset Successful - ${companyName}`);
+}
+
+export function generatePasswordResetSuccessEmailText(
+  data: PasswordResetSuccessEmailData,
+): string {
+  const {
+    email,
+    companyName = "Wild Mind AI",
+    supportEmail = "support@wildmindai.com",
+  } = data;
+
+  return `${companyName} - Password Reset Successful
+
+Your password was changed successfully for:
+${email}
+
+If you made this change, no further action is needed.
+
+If you did not reset your password, contact ${supportEmail} immediately.
 
 © ${new Date().getFullYear()} ${companyName}. All rights reserved.`.trim();
 }
