@@ -226,7 +226,13 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
 
 async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
   try {
-    const uid = req.uid as string;
+    const uid = req.uid as string | undefined;
+    if (!uid) {
+      res.json(
+        formatApiResponse("success", "Not authenticated", { user: null }),
+      );
+      return;
+    }
     console.log("[AuthController]/me request", {
       uid,
       cookiesPresent: Object.keys(req.cookies || {}),
