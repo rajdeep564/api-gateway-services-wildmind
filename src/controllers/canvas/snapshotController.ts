@@ -7,6 +7,8 @@ import { ApiError } from '../../utils/errorHandler';
 import { CanvasSnapshot } from '../../types/canvas';
 import { admin } from '../../config/firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
+import { notifyProjectOpenedElsewhere } from '../../services/canvas/canvasSessionNotifier';
+import { setCurrentSession, isCurrentSession } from '../../services/canvas/projectSessionStore';
 
 export async function getSnapshot(req: Request, res: Response) {
   try {
@@ -297,6 +299,32 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
       throw new ApiError('Access denied', 403);
     }
 
+    const clientSessionId = (req.headers['x-client-session-id'] as string) || null;
+    const isPoll = (req.headers['x-poll'] as string) === 'true' || req.query.poll === '1';
+
+    if (isPoll) {
+      // Poll: don't notify, don't delay. Return snapshot + sessionIsCurrent so previous tab can show popup if it missed WS.
+      let snapshot = await projectRepository.getCurrentSnapshot(projectId);
+      if (!snapshot) {
+        snapshot = {
+          projectId,
+          snapshotOpIndex: -1,
+          elements: {},
+          metadata: {
+            version: '1.0',
+            createdAt: admin.firestore.Timestamp.now(),
+          }
+        };
+      }
+      const sessionIsCurrent = clientSessionId == null || isCurrentSession(projectId, clientSessionId);
+      return res.json(formatApiResponse('success', 'Current snapshot retrieved', { snapshot, sessionIsCurrent }));
+    }
+
+    // Open: this tab is opening the project. Record it as current owner, notify previous tabs, then return snapshot.
+    setCurrentSession(projectId, clientSessionId);
+    notifyProjectOpenedElsewhere(projectId, clientSessionId);
+    await new Promise((r) => setTimeout(r, 800));
+
     // 1. Get the base snapshot (metadata + viewport)
     let snapshot = await projectRepository.getCurrentSnapshot(projectId);
 
@@ -324,7 +352,7 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
     //   snapshot.elements[el.id] = el;
     // }
 
-    res.json(formatApiResponse('success', 'Current snapshot retrieved', { snapshot }));
+    return res.json(formatApiResponse('success', 'Current snapshot retrieved', { snapshot }));
   } catch (error: any) {
     res.status(error.statusCode || 500).json(
       formatApiResponse('error', error.message || 'Failed to get snapshot', null)
