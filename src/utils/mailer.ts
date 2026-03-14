@@ -4,6 +4,20 @@ import { env } from '../config/env';
 let transporter: any | null = null;
 let lastCredentials: { user?: string; pass?: string } | null = null;
 
+function formatFromAddress(address?: string, displayName: string = 'WildMind AI'): string | undefined {
+  if (!address) return undefined;
+  if (address.includes('<')) return address;
+  return `${displayName} <${address}>`;
+}
+
+function buildMailHeaders() {
+  return {
+    'X-Auto-Response-Suppress': 'All',
+    'Auto-Submitted': 'auto-generated',
+    'X-Mailer': 'WildMind AI Transactional Mail',
+  };
+}
+
 /**
  * Reset the transporter to force recreation with new credentials
  * Call this after updating EMAIL_USER or EMAIL_APP_PASSWORD in .env
@@ -134,10 +148,11 @@ async function sendEmailViaResend(to: string, subject: string, text: string, htm
   try {
     const resendApiBase = env.resendApiBase || 'https://api.resend.com';
     const payload: any = {
-      from: env.smtpFrom,
+      from: formatFromAddress(env.smtpFrom),
       to,
       subject,
-      text
+      text,
+      headers: buildMailHeaders(),
     };
     
     // Add HTML if provided
@@ -186,7 +201,10 @@ async function sendEmailViaResend(to: string, subject: string, text: string, htm
  * Send email using Gmail SMTP as fallback
  */
 async function sendEmailViaSMTP(to: string, subject: string, text: string, html?: string): Promise<boolean> {
-  const from = env.smtpFrom || env.emailUser;
+  const usesGmailFallback = !!(env.emailUser && env.emailAppPassword);
+  const smtpFromAddress = usesGmailFallback ? env.emailUser : (env.smtpFrom || env.smtpUser || env.emailUser);
+  const replyToAddress = env.smtpFrom && env.smtpFrom !== smtpFromAddress ? env.smtpFrom : undefined;
+  const from = formatFromAddress(smtpFromAddress);
   const t = getTransporter();
   
   if (!t || !from) {
@@ -194,7 +212,17 @@ async function sendEmailViaSMTP(to: string, subject: string, text: string, html?
   }
 
   try {
-    const mailOptions: any = { from, to, subject, text };
+    const mailOptions: any = {
+      from,
+      to,
+      subject,
+      text,
+      headers: buildMailHeaders(),
+    };
+
+    if (replyToAddress) {
+      mailOptions.replyTo = formatFromAddress(replyToAddress);
+    }
     
     // Add HTML if provided
     if (html) {

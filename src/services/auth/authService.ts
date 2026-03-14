@@ -1,5 +1,5 @@
 import { admin } from "../../config/firebaseAdmin";
-import { env, getAppBaseUrl } from "../../config/env";
+import { env, getAppBaseUrl, resolveSafeAppBaseUrl } from "../../config/env";
 import { authRepository } from "../../repository/auth/authRepository"; // Updated with updateUserByEmail
 import { AppUser, ProviderId } from "../../types/authTypes";
 import { ApiError } from "../../utils/errorHandler";
@@ -18,6 +18,21 @@ function normalizeUsername(input: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9_.-]/g, "")
     .slice(0, 30);
+}
+
+function normalizeForPasswordComparison(input?: string): string {
+  return String(input || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function passwordContainsUsername(password?: string, username?: string): boolean {
+  const normalizedUsername = normalizeForPasswordComparison(username);
+  if (normalizedUsername.length < 3) {
+    return false;
+  }
+
+  return normalizeForPasswordComparison(password).includes(normalizedUsername);
 }
 
 async function checkUsernameAvailability(
@@ -232,7 +247,7 @@ async function startEmailOtp(
     try {
       await sendEmail(
         email,
-        "Verify Your Email - WildMind AI",
+        "Your WildMind AI verification code",
         emailText,
         emailHTML,
       );
@@ -246,7 +261,7 @@ async function startEmailOtp(
       try {
         await sendEmail(
           email,
-          "Verify Your Email - WildMind AI",
+          "Your WildMind AI verification code",
           emailText,
           emailHTML,
         );
@@ -285,6 +300,10 @@ async function verifyEmailOtpAndCreateUser(
   if (!/^[a-z0-9_.-]{3,30}$/.test(uname)) {
     console.log(`[AUTH] Invalid username format: ${uname}`);
     throw new ApiError("Invalid username", 400);
+  }
+
+  if (passwordContainsUsername(password, uname)) {
+    throw new ApiError("Password must not contain your username.", 400);
   }
 
   let firebaseUser;
@@ -723,17 +742,61 @@ async function loginWithEmailPassword(
 const PASSWORD_RESET_COOLDOWN_MS = 60 * 1000; // 60 seconds
 const passwordResetCooldown = new Map<string, number>();
 
+function buildPublicPasswordResetLink(
+  generatedResetLink: string,
+  appBaseUrl: string,
+): string {
+  try {
+    const parsed = new URL(generatedResetLink);
+    const publicUrl = new URL(
+      `${appBaseUrl.replace(/\/$/, "")}/auth/reset-password`,
+    );
+    const mode = parsed.searchParams.get("mode") || "resetPassword";
+    const oobCode = parsed.searchParams.get("oobCode");
+    const lang = parsed.searchParams.get("lang");
+    const apiKey = parsed.searchParams.get("apiKey");
+
+    publicUrl.searchParams.set("mode", mode);
+    if (oobCode) publicUrl.searchParams.set("oobCode", oobCode);
+    if (lang) publicUrl.searchParams.set("lang", lang);
+    if (apiKey) publicUrl.searchParams.set("apiKey", apiKey);
+
+    return publicUrl.toString();
+  } catch {
+    return generatedResetLink;
+  }
+}
+
 /**
  * Send password reset email to user
  * Returns result object with status and message for proper error handling
  */
-async function sendPasswordResetEmail(email: string): Promise<{
+async function sendPasswordResetEmail(
+  email: string,
+  requestOrigin?: string,
+): Promise<{
   success: boolean;
   message: string;
   reason?: string;
   retryAfterSeconds?: number;
 }> {
   console.log(`[AUTH] Password reset request for email: ${email}`);
+  const appBaseUrl = resolveSafeAppBaseUrl(requestOrigin);
+  const generationBaseUrls = Array.from(
+    new Set(
+      [
+        appBaseUrl,
+        getAppBaseUrl(),
+        env.productionWwwDomain,
+        env.productionDomain,
+        env.firebaseAuthDomain
+          ? `https://${String(env.firebaseAuthDomain).replace(/^https?:\/\//, "")}`
+          : undefined,
+      ]
+        .filter(Boolean)
+        .map((url) => String(url).replace(/\/$/, "")),
+    ),
+  );
 
   // Step 0: Enforce per-email cooldown to prevent email spam
   const now = Date.now();
@@ -790,26 +853,39 @@ async function sendPasswordResetEmail(email: string): Promise<{
   }
 
   // Step 3: Generate password reset link using Firebase Admin SDK
-  // Uses getAppBaseUrl() so staging emails redirect to onstaging.wildmindai.com
-  // and production emails redirect to www.wildmindai.com
-  const resetRedirectUrl = `${getAppBaseUrl()}/auth/reset-password`;
+  let resetLink: string | undefined;
+  let generatedWithBaseUrl: string | undefined;
+  let lastGenerationError: any;
 
-  console.log(`[AUTH] Using reset redirect URL: ${resetRedirectUrl}`);
+  for (const generationBaseUrl of generationBaseUrls) {
+    const resetRedirectUrl = `${generationBaseUrl}/auth/reset-password`;
+    console.log(`[AUTH] Trying reset redirect URL: ${resetRedirectUrl}`);
 
-  const actionCodeSettings = {
-    url: resetRedirectUrl,
-    handleCodeInApp: false,
-  };
+    const actionCodeSettings = {
+      url: resetRedirectUrl,
+      handleCodeInApp: false,
+    };
 
-  let resetLink: string;
-  try {
-    resetLink = await admin
-      .auth()
-      .generatePasswordResetLink(email, actionCodeSettings);
-    console.log(`[AUTH] Generated password reset link for: ${email}`);
-  } catch (error: any) {
+    try {
+      resetLink = await admin
+        .auth()
+        .generatePasswordResetLink(email, actionCodeSettings);
+      generatedWithBaseUrl = generationBaseUrl;
+      console.log(`[AUTH] Generated password reset link for: ${email}`, {
+        generationBaseUrl,
+      });
+      break;
+    } catch (error: any) {
+      lastGenerationError = error;
+      console.error(
+        `[AUTH] Failed to generate password reset link with ${generationBaseUrl}: ${error.message}`,
+      );
+    }
+  }
+
+  if (!resetLink) {
     console.error(
-      `[AUTH] Failed to generate password reset link: ${error.message}`,
+      `[AUTH] Failed to generate password reset link: ${lastGenerationError?.message}`,
     );
     return {
       success: false,
@@ -819,17 +895,28 @@ async function sendPasswordResetEmail(email: string): Promise<{
     };
   }
 
+  const publicResetLink = buildPublicPasswordResetLink(
+    resetLink,
+    appBaseUrl,
+  );
+  console.log(`[AUTH] Public password reset link prepared`, {
+    requestOrigin,
+    appBaseUrl,
+    generatedWithBaseUrl,
+    publicResetLink,
+  });
+
   // Step 4: Send password reset email via Resend (using same template style as OTP)
   try {
     const emailSubject = "Reset Your Password - WildMind AI";
     const emailHTML = generatePasswordResetEmailHTML({
-      resetLink,
+      resetLink: publicResetLink,
       email,
       companyName: "WildMind AI",
       supportEmail: "support@wildmindai.com",
     });
     const emailText = generatePasswordResetEmailText({
-      resetLink,
+      resetLink: publicResetLink,
       email,
       companyName: "WildMind AI",
       supportEmail: "support@wildmindai.com",

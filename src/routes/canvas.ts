@@ -89,6 +89,8 @@ router.post('/create-stitched-reference', requireAuth, generateController.create
 
 // Query (Canvas prompt enhancement)
 router.post('/query', queryController.queryCanvas);
+// Plan execution log (frontend sends what was built/executed for backend logs)
+router.post('/plan-log', queryController.logPlanExecution);
 // @ts-ignore
 router.post('/generate-scenes', makeCreditCost('canvas', 'generate-scenes', computeCanvasScriptCost), queryController.generateScenes);
 

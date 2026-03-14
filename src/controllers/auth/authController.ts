@@ -228,10 +228,12 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = req.uid as string | undefined;
     if (!uid) {
-      res.json(formatApiResponse("success", "User retrieved successfully", { user: null }));
+      res.json(
+        formatApiResponse("success", "Not authenticated", { user: null }),
+      );
       return;
     }
-    console.log('[AuthController]/me request', {
+    console.log("[AuthController]/me request", {
       uid,
       cookiesPresent: Object.keys(req.cookies || {}),
       origin: req.headers.origin,
@@ -379,12 +381,12 @@ async function startEmailOtp(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-async function verifyEmailOtp(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { email, code, password } = req.body;
-    console.log(
-      `[CONTROLLER] Verifying OTP - email: ${email}, code: ${code}, hasPassword: ${!!password}`,
-    );
+  async function verifyEmailOtp(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { email, code, password, username } = req.body;
+      console.log(
+        `[CONTROLLER] Verifying OTP - email: ${email}, code: ${code}, hasPassword: ${!!password}, hasUsername: ${!!username}`,
+      );
 
     const ok = await authRepository.verifyAndConsumeOtp(email, code);
     if (!ok) {
@@ -395,13 +397,13 @@ async function verifyEmailOtp(req: Request, res: Response, next: NextFunction) {
     console.log(
       `[CONTROLLER] OTP verified successfully, creating Firebase user and Firestore user...`,
     );
-    const deviceInfo = extractDeviceInfo(req);
-    const result = await authService.verifyEmailOtpAndCreateUser(
-      email,
-      undefined,
-      password,
-      deviceInfo,
-    );
+      const deviceInfo = extractDeviceInfo(req);
+      const result = await authService.verifyEmailOtpAndCreateUser(
+        email,
+        username,
+        password,
+        deviceInfo,
+      );
     console.log(`[CONTROLLER] User created and ID token generated`);
 
     // OPTIMIZATION: OTP verification only creates user - NO session cookie here
@@ -1809,7 +1811,12 @@ async function forgotPassword(req: Request, res: Response, next: NextFunction) {
     );
 
     // Send password reset email - now returns detailed result
-    const result = await authService.sendPasswordResetEmail(normalizedEmail);
+    const requestOrigin =
+      typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+    const result = await authService.sendPasswordResetEmail(
+      normalizedEmail,
+      requestOrigin,
+    );
 
     console.log("[AUTH][forgotPassword] Result:", result);
 

@@ -19,8 +19,14 @@ function getBannerUrl(): string {
 }
 
 /** Shared outer wrapper: dark background, centred 600-px column, banner at top */
-function wrapEmail(bodyContent: string, subject: string): string {
+function wrapEmail(
+  bodyContent: string,
+  subject: string,
+  options?: { showBanner?: boolean; previewText?: string },
+): string {
   const bannerUrl = getBannerUrl();
+  const showBanner = options?.showBanner !== false;
+  const previewText = options?.previewText || "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -33,18 +39,23 @@ function wrapEmail(bodyContent: string, subject: string): string {
   <![endif]-->
 </head>
 <body style="margin:0;padding:0;background-color:#0b0b12;font-family:${FONT_STACK};">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+    ${previewText}
+  </div>
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#0b0b12;">
     <tr><td align="center" style="padding:40px 20px;">
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600"
              style="max-width:600px;background-color:#12121e;border-radius:16px;overflow:hidden;border:1px solid #1e1e30;">
 
-        <!-- BANNER -->
+        ${showBanner
+          ? `<!-- BANNER -->
         <tr>
           <td style="padding:0;margin:0;line-height:0;font-size:0;">
             <img src="${bannerUrl}" width="600" height="auto" alt="Wild Mind AI" border="0"
                  style="display:block;width:100%;max-width:600px;border:0;outline:none;text-decoration:none;" />
           </td>
-        </tr>
+        </tr>`
+          : ""}
 
         ${bodyContent}
 
@@ -91,11 +102,14 @@ export function generateOTPEmailHTML(data: OTPEmailData): string {
         <!-- HEADING -->
         <tr>
           <td style="padding:36px 40px 10px;text-align:center;">
+            <p style="margin:0 0 10px;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#7f88b5;font-family:${FONT_STACK};">
+              ${companyName}
+            </p>
             <h1 style="margin:0 0 10px;font-size:26px;font-weight:700;color:#e8e8f0;font-family:${FONT_STACK};line-height:1.3;">
-              Verify Your Email Address
+              Your verification code
             </h1>
             <p style="margin:0;font-size:15px;color:#8888aa;font-family:${FONT_STACK};line-height:1.6;">
-              Use the code below to complete your sign-up.
+              Enter this code in the sign-up screen to finish verifying your email address.
             </p>
           </td>
         </tr>
@@ -118,7 +132,7 @@ export function generateOTPEmailHTML(data: OTPEmailData): string {
               &#x23F1; This code expires in <strong style="color:#aaaacc;">${expiresInMinutes} minutes</strong>.
             </p>
             <p style="margin:0;font-size:13px;color:#444466;font-family:${FONT_STACK};">
-              If you did not request this, you can safely ignore this email.
+              Requested from WildMind AI. If this was not you, you can ignore this email.
             </p>
           </td>
         </tr>
@@ -128,13 +142,16 @@ export function generateOTPEmailHTML(data: OTPEmailData): string {
           <td style="padding:0 40px 32px;">
             <div style="background-color:#16162a;border-left:3px solid #3a3a6a;border-radius:6px;padding:14px 18px;">
               <p style="margin:0;font-size:13px;color:#6666aa;font-family:${FONT_STACK};line-height:1.6;">
-                <strong style="color:#8888cc;">Security notice:</strong> ${companyName} will never ask for your code via phone or chat. Never share it with anyone.
+                <strong style="color:#8888cc;">Security notice:</strong> Never share this code with anyone. ${companyName} support will never ask for it by phone or chat.
               </p>
             </div>
           </td>
         </tr>`;
 
-  return wrapEmail(body, `Verify Your Email — ${companyName}`);
+  return wrapEmail(body, `Your ${companyName} verification code`, {
+    showBanner: false,
+    previewText: `${code} is your ${companyName} verification code. It expires in ${expiresInMinutes} minutes.`,
+  });
 }
 
 export function generateOTPEmailText(data: OTPEmailData): string {
@@ -147,11 +164,13 @@ export function generateOTPEmailText(data: OTPEmailData): string {
 
   return `${companyName} — Email Verification
 
-Your verification code: ${code}
+Your verification code is: ${code}
 
 This code expires in ${expiresInMinutes} minutes.
 
-Security: ${companyName} will never ask for your code via phone or chat.
+Enter this code in the WildMind AI sign-up screen to finish verifying your email address.
+
+Security: ${companyName} support will never ask for your code via phone or chat.
 
 If you did not request this, please ignore this email.
 

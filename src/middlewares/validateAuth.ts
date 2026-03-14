@@ -3,6 +3,19 @@ import { validationResult, body, query } from 'express-validator';
 import { ApiError } from '../utils/errorHandler';
 import { validateEmail } from '../utils/emailValidator';
 
+function normalizeForPasswordComparison(value?: string): string {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function passwordContainsUsername(password?: string, username?: string): boolean {
+  const normalizedUsername = normalizeForPasswordComparison(username);
+  if (normalizedUsername.length < 3) {
+    return false;
+  }
+
+  return normalizeForPasswordComparison(password).includes(normalizedUsername);
+}
+
 export const validateSession = [
   body('idToken').isString().notEmpty().withMessage('idToken is required'),
   (req: Request, _res: Response, next: NextFunction) => {
@@ -55,6 +68,22 @@ export const validateOtpVerify = [
   body('code').optional().isLength({ min: 6, max: 6 }).isNumeric().withMessage('Code must be 6 digits'),
   body('otp').optional().isLength({ min: 6, max: 6 }).isNumeric().withMessage('OTP must be 6 digits'),
   body('password').optional({ values: 'falsy' }).isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+  body('username')
+    .optional({ values: 'falsy' })
+    .isLength({ min: 3, max: 30 })
+    .matches(/^[a-z0-9_.-]+$/)
+    .withMessage('Username must be 3-30 chars: a-z0-9_.-'),
+  body('password').custom((password, { req }) => {
+    if (!password || !req.body?.username) {
+      return true;
+    }
+
+    if (passwordContainsUsername(password, req.body.username)) {
+      throw new Error('Password must not contain your username.');
+    }
+
+    return true;
+  }),
   (req: Request, _res: Response, next: NextFunction) => {
     console.log(`[VALIDATION] OTP Verify - Body:`, req.body);
     

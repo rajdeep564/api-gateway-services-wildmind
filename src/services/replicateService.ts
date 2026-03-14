@@ -4046,6 +4046,41 @@ export async function replicateQueueResult(
         );
         debitedCredits = cost;
         debitStatus = status;
+      } else if (model.includes("ltx-2.3-fast") || model.includes("ltx-2.3-pro")) {
+        const isProModel = model.includes("ltx-2.3-pro");
+        const { computeLtx23FastVideoCost } = await import("../utils/pricing/ltx23FastPricing");
+        const { computeLtx23ProVideoCost } = await import("../utils/pricing/ltx23ProPricing");
+        // Ensure duration and resolution have defaults if not stored in history
+        const duration = (fresh as any)?.duration ?? 6;
+        const resolution = (fresh as any)?.resolution ?? "1080p";
+        const fakeReq = {
+          body: {
+            duration: duration,
+            resolution: resolution,
+            model: (fresh as any)?.model,
+          },
+        } as any;
+        console.log('[replicateQueueResult] Computing LTX 2.3 cost', {
+          historyId,
+          model,
+          duration: duration,
+          resolution: resolution,
+          tier: isProModel ? "pro" : "fast",
+          generationType,
+        });
+        const { cost, pricingVersion, meta } = isProModel
+          ? await computeLtx23ProVideoCost(fakeReq as any)
+          : await computeLtx23FastVideoCost(fakeReq as any);
+        console.log('[replicateQueueResult] LTX 2.3 cost computed', { cost, pricingVersion, meta });
+        const status = await creditsRepository.writeDebitIfAbsent(
+          uid,
+          historyId,
+          cost,
+          `replicate.queue.${isProModel ? "ltx-2.3-pro" : "ltx-2.3-fast"}-${modeGuess}`,
+          { ...meta, historyId, provider: "replicate", pricingVersion }
+        );
+        debitedCredits = cost;
+        debitStatus = status;
       } else if (model.includes("wan-2.2-animate-replace")) {
         const nowMs = Date.now();
         const parseMs = (v: any): number => {
@@ -6100,6 +6135,478 @@ export async function pixverseI2vSubmit(
 }
 
 Object.assign(replicateService, { pixverseT2vSubmit, pixverseI2vSubmit });
+
+// ============ Queue-style API for Replicate LTX 2.3 Fast ============
+
+export async function ltx23FastT2vSubmit(
+  uid: string,
+  body: any
+): Promise<SubmitReturn> {
+  if (!body?.prompt) throw new ApiError("prompt is required", 400);
+  const replicate = ensureReplicate();
+  const modelBase = "lightricks/ltx-2.3-fast";
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator
+    ? { uid, username: creator.username, email: (creator as any)?.email }
+    : ({ uid } as any);
+  const durationSec = ((): number => {
+    const d = Number(body?.duration ?? 6);
+    return Math.max(2, Math.min(20, Math.round(d)));
+  })();
+  const res = ((): string => {
+    const r = String(body?.resolution ?? "1080p").toLowerCase();
+    if (r.includes("4k") || r.includes("2160")) return "4k";
+    if (r.includes("2k") || r.includes("1440")) return "2k";
+    return "1080p";
+  })();
+  const aspect = ((): string => {
+    const a = String(body?.aspect_ratio ?? "16:9");
+    return ["16:9", "9:16"].includes(a) ? a : "16:9";
+  })();
+  const fps = ((): number => {
+    const f = Number(body?.fps ?? 25);
+    return [24, 25, 48, 50].includes(f) ? f : 25;
+  })();
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt,
+    model: modelBase,
+    generationType: "text-to-video",
+    visibility: body.isPublic ? "public" : "private",
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    duration: durationSec as any,
+    resolution: res as any,
+  } as any);
+
+  const input: any = {
+    prompt: body.prompt,
+    duration: durationSec,
+    resolution: res,
+    aspect_ratio: aspect,
+    fps,
+  };
+  if (body.seed != null && Number.isInteger(Number(body.seed)))
+    input.seed = Number(body.seed);
+  if (body.camera_motion && body.camera_motion !== "none")
+    input.camera_motion = String(body.camera_motion);
+  if (body.generate_audio === false) {
+    input.generate_audio = false;
+  } else {
+    input.generate_audio = true;
+  }
+
+  let predictionId = "";
+  try {
+    let version: string | null = null;
+    try {
+      version = await getLatestModelVersion(replicate, modelBase);
+      console.log("[ltx23FastT2vSubmit] Model version lookup", {
+        modelBase,
+        version: version || "not found",
+      });
+    } catch (versionError: any) {
+      console.warn(
+        "[ltx23FastT2vSubmit] Version lookup failed, will try direct model",
+        { modelBase, error: versionError?.message }
+      );
+    }
+
+    console.log("[ltx23FastT2vSubmit] Creating prediction", {
+      modelBase,
+      version: version || "latest",
+      input,
+    });
+    const pred = await replicate.predictions.create(
+      version ? { version, input } : { model: modelBase, input }
+    );
+    predictionId = (pred as any)?.id || "";
+    if (!predictionId) throw new Error("Missing prediction id");
+    console.log("[ltx23FastT2vSubmit] Prediction created", { predictionId });
+  } catch (e: any) {
+    console.error("[ltx23FastT2vSubmit] Error creating prediction", {
+      modelBase,
+      error: e?.message || e,
+      stack: e?.stack,
+      statusCode: e?.statusCode,
+    });
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: e?.message || "Replicate submit failed",
+    } as any);
+
+    let errorMessage = e?.message || "Replicate API error";
+    const statusCode = e?.statusCode || e?.response?.status || e?.status;
+
+    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
+      errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+    }
+
+    if (statusCode === 404 || (errorMessage && errorMessage.includes("404"))) {
+      throw new ApiError(`Model "${modelBase}" not found on Replicate. Error: ${errorMessage}`, 404, e);
+    }
+    if (statusCode === 500 || statusCode === 502) {
+      throw new ApiError(errorMessage || "Replicate service is temporarily unavailable.", 502, e);
+    }
+
+    throw new ApiError(
+      `Failed to submit LTX 2.3 Fast T2V job: ${errorMessage}`,
+      502,
+      e
+    );
+  }
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: "replicate",
+    providerTaskId: predictionId,
+  } as any);
+  return {
+    requestId: predictionId,
+    historyId,
+    model: modelBase,
+    status: "submitted",
+  };
+}
+
+export async function ltx23FastI2vSubmit(
+  uid: string,
+  body: any
+): Promise<SubmitReturn> {
+  if (!body?.prompt) throw new ApiError("prompt is required", 400);
+  if (!body?.image) throw new ApiError("image is required", 400);
+  const replicate = ensureReplicate();
+  const modelBase = "lightricks/ltx-2.3-fast";
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator
+    ? { uid, username: creator.username, email: (creator as any)?.email }
+    : ({ uid } as any);
+  const durationSec = ((): number => {
+    const d = Number(body?.duration ?? 6);
+    return Math.max(2, Math.min(20, Math.round(d)));
+  })();
+  const res = ((): string => {
+    const r = String(body?.resolution ?? "1080p").toLowerCase();
+    if (r.includes("4k") || r.includes("2160")) return "4k";
+    if (r.includes("2k") || r.includes("1440")) return "2k";
+    return "1080p";
+  })();
+  const aspect = ((): string => {
+    const a = String(body?.aspect_ratio ?? "16:9");
+    return ["16:9", "9:16"].includes(a) ? a : "16:9";
+  })();
+  const fps = ((): number => {
+    const f = Number(body?.fps ?? 25);
+    return [24, 25, 48, 50].includes(f) ? f : 25;
+  })();
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt,
+    model: modelBase,
+    generationType: "image-to-video",
+    visibility: body.isPublic ? "public" : "private",
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    duration: durationSec as any,
+    resolution: res as any,
+    aspect_ratio: aspect as any,
+  } as any);
+
+  // Persist input image(s) to history
+  try {
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+    const urls: string[] = [];
+    if (typeof body.image === 'string') urls.push(String(body.image));
+    if (typeof body.last_frame_image === 'string') urls.push(String(body.last_frame_image));
+    const inputPersisted: any[] = [];
+    let idx = 0;
+    for (const src of urls) {
+      try {
+        const stored = /^data:/i.test(src)
+          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
+          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
+        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
+      } catch { }
+    }
+    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+  } catch { }
+
+  const input: any = {
+    prompt: body.prompt,
+    image: String(body.image),
+    duration: durationSec,
+    resolution: res,
+    aspect_ratio: aspect,
+    fps,
+  };
+  if (typeof body.last_frame_image === 'string' && body.last_frame_image.length > 0) {
+    input.last_frame_image = body.last_frame_image;
+  }
+  if (body.seed != null && Number.isInteger(Number(body.seed)))
+    input.seed = Number(body.seed);
+  if (body.camera_motion && body.camera_motion !== "none")
+    input.camera_motion = String(body.camera_motion);
+  if (body.generate_audio === false) {
+    input.generate_audio = false;
+  } else {
+    input.generate_audio = true;
+  }
+
+  let predictionId = "";
+  try {
+    let version: string | null = null;
+    try {
+      version = await getLatestModelVersion(replicate, modelBase);
+      console.log("[ltx23FastI2vSubmit] Model version lookup", {
+        modelBase,
+        version: version || "not found",
+      });
+    } catch (versionError: any) {
+      console.warn(
+        "[ltx23FastI2vSubmit] Version lookup failed, will try direct model",
+        { modelBase, error: versionError?.message }
+      );
+    }
+
+    console.log("[ltx23FastI2vSubmit] Creating prediction", {
+      modelBase,
+      version: version || "latest",
+      input,
+    });
+    const pred = await replicate.predictions.create(
+      version ? { version, input } : { model: modelBase, input }
+    );
+    predictionId = (pred as any)?.id || "";
+    if (!predictionId) throw new Error("Missing prediction id");
+    console.log("[ltx23FastI2vSubmit] Prediction created", { predictionId });
+  } catch (e: any) {
+    console.error("[ltx23FastI2vSubmit] Error creating prediction", {
+      modelBase,
+      error: e?.message || e,
+      stack: e?.stack,
+      statusCode: e?.statusCode,
+    });
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: e?.message || "Replicate submit failed",
+    } as any);
+
+    let errorMessage = e?.message || "Replicate API error";
+    const statusCode = e?.statusCode || e?.response?.status || e?.status;
+
+    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
+      errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+    }
+
+    if (statusCode === 404 || (errorMessage && errorMessage.includes("404"))) {
+      throw new ApiError(`Model "${modelBase}" not found on Replicate. Error: ${errorMessage}`, 404, e);
+    }
+    if (statusCode === 500 || statusCode === 502) {
+      throw new ApiError(errorMessage || "Replicate service is temporarily unavailable.", 502, e);
+    }
+
+    throw new ApiError(
+      `Failed to submit LTX 2.3 Fast I2V job: ${errorMessage}`,
+      502,
+      e
+    );
+  }
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: "replicate",
+    providerTaskId: predictionId,
+  } as any);
+  return {
+    requestId: predictionId,
+    historyId,
+    model: modelBase,
+    status: "submitted",
+  };
+}
+
+export async function ltx23ProT2vSubmit(
+  uid: string,
+  body: any
+): Promise<SubmitReturn> {
+  if (!body?.prompt) throw new ApiError("prompt is required", 400);
+  const replicate = ensureReplicate();
+  const modelBase = "lightricks/ltx-2.3-pro";
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator
+    ? { uid, username: creator.username, email: (creator as any)?.email }
+    : ({ uid } as any);
+  const durationSec = ((): number => {
+    const d = Number(body?.duration ?? 6);
+    const rounded = Math.round(d);
+    if (rounded <= 6) return 6;
+    if (rounded <= 8) return 8;
+    return 10;
+  })();
+  const res = ((): string => {
+    const r = String(body?.resolution ?? "1080p").toLowerCase();
+    if (r.includes("4k") || r.includes("2160")) return "4k";
+    if (r.includes("2k") || r.includes("1440")) return "2k";
+    return "1080p";
+  })();
+  const aspect = ((): string => {
+    const a = String(body?.aspect_ratio ?? "16:9");
+    return ["16:9", "9:16"].includes(a) ? a : "16:9";
+  })();
+  const fps = ((): number => {
+    const f = Number(body?.fps ?? 25);
+    return [24, 25, 48, 50].includes(f) ? f : 25;
+  })();
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt,
+    model: modelBase,
+    generationType: "text-to-video",
+    visibility: body.isPublic ? "public" : "private",
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    duration: durationSec as any,
+    resolution: res as any,
+    aspect_ratio: aspect as any,
+  } as any);
+
+  const input: any = {
+    prompt: body.prompt,
+    duration: durationSec,
+    resolution: res,
+    aspect_ratio: aspect,
+    fps,
+  };
+  if (body.seed != null && Number.isInteger(Number(body.seed))) input.seed = Number(body.seed);
+  if (body.camera_motion && body.camera_motion !== "none") input.camera_motion = String(body.camera_motion);
+  input.generate_audio = body.generate_audio === false ? false : true;
+  if (typeof body.audio === "string" && body.audio.length > 0) input.audio = body.audio;
+  if (typeof body.video === "string" && body.video.length > 0) input.video = body.video;
+  if (typeof body.task === "string" && body.task.length > 0) input.task = body.task;
+  if (typeof body.extend_mode === "string" && body.extend_mode.length > 0) input.extend_mode = body.extend_mode;
+  if (typeof body.retake_mode === "string" && body.retake_mode.length > 0) input.retake_mode = body.retake_mode;
+  if (body.retake_start_time != null) input.retake_start_time = Number(body.retake_start_time);
+  if (body.retake_duration != null) input.retake_duration = Number(body.retake_duration);
+
+  let predictionId = "";
+  try {
+    const version = await getLatestModelVersion(replicate, modelBase);
+    const pred = await replicate.predictions.create(
+      version ? { version, input } : { model: modelBase, input }
+    );
+    predictionId = (pred as any)?.id || "";
+    if (!predictionId) throw new Error("Missing prediction id");
+  } catch (e: any) {
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: e?.message || "Replicate submit failed",
+    } as any);
+    throw new ApiError(`Failed to submit LTX 2.3 Pro T2V job: ${e?.message || "Replicate API error"}`, 502, e);
+  }
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: "replicate",
+    providerTaskId: predictionId,
+  } as any);
+  return {
+    requestId: predictionId,
+    historyId,
+    model: modelBase,
+    status: "submitted",
+  };
+}
+
+export async function ltx23ProI2vSubmit(
+  uid: string,
+  body: any
+): Promise<SubmitReturn> {
+  if (!body?.prompt) throw new ApiError("prompt is required", 400);
+  if (!body?.image) throw new ApiError("image is required", 400);
+  const replicate = ensureReplicate();
+  const modelBase = "lightricks/ltx-2.3-pro";
+  const creator = await authRepository.getUserById(uid);
+  const createdBy = creator
+    ? { uid, username: creator.username, email: (creator as any)?.email }
+    : ({ uid } as any);
+  const durationSec = ((): number => {
+    const d = Number(body?.duration ?? 6);
+    const rounded = Math.round(d);
+    if (rounded <= 6) return 6;
+    if (rounded <= 8) return 8;
+    return 10;
+  })();
+  const res = ((): string => {
+    const r = String(body?.resolution ?? "1080p").toLowerCase();
+    if (r.includes("4k") || r.includes("2160")) return "4k";
+    if (r.includes("2k") || r.includes("1440")) return "2k";
+    return "1080p";
+  })();
+  const aspect = ((): string => {
+    const a = String(body?.aspect_ratio ?? "16:9");
+    return ["16:9", "9:16"].includes(a) ? a : "16:9";
+  })();
+  const fps = ((): number => {
+    const f = Number(body?.fps ?? 25);
+    return [24, 25, 48, 50].includes(f) ? f : 25;
+  })();
+  const { historyId } = await generationHistoryRepository.create(uid, {
+    prompt: body.prompt,
+    model: modelBase,
+    generationType: "image-to-video",
+    visibility: body.isPublic ? "public" : "private",
+    isPublic: body.isPublic ?? false,
+    createdBy,
+    duration: durationSec as any,
+    resolution: res as any,
+    aspect_ratio: aspect as any,
+  } as any);
+
+  const input: any = {
+    prompt: body.prompt,
+    image: String(body.image),
+    duration: durationSec,
+    resolution: res,
+    aspect_ratio: aspect,
+    fps,
+  };
+  if (typeof body.last_frame_image === "string" && body.last_frame_image.length > 0) input.last_frame_image = body.last_frame_image;
+  if (body.seed != null && Number.isInteger(Number(body.seed))) input.seed = Number(body.seed);
+  if (body.camera_motion && body.camera_motion !== "none") input.camera_motion = String(body.camera_motion);
+  input.generate_audio = body.generate_audio === false ? false : true;
+  if (typeof body.audio === "string" && body.audio.length > 0) input.audio = body.audio;
+  if (typeof body.video === "string" && body.video.length > 0) input.video = body.video;
+  if (typeof body.task === "string" && body.task.length > 0) input.task = body.task;
+  if (typeof body.extend_mode === "string" && body.extend_mode.length > 0) input.extend_mode = body.extend_mode;
+  if (typeof body.retake_mode === "string" && body.retake_mode.length > 0) input.retake_mode = body.retake_mode;
+  if (body.retake_start_time != null) input.retake_start_time = Number(body.retake_start_time);
+  if (body.retake_duration != null) input.retake_duration = Number(body.retake_duration);
+
+  let predictionId = "";
+  try {
+    const version = await getLatestModelVersion(replicate, modelBase);
+    const pred = await replicate.predictions.create(
+      version ? { version, input } : { model: modelBase, input }
+    );
+    predictionId = (pred as any)?.id || "";
+    if (!predictionId) throw new Error("Missing prediction id");
+  } catch (e: any) {
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: e?.message || "Replicate submit failed",
+    } as any);
+    throw new ApiError(`Failed to submit LTX 2.3 Pro I2V job: ${e?.message || "Replicate API error"}`, 502, e);
+  }
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: "replicate",
+    providerTaskId: predictionId,
+  } as any);
+  return {
+    requestId: predictionId,
+    historyId,
+    model: modelBase,
+    status: "submitted",
+  };
+}
+
+Object.assign(replicateService, {
+  ltx23FastT2vSubmit,
+  ltx23FastI2vSubmit,
+  ltx23ProT2vSubmit,
+  ltx23ProI2vSubmit
+});
 
 
 // ... existing code ...

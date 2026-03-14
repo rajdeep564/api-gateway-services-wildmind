@@ -20,6 +20,8 @@ import {
 } from "../middlewares/rateLimiter";
 import { ipFirewall } from "../middlewares/ipFirewall";
 import { moderationGuard } from "../middlewares/moderationGuard";
+import { optionalAuth } from "../middlewares/authMiddleware";
+import { authController } from "../controllers/auth/authController";
 import {
   sanitizeInput,
   detectInjectionAttacks,
@@ -463,6 +465,9 @@ app.get("/health/redis", async (_req, res) => {
     );
   }
 });
+
+// Explicit GET /api/auth/me so canvas and frontends always resolve auth (avoids 404 when opening projects)
+app.get("/api/auth/me", optionalAuth, authController.getCurrentUser);
 
 // API routes
 app.use("/api", routes);
