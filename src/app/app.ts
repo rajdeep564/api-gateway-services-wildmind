@@ -31,6 +31,7 @@ import { adminDb, admin } from "../config/firebaseAdmin";
 import { env } from "../config/env";
 import { creditsService } from "../services/creditsService";
 import { getRedisClient, isRedisEnabled } from "../config/redisClient";
+import { httpClient } from "../config/httpClient";
 // Note: dotenv is loaded in index.ts, no need to load here
 
 const app = express();
@@ -381,8 +382,29 @@ app.get("/debug-cors", (req, res) => {
 });
 
 // Health endpoint
-app.get("/health", (_req, res) => {
-  res.json(formatApiResponse("success", "OK", { uptime: process.uptime() }));
+app.get("/health", async (_req, res) => {
+  const openclawUrl = env.openclawGatewayUrl || "http://127.0.0.1:18789";
+  const openclawToken = env.openclawGatewayToken;
+
+  const openclawHealth = await httpClient
+    .get(`${openclawUrl}/health`, {
+      headers: {
+        ...(openclawToken ? { Authorization: `Bearer ${openclawToken}` } : {}),
+      },
+      timeout: 3000,
+    })
+    .then((r) => r.data)
+    .catch(() => ({ ok: false }));
+
+  res.json(
+    formatApiResponse("success", "OK", {
+      uptime: process.uptime(),
+      services: {
+        api: "up",
+        openclaw: openclawHealth?.ok ? "up" : "down",
+      },
+    }),
+  );
 });
 
 // Auth config health (does not leak secrets)

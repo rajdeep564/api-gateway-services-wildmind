@@ -6,8 +6,7 @@ let lastErrorLog = 0;
 const ERROR_THROTTLE_MS = 30000; // log at most once every 30s
 
 export function isRedisEnabled(): boolean {
-  return false; // Force disabled as Redis is not running
-  // return Boolean(env.redisUrl);
+  return Boolean(env.redisUrl);
 }
 
 export function getRedisClient(): RedisClientType | null {

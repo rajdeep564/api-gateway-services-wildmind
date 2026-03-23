@@ -160,6 +160,45 @@ export const pollingLimiter = rateLimit({
   }
 });
 
+/** Key by userId when set (after requireAuth), else IP. Use for authenticated routes only. */
+function userKeyGenerator(req: any): string {
+  const uid = req?.uid;
+  if (uid) return `user:${uid}`;
+  return req.ip ?? req.socket?.remoteAddress ?? 'anon';
+}
 
+// Per-user: conversation (converse + openclaw). Apply after requireAuth on /api/assistant.
+export const userConverseLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60, // 60 requests per minute per user
+  message: { status: 'error', message: 'Conversation rate limit exceeded, please slow down' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: userKeyGenerator,
+  skip: (req) => req.method !== 'POST', // only count POST (converse, openclaw)
+  ...(isRedisEnabled() && {
+    store: new RedisStore({
+      sendCommand: (...args: string[]) => getRedisClient()!.sendCommand(args),
+      prefix: 'rl:user:converse:'
+    })
+  })
+});
+
+// Per-user: orchestrator (plan, approve). Apply after requireAuth on /api/orchestrator.
+export const userOrchestratorLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30, // 30 requests per minute per user (plan + approve)
+  message: { status: 'error', message: 'Orchestrator rate limit exceeded, please slow down' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: userKeyGenerator,
+  skip: (req) => req.method === 'GET', // status polling stays unlimited by this limiter
+  ...(isRedisEnabled() && {
+    store: new RedisStore({
+      sendCommand: (...args: string[]) => getRedisClient()!.sendCommand(args),
+      prefix: 'rl:user:orchestrator:'
+    })
+  })
+});
 
 console.log('[Rate Limiter] Initialized with Redis:', isRedisEnabled() ? 'ENABLED' : 'DISABLED (in-memory)');

@@ -31,6 +31,10 @@ import subscriptionsRoutes from "./subscriptions";
 import webhooksRoutes from "./webhooks";
 import workflowsRoutes from "./workflows";
 import billingRoutes from "./billing";
+import orchestratorRoutes from "./orchestrator";
+import assistantRoutes from "./assistant";
+import agentRoutes from "./agent";
+import toolsRoutes from "./tools";
 import { contentModerationMiddleware } from "../middlewares/contentModeration";
 import { moderationGuard } from "../middlewares/moderationGuard";
 
@@ -68,6 +72,10 @@ router.use(
     "/webhooks",
     "/workflows",
     "/billing",
+    "/orchestrator",
+    "/assistant",
+    "/agent",
+    "/tools",
   ],
   moderationGuard,
 );
@@ -84,15 +92,16 @@ router.use(
     "/reimagine",
     "/wildmind",
     "/wildmindimage",
+    "/assistant",
   ],
   contentModerationMiddleware,
 );
-router.use("/bfl", bflRoutes);
-router.use("/fal", falRoutes);
-router.use("/minimax", minimaxRoutes);
-router.use("/runway", runwayRoutes);
+router.use("/bfl", bflRoutes); //
+router.use("/fal", falRoutes); //
+router.use("/minimax", minimaxRoutes); //
+router.use("/runway", runwayRoutes); //
 router.use("/generations", generationsRoutes);
-router.use("/library", libraryRoutes);
+router.use("/library", libraryRoutes); 
 router.use("/uploads", uploadsRoutes);
 router.use("/credits", creditsRoutes);
 router.use("/feed", publicGenerationsRoutes);
@@ -100,7 +109,7 @@ router.use("/engagement", engagementRoutes);
 router.use("/redeem-codes", redeemCodeRoutes);
 router.use("/proxy", proxyRoutes);
 router.use("/stickers", stickerRoutes);
-router.use("/replicate", replicateRoutes);
+router.use("/replicate", replicateRoutes); //
 router.use("/canvas", canvasRoutes);
 router.use("/prompt-enhancer", promptEnhancerRoutes);
 router.use("/replace", replaceRoutes);
@@ -113,5 +122,9 @@ router.use("/subscriptions", subscriptionsRoutes);
 router.use("/webhooks", webhooksRoutes);
 router.use("/workflows", workflowsRoutes);
 router.use("/billing", billingRoutes);
+router.use("/orchestrator", orchestratorRoutes);
+router.use("/assistant", assistantRoutes);
+router.use("/agent", agentRoutes);
+router.use("/tools", toolsRoutes());
 
 export default router;

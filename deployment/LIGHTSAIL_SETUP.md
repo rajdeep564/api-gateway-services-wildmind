@@ -98,6 +98,9 @@ sudo ln -s /etc/letsencrypt ~/wildmind-staging/certbot/conf/live
 cd ~/wildmind-staging/api-gateway-services-wildmind/deployment/
 chmod +x deploy.sh
 ./deploy.sh all
+
+# Required OpenClaw plugin gate (must pass)
+openclaw plugins list | grep wildmind-bridge | grep loaded
 ```
 
 ---
@@ -129,4 +132,18 @@ chmod +x deploy.sh
     }
   ]
 }
+```
+
+---
+
+## 9. OpenClaw Validation (post-deploy)
+
+```bash
+cd ~/wildmind-staging/api-gateway-services-wildmind/deployment/
+chmod +x validate-openclaw.sh
+./validate-openclaw.sh
+
+# For full stream smoke test:
+# export TEST_TOKEN="your_firebase_bearer_token"
+# ./validate-openclaw.sh
 ```

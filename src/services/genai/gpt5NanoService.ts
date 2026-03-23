@@ -1,63 +1,84 @@
+/**
+ * WildMind — GPT-5 via Replicate
+ *
+ * Exposes two model tiers, both accessed through Replicate (no OpenAI API key needed):
+ *
+ *   GPT_5_MODEL      = "openai/gpt-5"        ← full GPT-5, for planning / reasoning
+ *   GPT_5_NANO_MODEL = "openai/gpt-5-nano"   ← nano, for classification / chat
+ *
+ * The primary export `generateReplicateLLMResponse` accepts a `model` parameter.
+ * Legacy `generateGpt5NanoResponse` is kept for backward compatibility.
+ */
+
 import Replicate from 'replicate';
 import { env } from '../../config/env';
 
-const GPT5_NANO_MODEL = 'openai/gpt-5-nano';
+// ── Model IDs on Replicate ────────────────────────────────────────────────────
+export const GPT_5_MODEL      = 'openai/gpt-5' as const;
+export const GPT_5_NANO_MODEL = 'openai/gpt-5-nano' as const;
 
-let cachedReplicate: Replicate | null = null;
+export type ReplicateGPTModel = typeof GPT_5_MODEL | typeof GPT_5_NANO_MODEL;
+
+// ── Replicate singleton ───────────────────────────────────────────────────────
+let _replicate: Replicate | null = null;
 
 function getReplicateClient(): Replicate {
-    if (cachedReplicate) return cachedReplicate;
+    if (_replicate) return _replicate;
     const auth = env.replicateApiKey;
     if (!auth) throw new Error('REPLICATE_API_TOKEN is required');
-    cachedReplicate = new Replicate({ auth });
-    return cachedReplicate;
+    _replicate = new Replicate({ auth });
+    return _replicate;
 }
 
+// ── Shared types ──────────────────────────────────────────────────────────────
 export interface Gpt5NanoChatMessage {
     role: 'user' | 'assistant' | 'system';
     content: string;
 }
 
-export interface Gpt5NanoOptions {
+export interface ReplicateLLMOptions {
+    /** System prompt prepended to the conversation */
     systemPrompt?: string;
+    /** Prior conversation turns (for multi-turn chat) */
     messages?: Gpt5NanoChatMessage[];
+    /** Controls response verbosity on the model side */
     verbosity?: 'low' | 'medium' | 'high';
+    /** Controls chain-of-thought depth */
     reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
+    /** Hard token limit for the response */
     maxCompletionTokens?: number;
 }
 
+// Keep old name as alias for backward compat
+export type Gpt5NanoOptions = ReplicateLLMOptions;
+
+// ── Core function ─────────────────────────────────────────────────────────────
+
 /**
- * Calls GPT-5 Nano via Replicate using the messages array format for
- * proper multi-turn conversation support.
+ * Call any Replicate-hosted GPT-5 model (gpt-5 or gpt-5-nano).
  *
- * Input schema reference:
- *   - messages: [{role, content}] — preferred for conversation
- *   - verbosity: "low" | "medium" | "high"  (default "medium")
- *   - reasoning_effort: "minimal" | "low" | "medium" | "high"  (default "minimal")
- *   - max_completion_tokens: integer (optional)
- * Output: array of strings (concatenated = full response)
+ * @param userMessage  The latest user turn
+ * @param options      System prompt, history, token limits, etc.
+ * @param model        Which model to use. Defaults to GPT_5_MODEL (full GPT-5).
  */
-export async function generateGpt5NanoResponse(
+export async function generateReplicateLLMResponse(
     userMessage: string,
-    options: Gpt5NanoOptions = {}
+    options: ReplicateLLMOptions = {},
+    model: ReplicateGPTModel = GPT_5_MODEL,
 ): Promise<string> {
     if (!userMessage?.trim()) throw new Error('userMessage must be a non-empty string');
 
     const replicate = getReplicateClient();
 
-    // Build the messages array
+    // Build ordered messages array
     const messages: Gpt5NanoChatMessage[] = [];
 
     if (options.systemPrompt) {
         messages.push({ role: 'system', content: options.systemPrompt });
     }
-
-    // Append any prior conversation turns
     if (options.messages && options.messages.length > 0) {
         messages.push(...options.messages);
     }
-
-    // Append the new user message
     messages.push({ role: 'user', content: userMessage.trim() });
 
     const input: Record<string, any> = {
@@ -70,21 +91,34 @@ export async function generateGpt5NanoResponse(
         input.max_completion_tokens = options.maxCompletionTokens;
     }
 
-    console.log('[Gpt5NanoService] Calling GPT-5 Nano via Replicate', {
-        model: GPT5_NANO_MODEL,
+    console.log(`[ReplicateLLM] Calling ${model} via Replicate`, {
         messageCount: messages.length,
         verbosity: input.verbosity,
         reasoningEffort: input.reasoning_effort,
+        maxTokens: input.max_completion_tokens ?? 'unlimited',
     });
 
     try {
-        const output = await replicate.run(GPT5_NANO_MODEL, { input });
+        const output = await replicate.run(model, { input });
         const text = Array.isArray(output) ? output.join('') : String(output ?? '');
 
-        console.log('[Gpt5NanoService] ✅ Response received', { length: text.length });
+        console.log(`[ReplicateLLM] ✅ ${model} responded`, { length: text.length });
         return text.trim();
     } catch (error: any) {
-        console.error('[Gpt5NanoService] ❌ Failed:', error?.message);
-        throw new Error(`GPT-5 Nano generation failed: ${error?.message || 'Unknown error'}`);
+        console.error(`[ReplicateLLM] ❌ ${model} failed:`, error?.message);
+        throw new Error(`Replicate LLM (${model}) failed: ${error?.message || 'Unknown error'}`);
     }
+}
+
+// ── Legacy wrapper — backward compatible ──────────────────────────────────────
+
+/**
+ * @deprecated Use generateReplicateLLMResponse with GPT_5_NANO_MODEL instead.
+ * Kept for backward compatibility with chatAssistant.ts and other callers.
+ */
+export async function generateGpt5NanoResponse(
+    userMessage: string,
+    options: Gpt5NanoOptions = {},
+): Promise<string> {
+    return generateReplicateLLMResponse(userMessage, options, GPT_5_NANO_MODEL);
 }

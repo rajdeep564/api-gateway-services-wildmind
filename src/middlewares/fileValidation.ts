@@ -1,6 +1,55 @@
+/**
+ * File validation before permanent storage (SOC2 upload security).
+ * 1. Magic-byte validation (file type matches extension).
+ * 2. Optional antivirus scan — ClamAV when CLAMAV_ENABLED=true (CLAMAV_SOCKET or CLAMAV_SCAN_PATH).
+ */
+
 import { Request, Response, NextFunction } from 'express';
 import fs from 'fs';
 import { promisify } from 'util';
+import { spawn } from 'child_process';
+import path from 'path';
+
+const CLAMAV_ENABLED = process.env.CLAMAV_ENABLED === 'true';
+const CLAMAV_SOCKET = process.env.CLAMAV_SOCKET?.trim();
+const CLAMAV_SCAN_PATH = process.env.CLAMAV_SCAN_PATH?.trim() || 'clamscan';
+
+/**
+ * Scan file with ClamAV. When CLAMAV_ENABLED is not set, returns { ok: true } (no-op).
+ * Uses clamdscan with CLAMAV_SOCKET, or clamscan binary at CLAMAV_SCAN_PATH.
+ * Return { ok: false } on virus or scan error (fail closed).
+ */
+export async function scanFileForMalware(filePath: string): Promise<{ ok: boolean }> {
+  if (!CLAMAV_ENABLED) return { ok: true };
+
+  const normalizedPath = path.resolve(filePath);
+  return new Promise((resolve) => {
+    const useClamd = Boolean(CLAMAV_SOCKET);
+    const args = useClamd ? [normalizedPath] : ['--no-summary', '-i', normalizedPath];
+    const bin = useClamd ? 'clamdscan' : CLAMAV_SCAN_PATH;
+    const env = useClamd ? { ...process.env, CLAM_SOCKET: CLAMAV_SOCKET } : process.env;
+    const proc = spawn(bin, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+
+    let stderr = '';
+    proc.stderr?.on('data', (chunk) => { stderr += chunk.toString(); });
+    proc.on('error', (err) => {
+      console.warn('[FileValidation] ClamAV spawn error:', (err as Error)?.message);
+      resolve({ ok: false });
+    });
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve({ ok: true });
+        return;
+      }
+      if (code === 1) {
+        console.warn('[FileValidation] ClamAV: threat detected', normalizedPath, stderr.slice(0, 200));
+      } else {
+        console.warn('[FileValidation] ClamAV scan failed', { code, stderr: stderr.slice(0, 200) });
+      }
+      resolve({ ok: false });
+    });
+  });
+}
 
 const readChunk = async (filePath: string, length: number): Promise<Buffer> => {
   const handle = await promisify(fs.open)(filePath, 'r');
@@ -63,11 +112,20 @@ export const validateFileContent = async (req: Request, res: Response, next: Nex
 
     if (!isValid) {
       console.error(`[FileValidation] Invalid magic bytes for ${mimeType}. Hex: ${hex.slice(0, 32)}...`);
-      // Delete malicious file immediately
       fs.unlinkSync(filePath);
       return res.status(400).json({
         success: false,
         message: 'Invalid file format. File content does not match extension.',
+      });
+    }
+
+    // Antivirus: before permanent storage (SOC2). Implement scanFileForMalware for production (e.g. ClamAV).
+    const av = await scanFileForMalware(filePath);
+    if (!av.ok) {
+      fs.unlinkSync(filePath);
+      return res.status(400).json({
+        success: false,
+        message: 'File was rejected by security scan.',
       });
     }
 

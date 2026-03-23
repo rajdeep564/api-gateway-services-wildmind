@@ -78,7 +78,7 @@ export interface EnvConfig {
   // Development URLs
   devFrontendUrl?: string; // Development frontend URL (e.g., http://localhost:3000)
   devCanvasUrl?: string; // Development canvas URL (e.g., http://localhost:3001)
-  devBackendUrl?: string; // Development backend URL (e.g., http://localhost:5001)
+  devBackendUrl?: string; // Development backend URL (e.g., http://localhost:5000)
   // External Services
   bflApiBase?: string; // BFL API base URL
   apiGatewayUrl?: string; // API Gateway URL
@@ -91,6 +91,9 @@ export interface EnvConfig {
   ffmpegMaxConcurrency?: number; // FFmpeg max concurrent operations
   // Microservices
   creditServiceUrl: string;
+  openclawGatewayUrl?: string;
+  openclawGatewayToken?: string;
+  openclawAgentId?: string;
 }
 
 function normalizeBoolean(
@@ -116,7 +119,7 @@ function parseList(value: string | undefined): string[] {
 
 export const env: EnvConfig = {
   nodeEnv: process.env.NODE_ENV || "development",
-  port: Number(process.env.PORT || 5001),
+  port: Number(process.env.PORT || 5000),
   firebaseApiKey: process.env.FIREBASE_API_KEY,
   firebaseAuthDomain: process.env.FIREBASE_AUTH_DOMAIN,
   firebaseProjectId: process.env.FIREBASE_PROJECT_ID,
@@ -226,7 +229,7 @@ export const env: EnvConfig = {
   // Development URLs
   devFrontendUrl: process.env.DEV_FRONTEND_URL || "http://localhost:3000",
   devCanvasUrl: process.env.DEV_CANVAS_URL || "http://localhost:3001",
-  devBackendUrl: process.env.DEV_BACKEND_URL || "http://localhost:5001",
+  devBackendUrl: process.env.DEV_BACKEND_URL || "http://localhost:5000",
   // External Services
   bflApiBase: process.env.BFL_API_BASE || "https://api.bfl.ai",
   apiGatewayUrl: process.env.API_GATEWAY_URL,
@@ -250,6 +253,9 @@ export const env: EnvConfig = {
   // Microservices
   creditServiceUrl:
     process.env.CREDIT_SERVICE_URL || "http://credit-service:3000",
+  openclawGatewayUrl: process.env.OPENCLAW_GATEWAY_URL?.replace(/\/$/, ""),
+  openclawGatewayToken: process.env.OPENCLAW_GATEWAY_TOKEN,
+  openclawAgentId: process.env.OPENCLAW_AGENT_ID || "main",
 };
 
 /**
