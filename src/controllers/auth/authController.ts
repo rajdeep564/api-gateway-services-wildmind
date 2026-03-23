@@ -198,7 +198,7 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
           console.log("[AUTH][Redis] SET (createSession)", { uid, exp });
         }
       }
-    } catch {}
+    } catch { }
 
     // Initialize credits for this user (FREE plan on first use)
     try {
@@ -306,7 +306,7 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
       const canToggle = planCode === "PLAN_C" || planCode === "PLAN_D";
       (user as any).canTogglePublicGenerations = canToggle;
       (user as any).forcePublicGenerations = !canToggle;
-    } catch {}
+    } catch { }
 
     res.json(
       formatApiResponse("success", "User retrieved successfully", { user }),
@@ -382,7 +382,7 @@ async function logout(req: Request, res: Response, next: NextFunction) {
     // Even on error, try to clear cookies
     try {
       clearSessionCookie(res);
-    } catch {}
+    } catch { }
     next(error);
   }
 }
@@ -1099,9 +1099,10 @@ async function loginWithEmailPassword(
 ) {
   try {
     console.log("[AUTH][loginWithEmailPassword] ========== START ==========");
-    const { email, password } = req.body;
+    const identifier = String(req.body?.identifier || req.body?.email || "").trim();
+    const { password } = req.body;
     console.log(`[AUTH][loginWithEmailPassword] Login attempt`, {
-      email,
+      identifier,
       hasPassword: !!password,
       passwordLength: password?.length || 0,
       origin: req.headers.origin,
@@ -1114,13 +1115,13 @@ async function loginWithEmailPassword(
       "[AUTH][loginWithEmailPassword] Calling authService.loginWithEmailPassword...",
     );
     const result = await authService.loginWithEmailPassword(
-      email,
+      identifier,
       password,
       deviceInfo,
     );
 
     console.log(`[AUTH][loginWithEmailPassword] Login successful`, {
-      email,
+      identifier,
       uid: result.user?.uid,
       username: result.user?.username,
       hasPasswordLoginIdToken: !!result.passwordLoginIdToken,
@@ -1392,6 +1393,7 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
     const cookieDomain = env.cookieDomain;
     const isProd = env.nodeEnv === "production";
 
+
     if (oldToken) {
       // Delete old session from Redis cache
       try {
@@ -1415,7 +1417,7 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
           if (variant.secure || isProd) cookieString += "; Secure";
           res.setHeader("Set-Cookie", cookieString);
         });
-      } catch {}
+      } catch { }
     }
 
     // Create new session cookie with extended expiration (14 days / 2 weeks)
@@ -1729,7 +1731,7 @@ export async function debugSession(
             jwtInfo.isExpired = expiresInSec <= 0;
           }
         }
-      } catch {}
+      } catch { }
     }
 
     return res.json(
@@ -1826,6 +1828,7 @@ async function forgotPassword(req: Request, res: Response, next: NextFunction) {
       throw new ApiError("Email is required", 400);
     }
 
+
     const normalizedEmail = email.trim().toLowerCase();
     console.log(
       `[AUTH][forgotPassword] Password reset request for: ${normalizedEmail}`,
@@ -1887,8 +1890,13 @@ async function completeResetPassword(
   next: NextFunction,
 ) {
   try {
-    const { oobCode, newPassword } = req.body;
-    const result = await authService.completePasswordReset(oobCode, newPassword);
+    const { oobCode, newPassword, expiresAt, signature } = req.body;
+    const result = await authService.completePasswordReset(
+      oobCode,
+      newPassword,
+      Number(expiresAt),
+      signature,
+    );
 
     res.json(
       formatApiResponse("success", "Password reset successfully", {

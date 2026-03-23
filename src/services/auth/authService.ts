@@ -1,5 +1,6 @@
 import { admin } from "../../config/firebaseAdmin";
 import { env, getAppBaseUrl, resolveSafeAppBaseUrl } from "../../config/env";
+import crypto from "crypto";
 import { authRepository } from "../../repository/auth/authRepository"; // Updated with updateUserByEmail
 import { AppUser, ProviderId } from "../../types/authTypes";
 import { ApiError } from "../../utils/errorHandler";
@@ -219,7 +220,7 @@ async function startEmailOtp(
   }
 
   const code = Math.floor(100000 + Math.random() * 900000).toString();
-  const ttlSeconds = 300; // OTP valid for 300s (5m)
+  const ttlSeconds = 120; // OTP valid for 120s (2m)
   const expiresInMinutes = Math.ceil(ttlSeconds / 60); // Convert to minutes for email template
 
   console.log(
@@ -563,7 +564,7 @@ async function setUsernameOnly(
 }
 
 async function loginWithEmailPassword(
-  email: string,
+  identifier: string,
   password: string,
   deviceInfo?: any,
 ): Promise<{
@@ -571,6 +572,14 @@ async function loginWithEmailPassword(
   customToken: string;
   passwordLoginIdToken?: string;
 }> {
+  const email = await resolveEmailForLogin(identifier);
+  if (!email) {
+    throw new ApiError(
+      "No account found with this email address. Please sign up first.",
+      404,
+    );
+  }
+
   console.log(`[AUTH] Login attempt for email: ${email}`);
 
   if (email.includes("@")) {
@@ -812,7 +821,31 @@ async function loginWithEmailPassword(
 // Keyed by normalized email, value is the Unix timestamp (ms) when the email was last sent.
 // Entries are cleaned up automatically after the cooldown window to avoid unbounded growth.
 const PASSWORD_RESET_COOLDOWN_MS = 60 * 1000; // 60 seconds
+const PASSWORD_RESET_LINK_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const passwordResetCooldown = new Map<string, number>();
+
+function getPasswordResetSignatureSecret(): string {
+  return (
+    env.firebaseServiceAccountJson ||
+    env.firebaseServiceAccount ||
+    env.firebaseServiceAccountB64 ||
+    env.smtpPass ||
+    env.emailAppPassword ||
+    env.resendApiKey ||
+    env.firebaseApiKey ||
+    "wildmind-password-reset"
+  );
+}
+
+function createPasswordResetSignature(
+  oobCode: string,
+  expiresAt: number,
+): string {
+  return crypto
+    .createHmac("sha256", getPasswordResetSignatureSecret())
+    .update(`${oobCode}:${expiresAt}`)
+    .digest("hex");
+}
 
 function buildPublicPasswordResetLink(
   generatedResetLink: string,
@@ -827,11 +860,19 @@ function buildPublicPasswordResetLink(
     const oobCode = parsed.searchParams.get("oobCode");
     const lang = parsed.searchParams.get("lang");
     const apiKey = parsed.searchParams.get("apiKey");
+    const expiresAt = Date.now() + PASSWORD_RESET_LINK_TTL_MS;
 
     publicUrl.searchParams.set("mode", mode);
     if (oobCode) publicUrl.searchParams.set("oobCode", oobCode);
     if (lang) publicUrl.searchParams.set("lang", lang);
     if (apiKey) publicUrl.searchParams.set("apiKey", apiKey);
+    publicUrl.searchParams.set("expiresAt", String(expiresAt));
+    if (oobCode) {
+      publicUrl.searchParams.set(
+        "sig",
+        createPasswordResetSignature(oobCode, expiresAt),
+      );
+    }
 
     return publicUrl.toString();
   } catch {
@@ -1024,7 +1065,31 @@ async function sendPasswordResetEmail(
 async function completePasswordReset(
   oobCode: string,
   newPassword: string,
+  expiresAt?: number,
+  signature?: string,
 ): Promise<{ success: true; email: string }> {
+  if (!expiresAt || !signature) {
+    throw new ApiError(
+      "This password reset link has expired. Please request a new one.",
+      400,
+    );
+  }
+
+  if (Date.now() > expiresAt) {
+    throw new ApiError(
+      "This password reset link has expired. Please request a new one.",
+      400,
+    );
+  }
+
+  const expectedSignature = createPasswordResetSignature(oobCode, expiresAt);
+  if (signature !== expectedSignature) {
+    throw new ApiError(
+      "This password reset link is invalid or has already been used.",
+      400,
+    );
+  }
+
   const firebaseApiKey = env.firebaseApiKey;
   if (!firebaseApiKey) {
     throw new ApiError(
