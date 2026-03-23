@@ -57,27 +57,27 @@ export async function validateGenerationRequest(
  * @param params - Generation parameters (resolution, duration, etc.)
  * @returns Estimated size in bytes
  */
-export function estimateFileSize(type: 'image' | 'video', params?: {
-  width?: number;
-  height?: number;
+export function estimateFileSize(type: 'image' | 'video', params?: { 
+  width?: number; 
+  height?: number; 
   duration?: number;
   quality?: 'low' | 'medium' | 'high';
 }): number {
   const { width = 1024, height = 1024, duration = 5, quality = 'medium' } = params || {};
-
+  
   if (type === 'image') {
     // Estimate: pixels * bytes per pixel (JPEG compression factor)
     const pixels = width * height;
     const compressionFactor = quality === 'high' ? 0.5 : quality === 'low' ? 0.1 : 0.25;
     return Math.ceil(pixels * compressionFactor);
   }
-
+  
   if (type === 'video') {
     // Estimate: bitrate * duration
     // Typical bitrates: low=1Mbps, medium=5Mbps, high=10Mbps
     const bitrate = quality === 'high' ? 10_000_000 : quality === 'low' ? 1_000_000 : 5_000_000;
     return Math.ceil((bitrate / 8) * duration); // Convert bits to bytes
   }
-
+  
   return 10 * 1024 * 1024; // Default 10MB
 }

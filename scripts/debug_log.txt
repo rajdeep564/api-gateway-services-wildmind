@@ -1,0 +1,19 @@
+[Debug] Starting limited preview generation...
+[Debug] Found 1 templates.
+[Debug] Processing: Simply Elegant Black (00d8bde6-6d64-4848-9870-7185b36eefec)
+[Debug] Failed for 00d8bde6-6d64-4848-9870-7185b36eefec: Cannot read properties of undefined (reading 'fromObject')
+<anonymous>:1:11189
+Array.forEach (<anonymous>)
+TypeError: Cannot read properties of undefined (reading 'fromObject')
+<anonymous>:1:11189
+Array.forEach (<anonymous>)
+    at evaluate (evaluate at PreviewService.generatePreview (D:\project clone\wild mind editor\api-gateway-services-wildmind\src\services\previewService.ts:58:24), <anonymous>:2:30)
+    at ExecutionContext.#evaluate (D:\project clone\wild mind editor\api-gateway-services-wildmind\node_modules\puppeteer-core\src\cdp\ExecutionContext.ts:456:34)
+    at async ExecutionContext.evaluate (D:\project clone\wild mind editor\api-gateway-services-wildmind\node_modules\puppeteer-core\src\cdp\ExecutionContext.ts:293:12)
+    at async IsolatedWorld.evaluate (D:\project clone\wild mind editor\api-gateway-services-wildmind\node_modules\puppeteer-core\src\cdp\IsolatedWorld.ts:196:12)
+    at async CdpFrame.evaluate (D:\project clone\wild mind editor\api-gateway-services-wildmind\node_modules\puppeteer-core\src\api\Frame.ts:488:12)
+    at async CdpPage.evaluate (D:\project clone\wild mind editor\api-gateway-services-wildmind\node_modules\puppeteer-core\src\api\Page.ts:2341:12)
+    at async PreviewService.generatePreview (D:\project clone\wild mind editor\api-gateway-services-wildmind\src\services\previewService.ts:63:13)
+    at async debugPreviewGen (D:\project clone\wild mind editor\api-gateway-services-wildmind\scripts\debugPreviewGen.ts:33:29)
+    at window.renderTemplate (:11:19)
+    at <anonymous> (:48:27)

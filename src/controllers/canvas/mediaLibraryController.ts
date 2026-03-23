@@ -22,46 +22,21 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
       );
     }
 
-    // Fetch all image generations (text-to-image, logo, sticker, product, mockup, ad)
-    const imageGenerationTypes = [
-      'text-to-image',
-      'logo',
-      'logo-generation',
-      'sticker-generation',
-      'product-generation',
-      'mockup-generation',
-      'ad-generation',
-      'text-to-character',
-    ];
-
-    // Fetch all video generations
-    const videoGenerationTypes = [
-      'text-to-video',
-      'image-to-video',
-      'video-to-video',
-    ];
-
-    // Fetch image generations with a high limit to get all images
-    const imageResult = await generationHistoryService.listUserGenerations(uid, {
-      limit: 1000, // Large limit to get all images
-      status: 'completed',
-      generationType: imageGenerationTypes,
-    });
-
-    // Fetch video generations with a high limit to get all videos
-    const videoResult = await generationHistoryService.listUserGenerations(uid, {
-      limit: 1000, // Large limit to get all videos
-      status: 'completed',
-      generationType: videoGenerationTypes,
-    });
-
-    // Fetch all generations to get uploaded media (inputImages, inputVideos)
-    const allGenerationsResult = await generationHistoryService.listUserGenerations(uid, {
-      limit: 1000, // Large limit to get all generations
+    // Single list call to reduce backend load and cache pressure (was 3 separate calls)
+    const allResult = await generationHistoryService.listUserGenerations(uid, {
+      limit: 1000,
       status: 'completed',
     });
 
-    // Extract images from history entries
+    const imageGenerationTypes = new Set([
+      'text-to-image', 'logo', 'logo-generation', 'sticker-generation',
+      'product-generation', 'mockup-generation', 'ad-generation', 'text-to-character',
+    ]);
+    const videoGenerationTypes = new Set([
+      'text-to-video', 'image-to-video', 'video-to-video',
+    ]);
+
+    // Extract images, videos, and uploaded from the single result
     const images: Array<{
       id: string;
       url: string;
@@ -74,25 +49,6 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
       mediaId?: string;
     }> = [];
 
-    imageResult.items.forEach((item) => {
-      if (item.images && Array.isArray(item.images)) {
-        item.images.forEach((img: ImageMedia) => {
-          images.push({
-            id: `${item.id}-${img.id || Date.now()}`,
-            url: img.url || img.originalUrl || '',
-            type: 'image',
-            thumbnail: img.url, // Use main URL as thumbnail
-            prompt: item.prompt,
-            model: item.model,
-            createdAt: item.createdAt?.toString() || new Date().toISOString(),
-            storagePath: img.storagePath,
-            mediaId: img.id,
-          });
-        });
-      }
-    });
-
-    // Extract videos from history entries
     const videos: Array<{
       id: string;
       url: string;
@@ -105,25 +61,6 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
       mediaId?: string;
     }> = [];
 
-    videoResult.items.forEach((item) => {
-      if (item.videos && Array.isArray(item.videos)) {
-        item.videos.forEach((video: VideoMedia) => {
-          videos.push({
-            id: `${item.id}-${video.id || Date.now()}`,
-            url: video.url || '',
-            type: 'video',
-            thumbnail: video.thumbUrl || video.thumbnailUrl || video.url, // Use thumbUrl or url as thumbnail
-            prompt: item.prompt,
-            model: item.model,
-            createdAt: item.createdAt?.toString() || new Date().toISOString(),
-            storagePath: video.storagePath,
-            mediaId: video.id,
-          });
-        });
-      }
-    });
-
-    // Extract uploaded media (inputImages and inputVideos) from all history entries
     const uploaded: Array<{
       id: string;
       url: string;
@@ -136,7 +73,44 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
       mediaId?: string;
     }> = [];
 
-    allGenerationsResult.items.forEach((item) => {
+    allResult.items.forEach((item) => {
+      const genType = (item as any).generationType || (item as any).generation_type || '';
+
+      // Images from image-type generations
+      if (imageGenerationTypes.has(genType) && item.images && Array.isArray(item.images)) {
+        item.images.forEach((img: ImageMedia) => {
+          images.push({
+            id: `${item.id}-${img.id || Date.now()}`,
+            url: img.url || img.originalUrl || '',
+            type: 'image',
+            thumbnail: img.url,
+            prompt: item.prompt,
+            model: item.model,
+            createdAt: item.createdAt?.toString() || new Date().toISOString(),
+            storagePath: img.storagePath,
+            mediaId: img.id,
+          });
+        });
+      }
+
+      // Videos from video-type generations
+      if (videoGenerationTypes.has(genType) && item.videos && Array.isArray(item.videos)) {
+        item.videos.forEach((video: VideoMedia) => {
+          videos.push({
+            id: `${item.id}-${video.id || Date.now()}`,
+            url: video.url || '',
+            type: 'video',
+            thumbnail: video.thumbUrl || video.thumbnailUrl || video.url,
+            prompt: item.prompt,
+            model: item.model,
+            createdAt: item.createdAt?.toString() || new Date().toISOString(),
+            storagePath: video.storagePath,
+            mediaId: video.id,
+          });
+        });
+      }
+
+      // Uploaded media (inputImages, inputVideos) from any entry
       // Extract inputImages (uploaded images)
       const inputImages = (item as any).inputImages;
       if (inputImages && Array.isArray(inputImages)) {
@@ -197,34 +171,39 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
       return dateB - dateA;
     });
 
-    // Pagination logic
+    // Pagination logic; optional category = only return that category (saves bandwidth when user only views one tab)
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
+    const category = (req.query.category as string) || 'all'; // 'images' | 'videos' | 'music' | 'uploaded' | 'all'
+
     const startIndex = (page - 1) * limit;
     const endIndex = page * limit;
 
-    // Slice arrays based on pagination
     const paginatedImages = images.slice(startIndex, endIndex);
     const paginatedVideos = videos.slice(startIndex, endIndex);
     const paginatedUploaded = uploaded.slice(startIndex, endIndex);
+    const musicList: any[] = []; // TODO: Add music support later
+
+    const includeAll = !category || category === 'all';
+    const payload = {
+      images: includeAll || category === 'images' ? paginatedImages : [],
+      videos: includeAll || category === 'videos' ? paginatedVideos : [],
+      music: includeAll || category === 'music' ? musicList : [],
+      uploaded: includeAll || category === 'uploaded' ? paginatedUploaded : [],
+      pagination: {
+        page,
+        limit,
+        totalImages: images.length,
+        totalVideos: videos.length,
+        totalUploaded: uploaded.length,
+        hasMoreImages: endIndex < images.length,
+        hasMoreVideos: endIndex < videos.length,
+        hasMoreUploaded: endIndex < uploaded.length,
+      }
+    };
 
     return res.json(
-      formatApiResponse('success', 'Media library retrieved', {
-        images: paginatedImages,
-        videos: paginatedVideos,
-        music: [], // TODO: Add music support later
-        uploaded: paginatedUploaded,
-        pagination: {
-          page,
-          limit,
-          totalImages: images.length,
-          totalVideos: videos.length,
-          totalUploaded: uploaded.length,
-          hasMoreImages: endIndex < images.length,
-          hasMoreVideos: endIndex < videos.length,
-          hasMoreUploaded: endIndex < uploaded.length,
-        }
-      })
+      formatApiResponse('success', 'Media library retrieved', payload)
     );
   } catch (err) {
     console.error('[getMediaLibrary] Error:', err);

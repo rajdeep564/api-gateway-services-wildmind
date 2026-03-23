@@ -103,6 +103,50 @@ export async function requireAuth(
       throw new ApiError(errorMessage, 401);
     }
 
+    return await verifyTokenAndAttach(req, res, next, token);
+  } catch (error) {
+    // Handle ApiError instances
+    if (error instanceof ApiError) {
+      return next(error);
+    }
+    
+    // Handle unexpected errors
+    console.error('[AUTH][requireAuth] Unexpected error:', error);
+    return next(new ApiError('Unauthorized - Authentication failed', 401));
+  }
+}
+
+/**
+ * Middleware for routes that work with or without auth (e.g. GET /api/auth/me).
+ * When no token/cookie is present, sets req.uid = undefined and continues so the handler can return 200 with no user.
+ * Fixes 401 on localhost when the browser does not send app_session (e.g. different port or cookie domain).
+ */
+export async function optionalAuth(req: Request, res: Response, next: NextFunction) {
+  try {
+    let token = req.cookies?.[COOKIE_NAME];
+    if (!token) {
+      const authHeader = req.headers.authorization || (req.headers.Authorization as string | undefined);
+      if (authHeader && /^Bearer\s+/i.test(authHeader)) {
+        token = authHeader.replace(/^Bearer\s+/i, '').trim();
+      }
+    }
+    if (!token) {
+      (req as any).uid = undefined;
+      return next();
+    }
+    return await verifyTokenAndAttach(req, res, next, token);
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return next(error);
+    }
+    console.error('[AUTH][optionalAuth] Unexpected error:', error);
+    return next(new ApiError('Unauthorized - Authentication failed', 401));
+  }
+}
+
+/** Shared token verification and req.uid attachment; used by requireAuth and optionalAuth. */
+async function verifyTokenAndAttach(req: Request, res: Response, next: NextFunction, token: string): Promise<void> {
+  try {
     // Try Redis cache first for performance (avoids Firebase Admin API calls)
     // SECURITY FIX: Cross-check cached UID against the JWT's own uid/sub claim
     // This prevents stale cache entries from mapping a fresh token to the wrong user.
@@ -632,7 +676,6 @@ export async function requireAuth(
 
     return next();
   } catch (error) {
-    // Handle ApiError instances
     if (error instanceof ApiError) {
       return next(error);
     }
@@ -643,73 +686,3 @@ export async function requireAuth(
   }
 }
 
-/**
- * Optional auth: same token resolution as requireAuth, but never returns 401.
- * If a valid token is present, sets req.uid and req.authMethod; otherwise continues without them.
- * Use for routes that work both authenticated and anonymous (e.g. GET /api/auth/me).
- */
-export async function optionalAuth(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) {
-  try {
-    let token = req.cookies?.[COOKIE_NAME];
-    if (!token) {
-      const authHeader =
-        req.headers.authorization ||
-        (req.headers.Authorization as string | undefined);
-      if (authHeader && /^Bearer\s+/i.test(authHeader)) {
-        token = authHeader.replace(/^Bearer\s+/i, "").trim();
-      }
-    }
-    if (!token) {
-      return next();
-    }
-
-    try {
-      const cached = await getCachedSession(token);
-      if (cached?.uid) {
-        const nowSec = Math.floor(Date.now() / 1000);
-        if (cached.exp && cached.exp < nowSec) {
-          return next();
-        }
-        const tokenPayload = decodeJwtPayload(token);
-        const tokenUid =
-          tokenPayload?.uid || tokenPayload?.sub || tokenPayload?.user_id;
-        if (tokenUid && tokenUid !== cached.uid) {
-          await deleteCachedSession(token);
-        } else {
-          (req as any).uid = cached.uid;
-          (req as any).authMethod = "cached";
-          return next();
-        }
-      }
-    } catch (_e) {
-      // fall through to Firebase
-    }
-
-    let decoded: any;
-    try {
-      const payload = decodeJwtPayload(token);
-      const issuer = payload?.iss || "";
-      if (issuer.includes("securetoken.google.com")) {
-        decoded = await admin
-          .auth()
-          .verifyIdToken(token, env.authStrictRevocation);
-      } else {
-        decoded = await admin
-          .auth()
-          .verifySessionCookie(token, env.authStrictRevocation);
-      }
-      (req as any).uid = decoded.uid;
-      (req as any).authMethod = issuer.includes("session.firebase.google.com") ? "session" : "idToken";
-      return next();
-    } catch (_e) {
-      // Invalid or expired token — continue without auth
-      return next();
-    }
-  } catch (err) {
-    return next(err);
-  }
-}

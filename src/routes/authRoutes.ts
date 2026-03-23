@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { authController, sessionCacheStatus } from '../controllers/auth/authController';
 import { redeemCodeController } from '../controllers/redeemCodeController';
 import { publicVisibilityController } from '../controllers/auth/publicVisibilityController';
-import { requireAuth } from '../middlewares/authMiddleware';
+import { requireAuth, optionalAuth } from '../middlewares/authMiddleware';
 import { validateSession, validateOtpStart, validateOtpVerify, validateUsername, validateUpdateMe, validateLogin, validateGoogleSignIn, validateGoogleUsername, validateCheckUsername, validateForgotPassword, validateCompleteResetPassword } from '../middlewares/validateAuth';
 import { env } from '../config/env';
 
@@ -20,7 +20,7 @@ router.post('/email/verify', validateOtpVerify, authController.verifyEmailOtp);
 router.post('/email/username', validateUsername, authController.setEmailUsername);
 router.get('/resolve-email', authController.resolveEmail);
 router.get('/username/check', validateCheckUsername, authController.checkUsername);
-router.get('/me', requireAuth, authController.getCurrentUser);
+router.get('/me', optionalAuth, authController.getCurrentUser);
 router.patch('/me', requireAuth, validateUpdateMe, authController.updateUser);
 router.post('/session/refresh', requireAuth, validateSession, authController.refreshSession);
 router.post('/logout', authController.logout);

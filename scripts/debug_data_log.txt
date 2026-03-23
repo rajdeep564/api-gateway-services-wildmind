@@ -1,0 +1,8 @@
+Template ID: 00d8bde6-6d64-4848-9870-7185b36eefec
+Template Name: Simply Elegant Black
+Object Count: 19
+Object 0 Type: shape
+Object 1 Type: shape
+Object 2 Type: text
+Object 3 Type: text
+Object 4 Type: text

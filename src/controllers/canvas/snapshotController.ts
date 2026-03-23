@@ -7,6 +7,8 @@ import { ApiError } from '../../utils/errorHandler';
 import { CanvasSnapshot } from '../../types/canvas';
 import { admin } from '../../config/firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
+import { setCurrentSession, isCurrentSession } from '../../services/canvas/projectSessionStore';
+import { notifyProjectOpenedElsewhere } from '../../services/canvas/canvasSessionNotifier';
 
 export async function getSnapshot(req: Request, res: Response) {
   try {
@@ -324,10 +326,51 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
     //   snapshot.elements[el.id] = el;
     // }
 
-    res.json(formatApiResponse('success', 'Current snapshot retrieved', { snapshot }));
+    // 5. Track "project opened" for "opened elsewhere" popup (hybrid: WebSocket + optional polling)
+    const canvasSessionId = req.get('x-canvas-session-id') || undefined;
+    if (canvasSessionId && canvasSessionId.trim()) {
+      setCurrentSession(projectId, canvasSessionId.trim());
+      notifyProjectOpenedElsewhere(projectId, canvasSessionId.trim());
+    }
+
+    return res.json(formatApiResponse('success', 'Current snapshot retrieved', { snapshot }));
   } catch (error: any) {
     res.status(error.statusCode || 500).json(
       formatApiResponse('error', error.message || 'Failed to get snapshot', null)
+    );
+  }
+}
+
+/** GET /projects/:id/session-status — Polling fallback for "project opened elsewhere". Returns sessionIsCurrent. */
+export async function getSessionStatus(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+    const { id: projectId } = req.params;
+    const rawSessionId = req.get('x-canvas-session-id') || req.query.sessionId;
+    const canvasSessionId: string | null =
+      typeof rawSessionId === 'string' ? rawSessionId
+        : Array.isArray(rawSessionId) && typeof rawSessionId[0] === 'string' ? rawSessionId[0]
+          : null;
+
+    const project = await projectRepository.getProject(projectId);
+    if (!project) {
+      throw new ApiError('Project not found', 404);
+    }
+    const hasAccess =
+      project.ownerUid === userId ||
+      project.collaborators.some(c => c.uid === userId);
+    if (!hasAccess) {
+      throw new ApiError('Access denied', 403);
+    }
+
+    const sessionIsCurrent = isCurrentSession(projectId, canvasSessionId || null);
+    return res.json(formatApiResponse('success', 'Session status', { sessionIsCurrent }));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to get session status', null)
     );
   }
 }

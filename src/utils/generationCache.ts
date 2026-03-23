@@ -4,6 +4,15 @@ import { GenerationHistoryItem } from '../types/generate';
 const CACHE_TTL = 60 * 120; // 2 hours cache for generation items
 const LIST_CACHE_TTL = 60 * 60; // 1 hour for list results
 
+/** Log "no Redis" only once per process to avoid flooding when Redis is not configured */
+let noRedisWarned = false;
+function warnNoRedisOnce(context?: string) {
+  if (!noRedisWarned) {
+    noRedisWarned = true;
+    console.warn('[generationCache] No Redis client available; cache disabled.', context || '');
+  }
+}
+
 function getClient() {
   return getRedisClient();
 }
@@ -45,7 +54,7 @@ export async function getCachedItem(uid: string, historyId: string): Promise<Gen
   try {
     const client = getClient();
     if (!client) {
-      console.log('[generationCache] ❌ No Redis client available');
+      warnNoRedisOnce();
       return null;
     }
     const key = getItemCacheKey(uid, historyId);
@@ -69,7 +78,7 @@ export async function setCachedItem(uid: string, historyId: string, item: Genera
   try {
     const client = getClient();
     if (!client) {
-      console.log('[generationCache] ❌ No Redis client available for caching');
+      warnNoRedisOnce();
       return;
     }
     const key = getItemCacheKey(uid, historyId);
@@ -103,7 +112,7 @@ export async function getCachedList(uid: string, params: any): Promise<any | nul
   try {
     const client = getClient();
     if (!client) {
-      console.log('[generationCache] ❌ No Redis client available');
+      warnNoRedisOnce();
       return null;
     }
     const key = getListCacheKey(uid, params);
@@ -127,7 +136,7 @@ export async function setCachedList(uid: string, params: any, result: any): Prom
   try {
     const client = getClient();
     if (!client) {
-      console.log('[generationCache] ❌ No Redis client available for list caching');
+      warnNoRedisOnce();
       return;
     }
     const key = getListCacheKey(uid, params);

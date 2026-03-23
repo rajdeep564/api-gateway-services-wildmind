@@ -179,7 +179,7 @@ async function createSession(req: Request, res: Response, next: NextFunction) {
           console.log("[AUTH][Redis] SET (createSession)", { uid, exp });
         }
       }
-    } catch {}
+    } catch { }
 
     // Initialize credits for this user (FREE plan on first use)
     try {
@@ -287,7 +287,7 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
       const canToggle = planCode === "PLAN_C" || planCode === "PLAN_D";
       (user as any).canTogglePublicGenerations = canToggle;
       (user as any).forcePublicGenerations = !canToggle;
-    } catch {}
+    } catch { }
 
     res.json(
       formatApiResponse("success", "User retrieved successfully", { user }),
@@ -363,7 +363,7 @@ async function logout(req: Request, res: Response, next: NextFunction) {
     // Even on error, try to clear cookies
     try {
       clearSessionCookie(res);
-    } catch {}
+    } catch { }
     next(error);
   }
 }
@@ -1374,6 +1374,7 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
     const cookieDomain = env.cookieDomain;
     const isProd = env.nodeEnv === "production";
 
+
     if (oldToken) {
       // Delete old session from Redis cache
       try {
@@ -1397,7 +1398,7 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
           if (variant.secure || isProd) cookieString += "; Secure";
           res.setHeader("Set-Cookie", cookieString);
         });
-      } catch {}
+      } catch { }
     }
 
     // Create new session cookie with extended expiration (14 days / 2 weeks)
@@ -1710,7 +1711,7 @@ export async function debugSession(
             jwtInfo.isExpired = expiresInSec <= 0;
           }
         }
-      } catch {}
+      } catch { }
     }
 
     return res.json(
@@ -1806,6 +1807,7 @@ async function forgotPassword(req: Request, res: Response, next: NextFunction) {
     if (!email || typeof email !== "string" || !email.trim()) {
       throw new ApiError("Email is required", 400);
     }
+
 
     const normalizedEmail = email.trim().toLowerCase();
     console.log(
