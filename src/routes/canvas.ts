@@ -62,6 +62,7 @@ router.post('/projects/:id/snapshot', snapshotController.createSnapshot);
 router.get('/projects/:id/snapshot/current', snapshotController.getCurrentSnapshot);
 router.put('/projects/:id/snapshot/current', snapshotController.setCurrentSnapshot);
 router.get('/projects/:id/session-status', snapshotController.getSessionStatus);
+router.post('/projects/:id/session-takeover/respond', snapshotController.respondToSessionTakeover);
 
 import { makeCreditCost } from '../middlewares/creditCostFactory';
 import {

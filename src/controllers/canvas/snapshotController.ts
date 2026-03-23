@@ -7,8 +7,8 @@ import { ApiError } from '../../utils/errorHandler';
 import { CanvasSnapshot } from '../../types/canvas';
 import { admin } from '../../config/firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
-import { setCurrentSession, isCurrentSession } from '../../services/canvas/projectSessionStore';
-import { notifyProjectOpenedElsewhere } from '../../services/canvas/canvasSessionNotifier';
+import { getSessionState, requestSessionTakeover, resolveSessionTakeover } from '../../services/canvas/projectSessionStore';
+import { notifyProjectOpenedElsewhere, notifySessionTakeoverAccepted, notifySessionTakeoverRejected, notifySessionTakeoverRequested } from '../../services/canvas/canvasSessionNotifier';
 
 export async function getSnapshot(req: Request, res: Response) {
   try {
@@ -329,8 +329,13 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
     // 5. Track "project opened" for "opened elsewhere" popup (hybrid: WebSocket + optional polling)
     const canvasSessionId = req.get('x-canvas-session-id') || undefined;
     if (canvasSessionId && canvasSessionId.trim()) {
-      setCurrentSession(projectId, canvasSessionId.trim());
-      notifyProjectOpenedElsewhere(projectId, canvasSessionId.trim());
+      const normalizedSessionId = canvasSessionId.trim();
+      const takeover = requestSessionTakeover(projectId, normalizedSessionId);
+      if (takeover.status === 'granted') {
+        notifyProjectOpenedElsewhere(projectId, normalizedSessionId);
+      } else if (takeover.currentSessionId) {
+        notifySessionTakeoverRequested(projectId, takeover.currentSessionId, normalizedSessionId);
+      }
     }
 
     return res.json(formatApiResponse('success', 'Current snapshot retrieved', { snapshot }));
@@ -366,8 +371,8 @@ export async function getSessionStatus(req: Request, res: Response) {
       throw new ApiError('Access denied', 403);
     }
 
-    const sessionIsCurrent = isCurrentSession(projectId, canvasSessionId || null);
-    return res.json(formatApiResponse('success', 'Session status', { sessionIsCurrent }));
+    const sessionState = getSessionState(projectId, canvasSessionId || null);
+    return res.json(formatApiResponse('success', 'Session status', sessionState));
   } catch (error: any) {
     res.status(error.statusCode || 500).json(
       formatApiResponse('error', error.message || 'Failed to get session status', null)
@@ -375,3 +380,52 @@ export async function getSessionStatus(req: Request, res: Response) {
   }
 }
 
+export async function respondToSessionTakeover(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+    const { id: projectId } = req.params;
+    const { action } = req.body as { action?: 'accept' | 'reject' };
+    const rawSessionId = req.get('x-canvas-session-id');
+    const sessionId = typeof rawSessionId === 'string' ? rawSessionId.trim() : '';
+
+    if (!sessionId) {
+      throw new ApiError('Session id is required', 400);
+    }
+    if (action !== 'accept' && action !== 'reject') {
+      throw new ApiError('Invalid action', 400);
+    }
+
+    const project = await projectRepository.getProject(projectId);
+    if (!project) {
+      throw new ApiError('Project not found', 404);
+    }
+    const hasAccess =
+      project.ownerUid === userId ||
+      project.collaborators.some(c => c.uid === userId);
+    if (!hasAccess) {
+      throw new ApiError('Access denied', 403);
+    }
+
+    const result = resolveSessionTakeover(projectId, sessionId, action);
+    if (result.requesterSessionId) {
+      if (action === 'accept') {
+        notifySessionTakeoverAccepted(projectId, result.requesterSessionId, sessionId);
+      } else {
+        notifySessionTakeoverRejected(projectId, result.requesterSessionId);
+      }
+    }
+
+    return res.json(formatApiResponse('success', 'Session takeover handled', {
+      action,
+      requesterSessionId: result.requesterSessionId,
+      currentSessionId: result.currentSessionId,
+    }));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to respond to session takeover', null)
+    );
+  }
+}
