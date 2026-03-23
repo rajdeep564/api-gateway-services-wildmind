@@ -160,6 +160,42 @@ async function getEmailByUsername(username: string): Promise<string | null> {
   return data.email || null;
 }
 
+async function searchUsersByQuery(
+  query: string,
+  limit: number = 10,
+): Promise<AppUser[]> {
+  const normalized = String(query || "").trim().toLowerCase();
+  if (!normalized) return [];
+
+  const usersRef = adminDb.collection("users");
+
+  // Firestore doesn't support OR prefix queries in one call, so run two and merge.
+  const [usernameSnap, emailSnap] = await Promise.all([
+    usersRef
+      .where("username", ">=", normalized)
+      .where("username", "<=", normalized + "\uf8ff")
+      .limit(limit)
+      .get(),
+    usersRef
+      .where("email", ">=", normalized)
+      .where("email", "<=", normalized + "\uf8ff")
+      .limit(limit)
+      .get(),
+  ]);
+
+  const merged = new Map<string, AppUser>();
+  usernameSnap.docs.forEach((doc) => {
+    const user = doc.data() as AppUser;
+    if (user?.uid) merged.set(user.uid, user);
+  });
+  emailSnap.docs.forEach((doc) => {
+    const user = doc.data() as AppUser;
+    if (user?.uid) merged.set(user.uid, user);
+  });
+
+  return Array.from(merged.values()).slice(0, limit);
+}
+
 async function updateUser(
   uid: string,
   updates: Partial<AppUser>,
@@ -279,6 +315,7 @@ export const authRepository = {
   updateUserByEmail,
   getUserByEmail,
   getEmailByUsername,
+  searchUsersByQuery,
   saveOtp,
   verifyAndConsumeOtp,
 };

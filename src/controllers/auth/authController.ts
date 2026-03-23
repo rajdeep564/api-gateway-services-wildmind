@@ -34,6 +34,25 @@ async function checkUsername(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+async function searchUsersForShare(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const query = String(req.query.query || "").trim();
+    if (query.length < 2) {
+      res.json(formatApiResponse("success", "Search query too short", { users: [] }));
+      return;
+    }
+    const currentUid = req.uid as string | undefined;
+    const users = await authService.searchUsersForSharing(query, currentUid);
+    res.json(formatApiResponse("success", "Users fetched", { users }));
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function createSession(req: Request, res: Response, next: NextFunction) {
   try {
     console.log("[AUTH][createSession] ========== START ==========");
@@ -1452,6 +1471,7 @@ export const authController = {
   completeResetPassword,
   setGoogleUsername,
   checkUsername,
+  searchUsersForShare,
   refreshSession,
   debugSession,
 };

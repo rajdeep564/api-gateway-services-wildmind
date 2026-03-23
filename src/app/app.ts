@@ -147,6 +147,8 @@ const corsOptions: any = {
   allowedHeaders: [
     "Content-Type",
     "Authorization",
+    "x-canvas-session-id",
+    "X-Canvas-Session-Id",
     "X-Requested-With",
     "X-Request-Id",
     "X-Device-Id",

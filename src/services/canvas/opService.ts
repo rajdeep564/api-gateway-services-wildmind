@@ -9,18 +9,19 @@ export async function appendOp(
   userId: string,
   op: Omit<CanvasOp, 'id' | 'opIndex' | 'createdAt' | 'projectId' | 'actorUid'>
 ): Promise<{ opId: string; opIndex: number }> {
-  // Verify user has access
+  // Verify user has edit access
   const project = await projectRepository.getProject(projectId);
   if (!project) {
     throw new ApiError('Project not found', 404);
   }
 
-  const hasAccess = 
-    project.ownerUid === userId ||
-    project.collaborators.some(c => c.uid === userId);
-  
-  if (!hasAccess) {
-    throw new ApiError('Access denied', 403);
+  const userRole =
+    project.ownerUid === userId
+      ? 'owner'
+      : project.collaborators.find((collaborator) => collaborator.uid === userId)?.role;
+
+  if (userRole !== 'owner' && userRole !== 'editor') {
+    throw new ApiError('Only owners and editors can modify projects', 403);
   }
 
   // Check for duplicate requestId
@@ -247,4 +248,3 @@ export const opService = {
   getOpsAfterIndex,
   computeInverseOp,
 };
-

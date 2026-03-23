@@ -20,6 +20,7 @@ router.post('/email/verify', validateOtpVerify, authController.verifyEmailOtp);
 router.post('/email/username', validateUsername, authController.setEmailUsername);
 router.get('/resolve-email', authController.resolveEmail);
 router.get('/username/check', validateCheckUsername, authController.checkUsername);
+router.get('/users/search', requireAuth, authController.searchUsersForShare);
 router.get('/me', optionalAuth, authController.getCurrentUser);
 router.patch('/me', requireAuth, validateUpdateMe, authController.updateUser);
 router.post('/session/refresh', requireAuth, validateSession, authController.refreshSession);
