@@ -1080,9 +1080,10 @@ async function loginWithEmailPassword(
 ) {
   try {
     console.log("[AUTH][loginWithEmailPassword] ========== START ==========");
-    const { email, password } = req.body;
+    const identifier = String(req.body?.identifier || req.body?.email || "").trim();
+    const { password } = req.body;
     console.log(`[AUTH][loginWithEmailPassword] Login attempt`, {
-      email,
+      identifier,
       hasPassword: !!password,
       passwordLength: password?.length || 0,
       origin: req.headers.origin,
@@ -1095,13 +1096,13 @@ async function loginWithEmailPassword(
       "[AUTH][loginWithEmailPassword] Calling authService.loginWithEmailPassword...",
     );
     const result = await authService.loginWithEmailPassword(
-      email,
+      identifier,
       password,
       deviceInfo,
     );
 
     console.log(`[AUTH][loginWithEmailPassword] Login successful`, {
-      email,
+      identifier,
       uid: result.user?.uid,
       username: result.user?.username,
       hasPasswordLoginIdToken: !!result.passwordLoginIdToken,
@@ -1867,8 +1868,13 @@ async function completeResetPassword(
   next: NextFunction,
 ) {
   try {
-    const { oobCode, newPassword } = req.body;
-    const result = await authService.completePasswordReset(oobCode, newPassword);
+    const { oobCode, newPassword, expiresAt, signature } = req.body;
+    const result = await authService.completePasswordReset(
+      oobCode,
+      newPassword,
+      Number(expiresAt),
+      signature,
+    );
 
     res.json(
       formatApiResponse("success", "Password reset successfully", {
