@@ -34,7 +34,7 @@ async function checkUsername(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-async function searchUsersForShare(
+export async function searchUsersForShare(
   req: Request,
   res: Response,
   next: NextFunction,
@@ -1459,6 +1459,7 @@ async function refreshSession(req: Request, res: Response, next: NextFunction) {
 }
 
 export const authController = {
+  searchUsersForShare: searchUsersForShare,
   forgotPassword,
   createSession,
   getCurrentUser,
@@ -1473,7 +1474,6 @@ export const authController = {
   completeResetPassword,
   setGoogleUsername,
   checkUsername,
-  searchUsersForShare,
   refreshSession,
   debugSession,
 };
