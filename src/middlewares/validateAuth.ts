@@ -132,9 +132,31 @@ export const validateUpdateMe = [
 ];
 
 export const validateLogin = [
-  body('email').isEmail().withMessage('Valid email is required'),
+  body('identifier')
+    .optional()
+    .isString()
+    .trim()
+    .notEmpty()
+    .withMessage('Email or username is required'),
+  body('email')
+    .optional()
+    .isString()
+    .trim()
+    .notEmpty()
+    .withMessage('Email or username is required'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+  body().custom((_, { req }) => {
+    const identifier = String(req.body?.identifier || req.body?.email || '').trim();
+    if (!identifier) {
+      throw new Error('Email or username is required');
+    }
+    return true;
+  }),
   (req: Request, _res: Response, next: NextFunction) => {
+    if (!req.body?.identifier && req.body?.email) {
+      req.body.identifier = req.body.email;
+    }
+
     console.log(`[VALIDATION] Login - Body:`, req.body);
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -173,6 +195,13 @@ export const validateForgotPassword = [
 
 export const validateCompleteResetPassword = [
   body('oobCode').isString().notEmpty().withMessage('Reset code is required'),
+  body('expiresAt')
+    .isInt({ min: 1 })
+    .withMessage('Reset link expiry is required'),
+  body('signature')
+    .isString()
+    .notEmpty()
+    .withMessage('Reset link signature is required'),
   body('newPassword')
     .isString()
     .isLength({ min: 8, max: 14 })

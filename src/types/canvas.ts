@@ -6,6 +6,7 @@ export interface CanvasProject {
   name: string;
   description?: string;
   ownerUid: string;
+  collaboratorUids?: string[];
   collaborators: Array<{
     uid: string;
     role: 'owner' | 'editor' | 'viewer';
@@ -21,6 +22,23 @@ export interface CanvasProject {
   lastSnapshotAt?: Timestamp;
   thumbnail?: string;
   previewImages?: string[];
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface CanvasInvitation {
+  id: string;
+  projectId: string;
+  projectName: string;
+  ownerUid: string;
+  senderUid: string;
+  senderEmail?: string;
+  senderUsername?: string;
+  recipientUid: string;
+  recipientEmail: string;
+  recipientUsername?: string;
+  role: 'owner' | 'editor' | 'viewer';
+  status: 'pending' | 'accepted' | 'dismissed';
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -235,4 +253,3 @@ export interface CanvasGenerationRequest {
     elementId?: string;
   };
 }
-

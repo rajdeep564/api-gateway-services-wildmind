@@ -123,16 +123,17 @@ export function startRealtimeServer(server: HttpServer) {
   const rooms = new Map<string, Set<WebSocket>>(); // projectId -> clients
 
   // Register "project opened elsewhere" broadcaster: notify all tabs except the one that just opened
-  registerCanvasSessionBroadcaster((projectId: string, openerSessionId: string | null) => {
+  registerCanvasSessionBroadcaster((projectId: string, payload: any, targetSessionId: string | null = null, exceptSessionId: string | null = null) => {
     const room = rooms.get(projectId);
     if (!room) return;
-    const payload = JSON.stringify({ type: 'project_opened_elsewhere' });
+    const data = JSON.stringify(payload);
     for (const ws of room) {
       const sid = (ws as any).canvasSessionId;
-      if (openerSessionId != null && sid === openerSessionId) continue; // don't notify the new opener
+      if (targetSessionId != null && sid !== targetSessionId) continue;
+      if (exceptSessionId != null && sid === exceptSessionId) continue;
       if (ws.readyState === WebSocket.OPEN) {
         try {
-          ws.send(payload);
+          ws.send(data);
         } catch (_e) { /* ignore */ }
       }
     }

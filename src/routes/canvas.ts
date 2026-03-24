@@ -42,6 +42,13 @@ router.get('/projects/:id', projectsController.getProject);
 router.patch('/projects/:id', projectsController.updateProject);
 router.delete('/projects/:id', projectsController.deleteProject);
 router.post('/projects/:id/collaborators', projectsController.addCollaborator);
+router.post('/projects/:id/invitations', projectsController.inviteCollaborator);
+router.get('/invitations', projectsController.listInvitations);
+router.get('/invitations/sent', projectsController.listSentInvitations);
+router.post('/invitations/:invitationId/accept', projectsController.acceptInvitation);
+router.post('/invitations/:invitationId/dismiss', projectsController.dismissInvitation);
+router.post('/invitations/:invitationId/cancel', projectsController.cancelSentInvitation);
+router.patch('/invitations/:invitationId/role', projectsController.updateSentInvitationRole);
 
 // Operations
 // Removed ops routes to reduce server-side op churn
@@ -55,6 +62,7 @@ router.post('/projects/:id/snapshot', snapshotController.createSnapshot);
 router.get('/projects/:id/snapshot/current', snapshotController.getCurrentSnapshot);
 router.put('/projects/:id/snapshot/current', snapshotController.setCurrentSnapshot);
 router.get('/projects/:id/session-status', snapshotController.getSessionStatus);
+router.post('/projects/:id/session-takeover/respond', snapshotController.respondToSessionTakeover);
 
 import { makeCreditCost } from '../middlewares/creditCostFactory';
 import {

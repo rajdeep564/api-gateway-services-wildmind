@@ -243,7 +243,7 @@ export function generatePasswordResetEmailHTML(
           <td style="padding:8px 40px 32px;">
             <div style="background-color:#16162a;border-left:3px solid #3a3a6a;border-radius:6px;padding:14px 18px;">
               <p style="margin:0 0 6px;font-size:13px;color:#8888cc;font-family:${FONT_STACK};">
-                &#x23F1; This link expires in <strong>1 hour</strong>.
+                &#x23F1; This link expires in <strong>15 minutes</strong>.
               </p>
               <p style="margin:0;font-size:13px;color:#6666aa;font-family:${FONT_STACK};">
                 If you did not request a password reset, you can safely ignore this email — your password will remain unchanged.
@@ -271,7 +271,7 @@ We received a request to reset your password.
 Reset your password here:
 ${resetLink}
 
-This link expires in 1 hour.
+This link expires in 15 minutes.
 
 If you did not request a password reset, you can safely ignore this email.
 
