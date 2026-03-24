@@ -447,6 +447,24 @@ async function updateUser(
   return await authRepository.updateUser(uid, updates);
 }
 
+async function searchUsersForSharing(
+  query: string,
+  currentUid?: string,
+): Promise<Array<{ uid: string; username: string; email: string }>> {
+  const normalized = String(query || "").trim().toLowerCase();
+  if (normalized.length < 2) return [];
+
+  const users = await authRepository.searchUsersByQuery(normalized, 10);
+  return users
+    .filter((u) => !!u?.uid && !!u?.username && !!u?.email)
+    .filter((u) => (currentUid ? u.uid !== currentUid : true))
+    .map((u) => ({
+      uid: u.uid,
+      username: u.username,
+      email: u.email,
+    }));
+}
+
 async function resolveEmailForLogin(
   identifier: string,
 ): Promise<string | null> {
@@ -1409,6 +1427,7 @@ export const authService = {
   googleSignIn,
   setGoogleUsername,
   checkUsernameAvailability,
+  searchUsersForSharing,
   sendPasswordResetEmail,
   completePasswordReset,
 };
