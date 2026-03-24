@@ -190,8 +190,8 @@ export async function writeDebitIfAbsent(
     throw new Error('Debit failed');
   } catch (e: any) {
     if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
-      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, skipping debit');
-      return 'WRITTEN';
+      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, debit not written');
+      return 'SKIPPED';
     }
 
     handleAxiosError(e, 'writeDebitIfAbsent');

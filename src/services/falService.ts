@@ -2155,26 +2155,6 @@ async function generate(
       // Sync to mirror immediately with provider URLs
       await syncToMirror(uid, historyId);
 
-      // STRICT CREDIT REDUCTION
-      if (ctx && ctx.creditCost && ctx.creditCost > 0) {
-        try {
-          await creditsRepository.writeDebitIfAbsent(
-            uid,
-            historyId,
-            ctx.creditCost,
-            'fal-generate',
-            {
-              model,
-              ...(ctx.meta || {}),
-              pricingVersion: ctx.pricingVersion || 'v1',
-            }
-          );
-          console.log(`[falService.generate] Debited ${ctx.creditCost} credits for ${uid}`);
-        } catch (error) {
-           console.error('[falService.generate] Failed to deduct credits:', error);
-        }
-      }
-
       // Best-effort: background upload to Zata, then replace URLs in history/mirror and re-score
       setImmediate(async () => {
         try {
