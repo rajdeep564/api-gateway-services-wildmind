@@ -194,6 +194,27 @@ export const validateFalVeoTextToVideo = [
 
 export const validateFalVeoTextToVideoFast = validateFalVeoTextToVideo;
 
+// Veo 3.1 Text-to-Video (standard and fast)
+// Note: Veo 3.1 queue submit currently rejects "1:1" and only accepts auto, 16:9, 9:16.
+export const validateFalVeo31TextToVideo = [
+  body('prompt').isString().notEmpty(),
+  body('aspect_ratio').optional().isIn(['auto', '16:9', '9:16']),
+  body('duration').optional().isIn(['4s', '6s', '8s']),
+  body('negative_prompt').optional().isString(),
+  body('enhance_prompt').optional().isBoolean(),
+  body('seed').optional().isInt(),
+  body('auto_fix').optional().isBoolean(),
+  body('resolution').optional().isIn(['720p', '1080p', '4k']),
+  body('generate_audio').optional().isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    next();
+  }
+];
+
+export const validateFalVeo31TextToVideoFast = validateFalVeo31TextToVideo;
+
 // Veo3 Image-to-Video (standard and fast)
 export const validateFalVeoImageToVideo = [
   body('prompt').isString().notEmpty(),
@@ -202,7 +223,7 @@ export const validateFalVeoImageToVideo = [
   // Allow 4s, 6s or 8s durations (was only '8s')
   body('duration').optional().isIn(['4s', '6s', '8s']),
   body('generate_audio').optional().isBoolean(),
-  body('resolution').optional().isIn(['720p', '1080p']),
+  body('resolution').optional().isIn(['720p', '1080p', '4k']),
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));

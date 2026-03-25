@@ -74,6 +74,14 @@ function tryConvertProxyResourceToZataUrl(src: string): { key: string; publicUrl
   }
 }
 
+function normalizeVeo31AspectRatio(input: any): 'auto' | '16:9' | '9:16' {
+  const ar = typeof input === 'string' ? input : undefined;
+  if (!ar) return 'auto';
+  if (ar === '16:9' || ar === '9:16' || ar === 'auto') return ar;
+  // Veo 3.1 endpoints currently reject "1:1" and other ratios
+  return 'auto';
+}
+
 /**
  * Resize image to 1MP (1,000,000 pixels) while maintaining aspect ratio
  * @param imageBuffer - The image buffer to resize
@@ -4835,11 +4843,16 @@ export const falQueueService = {
     fal.config({ credentials: falKey });
     if (!body?.prompt) throw new ApiError('Prompt is required', 400);
     const model = fast ? 'fal-ai/veo3.1/fast' : 'fal-ai/veo3.1';
+    const resolvedAspectRatio = (() => {
+      // T2V defaults to 16:9; normalize any unsupported ratios to 'auto'
+      if (!body?.aspect_ratio) return '16:9';
+      return normalizeVeo31AspectRatio(body.aspect_ratio);
+    })();
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
-        aspect_ratio: body.aspect_ratio ?? '16:9',
+        aspect_ratio: resolvedAspectRatio,
         duration: body.duration ?? '8s',
         negative_prompt: body.negative_prompt,
         enhance_prompt: body.enhance_prompt ?? true,
@@ -4849,7 +4862,7 @@ export const falQueueService = {
         generate_audio: body.generate_audio ?? true,
       },
     } as any);
-    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: body.aspect_ratio ?? '16:9' } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: resolvedAspectRatio } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   async veo31I2vSubmit(uid: string, body: any, fast = false): Promise<SubmitReturn> {
@@ -4861,6 +4874,7 @@ export const falQueueService = {
     const duration = typeof body.duration === 'number' ? `${body.duration}s` : (body.duration || '8s');
     const resolution = body.resolution || '720p';
 
+    const resolvedAspectRatio = normalizeVeo31AspectRatio(body?.aspect_ratio);
     const { historyId } = await queueCreateHistory(uid, {
       prompt: body.prompt,
       model,
@@ -4868,7 +4882,7 @@ export const falQueueService = {
       // store meta fields for later pricing/debit
       duration,
       resolution,
-      aspect_ratio: body.aspect_ratio ?? 'auto',
+      aspect_ratio: resolvedAspectRatio,
       generate_audio: body.generate_audio ?? true,
     } as any);
 
@@ -4894,7 +4908,7 @@ export const falQueueService = {
       input: {
         prompt: body.prompt,
         image_url: imageUrl,
-        aspect_ratio: body.aspect_ratio ?? 'auto',
+        aspect_ratio: resolvedAspectRatio,
         duration,
         generate_audio: body.generate_audio ?? true,
         resolution,
@@ -4966,6 +4980,7 @@ export const falQueueService = {
 
     const model = 'fal-ai/veo3.1/fast/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    const resolvedAspectRatio = normalizeVeo31AspectRatio(body?.aspect_ratio);
 
     // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
     const creator = await authRepository.getUserById(uid);
@@ -4995,13 +5010,13 @@ export const falQueueService = {
         prompt: body.prompt,
         first_frame_url: firstUrl,
         last_frame_url: lastUrl,
-        aspect_ratio: body.aspect_ratio ?? 'auto',
+        aspect_ratio: resolvedAspectRatio,
         duration: body.duration ?? '8s',
         generate_audio: body.generate_audio ?? true,
         resolution: body.resolution ?? '720p',
       },
     } as any);
-    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: body.aspect_ratio ?? 'auto' } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: resolvedAspectRatio } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   async veo31FirstLastSubmit(uid: string, body: any): Promise<SubmitReturn> {
@@ -5027,6 +5042,7 @@ export const falQueueService = {
 
     const model = 'fal-ai/veo3.1/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    const resolvedAspectRatio = normalizeVeo31AspectRatio(body?.aspect_ratio);
 
     // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
     const creator = await authRepository.getUserById(uid);
@@ -5056,13 +5072,13 @@ export const falQueueService = {
         prompt: body.prompt,
         first_frame_url: firstUrl,
         last_frame_url: lastUrl,
-        aspect_ratio: body.aspect_ratio ?? 'auto',
+        aspect_ratio: resolvedAspectRatio,
         duration: body.duration ?? '8s',
         generate_audio: body.generate_audio ?? true,
         resolution: body.resolution ?? '720p',
       },
     } as any);
-    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: body.aspect_ratio ?? 'auto' } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: resolvedAspectRatio } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   // Sora 2 - Image to Video (standard)

@@ -81,15 +81,12 @@ export function getSessionState(projectId: string, sessionId: string | null): {
   waitingForApproval: boolean;
   rejected: boolean;
   hasActiveSession: boolean;
-  takeoverRequested: boolean;
 } {
   const state = ensureState(projectId);
-  const sessionIsCurrent = sessionId == null ? true : state.currentSessionId === sessionId;
   return {
-    sessionIsCurrent,
+    sessionIsCurrent: sessionId == null ? true : state.currentSessionId === sessionId,
     waitingForApproval: sessionId != null && state.pendingRequesterSessionId === sessionId,
     rejected: sessionId != null && state.lastRejectedSessionId === sessionId,
     hasActiveSession: state.currentSessionId != null,
-    takeoverRequested: sessionIsCurrent && state.pendingRequesterSessionId != null,
   };
 }
