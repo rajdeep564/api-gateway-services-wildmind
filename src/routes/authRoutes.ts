@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authController, sessionCacheStatus } from '../controllers/auth/authController';
+import { authController, searchUsersForShare, sessionCacheStatus } from '../controllers/auth/authController';
 import { redeemCodeController } from '../controllers/redeemCodeController';
 import { publicVisibilityController } from '../controllers/auth/publicVisibilityController';
 import { requireAuth, optionalAuth } from '../middlewares/authMiddleware';
@@ -20,7 +20,7 @@ router.post('/email/verify', validateOtpVerify, authController.verifyEmailOtp);
 router.post('/email/username', validateUsername, authController.setEmailUsername);
 router.get('/resolve-email', authController.resolveEmail);
 router.get('/username/check', validateCheckUsername, authController.checkUsername);
-router.get('/users/search', requireAuth, authController.searchUsersForShare);
+router.get('/users/search', requireAuth, searchUsersForShare);
 router.get('/me', optionalAuth, authController.getCurrentUser);
 router.patch('/me', requireAuth, validateUpdateMe, authController.updateUser);
 router.post('/session/refresh', requireAuth, validateSession, authController.refreshSession);

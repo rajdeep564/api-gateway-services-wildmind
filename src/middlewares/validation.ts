@@ -109,7 +109,7 @@ const XSS_PATTERNS = [
  * Check for injection attempts
  */
 export const detectInjectionAttacks = (req: Request, res: Response, next: NextFunction) => {
-  const textFields = ['text', 'prompt', 'lyrics', 'bio', 'description', 'message'];
+  const textFields = ['text', 'prompt', 'lyrics', 'bio', 'description', 'message', 'search', 'q'];
 
   const checkValue = (value: any, path: string = ''): boolean => {
     if (typeof value === 'string') {

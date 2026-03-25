@@ -47,7 +47,12 @@ export async function computeFalImageCost(req: Request): Promise<{ cost: number;
   } else if (m.includes('google/nano-banana-pro') || m.includes('nano-banana-pro')) {
     // Google Nano Banana Pro: resolution-based pricing (same as Replicate)
     const nanoRes = String(res || '2K').toUpperCase();
-    if (nanoRes === '4K') {
+    const is4K =
+      nanoRes === '4K' ||
+      nanoRes.includes('AUTO_4K') ||
+      nanoRes.includes('2160') ||
+      nanoRes.includes('4096');
+    if (is4K) {
       display = 'Nano banana Pro 4K';
     } else {
       display = 'Nano banana Pro 2K'; // Default to 2K (320 credits) or 1K (320 credits)
