@@ -4802,6 +4802,92 @@ async function kling26ProI2vSubmit(uid: string, body: any): Promise<SubmitReturn
   return { requestId: request_id, historyId, model, status: 'submitted' };
 }
 
+async function klingV3Submit(uid: string, body: any, tier: 'standard' | 'pro', mode: 'text-to-video' | 'image-to-video'): Promise<SubmitReturn> {
+  const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+  fal.config({ credentials: falKey });
+
+  const prompt = typeof body?.prompt === 'string' ? body.prompt : undefined;
+  const multiPrompt = Array.isArray(body?.multi_prompt) ? body.multi_prompt : undefined;
+  if (!prompt && (!multiPrompt || multiPrompt.length === 0)) {
+    throw new ApiError('Prompt or multi_prompt is required', 400);
+  }
+
+  const model = `fal-ai/kling-video/v3/${tier}/${mode}`;
+  const duration = typeof body.duration === 'string' ? body.duration : (body.duration ? `${body.duration}` : '5');
+  const creator = await authRepository.getUserById(uid);
+  const username = creator?.username || uid;
+  const { historyId } = await queueCreateHistory(uid, { prompt: prompt || 'Multi-shot Kling 3 generation', model, isPublic: body.isPublic });
+  const keyPrefix = `users/${username}/input/${historyId}`;
+
+  let startImageUrl = body.start_image_url;
+  let endImageUrl = body.end_image_url;
+
+  if (mode === 'image-to-video') {
+    if (!startImageUrl) throw new ApiError('start_image_url is required', 400);
+    try {
+      if (typeof startImageUrl === 'string' && /^data:/i.test(startImageUrl)) {
+        const stored = await uploadDataUriToZata({ dataUri: startImageUrl, keyPrefix, fileName: 'start-image' });
+        startImageUrl = stored.publicUrl;
+      }
+      if (typeof endImageUrl === 'string' && /^data:/i.test(endImageUrl)) {
+        const stored = await uploadDataUriToZata({ dataUri: endImageUrl, keyPrefix, fileName: 'end-image' });
+        endImageUrl = stored.publicUrl;
+      }
+      const persistedInputUrls = [startImageUrl, endImageUrl].filter((value): value is string => typeof value === 'string' && value.length > 0);
+      if (persistedInputUrls.length > 0) {
+        await persistInputImagesFromUrls(uid, historyId, persistedInputUrls);
+      }
+    } catch (e: any) {
+      console.error(`[falService.klingV3Submit] Failed to upload ${tier} ${mode} image to Zata:`, e);
+    }
+  }
+
+  const input: Record<string, any> = {
+    duration,
+    generate_audio: body.generate_audio !== false,
+    shot_type: body.shot_type ?? 'customize',
+    negative_prompt: body.negative_prompt ?? 'blur, distort, and low quality',
+    cfg_scale: body.cfg_scale ?? 0.5,
+  };
+
+  if (prompt) input.prompt = prompt;
+  if (multiPrompt && multiPrompt.length > 0) input.multi_prompt = multiPrompt;
+  if (mode === 'text-to-video') {
+    input.aspect_ratio = body.aspect_ratio ?? '16:9';
+  } else {
+    input.start_image_url = startImageUrl;
+    if (endImageUrl) input.end_image_url = endImageUrl;
+    if (Array.isArray(body.elements) && body.elements.length > 0) input.elements = body.elements;
+  }
+
+  const { request_id } = await fal.queue.submit(model, { input } as any);
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: 'fal',
+    providerTaskId: request_id,
+    generate_audio: body.generate_audio !== false,
+    duration,
+    aspect_ratio: body.aspect_ratio ?? '16:9',
+  } as any);
+
+  return { requestId: request_id, historyId, model, status: 'submitted' };
+}
+
+async function klingV3StandardT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  return klingV3Submit(uid, body, 'standard', 'text-to-video');
+}
+
+async function klingV3StandardI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  return klingV3Submit(uid, body, 'standard', 'image-to-video');
+}
+
+async function klingV3ProT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  return klingV3Submit(uid, body, 'pro', 'text-to-video');
+}
+
+async function klingV3ProI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  return klingV3Submit(uid, body, 'pro', 'image-to-video');
+}
+
 export const falQueueService = {
   veoTtvSubmit,
   veoI2vSubmit,
@@ -4809,6 +4895,10 @@ export const falQueueService = {
   klingO1ReferenceSubmit,
   kling26ProT2vSubmit,
   kling26ProI2vSubmit,
+  klingV3StandardT2vSubmit,
+  klingV3StandardI2vSubmit,
+  klingV3ProT2vSubmit,
+  klingV3ProI2vSubmit,
   // Veo 3.1 variants
   async veo31TtvSubmit(uid: string, body: any, fast = false): Promise<SubmitReturn> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);

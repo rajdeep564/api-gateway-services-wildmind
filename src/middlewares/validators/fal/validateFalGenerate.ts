@@ -390,6 +390,80 @@ export const validateFalKling26ProI2v = [
   }
 ];
 
+const normalizeKlingV3Duration = (rawDuration: unknown): string => {
+  const parsed = typeof rawDuration === 'number'
+    ? rawDuration
+    : parseInt(String(rawDuration ?? '5').replace(/s$/i, ''), 10);
+
+  if (!Number.isFinite(parsed)) return '5';
+  const clamped = Math.min(15, Math.max(3, parsed));
+  return String(clamped);
+};
+
+const validateKlingV3PromptFields = (bodyValue: any) => {
+  const hasPrompt = typeof bodyValue?.prompt === 'string' && bodyValue.prompt.trim().length > 0;
+  const hasMultiPrompt = Array.isArray(bodyValue?.multi_prompt) && bodyValue.multi_prompt.length > 0;
+  return hasPrompt || hasMultiPrompt;
+};
+
+export const validateFalKlingV3T2v = [
+  body('prompt').optional().isString(),
+  body('multi_prompt').optional().isArray(),
+  body('duration').optional().custom((value) => {
+    if (value == null) return true;
+    const parsed = typeof value === 'number' ? value : parseInt(String(value).replace(/s$/i, ''), 10);
+    return Number.isFinite(parsed) && parsed >= 3 && parsed <= 15;
+  }).withMessage('duration must be between 3 and 15 seconds'),
+  body('generate_audio').optional().isBoolean(),
+  body('shot_type').optional().isIn(['customize', 'intelligent']),
+  body('aspect_ratio').optional().isIn(['16:9', '9:16', '1:1']),
+  body('negative_prompt').optional().isString(),
+  body('cfg_scale').optional().isFloat({ min: 0, max: 1 }),
+  body('elements').optional().isArray(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    if (!validateKlingV3PromptFields(req.body)) {
+      return next(new ApiError('prompt or multi_prompt is required', 400));
+    }
+    (req.body as any).duration = normalizeKlingV3Duration((req.body as any)?.duration);
+    next();
+  }
+];
+
+export const validateFalKlingV3I2v = [
+  body('prompt').optional().isString(),
+  body('multi_prompt').optional().isArray(),
+  body('start_image_url').optional().isString(),
+  body('image_url').optional().isString(),
+  body('end_image_url').optional().isString(),
+  body('duration').optional().custom((value) => {
+    if (value == null) return true;
+    const parsed = typeof value === 'number' ? value : parseInt(String(value).replace(/s$/i, ''), 10);
+    return Number.isFinite(parsed) && parsed >= 3 && parsed <= 15;
+  }).withMessage('duration must be between 3 and 15 seconds'),
+  body('generate_audio').optional().isBoolean(),
+  body('shot_type').optional().isIn(['customize', 'intelligent']),
+  body('negative_prompt').optional().isString(),
+  body('cfg_scale').optional().isFloat({ min: 0, max: 1 }),
+  body('elements').optional().isArray(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    if (!req.body?.start_image_url && typeof req.body?.image_url === 'string') {
+      req.body.start_image_url = req.body.image_url;
+    }
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+    if (!validateKlingV3PromptFields(req.body)) {
+      return next(new ApiError('prompt or multi_prompt is required', 400));
+    }
+    if (!req.body?.start_image_url || typeof req.body.start_image_url !== 'string') {
+      return next(new ApiError('start_image_url is required (alias: image_url)', 400));
+    }
+    (req.body as any).duration = normalizeKlingV3Duration((req.body as any)?.duration);
+    next();
+  }
+];
+
 export const validateFalVeoTextToVideoSubmit = validateFalVeoTextToVideo;
 export const validateFalVeoTextToVideoFastSubmit = validateFalVeoTextToVideoFast;
 export const validateFalVeoImageToVideoSubmit = validateFalVeoImageToVideo;

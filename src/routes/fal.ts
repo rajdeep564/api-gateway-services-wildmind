@@ -33,6 +33,10 @@ import {
   computeFalKlingO1SubmitCost,
   computeFalKling26ProT2vSubmitCost,
   computeFalKling26ProI2vSubmitCost,
+  computeFalKlingV3StandardT2vSubmitCost,
+  computeFalKlingV3StandardI2vSubmitCost,
+  computeFalKlingV3ProT2vSubmitCost,
+  computeFalKlingV3ProI2vSubmitCost,
   computeFalQwenMultipleAnglesCost,
 } from "../utils/pricing/falPricing";
 import {
@@ -74,6 +78,8 @@ import {
   validateFalKlingO1ReferenceSubmit,
   validateFalKling26ProT2v,
   validateFalKling26ProI2v,
+  validateFalKlingV3T2v,
+  validateFalKlingV3I2v,
   validateFalNanoBananaPro,
   validateFalQwenMultipleAngles,
 } from "../middlewares/validators/fal/validateFalGenerate";
@@ -333,6 +339,46 @@ router.post(
     computeFalKling26ProI2vSubmitCost(req)
   ) as any,
   (falController as any).kling26ProI2vSubmit
+);
+// Kling 3 Standard Text-to-Video
+router.post(
+  "/kling-v3/standard/text-to-video/submit",
+  requireAuth as any,
+  validateFalKlingV3T2v as any,
+  makeCreditCost("fal", "kling_v3_standard_t2v_submit", (req) =>
+    computeFalKlingV3StandardT2vSubmitCost(req)
+  ) as any,
+  (falController as any).klingV3StandardT2vSubmit
+);
+// Kling 3 Standard Image-to-Video
+router.post(
+  "/kling-v3/standard/image-to-video/submit",
+  requireAuth as any,
+  validateFalKlingV3I2v as any,
+  makeCreditCost("fal", "kling_v3_standard_i2v_submit", (req) =>
+    computeFalKlingV3StandardI2vSubmitCost(req)
+  ) as any,
+  (falController as any).klingV3StandardI2vSubmit
+);
+// Kling 3 Pro Text-to-Video
+router.post(
+  "/kling-v3/pro/text-to-video/submit",
+  requireAuth as any,
+  validateFalKlingV3T2v as any,
+  makeCreditCost("fal", "kling_v3_pro_t2v_submit", (req) =>
+    computeFalKlingV3ProT2vSubmitCost(req)
+  ) as any,
+  (falController as any).klingV3ProT2vSubmit
+);
+// Kling 3 Pro Image-to-Video
+router.post(
+  "/kling-v3/pro/image-to-video/submit",
+  requireAuth as any,
+  validateFalKlingV3I2v as any,
+  makeCreditCost("fal", "kling_v3_pro_i2v_submit", (req) =>
+    computeFalKlingV3ProI2vSubmitCost(req)
+  ) as any,
+  (falController as any).klingV3ProI2vSubmit
 );
 router.get(
   "/queue/status",
