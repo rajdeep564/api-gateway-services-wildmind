@@ -1,8 +1,8 @@
 import { CursorAgentInstruction, CursorAgentPlan, CursorAgentAction } from '../../types/canvas';
+import { randomUUID } from 'crypto';
 import { elementRepository } from '../../repository/canvas/elementRepository';
 import { projectRepository } from '../../repository/canvas/projectRepository';
 import { ApiError } from '../../utils/errorHandler';
-import { v4 as uuidv4 } from 'uuid';
 
 export async function planAgentActions(
   userId: string,
@@ -50,7 +50,7 @@ export async function planAgentActions(
   const confidence = calculateConfidence(instruction.instruction, actions, elements);
 
   return {
-    planId: uuidv4(),
+    planId: randomUUID(),
     actions,
     confidence,
     previewPolygons: generatePreviewPolygons(actions, elements),

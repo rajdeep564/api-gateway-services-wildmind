@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
+import { randomUUID } from 'crypto';
 import { ApiError } from '../utils/errorHandler';
 import { creditsService } from '../services/creditsService';
-import { v4 as uuidv4 } from 'uuid';
 import { creditsRepository } from '../repository/creditsRepository';
 
 type CostComputer = (req: Request) => Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }>;
@@ -19,7 +19,7 @@ export function makeCreditCost(provider: string, operation: string, computeCost:
       
       // Skip balance check if cost is 0 (free models like z-image-turbo)
       if (cost === 0) {
-        const idempotencyKey = uuidv4();
+        const idempotencyKey = randomUUID();
         (req as any).context = {
           creditCost: 0,
           reason: `${provider}.${operation}`,
@@ -43,7 +43,7 @@ export function makeCreditCost(provider: string, operation: string, computeCost:
         });
       }
 
-      const idempotencyKey = uuidv4();
+      const idempotencyKey = randomUUID();
       (req as any).context = {
         creditCost: cost,
         reason: `${provider}.${operation}`,

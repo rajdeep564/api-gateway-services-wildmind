@@ -1,6 +1,6 @@
 import { adminDb } from '../config/firebaseAdmin';
+import { randomUUID } from 'crypto';
 import { Template, TemplateCategory, TemplateTheme } from '../types/template';
-import { v4 as uuidv4 } from 'uuid';
 import { previewService } from './previewService';
 
 const COLLECTION_TEMPLATES = 'templates';
@@ -80,7 +80,7 @@ export class TemplateService {
      * Create a new template. Supports optional ID for migration.
      */
     async createTemplate(data: Omit<Template, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<Template> {
-        const id = data.id || uuidv4();
+        const id = data.id || randomUUID();
         const now = new Date();
 
         // Remove id from data to avoid duplication if it was passed in

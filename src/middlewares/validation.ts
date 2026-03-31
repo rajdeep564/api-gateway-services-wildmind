@@ -10,7 +10,16 @@
 
 import { Request, Response, NextFunction } from 'express';
 import { body, validationResult, ValidationChain } from 'express-validator';
-import DOMPurify from 'isomorphic-dompurify';
+
+function sanitizeString(value: string): string {
+  return value
+    .replace(/<[^>]*>/g, '')
+    .replace(/javascript:/gi, '')
+    .replace(/vbscript:/gi, '')
+    .replace(/data:text\/html/gi, '')
+    .replace(/on\w+\s*=/gi, '')
+    .trim();
+}
 
 /**
  * Sanitize all string inputs in request
@@ -18,8 +27,8 @@ import DOMPurify from 'isomorphic-dompurify';
 export const sanitizeInput = (req: Request, res: Response, next: NextFunction) => {
   const sanitizeValue = (value: any): any => {
     if (typeof value === 'string') {
-      // Remove potentially dangerous HTML/scripts
-      return DOMPurify.sanitize(value, { ALLOWED_TAGS: [] });
+      // Strip HTML and inline script-oriented payload fragments without requiring jsdom.
+      return sanitizeString(value);
     } else if (Array.isArray(value)) {
       return value.map(sanitizeValue);
     } else if (typeof value === 'object' && value !== null) {
