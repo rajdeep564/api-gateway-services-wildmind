@@ -302,6 +302,18 @@ export async function list(uid: string, params: {
   const col = adminDb.collection('generationHistory').doc(uid).collection('items');
   const normalizedMode = normalizeMode(params.mode);
   const hasModeFilter = Boolean(normalizedMode && normalizedMode !== 'all');
+  const wantsDateFilter = typeof params.dateStart === 'string' && typeof params.dateEnd === 'string';
+  const parsedDateRange = (() => {
+    if (!wantsDateFilter) return null;
+    try {
+      const start = new Date(params.dateStart as string);
+      const end = new Date(params.dateEnd as string);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+      return { start, end };
+    } catch {
+      return null;
+    }
+  })();
 
   // Determine if we're using new optimized pagination or legacy mode
   // Allow explicit sortBy=createdAt without disabling optimized path. Optimized path triggers if:
@@ -329,6 +341,12 @@ export async function list(uid: string, params: {
     // Apply filters with proper composite index support
     if (params.status) {
       q = q.where('status', '==', params.status);
+    }
+
+    if (parsedDateRange) {
+      q = q
+        .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(parsedDateRange.start))
+        .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(parsedDateRange.end));
     }
 
     if (params.generationType) {
@@ -416,6 +434,16 @@ export async function list(uid: string, params: {
     const applyInMemoryFilters = (raw: GenerationHistoryItem[]) => {
       let items = raw;
       items = items.filter((it: any) => it.isDeleted !== true);
+      if (parsedDateRange) {
+        items = items.filter((it: any) => {
+          try {
+            const created = new Date((it as any).createdAt || (it as any).updatedAt);
+            return created >= parsedDateRange.start && created <= parsedDateRange.end;
+          } catch {
+            return true;
+          }
+        });
+      }
       const searchTokens = normalizeSearchTokens(params.search);
       if (searchTokens.length > 0) {
         items = items.filter((it: any) => matchesSearch((it as any).prompt, searchTokens));
@@ -444,6 +472,11 @@ export async function list(uid: string, params: {
     const fetchOnce = async (cursorMs?: number) => {
       let qq: FirebaseFirestore.Query = col.orderBy('createdAt', sortOrder);
       if (params.status) qq = qq.where('status', '==', params.status);
+      if (parsedDateRange) {
+        qq = qq
+          .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(parsedDateRange.start))
+          .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(parsedDateRange.end));
+      }
       // generationType filters are handled above (and wantsVideoScan only when generationType is absent)
       if (cursorMs !== undefined) {
         try {
@@ -508,12 +541,12 @@ export async function list(uid: string, params: {
             fetchLimit,
             fetchedRaw: snap.docs.length,
             filteredAfterDelete: items.length,
-            returned: pageItems.length,
-            hasMore,
-            appliedFilters: { status: params.status || null, generationType: params.generationType || null, mode: normalizedMode || null },
-            generationTypeSynonymsUsed: params.generationType ? (Array.isArray(params.generationType) ? params.generationType : [params.generationType]) : [],
-            removedByMode,
-            beforeDeleteFilterCount,
+             returned: pageItems.length,
+             hasMore,
+             appliedFilters: { status: params.status || null, generationType: params.generationType || null, mode: normalizedMode || null, dateStart: params.dateStart || null, dateEnd: params.dateEnd || null },
+             generationTypeSynonymsUsed: params.generationType ? (Array.isArray(params.generationType) ? params.generationType : [params.generationType]) : [],
+             removedByMode,
+             beforeDeleteFilterCount,
           } : undefined
         };
       }
