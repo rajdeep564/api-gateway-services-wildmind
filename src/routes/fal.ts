@@ -50,6 +50,8 @@ import {
   validateFalQueueStatus,
   validateFalVeoTextToVideoSubmit,
   validateFalVeoTextToVideoFastSubmit,
+  validateFalVeo31TextToVideo,
+  validateFalVeo31TextToVideoFast,
   validateFalVeoImageToVideoSubmit,
   validateFalVeoImageToVideoFastSubmit,
   validateFalVeo31FirstLastFast,
@@ -411,7 +413,7 @@ export default router;
 router.post(
   "/veo3_1/text-to-video/submit",
   requireAuth as any,
-  validateFalVeoTextToVideoSubmit as any,
+  validateFalVeo31TextToVideo as any,
   makeCreditCost("fal", "veo31_t2v_submit", (req) =>
     computeFalVeo31TtvSubmitCost(req, false)
   ) as any,
@@ -420,7 +422,7 @@ router.post(
 router.post(
   "/veo3_1/text-to-video/fast/submit",
   requireAuth as any,
-  validateFalVeoTextToVideoFastSubmit as any,
+  validateFalVeo31TextToVideoFast as any,
   makeCreditCost("fal", "veo31_t2v_fast_submit", (req) =>
     computeFalVeo31TtvSubmitCost(req, true)
   ) as any,

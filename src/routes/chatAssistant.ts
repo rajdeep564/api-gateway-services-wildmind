@@ -1,36 +1,16 @@
 import express from 'express';
 import { formatApiResponse } from '../utils/formatApiResponse';
 import { generateGpt5NanoResponse, Gpt5NanoChatMessage } from '../services/genai/gpt5NanoService';
-
 import { creditsRepository } from '../repository/creditsRepository';
 import { requireAuth } from '../middlewares/authMiddleware';
+import { assistantThreadsRepository } from '../repository/assistantThreadsRepository';
+import { AGENT_DEFAULT_MODEL_ID } from '../config/assistantModels';
 
 const router = express.Router();
 
-const ASSISTANT_SYSTEM_PROMPT = `You are the WildMind AI Assistant — a friendly, intelligent, and conversational guide.
-
-Your Personality:
-- Be natural, warm, and human-like (similar to ChatGPT or Gemini).
-- Use varied greetings and responses. Don't be robotic or repetitive.
-- **Small Talk**: If a user says "Hi" or "How are you?", respond naturally (e.g., "I'm doing great! Ready to create something amazing?"). Do NOT simply say "How can I help?".
-
-Your Knowledge Base (Use this to recommend the best tool for the job):
-- **Image Models**: 
-  - **Flux 2 Pro** (Extreme Realism, no video), **GPT Image 1.5** (Prompt adherence), **Seedream v4/4.5** (Artistic), **Nano Banana** (Fast/Pro), **Ideogram v3** (Best for Typography/Text), **Imagen 4** (Standard/Ultra/Fast), **Minimax Image-01**, **Runway Gen4 Image** (Standard/Turbo).
-- **Video Models**: 
-  - **Veo 3.1** (Google's latest), **Sora 2** (OpenAI), **Kling 2.6/2.5 Pro** (Realistic Motion), **Wan 2.5** (Standard/Fast/Lipsync), **Seedance** (1.5 Pro/1.0 Pro/Lite), **LTX V2** (Pro/Fast), **Gen-4 Turbo** (Runway), **Hailuo-2.3** (Minimax).
-  - *Recommendation*: Use Kling or Sora for cinematic realism; use Wan or Hailuo for character consistency.
-- **Music/Audio Models**: 
-  - **MiniMax Music 2** (High quality structured music), **ElevenLabs** (TTS v3, Dialogue, SFX), **Chatterbox Multilingual**, **Maya TTS**.
-
-Your Core Phrasing (Use ONLY if asked "What is WildMind?"):
-"WildMind AI is an all-in-one AI image, video, and music generation platform that also offers different editing tools for images and video like upscale, remove bg, and others. It also provides different useful workflows."
-
-Rules you MUST follow:
-- **PRIORITY**: Answer the user's specific question directly.
-- **Flux 2 Pro** is strictly an IMAGE model. Never group it with video.
-- **Prompt Suggestions**: ONLY provide a prompt suggestion (prefixed with "Prompt: " or in double quotes) if the user explicitly asks for ideas or clearly intends to create something. 
-- Keep responses SHORT — max 3-4 sentences total.`;
+function serializeContentForContext(content: string): string {
+    return String(content || '').trim();
+}
 
 /**
  * POST /api/chat/assistant
@@ -43,9 +23,10 @@ router.post('/', requireAuth, async (req, res) => {
         // Authenticated user from middleware
         const uid = (req as any).uid;
 
-        const { message, history = [] } = req.body as {
+        const { message, history = [], threadId } = req.body as {
             message: string;
             history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+            threadId?: string;
         };
 
         if (!message || typeof message !== 'string' || !message.trim()) {
@@ -54,7 +35,7 @@ router.post('/', requireAuth, async (req, res) => {
             );
         }
 
-        // 1. Validate Credits (Cost: 1)
+        // 1. Validate Credits
         const COST = 1;
         try {
             await creditsRepository.validateGeneration(uid, COST);
@@ -69,19 +50,46 @@ router.post('/', requireAuth, async (req, res) => {
 
         const sanitized = message.trim().slice(0, 2000);
 
-        // Last 6 turns for context window safety
-        const conversationHistory: Gpt5NanoChatMessage[] = history
+        let activeThread = threadId
+            ? await assistantThreadsRepository.getThread(uid, threadId)
+            : await assistantThreadsRepository.createThread(uid, {
+                mode: 'agent',
+                modelId: AGENT_DEFAULT_MODEL_ID,
+            });
+
+        if (!activeThread) {
+            return res.status(404).json(
+                formatApiResponse('error', 'Assistant thread not found', null)
+            );
+        }
+
+        if (activeThread.mode !== 'agent') {
+            return res.status(400).json(
+                formatApiResponse('error', 'Agent route can only be used with agent threads', null)
+            );
+        }
+
+        const persistedMessages = await assistantThreadsRepository.listMessages(uid, activeThread.id, 20);
+        const fallbackHistory = history
             .slice(-6)
-            .map((m) => ({ role: m.role, content: m.content }));
+            .map((m) => ({ role: m.role, content: serializeContentForContext(m.content) }));
+        const conversationHistory: Gpt5NanoChatMessage[] = (
+            persistedMessages.length > 0
+                ? persistedMessages.slice(-12).map((m) => ({
+                    role: m.role,
+                    content: serializeContentForContext(m.content),
+                }))
+                : fallbackHistory
+        ).slice(-12);
 
         console.log('[AssistantRoute] Request', {
             uid,
+            threadId: activeThread.id,
             messageLength: sanitized.length,
             historyTurns: conversationHistory.length,
         });
 
         const reply = await generateGpt5NanoResponse(sanitized, {
-            systemPrompt: ASSISTANT_SYSTEM_PROMPT,
             messages: conversationHistory,
             verbosity: 'low',
             reasoningEffort: 'minimal',
@@ -90,20 +98,54 @@ router.post('/', requireAuth, async (req, res) => {
 
         // 2. Deduct Credits
         // Use a unique request ID for idempotency
-        const requestId = `chat-${uid}-${Date.now()}`;
+        const requestId = `chat-agent-${uid}-${Date.now()}`;
         await creditsRepository.writeDebitIfAbsent(
             uid,
             requestId,
             COST,
             'Assistant Chat',
-            { messageLength: sanitized.length },
-            'gpt-5-nano' // Model ID for credit tracking
+            {
+                messageLength: sanitized.length,
+                mode: 'agent',
+                modelId: AGENT_DEFAULT_MODEL_ID,
+                threadId: activeThread.id,
+            },
+            'gpt-5-nano'
         );
+
+        await assistantThreadsRepository.appendMessages(uid, activeThread.id, {
+            threadMode: 'agent',
+            modelId: AGENT_DEFAULT_MODEL_ID,
+            messages: [
+                {
+                    role: 'user',
+                    content: sanitized,
+                    metadata: {
+                        mode: 'agent',
+                        modelId: AGENT_DEFAULT_MODEL_ID,
+                    },
+                },
+                {
+                    role: 'assistant',
+                    content: reply.trim(),
+                    metadata: {
+                        mode: 'agent',
+                        modelId: AGENT_DEFAULT_MODEL_ID,
+                        requestId,
+                    },
+                },
+            ],
+        });
+        activeThread = await assistantThreadsRepository.getThread(uid, activeThread.id) || activeThread;
 
         console.log('[AssistantRoute] Reply generated & credits deducted', { replyLength: reply.length });
 
         return res.json(
-            formatApiResponse('success', 'OK', { reply: reply.trim() })
+            formatApiResponse('success', 'OK', {
+                reply: reply.trim(),
+                thread: activeThread,
+                threadId: activeThread.id,
+            })
         );
     } catch (error: any) {
         console.error('[AssistantRoute] Error:', error?.message);

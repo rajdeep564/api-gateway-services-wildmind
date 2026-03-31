@@ -1,12 +1,12 @@
 import helmet from 'helmet';
 import compression from 'compression';
 import hpp from 'hpp';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 import { env } from '../config/env';
 
 export const requestId = (req: Request, _res: Response, next: NextFunction) => {
-  (req as any).requestId = req.headers['x-request-id'] || uuidv4();
+  (req as any).requestId = req.headers['x-request-id'] || randomUUID();
   next();
 };
 

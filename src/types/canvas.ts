@@ -17,6 +17,8 @@ export interface CanvasProject {
     height?: number;
     backgroundColor?: string;
     gridEnabled?: boolean;
+    /** When true, GET snapshot/current may be read without auth (marketing / embed). */
+    publicSnapshotRead?: boolean;
   };
   lastSnapshotOpIndex?: number;
   lastSnapshotAt?: Timestamp;
