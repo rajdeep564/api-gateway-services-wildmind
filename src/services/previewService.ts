@@ -1,4 +1,4 @@
-import puppeteer from 'puppeteer';
+import puppeteer, { type Browser, type ConsoleMessage } from 'puppeteer';
 import path from 'path';
 import fs from 'fs';
 import { adminDb } from '../config/firebaseAdmin';
@@ -14,7 +14,7 @@ class PreviewService {
     async generatePreview(template: Template): Promise<string> {
         console.log(`[PreviewService] Generating preview for template ${template.id}`);
 
-        let browser;
+        let browser: Browser | null = null;
         try {
             browser = await puppeteer.launch({
                 args: ['--no-sandbox', '--disable-setuid-sandbox'],
@@ -22,7 +22,7 @@ class PreviewService {
             });
 
             const page = await browser.newPage();
-            page.on('console', msg => console.log('PAGE LOG:', msg.text()));
+            page.on('console', (msg: ConsoleMessage) => console.log('PAGE LOG:', msg.text()));
             page.on('pageerror', (err: any) => console.error('PAGE ERROR:', err.toString()));
 
             // Set viewport to template dimensions (or scaled down if too large)
@@ -60,7 +60,7 @@ class PreviewService {
             // Assuming template.data contains { elements: [], background: ... } or similar.
             const bg = (template.data as any).background;
 
-            await page.evaluate((data, w, h, bg) => {
+            await page.evaluate((data: unknown, w: number, h: number, bg: unknown) => {
                 // @ts-ignore
                 return window.renderTemplate(data, w, h, bg);
             }, template.data, width, height, bg);
