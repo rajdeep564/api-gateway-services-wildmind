@@ -171,11 +171,11 @@ async function generate(
     // Estimate cost based on model and type
     const estimatedCost = 100; // Placeholder - should use actual pricing
     const isVideo = modelLower.includes('veo') || modelLower.includes('video');
-    
+
     const validation = await validateGenerationRequest(
       uid,
       estimatedCost,
-      isVideo 
+      isVideo
         ? estimateFileSize('video', { duration: 5, quality: 'medium' })
         : estimateFileSize('image', { width: 1024, height: 1024, quality: 'high' })
     );
@@ -1665,7 +1665,17 @@ async function generate(
       }
 
       // Debug log for final body
-      try { console.log('[falService.generate] request', { modelEndpoint, input }); } catch { }
+      try {
+        console.log('[falService.generate] ----------------------------------------------------------------');
+        console.log('[falService.generate] Preparing FAL request:', {
+          modelEndpoint,
+          inputSummary: {
+            ...input,
+            image_urls: input.image_urls ? `[Array(${input.image_urls.length})]` : undefined,
+            prompt: input.prompt ? (input.prompt.slice(0, 50) + '...') : undefined
+          }
+        });
+      } catch { }
 
       // For Seedream 4.5 image-to-image, use queue mode to avoid timeout issues
       // Queue mode returns immediately and we poll for results, preventing 2-minute server timeouts
@@ -1986,7 +1996,19 @@ async function generate(
         result = queueResult;
       } else {
         // Use synchronous subscribe for other models (faster for short requests)
-        result = await fal.subscribe(modelEndpoint as any, ({ input, logs: true } as unknown) as any);
+        console.log(`[falService] 🚀 Sending synchronous subscribe to ${modelEndpoint}`);
+        try {
+          result = await fal.subscribe(modelEndpoint as any, ({ input, logs: true } as unknown) as any);
+          console.log('[falService] ✅ Subscribe success. Result keys:', Object.keys(result || {}));
+        } catch (subscribeError: any) {
+          console.error('[falService] ❌ Subscribe FAILED:', {
+            message: subscribeError.message,
+            status: subscribeError.status,
+            body: subscribeError.body,
+            stack: subscribeError.stack
+          });
+          throw subscribeError; // Re-throw to be caught by outer handler
+        }
       }
 
       let imageUrl = "";
@@ -2171,7 +2193,7 @@ async function generate(
           );
           console.log(`[falService.generate] Debited ${ctx.creditCost} credits for ${uid}`);
         } catch (error) {
-           console.error('[falService.generate] Failed to deduct credits:', error);
+          console.error('[falService.generate] Failed to deduct credits:', error);
         }
       }
 
@@ -2223,6 +2245,13 @@ async function generate(
       return { images: scoredQuick as any, historyId, model, status: 'completed' };
     }
   } catch (err: any) {
+    console.error('[falService.generate] ❌ CRITICAL ERROR:', {
+      message: err.message,
+      stack: err.stack,
+      body: err.body,
+      status: err.status,
+      details: JSON.stringify(err).slice(0, 500)
+    });
     const falError = buildFalApiError(err, {
       fallbackMessage: 'Failed to generate images with FAL API',
       context: 'falService.generate.core',
@@ -2312,7 +2341,7 @@ async function veoTextToVideo(uid: string, payload: {
         );
         console.log(`[falService.veoTextToVideo] Debited ${ctx.creditCost} credits for ${uid}`);
       } catch (error) {
-         console.error('[falService.veoTextToVideo] Failed to deduct credits:', error);
+        console.error('[falService.veoTextToVideo] Failed to deduct credits:', error);
       }
     }
 
@@ -2394,7 +2423,7 @@ async function veoTextToVideoFast(uid: string, payload: Parameters<typeof veoTex
         );
         console.log(`[falService.veoTextToVideoFast] Debited ${ctx.creditCost} credits for ${uid}`);
       } catch (error) {
-         console.error('[falService.veoTextToVideoFast] Failed to deduct credits:', error);
+        console.error('[falService.veoTextToVideoFast] Failed to deduct credits:', error);
       }
     }
 
@@ -2482,7 +2511,7 @@ async function veoImageToVideo(uid: string, payload: {
         );
         console.log(`[falService.veoImageToVideo] Debited ${ctx.creditCost} credits for ${uid}`);
       } catch (error) {
-         console.error('[falService.veoImageToVideo] Failed to deduct credits:', error);
+        console.error('[falService.veoImageToVideo] Failed to deduct credits:', error);
       }
     }
 
@@ -2562,7 +2591,7 @@ async function veoImageToVideoFast(uid: string, payload: Parameters<typeof veoIm
         );
         console.log(`[falService.veoImageToVideoFast] Debited ${ctx.creditCost} credits for ${uid}`);
       } catch (error) {
-         console.error('[falService.veoImageToVideoFast] Failed to deduct credits:', error);
+        console.error('[falService.veoImageToVideoFast] Failed to deduct credits:', error);
       }
     }
 
@@ -2965,7 +2994,7 @@ export const falService = {
           );
           console.log(`[falService.briaExpandImage] Debited ${ctx.creditCost} credits for ${uid}`);
         } catch (error) {
-           console.error('[falService.briaExpandImage] Failed to deduct credits:', error);
+          console.error('[falService.briaExpandImage] Failed to deduct credits:', error);
         }
       }
 
@@ -3158,7 +3187,7 @@ export const falService = {
           );
           console.log(`[falService.outpaintImage] Debited ${ctx.creditCost} credits for ${uid}`);
         } catch (error) {
-           console.error('[falService.outpaintImage] Failed to deduct credits:', error);
+          console.error('[falService.outpaintImage] Failed to deduct credits:', error);
         }
       }
 
@@ -3267,7 +3296,7 @@ export const falService = {
           );
           console.log(`[falService.topazUpscaleImage] Debited ${ctx.creditCost} credits for ${uid}`);
         } catch (error) {
-           console.error('[falService.topazUpscaleImage] Failed to deduct credits:', error);
+          console.error('[falService.topazUpscaleImage] Failed to deduct credits:', error);
         }
       }
       return { images: scoredImages as any, historyId, model, status: 'completed' };
@@ -3378,7 +3407,7 @@ export const falService = {
           );
           console.log(`[falService.seedvrUpscaleImage] Debited ${ctx.creditCost} credits for ${uid}`);
         } catch (error) {
-           console.error('[falService.seedvrUpscaleImage] Failed to deduct credits:', error);
+          console.error('[falService.seedvrUpscaleImage] Failed to deduct credits:', error);
         }
       }
 
@@ -3505,7 +3534,7 @@ export const falService = {
           );
           console.log(`[falService.seedvrUpscale] Debited ${ctx.creditCost} credits for ${uid}`);
         } catch (error) {
-           console.error('[falService.seedvrUpscale] Failed to deduct credits:', error);
+          console.error('[falService.seedvrUpscale] Failed to deduct credits:', error);
         }
       }
       return { videos: scoredVideos as any, historyId, model, status: 'completed' };
@@ -3647,7 +3676,7 @@ export const falService = {
           );
           console.log(`[falService.image2svg] Debited ${ctx.creditCost} credits for ${uid}`);
         } catch (error) {
-           console.error('[falService.image2svg] Failed to deduct credits:', error);
+          console.error('[falService.image2svg] Failed to deduct credits:', error);
         }
       }
       return { images, historyId, model, status: 'completed' };
@@ -3774,7 +3803,7 @@ export const falService = {
           );
           console.log(`[falService.recraftVectorize] Debited ${ctx.creditCost} credits for ${uid}`);
         } catch (error) {
-           console.error('[falService.recraftVectorize] Failed to deduct credits:', error);
+          console.error('[falService.recraftVectorize] Failed to deduct credits:', error);
         }
       }
       return { images, historyId, model, status: 'completed' };
@@ -3917,7 +3946,7 @@ export const falService = {
           );
           console.log(`[falService.briaGenfill] Debited ${ctx.creditCost} credits for ${uid}`);
         } catch (error) {
-           console.error('[falService.briaGenfill] Failed to deduct credits:', error);
+          console.error('[falService.briaGenfill] Failed to deduct credits:', error);
         }
       }
 
@@ -4006,7 +4035,7 @@ export const falService = {
           );
           console.log(`[falService.birefnetVideo] Debited ${ctx.creditCost} credits for ${uid}`);
         } catch (error) {
-           console.error('[falService.birefnetVideo] Failed to deduct credits:', error);
+          console.error('[falService.birefnetVideo] Failed to deduct credits:', error);
         }
       }
       return { videos: scoredVideos as any, historyId, model, status: 'completed' };
@@ -4049,10 +4078,10 @@ export const falService = {
       // Resolve image URLs - ensure they're publicly accessible
       const username = creator?.username || uid;
       const resolvedImageUrls: string[] = [];
-      
+
       for (const imgUrl of body.image_urls) {
         if (!imgUrl || typeof imgUrl !== 'string') continue;
-        
+
         // Check if it's a proxy/Zata URL that needs conversion
         const proxyAsZata = tryConvertProxyResourceToZataUrl(imgUrl);
         if (proxyAsZata) {
@@ -4154,12 +4183,12 @@ export const falService = {
         input.num_images = 1; // Default num_images
       }
 
-      console.log('[falService.qwenMultipleAngles] Calling FAL API:', { 
-        model, 
-        input: { 
-          ...input, 
-          image_urls: input.image_urls.map((url: string) => url.substring(0, 100) + '...') 
-        } 
+      console.log('[falService.qwenMultipleAngles] Calling FAL API:', {
+        model,
+        input: {
+          ...input,
+          image_urls: input.image_urls.map((url: string) => url.substring(0, 100) + '...')
+        }
       });
 
       let result: any;
@@ -4184,10 +4213,10 @@ export const falService = {
           return { id: fallbackId, url: '', originalUrl: '' } as any;
         }
         try {
-          const { key, publicUrl } = await uploadFromUrlToZata({ 
-            sourceUrl, 
-            keyPrefix: `users/${username}/image/${historyId}`, 
-            fileName: `qwen-angle-${index + 1}` 
+          const { key, publicUrl } = await uploadFromUrlToZata({
+            sourceUrl,
+            keyPrefix: `users/${username}/image/${historyId}`,
+            fileName: `qwen-angle-${index + 1}`
           });
           return { id: fallbackId, url: publicUrl, storagePath: key, originalUrl: sourceUrl } as any;
         } catch {
@@ -4230,7 +4259,7 @@ export const falService = {
           );
           console.log(`[falService.qwenMultipleAngles] Debited ${ctx.creditCost} credits for ${uid}`);
         } catch (error) {
-           console.error('[falService.qwenMultipleAngles] Failed to deduct credits:', error);
+          console.error('[falService.qwenMultipleAngles] Failed to deduct credits:', error);
         }
       }
 

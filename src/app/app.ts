@@ -115,6 +115,7 @@ const corsOptions: any = {
     'X-Device-Id',
     'X-Device-Name',
     'X-Device-Info',
+    'X-Device-Hash',
     'ngrok-skip-browser-warning',
     'Range',
     // Allow client no-cache request headers used for fresh reads
