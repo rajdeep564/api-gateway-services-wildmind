@@ -182,6 +182,7 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
     (req.body as any)?.num_images ??
     (req.body as any)?.max_images;
   const count = Math.max(1, Math.min(10, Number(rawCount ?? 1)));
+  const isRecraftV4 = normalized.includes('recraft-ai/recraft-v4') || normalized === 'recraft-v4';
 
   let display = 'replicate/bytedance/seedream-4'; // Default fallback
   let meta: Record<string, any> = { model: normalized };
@@ -205,6 +206,9 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   }
   else if (normalized.includes('fermatresearch/magic-image-refiner')) {
     display = 'replicate/fermatresearch/magic-image-refiner';
+  }
+  else if (isRecraftV4) {
+    display = 'replicate/recraft-ai/recraft-v4';
   }
   else if (
     normalized.includes('ideogram-ai/ideogram-v3-quality') ||
@@ -264,11 +268,12 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   if (base == null) throw new Error(`Unsupported Replicate Image model: ${display}`);
   baseCost = Math.ceil(base);
 
-  const cost = Math.ceil(baseCost * count);
+  const effectiveCount = count;
+  const cost = Math.ceil(baseCost * effectiveCount);
   return {
     cost,
     pricingVersion: REPLICATE_PRICING_VERSION,
-    meta: { ...meta, model: display, n: count },
+    meta: { ...meta, model: display, n: effectiveCount },
   };
 }
 

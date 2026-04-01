@@ -10,6 +10,7 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
   const isSeedream = m.includes('bytedance/seedream-4') || m.includes('bytedance/seedream-5-lite') || m.includes('seedream-5-lite');
   const isSeedream45 = false; // Seedream 4.5 moved to FAL; no longer validated here
   const isIdeogram = m.includes('ideogram-ai/ideogram-v3');
+  const isRecraftV4 = m.includes('recraft-ai/recraft-v4') || m === 'recraft-v4';
   const isLucidOrigin = m.includes('leonardoai/lucid-origin');
   const isPhoenix = m.includes('leonardoai/phoenix-1.0');
   // Z Image Turbo model (prunaai/z-image-turbo)
@@ -42,6 +43,22 @@ export function validateReplicateGenerate(req: Request, _res: Response, next: Ne
       if (inputCount + requested > 15) {
         return next(new ApiError('input images + max_images must be <= 15', 400));
       }
+    }
+  }
+
+  if (isRecraftV4) {
+    const allowedAspect = new Set([
+      'Not set', '1:1', '4:3', '3:4', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '14:10', '10:14', '4:5', '5:4', '6:10'
+    ]);
+    const allowedSize = new Set([
+      '1024x1024', '1536x768', '768x1536', '1280x832', '832x1280', '1216x896', '896x1216', '1152x896', '896x1152', '832x1344', '1280x896', '896x1280', '1344x768', '768x1344'
+    ]);
+
+    if (aspect_ratio != null && !allowedAspect.has(String(aspect_ratio))) {
+      return next(new ApiError('invalid aspect_ratio for recraft-v4', 400));
+    }
+    if (size != null && !allowedSize.has(String(size))) {
+      return next(new ApiError('invalid size for recraft-v4', 400));
     }
   }
 

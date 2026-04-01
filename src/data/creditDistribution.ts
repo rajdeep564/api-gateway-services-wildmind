@@ -1073,6 +1073,21 @@ export const creditDistributionData: ModelCreditInfo[] = [
     },
   },
   {
+    srNo: 38.1,
+    modelName: "replicate/recraft-ai/recraft-v4",
+    priceToPay: 0.04,
+    overCharge: 0.01,
+    userCost: 0.05,
+    creditsPerGeneration: 100,
+    plans: {
+      planA: 123.6,
+      planB: 247.2,
+      planC: 618,
+      planD: 1977.6,
+      free: 20,
+    },
+  },
+  {
     srNo: 39,
     modelName: "replicate/fermatresearch/magic-image-refiner",
     priceToPay: 0.027,

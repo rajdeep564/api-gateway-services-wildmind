@@ -1591,6 +1591,9 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     if (lr === 'nano-banana-2') {
       return 'google/nano-banana-2';
     }
+    if (lr === 'recraft-v4') {
+      return 'recraft-ai/recraft-v4';
+    }
 
     return trimmed;
   };
@@ -1610,6 +1613,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       }
       if (lower.includes('qwen-image-2512')) return 'qwen/qwen-image-2512';
       if (lower.includes('qwen-image-2511')) return 'qwen/qwen-image-2511';
+      if (lower.includes('recraft-v4')) return 'recraft-ai/recraft-v4';
       throw new ApiError(
         `Invalid replicate model reference: ${trimmed}. Expected owner/name or owner/name:version`,
         400
@@ -2134,6 +2138,31 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
           input.max_images = Math.max(1, 15 - inputCount);
         }
       }
+    }
+    if (modelBase === "recraft-ai/recraft-v4") {
+      const allowedAspect = new Set([
+        '1:1', '4:3', '3:4', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '14:10', '10:14', '4:5', '5:4', '6:10'
+      ]);
+      const allowedSize = new Set([
+        '1024x1024', '1536x768', '768x1536', '1280x832', '832x1280', '1216x896', '896x1216', '1152x896', '896x1152', '832x1344', '1280x896', '896x1280', '1344x768', '768x1344'
+      ]);
+
+      const requestedAspect = String(rest.aspect_ratio || rest.frameSize || '').trim();
+      if (requestedAspect && requestedAspect !== 'Not set' && allowedAspect.has(requestedAspect)) {
+        input.aspect_ratio = requestedAspect;
+      }
+
+      const requestedSize = String(rest.size || '').trim();
+      if (requestedSize && allowedSize.has(requestedSize)) {
+        input.size = requestedSize;
+      } else if (!input.aspect_ratio) {
+        input.size = '1024x1024';
+      }
+
+      replicateModelBase = 'recraft-ai/recraft-v4';
+      const requestedCountRaw = rest.num_images != null ? rest.num_images : rest.n != null ? rest.n : undefined;
+      const requestedCount = Math.max(1, Math.min(4, Number(requestedCountRaw ?? 1)));
+      (body as any).__num_images = requestedCount;
     }
     // Leonardo Phoenix 1.0 mapping
     if (modelBase === "leonardoai/phoenix-1.0") {
@@ -2835,11 +2864,12 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     const isPImage = replicateModelBase === "prunaai/p-image";
     const isPImageEdit = replicateModelBase === "prunaai/p-image-edit";
     const isGptImage15 = replicateModelBase === "openai/gpt-image-1.5";
+    const isRecraftV4 = replicateModelBase === 'recraft-ai/recraft-v4';
 
     const lowerReplicateModelBase = String(replicateModelBase || '').toLowerCase();
     const isQwenImage = lowerReplicateModelBase.startsWith('qwen/qwen-image');
 
-    if ((isZTurbo || isPImage || isPImageEdit || isGptImage15 || isQwenImage) && numImages > 1) {
+    if ((isZTurbo || isPImage || isPImageEdit || isGptImage15 || isQwenImage || isRecraftV4) && numImages > 1) {
       // Make multiple parallel calls
       const outputPromises = Array.from({ length: numImages }, async () => {
         return await replicate.run(modelSpec as any, { input });
