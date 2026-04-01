@@ -4481,7 +4481,20 @@ async function queueStatus(uid: string, model: string | undefined, requestId: st
     throw new ApiError('Model is required. Either provide it in the request or ensure the requestId exists in generation history.', 400);
   }
 
-  const status = await fal.queue.status(resolvedModel, { requestId, logs: true } as any);
+  let status: any;
+  try {
+    status = await fal.queue.status(resolvedModel, { requestId, logs: true } as any);
+  } catch (falErr: any) {
+    const falError = buildFalApiError(falErr, {
+      fallbackMessage: 'Failed to fetch FAL queue status',
+      context: 'falQueueService.queueStatus',
+      toastTitle: 'Queue status failed',
+      defaultStatus: falErr?.response?.status || falErr?.statusCode || 422,
+      extraData: { operation: 'queue.status' },
+    });
+    console.error('[queueStatus] FAL queue.status error:', JSON.stringify(falError.data, null, 2));
+    throw falError;
+  }
 
   // STRICT CREDIT DEDUCTION: If status is COMPLETED, we must finalize (debit) immediately
   // before returning the result to the client. This prevents "free" generations via polling.
@@ -4985,6 +4998,93 @@ export const falQueueService = {
       },
     } as any);
     await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration, resolution } as any);
+    return { requestId: request_id, historyId, model, status: 'submitted' };
+  },
+  async veo31LiteTtvSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+    const model = 'fal-ai/veo3.1/lite';
+    const duration = typeof body.duration === 'number' ? `${body.duration}s` : (body.duration || '8s');
+    const resolution = body.resolution || '720p';
+    if (resolution === '1080p' && duration !== '8s') {
+      throw new ApiError('Veo 3.1 Lite 1080p output requires 8s duration', 400);
+    }
+    const aspectRatio = body.aspect_ratio === '9:16' ? '9:16' : '16:9';
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt: body.prompt,
+      model,
+      isPublic: body.isPublic,
+      duration,
+      resolution,
+      aspect_ratio: aspectRatio,
+      generate_audio: true,
+    } as any);
+    const { request_id } = await fal.queue.submit(model, {
+      input: {
+        prompt: body.prompt,
+        aspect_ratio: aspectRatio,
+        duration,
+        negative_prompt: body.negative_prompt,
+        resolution,
+        seed: body.seed,
+        auto_fix: body.auto_fix ?? true,
+      },
+    } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: true, duration, resolution, aspect_ratio: aspectRatio } as any);
+    return { requestId: request_id, historyId, model, status: 'submitted' };
+  },
+  async veo31LiteI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError('Prompt is required', 400);
+    if (!body?.image_url) throw new ApiError('image_url is required', 400);
+    const model = 'fal-ai/veo3.1/lite/image-to-video';
+    const duration = typeof body.duration === 'number' ? `${body.duration}s` : (body.duration || '8s');
+    const resolution = body.resolution || '720p';
+    if (resolution === '1080p' && duration !== '8s') {
+      throw new ApiError('Veo 3.1 Lite 1080p output requires 8s duration', 400);
+    }
+    const aspectRatio = normalizeVeo31AspectRatio(body?.aspect_ratio);
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt: body.prompt,
+      model,
+      isPublic: body.isPublic,
+      duration,
+      resolution,
+      aspect_ratio: aspectRatio,
+      generate_audio: true,
+    } as any);
+
+    let imageUrl = body.image_url;
+    const creator = await authRepository.getUserById(uid);
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+
+    try {
+      if (typeof imageUrl === 'string' && /^data:/i.test(imageUrl)) {
+        const stored = await uploadDataUriToZata({ dataUri: imageUrl, keyPrefix, fileName: 'input-1' });
+        imageUrl = stored.publicUrl;
+      }
+    } catch (e: any) {
+      console.error('[falService.veo31LiteI2vSubmit] Failed to upload image to Zata:', e);
+      throw new ApiError('Failed to upload image: ' + (e?.message || String(e)), 500);
+    }
+
+    await persistInputImagesFromUrls(uid, historyId, [imageUrl]);
+    const { request_id } = await fal.queue.submit(model, {
+      input: {
+        prompt: body.prompt,
+        image_url: imageUrl,
+        aspect_ratio: aspectRatio,
+        duration,
+        negative_prompt: body.negative_prompt,
+        resolution,
+        seed: body.seed,
+        auto_fix: body.auto_fix ?? true,
+      },
+    } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: true, duration, resolution, aspect_ratio: aspectRatio } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   async veo31ReferenceToVideoSubmit(uid: string, body: any): Promise<SubmitReturn> {

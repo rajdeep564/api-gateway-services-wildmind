@@ -25,16 +25,21 @@ export const createSubscription = async (req: Request, res: Response) => {
         userId,
         planCode,
         ...billingDetails,
-      }
+      },
     );
 
     res.json(response.data);
   } catch (error) {
     if (axios.isAxiosError(error)) {
-      console.error("Create subscription error:", error.response?.data || error.message);
+      console.error(
+        "Create subscription error:",
+        error.response?.data || error.message,
+      );
       res
         .status(error.response?.status || 500)
-        .json(error.response?.data || { error: "Failed to create subscription" });
+        .json(
+          error.response?.data || { error: "Failed to create subscription" },
+        );
     } else {
       console.error("Create subscription error:", error);
       res.status(500).json({ error: "Failed to create subscription" });
@@ -51,7 +56,7 @@ export const getCurrentSubscription = async (req: Request, res: Response) => {
     }
 
     const response = await axios.get(
-      `${CREDIT_SERVICE_URL}/subscriptions/me/${userId}`
+      `${CREDIT_SERVICE_URL}/subscriptions/me/${userId}`,
     );
 
     res.json(response.data);
@@ -60,8 +65,24 @@ export const getCurrentSubscription = async (req: Request, res: Response) => {
       if (error.response?.status === 404) {
         return res.json({ success: true, data: null });
       }
-      
-      console.error("Get subscription error:", error.response?.data || error.message);
+
+      // Subscription metadata should not block the generation UI.
+      // Treat upstream 5xx/network issues as "no subscription" and allow the app to continue.
+      if (
+        !error.response ||
+        (error.response.status >= 500 && error.response.status <= 599)
+      ) {
+        console.error(
+          "Get subscription upstream unavailable:",
+          error.response?.data || error.message,
+        );
+        return res.json({ success: true, data: null });
+      }
+
+      console.error(
+        "Get subscription error:",
+        error.response?.data || error.message,
+      );
       res
         .status(error.response?.status || 500)
         .json(error.response?.data || { error: "Failed to get subscription" });
@@ -87,16 +108,21 @@ export const cancelSubscription = async (req: Request, res: Response) => {
       {
         userId,
         immediate,
-      }
+      },
     );
 
     res.json(response.data);
   } catch (error) {
     if (axios.isAxiosError(error)) {
-      console.error("Cancel subscription error:", error.response?.data || error.message);
+      console.error(
+        "Cancel subscription error:",
+        error.response?.data || error.message,
+      );
       res
         .status(error.response?.status || 500)
-        .json(error.response?.data || { error: "Failed to cancel subscription" });
+        .json(
+          error.response?.data || { error: "Failed to cancel subscription" },
+        );
     } else {
       console.error("Cancel subscription error:", error);
       res.status(500).json({ error: "Failed to cancel subscription" });
@@ -120,13 +146,16 @@ export const changePlan = async (req: Request, res: Response) => {
         userId,
         newPlanCode,
         immediate,
-      }
+      },
     );
 
     res.json(response.data);
   } catch (error) {
     if (axios.isAxiosError(error)) {
-      console.error("Change plan error:", error.response?.data || error.message);
+      console.error(
+        "Change plan error:",
+        error.response?.data || error.message,
+      );
       res
         .status(error.response?.status || 500)
         .json(error.response?.data || { error: "Failed to change plan" });
@@ -154,13 +183,16 @@ export const verifyPayment = async (req: Request, res: Response) => {
         razorpayPaymentId,
         razorpaySubscriptionId,
         razorpaySignature,
-      }
+      },
     );
 
     res.json(response.data);
   } catch (error) {
     if (axios.isAxiosError(error)) {
-      console.error("Verify payment error:", error.response?.data || error.message);
+      console.error(
+        "Verify payment error:",
+        error.response?.data || error.message,
+      );
       res
         .status(error.response?.status || 500)
         .json(error.response?.data || { error: "Failed to verify payment" });
@@ -170,26 +202,28 @@ export const verifyPayment = async (req: Request, res: Response) => {
     }
   }
 };
-  /**
-   * Check for expired subscriptions (Admin/Cron)
-   */
-  export const checkExpiry = async (req: Request, res: Response) => {
-    try {
-      const response = await axios.post(
-        `${CREDIT_SERVICE_URL}/subscriptions/check-expiry`
+/**
+ * Check for expired subscriptions (Admin/Cron)
+ */
+export const checkExpiry = async (req: Request, res: Response) => {
+  try {
+    const response = await axios.post(
+      `${CREDIT_SERVICE_URL}/subscriptions/check-expiry`,
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      console.error(
+        "Check expiry error:",
+        error.response?.data || error.message,
       );
-  
-      res.json(response.data);
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        console.error("Check expiry error:", error.response?.data || error.message);
-        res
-          .status(error.response?.status || 500)
-          .json(error.response?.data || { error: "Failed to check expiry" });
-      } else {
-        console.error("Check expiry error:", error);
-        res.status(500).json({ error: "Failed to check expiry" });
-      }
+      res
+        .status(error.response?.status || 500)
+        .json(error.response?.data || { error: "Failed to check expiry" });
+    } else {
+      console.error("Check expiry error:", error);
+      res.status(500).json({ error: "Failed to check expiry" });
     }
-  };
-   
+  }
+};

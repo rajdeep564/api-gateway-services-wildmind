@@ -158,6 +158,14 @@ export const falController = {
       res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
     } catch (err) { next(err); }
   },
+  async veo31LiteTtvSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.veo31LiteTtvSubmit(uid, req.body || {});
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
   async veoI2vSubmit(req: Request, res: Response, next: NextFunction) {
     try {
       const uid = req.uid;
@@ -179,6 +187,14 @@ export const falController = {
       const uid = req.uid;
       const ctx = (req as any).context || {};
       const result = await falQueueService.veo31I2vSubmit(uid, req.body || {}, true);
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
+  async veo31LiteI2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.veo31LiteI2vSubmit(uid, req.body || {});
       res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
     } catch (err) { next(err); }
   },

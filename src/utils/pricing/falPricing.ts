@@ -171,6 +171,19 @@ function resolveVeo31Display(isFast: boolean, kind: 't2v' | 'i2v', duration?: st
   }
 }
 
+function resolveVeo31LiteDisplay(kind: 't2v' | 'i2v', duration?: string, resolution?: string): string {
+  const dur = String(duration || '8s').toLowerCase();
+  const res = String(resolution || '720p').toLowerCase();
+
+  if (res === '1080p') {
+    return `Veo 3.1 Lite ${kind === 't2v' ? 'T2V' : 'I2V'} 8s 1080p`;
+  }
+
+  if (dur.startsWith('4')) return `Veo 3.1 Lite ${kind === 't2v' ? 'T2V' : 'I2V'} 4s 720p`;
+  if (dur.startsWith('6')) return `Veo 3.1 Lite ${kind === 't2v' ? 'T2V' : 'I2V'} 6s 720p`;
+  return `Veo 3.1 Lite ${kind === 't2v' ? 'T2V' : 'I2V'} 8s 720p`;
+}
+
 export async function computeFalVeoTtvSubmitCost(req: Request, isFast: boolean): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { duration } = req.body || {};
   const display = resolveVeoDisplay(isFast, 't2v', duration);
@@ -222,6 +235,40 @@ export async function computeFalVeo31I2vSubmitCost(req: Request, isFast: boolean
       model: display,
       duration: duration || '8s',
       generate_audio: hasAudio,
+    },
+  };
+}
+
+export async function computeFalVeo31LiteTtvSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { duration, resolution } = req.body || {};
+  const display = resolveVeo31LiteDisplay('t2v', duration, resolution);
+  const base = findCredits(display);
+  if (base == null) throw new Error('Unsupported FAL Veo 3.1 Lite T2V pricing');
+  return {
+    cost: Math.ceil(base),
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: display,
+      duration: duration || '8s',
+      resolution: resolution || '720p',
+      generate_audio: true,
+    },
+  };
+}
+
+export async function computeFalVeo31LiteI2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  const { duration, resolution } = req.body || {};
+  const display = resolveVeo31LiteDisplay('i2v', duration, resolution);
+  const base = findCredits(display);
+  if (base == null) throw new Error('Unsupported FAL Veo 3.1 Lite I2V pricing');
+  return {
+    cost: Math.ceil(base),
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: display,
+      duration: duration || '8s',
+      resolution: resolution || '720p',
+      generate_audio: true,
     },
   };
 }
@@ -428,6 +475,8 @@ export function computeFalVeoCostFromModel(model: string, meta?: any): { cost: n
   else if (normalized === 'fal-ai/veo3/image-to-video') display = 'veo3 i2v 8s';
   else if (normalized === 'fal-ai/veo3/fast/image-to-video') display = 'veo3 fast i2v 8s';
   else if (normalized === 'fal-ai/veo3.1') display = 'Veo 3.1 T2V 8s';
+  else if (normalized === 'fal-ai/veo3.1/lite') display = resolveVeo31LiteDisplay('t2v', meta?.duration, meta?.resolution);
+  else if (normalized === 'fal-ai/veo3.1/lite/image-to-video') display = resolveVeo31LiteDisplay('i2v', meta?.duration, meta?.resolution);
   else if (normalized === 'fal-ai/veo3.1/fast') display = 'Veo 3.1 Fast T2V 8s';
   else if (normalized === 'fal-ai/veo3.1/image-to-video') {
     // Handle duration and audio flag for Veo 3.1 I2V (image-to-video)

@@ -8,6 +8,8 @@ import {
   computeFalVeoI2vSubmitCost,
   computeFalVeoTtvSubmitCost,
   computeFalVeo31I2vSubmitCost,
+  computeFalVeo31LiteI2vSubmitCost,
+  computeFalVeo31LiteTtvSubmitCost,
   computeFalVeo31TtvSubmitCost,
   computeFalSora2I2vSubmitCost,
   computeFalSora2ProI2vSubmitCost,
@@ -51,9 +53,11 @@ import {
   validateFalVeoTextToVideoSubmit,
   validateFalVeoTextToVideoFastSubmit,
   validateFalVeo31TextToVideo,
+  validateFalVeo31LiteTextToVideoSubmit,
   validateFalVeo31TextToVideoFast,
   validateFalVeoImageToVideoSubmit,
   validateFalVeoImageToVideoFastSubmit,
+  validateFalVeo31LiteImageToVideoSubmit,
   validateFalVeo31FirstLastFast,
   validateFalVeo31FirstLast,
   validateFalVeo31ReferenceToVideo,
@@ -420,6 +424,15 @@ router.post(
   (falController as any).veo31TtvSubmit
 );
 router.post(
+  "/veo3_1/lite/text-to-video/submit",
+  requireAuth as any,
+  validateFalVeo31LiteTextToVideoSubmit as any,
+  makeCreditCost("fal", "veo31_lite_t2v_submit", (req) =>
+    computeFalVeo31LiteTtvSubmitCost(req)
+  ) as any,
+  (falController as any).veo31LiteTtvSubmit
+);
+router.post(
   "/veo3_1/text-to-video/fast/submit",
   requireAuth as any,
   validateFalVeo31TextToVideoFast as any,
@@ -436,6 +449,15 @@ router.post(
     computeFalVeo31I2vSubmitCost(req, false)
   ) as any,
   (falController as any).veo31I2vSubmit
+);
+router.post(
+  "/veo3_1/lite/image-to-video/submit",
+  requireAuth as any,
+  validateFalVeo31LiteImageToVideoSubmit as any,
+  makeCreditCost("fal", "veo31_lite_i2v_submit", (req) =>
+    computeFalVeo31LiteI2vSubmitCost(req)
+  ) as any,
+  (falController as any).veo31LiteI2vSubmit
 );
 router.post(
   "/veo3_1/image-to-video/fast/submit",

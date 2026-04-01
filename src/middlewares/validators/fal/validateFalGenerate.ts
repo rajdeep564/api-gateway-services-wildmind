@@ -215,6 +215,28 @@ export const validateFalVeo31TextToVideo = [
 
 export const validateFalVeo31TextToVideoFast = validateFalVeo31TextToVideo;
 
+export const validateFalVeo31LiteTextToVideo = [
+  body('prompt').isString().notEmpty(),
+  body('aspect_ratio').optional().isIn(['16:9', '9:16']),
+  body('duration').optional().isIn(['4s', '6s', '8s']),
+  body('negative_prompt').optional().isString(),
+  body('enhance_prompt').optional().isBoolean(),
+  body('seed').optional().isInt(),
+  body('auto_fix').optional().isBoolean(),
+  body('resolution').optional().isIn(['720p', '1080p']),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+
+    const duration = String(req.body?.duration || '8s').toLowerCase();
+    const resolution = String(req.body?.resolution || '720p').toLowerCase();
+    if (resolution === '1080p' && duration !== '8s') {
+      return next(new ApiError('Veo 3.1 Lite 1080p output requires 8s duration', 400));
+    }
+    next();
+  }
+];
+
 // Veo3 Image-to-Video (standard and fast)
 export const validateFalVeoImageToVideo = [
   body('prompt').isString().notEmpty(),
@@ -232,6 +254,29 @@ export const validateFalVeoImageToVideo = [
 ];
 
 export const validateFalVeoImageToVideoFast = validateFalVeoImageToVideo;
+
+export const validateFalVeo31LiteImageToVideo = [
+  body('prompt').isString().notEmpty(),
+  body('image_url').isString().notEmpty(),
+  body('aspect_ratio').optional().isIn(['auto', '16:9', '9:16']),
+  body('duration').optional().isIn(['4s', '6s', '8s']),
+  body('negative_prompt').optional().isString(),
+  body('enhance_prompt').optional().isBoolean(),
+  body('seed').optional().isInt(),
+  body('auto_fix').optional().isBoolean(),
+  body('resolution').optional().isIn(['720p', '1080p']),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return next(new ApiError('Validation failed', 400, errors.array()));
+
+    const duration = String(req.body?.duration || '8s').toLowerCase();
+    const resolution = String(req.body?.resolution || '720p').toLowerCase();
+    if (resolution === '1080p' && duration !== '8s') {
+      return next(new ApiError('Veo 3.1 Lite 1080p output requires 8s duration', 400));
+    }
+    next();
+  }
+];
 
 // ElevenLabs Text-to-Dialogue validator
 export const validateFalElevenDialogue = [
@@ -487,7 +532,9 @@ export const validateFalKlingV3I2v = [
 
 export const validateFalVeoTextToVideoSubmit = validateFalVeoTextToVideo;
 export const validateFalVeoTextToVideoFastSubmit = validateFalVeoTextToVideoFast;
+export const validateFalVeo31LiteTextToVideoSubmit = validateFalVeo31LiteTextToVideo;
 export const validateFalVeoImageToVideoSubmit = validateFalVeoImageToVideo;
+export const validateFalVeo31LiteImageToVideoSubmit = validateFalVeo31LiteImageToVideo;
 // Allow 4s/6s/8s for fast I2V and coerce numeric durations to the expected string format
 export const validateFalVeoImageToVideoFastSubmit = [
   ...validateFalVeoImageToVideoFast,
