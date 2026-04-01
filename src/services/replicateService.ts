@@ -21,7 +21,10 @@ import { computeWanVideoCost } from "../utils/pricing/wanPricing";
 import { syncToMirror, updateMirror } from "../utils/mirrorHelper";
 import { aestheticScoreService } from "./aestheticScoreService";
 import { markGenerationCompleted } from "./generationHistoryService";
-import { validateGenerationRequest, estimateFileSize } from "../utils/validationHelpers";
+import {
+  validateGenerationRequest,
+  estimateFileSize,
+} from "../utils/validationHelpers";
 
 const DEFAULT_BG_MODEL_A =
   "851-labs/background-remover:a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc";
@@ -59,7 +62,7 @@ function clamp(n: any, min: number, max: number): number {
 }
 
 async function downloadToDataUri(
-  sourceUrl: string
+  sourceUrl: string,
 ): Promise<{ dataUri: string; ext: string } | null> {
   try {
     const res = await fetch(sourceUrl as any);
@@ -150,46 +153,50 @@ async function resolveOutputUrls(output: any): Promise<string[]> {
  * to a public URL that Replicate can access.
  */
 function resolveToPublicUrl(url: string | any): string {
-  if (typeof url !== 'string') return '';
-  if (!url) return '';
+  if (typeof url !== "string") return "";
+  if (!url) return "";
 
   // Handled already-public URLs or data URIs
-  if (url.startsWith('http') || url.startsWith('data:')) return url;
+  if (url.startsWith("http") || url.startsWith("data:")) return url;
 
   const toZataPrefixUrl = (decodedPath: string): string => {
-    const key = decodedPath.replace(/^\//, '');
-    const prefix = (env.zataPrefix || '').replace(/\/$/, '');
+    const key = decodedPath.replace(/^\//, "");
+    const prefix = (env.zataPrefix || "").replace(/\/$/, "");
     if (prefix) return `${prefix}/${key}`;
 
-    const endpoint = (env.zataEndpoint || '').replace(/\/$/, '');
-    const bucket = env.zataBucket || '';
+    const endpoint = (env.zataEndpoint || "").replace(/\/$/, "");
+    const bucket = env.zataBucket || "";
     if (endpoint && bucket) return `${endpoint}/${bucket}/${encodeURI(key)}`;
     return decodedPath;
   };
 
-  if (url.includes('/api/proxy/resource/')) {
+  if (url.includes("/api/proxy/resource/")) {
     try {
-      const parts = url.split('/api/proxy/resource/');
+      const parts = url.split("/api/proxy/resource/");
       const encodedPath = parts[parts.length - 1];
       if (encodedPath) {
         const decodedPath = decodeURIComponent(encodedPath);
         return toZataPrefixUrl(decodedPath);
       }
     } catch (e) {
-      console.warn('[replicateService] Failed to resolve proxy URL:', url, e);
+      console.warn("[replicateService] Failed to resolve proxy URL:", url, e);
     }
   }
 
-  if (url.includes('/api/proxy/media/')) {
+  if (url.includes("/api/proxy/media/")) {
     try {
-      const parts = url.split('/api/proxy/media/');
+      const parts = url.split("/api/proxy/media/");
       const encodedPath = parts[parts.length - 1];
       if (encodedPath) {
         const decodedPath = decodeURIComponent(encodedPath);
         return toZataPrefixUrl(decodedPath);
       }
     } catch (e) {
-      console.warn('[replicateService] Failed to resolve proxy media URL:', url, e);
+      console.warn(
+        "[replicateService] Failed to resolve proxy media URL:",
+        url,
+        e,
+      );
     }
   }
 
@@ -208,14 +215,14 @@ export async function removeBackground(
     isPublic?: boolean;
     prompt?: string;
   },
-  ctx: any = {}
+  ctx: any = {},
 ) {
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
   if (!key) {
     // eslint-disable-next-line no-console
     console.error(
-      "[replicateService.removeBackground] Missing REPLICATE_API_TOKEN"
+      "[replicateService.removeBackground] Missing REPLICATE_API_TOKEN",
     );
     throw new ApiError("Replicate API key not configured", 500);
   }
@@ -227,7 +234,8 @@ export async function removeBackground(
   const replicate = new Replicate({ auth: key });
 
   const creator = await authRepository.getUserById(uid);
-  const storageKeyPrefixOverride: string | undefined = (body as any)?.storageKeyPrefixOverride;
+  const storageKeyPrefixOverride: string | undefined = (body as any)
+    ?.storageKeyPrefixOverride;
   const legacyId = await replicateRepository.createGenerationRecord(
     {
       prompt: "[Remove background]",
@@ -236,7 +244,7 @@ export async function removeBackground(
     },
     creator
       ? { uid, username: creator.username, email: (creator as any)?.email }
-      : { uid }
+      : { uid },
   );
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: "[Remove background]",
@@ -314,7 +322,7 @@ export async function removeBackground(
     console.log(
       "[replicateService.removeBackground] output",
       typeof output,
-      Array.isArray(output) ? output.length : "n/a"
+      Array.isArray(output) ? output.length : "n/a",
     );
     // Resolve possible file-like outputs
     const urls = await resolveOutputUrls(output);
@@ -325,7 +333,7 @@ export async function removeBackground(
     // eslint-disable-next-line no-console
     console.error("[replicateService.removeBackground] error", {
       original: e?.message || e,
-      mapped: mappedError
+      mapped: mappedError,
     });
 
     try {
@@ -333,7 +341,7 @@ export async function removeBackground(
         status: "failed",
         error: mappedError.message,
       });
-    } catch { }
+    } catch {}
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
       error: mappedError.message,
@@ -343,7 +351,7 @@ export async function removeBackground(
     throw new ApiError(mappedError.message, 502, {
       title: mappedError.title,
       code: mappedError.code,
-      technical: e?.message
+      technical: e?.message,
     });
   }
 
@@ -381,19 +389,25 @@ export async function removeBackground(
     aestheticScore: highestScore,
     updatedAt: new Date().toISOString(), // Set completion time for proper sorting
   } as any);
-  try { console.log('[Replicate.removeBackground] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch { }
+  try {
+    console.log("[Replicate.removeBackground] History updated with scores", {
+      historyId,
+      imageCount: scoredImages.length,
+      highestScore,
+    });
+  } catch {}
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
       status: "completed",
       images: scoredImages as any,
     });
-  } catch { }
+  } catch {}
 
   // Trigger optimization and re-enqueue mirror update (non-blocking)
   try {
     console.log(
       "[replicateService.removeBackground] triggering markGenerationCompleted",
-      { uid, historyId, isPublic: body?.isPublic === true }
+      { uid, historyId, isPublic: body?.isPublic === true },
     );
     markGenerationCompleted(uid, historyId, {
       status: "completed",
@@ -402,13 +416,13 @@ export async function removeBackground(
     }).catch((e: any) =>
       console.error(
         "[replicateService.removeBackground] markGenerationCompleted failed",
-        e
-      )
+        e,
+      ),
     );
   } catch (e) {
     console.warn(
       "[replicateService.removeBackground] markGenerationCompleted call error",
-      e
+      e,
     );
   }
 
@@ -422,16 +436,21 @@ export async function removeBackground(
         uid,
         historyId,
         ctx.creditCost,
-        'replicate-remove-bg',
+        "replicate-remove-bg",
         {
           model: modelBase,
           ...(ctx.meta || {}),
-          pricingVersion: ctx.pricingVersion || 'v1',
-        }
+          pricingVersion: ctx.pricingVersion || "v1",
+        },
       );
-      console.log(`[replicateService.removeBackground] Debited ${ctx.creditCost} credits for ${uid}`);
+      console.log(
+        `[replicateService.removeBackground] Debited ${ctx.creditCost} credits for ${uid}`,
+      );
     } catch (error) {
-      console.error('[replicateService.removeBackground] Failed to deduct credits:', error);
+      console.error(
+        "[replicateService.removeBackground] Failed to deduct credits:",
+        error,
+      );
       // We log but do not fail the request since service was delivered
     }
   }
@@ -478,7 +497,7 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
     { prompt: "[Upscale]", model: modelBase, isPublic: body.isPublic === true },
     creator
       ? { uid, username: creator.username, email: (creator as any)?.email }
-      : { uid }
+      : { uid },
   );
 
   // Track the original input image URL for saving to database
@@ -497,7 +516,7 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
       if (dataUriSize > maxDataUriSize) {
         throw new ApiError(
           `Image data URI is too large (${Math.round(dataUriSize / 1024 / 1024)}MB). Maximum size is 10MB.`,
-          400
+          400,
         );
       }
       const stored = await uploadDataUriToZata({
@@ -506,7 +525,9 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
         fileName: "source",
       });
       if (!stored?.publicUrl) {
-        throw new Error("Failed to upload image to storage: no public URL returned");
+        throw new Error(
+          "Failed to upload image to storage: no public URL returned",
+        );
       }
       body.image = stored.publicUrl;
       inputImageUrl = stored.publicUrl;
@@ -518,15 +539,19 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
       });
     } catch (e: any) {
       // eslint-disable-next-line no-console
-      console.error("[replicateService.upscale] Failed to upload data URI to Zata", e?.message || e);
+      console.error(
+        "[replicateService.upscale] Failed to upload data URI to Zata",
+        e?.message || e,
+      );
       await generationHistoryRepository.update(uid, historyId, {
         status: "failed",
         error: e?.message || "Failed to upload image to storage",
       } as any);
       throw new ApiError(
-        e?.message || "Failed to upload image to storage. Please try again or use a smaller image.",
+        e?.message ||
+          "Failed to upload image to storage. Please try again or use a smaller image.",
         e?.statusCode || 500,
-        e
+        e,
       );
     }
   } else if (typeof body.image === "string" && body.image.trim().length > 0) {
@@ -552,7 +577,10 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
     } catch (e: any) {
       // If upload fails, still use the original URL but log a warning
       // eslint-disable-next-line no-console
-      console.warn("[replicateService.upscale] Failed to upload input URL to Zata, using original URL", e?.message || e);
+      console.warn(
+        "[replicateService.upscale] Failed to upload input URL to Zata, using original URL",
+        e?.message || e,
+      );
       inputImageUrl = body.image;
     }
   }
@@ -561,28 +589,39 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
   if (typeof body.image === "string" && body.image.startsWith("data:")) {
     throw new ApiError(
       "Image upload failed. Please try again or use a smaller image.",
-      400
+      400,
     );
   }
 
-  if (!body.image || typeof body.image !== "string" || body.image.trim().length === 0) {
+  if (
+    !body.image ||
+    typeof body.image !== "string" ||
+    body.image.trim().length === 0
+  ) {
     throw new ApiError("Invalid image URL provided", 400);
   }
 
   // Save input image to database
   if (inputImageUrl) {
     try {
-      const inputPersisted: any[] = [{
-        id: "in-1",
-        url: inputImageUrl,
-        originalUrl: originalInputImage,
-      }];
+      const inputPersisted: any[] = [
+        {
+          id: "in-1",
+          url: inputImageUrl,
+          originalUrl: originalInputImage,
+        },
+      ];
       if (inputImageStoragePath) {
         inputPersisted[0].storagePath = inputImageStoragePath;
       }
-      await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+      await generationHistoryRepository.update(uid, historyId, {
+        inputImages: inputPersisted,
+      } as any);
       // eslint-disable-next-line no-console
-      console.log("[replicateService.upscale] Saved inputImages to database", { historyId, count: inputPersisted.length });
+      console.log("[replicateService.upscale] Saved inputImages to database", {
+        historyId,
+        count: inputPersisted.length,
+      });
     } catch (e: any) {
       // eslint-disable-next-line no-console
       console.warn("[replicateService.upscale] Failed to save inputImages:", e);
@@ -605,7 +644,7 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
       if (input.num_inference_steps != null)
         input.num_inference_steps = Math.max(
           1,
-          Math.min(100, Number(input.num_inference_steps))
+          Math.min(100, Number(input.num_inference_steps)),
         );
     }
     if (modelBase === "fermatresearch/magic-image-refiner") {
@@ -672,7 +711,10 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
     // Add timeout wrapper for Replicate API call (7 minutes max)
     const REPLICATE_TIMEOUT = 7 * 60 * 1000; // 7 minutes
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Replicate API call timed out after 7 minutes")), REPLICATE_TIMEOUT);
+      setTimeout(
+        () => reject(new Error("Replicate API call timed out after 7 minutes")),
+        REPLICATE_TIMEOUT,
+      );
     });
 
     // Retry logic with exponential backoff for transient errors (500, 502, 503, 504)
@@ -686,14 +728,16 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
           // Exponential backoff: wait 1s, 2s, 4s
           const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
           // eslint-disable-next-line no-console
-          console.log(`[replicateService.upscale] Retry attempt ${attempt} after ${delay}ms delay`);
-          await new Promise(resolve => setTimeout(resolve, delay));
+          console.log(
+            `[replicateService.upscale] Retry attempt ${attempt} after ${delay}ms delay`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
 
-        output = await Promise.race([
+        output = (await Promise.race([
           replicate.run(modelSpec as any, { input }),
           timeoutPromise,
-        ]) as any;
+        ])) as any;
 
         // Success - break out of retry loop
         break;
@@ -706,7 +750,9 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
           retryError?.response?.status ||
           retryError?.$metadata?.httpStatusCode ||
           retryError?.data?.$metadata?.httpStatusCode ||
-          (retryError?.message?.match(/status[:\s]+(\d{3})/i)?.[1] ? Number(retryError.message.match(/status[:\s]+(\d{3})/i)?.[1]) : null);
+          (retryError?.message?.match(/status[:\s]+(\d{3})/i)?.[1]
+            ? Number(retryError.message.match(/status[:\s]+(\d{3})/i)?.[1])
+            : null);
 
         // Check if this is a parsing/deserialization error (usually indicates HTML response from server)
         const isParseError =
@@ -736,22 +782,32 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
             !body.model // Only fallback if user didn't explicitly specify the model
           ) {
             // eslint-disable-next-line no-console
-            console.log("[replicateService.upscale] Crystal-upscaler failed, trying fallback model: philz1337x/clarity-upscaler");
+            console.log(
+              "[replicateService.upscale] Crystal-upscaler failed, trying fallback model: philz1337x/clarity-upscaler",
+            );
             try {
-              const fallbackModelSpec = composeModelSpec("philz1337x/clarity-upscaler", body.version);
+              const fallbackModelSpec = composeModelSpec(
+                "philz1337x/clarity-upscaler",
+                body.version,
+              );
               const fallbackInput: any = { image: body.image };
               // Copy relevant parameters from original input
-              if (input.scale_factor) fallbackInput.scale_factor = input.scale_factor;
+              if (input.scale_factor)
+                fallbackInput.scale_factor = input.scale_factor;
               if (input.dynamic != null) fallbackInput.dynamic = input.dynamic;
               if (input.sharpen != null) fallbackInput.sharpen = input.sharpen;
 
-              output = await Promise.race([
-                replicate.run(fallbackModelSpec as any, { input: fallbackInput }),
+              output = (await Promise.race([
+                replicate.run(fallbackModelSpec as any, {
+                  input: fallbackInput,
+                }),
                 timeoutPromise,
-              ]) as any;
+              ])) as any;
 
               // eslint-disable-next-line no-console
-              console.log("[replicateService.upscale] Fallback model succeeded");
+              console.log(
+                "[replicateService.upscale] Fallback model succeeded",
+              );
               break; // Success with fallback
             } catch (fallbackError: any) {
               // Fallback also failed, throw original error
@@ -773,7 +829,7 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
     console.log(
       "[replicateService.upscale] output",
       typeof output,
-      Array.isArray(output) ? output.length : "n/a"
+      Array.isArray(output) ? output.length : "n/a",
     );
 
     // Robustly resolve Replicate SDK file outputs (which may be objects with url())
@@ -787,11 +843,16 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
     }
     if (!outputUrls.length) {
       // eslint-disable-next-line no-console
-      console.error("[replicateService.upscale] No output URL returned by Replicate", {
-        outputType: typeof output,
-        outputValue: output,
-      });
-      throw new Error("No output URL returned by Replicate. The model may have failed or returned an unexpected format.");
+      console.error(
+        "[replicateService.upscale] No output URL returned by Replicate",
+        {
+          outputType: typeof output,
+          outputValue: output,
+        },
+      );
+      throw new Error(
+        "No output URL returned by Replicate. The model may have failed or returned an unexpected format.",
+      );
     }
   } catch (e: any) {
     const mappedError = mapReplicateError(e);
@@ -814,7 +875,9 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
       responseStatus: e?.response?.status,
       httpStatusCode: httpStatusForLog,
       metadata: e?.$metadata || e?.data?.$metadata,
-      isParseError: e?.message?.includes("Deserialization error") || e?.message?.includes("Expected closing tag"),
+      isParseError:
+        e?.message?.includes("Deserialization error") ||
+        e?.message?.includes("Expected closing tag"),
     });
 
     await generationHistoryRepository.update(uid, historyId, {
@@ -827,12 +890,12 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
         status: "failed",
         error: mappedError.message,
       });
-    } catch { }
+    } catch {}
 
     throw new ApiError(mappedError.message, 502, {
       title: mappedError.title,
       code: mappedError.code,
-      technical: e?.message
+      technical: e?.message,
     });
   }
 
@@ -891,7 +954,7 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
         id: `replicate-${Date.now()}-${i + 1}`,
         url: out,
         originalUrl: out,
-      }))
+      })),
     );
   }
 
@@ -908,23 +971,33 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
     updatedAt: new Date().toISOString(), // Set completion time for proper sorting
   };
   // Preserve inputImages if they exist
-  if (existing && Array.isArray((existing as any).inputImages) && (existing as any).inputImages.length > 0) {
+  if (
+    existing &&
+    Array.isArray((existing as any).inputImages) &&
+    (existing as any).inputImages.length > 0
+  ) {
     updateData.inputImages = (existing as any).inputImages;
   }
 
   await generationHistoryRepository.update(uid, historyId, updateData);
-  try { console.log('[Replicate.upscale] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch { }
+  try {
+    console.log("[Replicate.upscale] History updated with scores", {
+      historyId,
+      imageCount: scoredImages.length,
+      highestScore,
+    });
+  } catch {}
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
       status: "completed",
       images: scoredImages as any,
     });
-  } catch { }
+  } catch {}
   // Trigger optimization and re-enqueue mirror update (non-blocking)
   try {
     console.log(
       "[replicateService.upscale] triggering markGenerationCompleted",
-      { uid, historyId, isPublic: body?.isPublic === true }
+      { uid, historyId, isPublic: body?.isPublic === true },
     );
     markGenerationCompleted(uid, historyId, {
       status: "completed",
@@ -933,13 +1006,13 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
     }).catch((e: any) =>
       console.error(
         "[replicateService.upscale] markGenerationCompleted failed",
-        e
-      )
+        e,
+      ),
     );
   } catch (e) {
     console.warn(
       "[replicateService.upscale] markGenerationCompleted call error",
-      e
+      e,
     );
   }
   // Robust mirror sync with retry logic
@@ -952,16 +1025,21 @@ export async function upscale(uid: string, body: any, ctx: any = {}) {
         uid,
         historyId,
         ctx.creditCost,
-        'replicate-upscale',
+        "replicate-upscale",
         {
           model: modelBase,
           ...(ctx.meta || {}),
-          pricingVersion: ctx.pricingVersion || 'v1',
-        }
+          pricingVersion: ctx.pricingVersion || "v1",
+        },
       );
-      console.log(`[replicateService.upscale] Debited ${ctx.creditCost} credits for ${uid}`);
+      console.log(
+        `[replicateService.upscale] Debited ${ctx.creditCost} credits for ${uid}`,
+      );
     } catch (error) {
-      console.error('[replicateService.upscale] Failed to deduct credits:', error);
+      console.error(
+        "[replicateService.upscale] Failed to deduct credits:",
+        error,
+      );
     }
   }
 
@@ -1001,10 +1079,14 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
   } as any);
 
   const legacyId = await replicateRepository.createGenerationRecord(
-    { prompt: "[Multiangle]", model: modelBase, isPublic: body.isPublic === true },
+    {
+      prompt: "[Multiangle]",
+      model: modelBase,
+      isPublic: body.isPublic === true,
+    },
     creator
       ? { uid, username: creator.username, email: (creator as any)?.email }
-      : { uid }
+      : { uid },
   );
 
   // Track the original input image URL for saving to database
@@ -1021,7 +1103,7 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
       if (dataUriSize > maxDataUriSize) {
         throw new ApiError(
           `Image data URI is too large (${Math.round(dataUriSize / 1024 / 1024)}MB). Maximum size is 10MB.`,
-          400
+          400,
         );
       }
       const stored = await uploadDataUriToZata({
@@ -1029,12 +1111,16 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
         keyPrefix: `users/${username}/input/${historyId}`,
         fileName: "source",
       });
-      if (!stored?.publicUrl) throw new Error("Failed to upload image to storage");
+      if (!stored?.publicUrl)
+        throw new Error("Failed to upload image to storage");
       body.image = stored.publicUrl;
       inputImageUrl = stored.publicUrl;
       inputImageStoragePath = (stored as any).key;
     } catch (e: any) {
-      console.error("[replicateService.multiangle] Failed to upload data URI", e);
+      console.error(
+        "[replicateService.multiangle] Failed to upload data URI",
+        e,
+      );
       throw new ApiError("Failed to upload input image.", 500, e);
     }
   } else if (typeof body.image === "string" && body.image.trim().length > 0) {
@@ -1055,7 +1141,10 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
         body.image = stored.publicUrl;
       }
     } catch (e: any) {
-      console.warn("[replicateService.multiangle] Failed to upload input URL to Zata, using original URL", e?.message || e);
+      console.warn(
+        "[replicateService.multiangle] Failed to upload input URL to Zata, using original URL",
+        e?.message || e,
+      );
       inputImageUrl = body.image;
     }
   }
@@ -1063,17 +1152,24 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
   // Save input image to database
   if (inputImageUrl) {
     try {
-      const inputPersisted: any[] = [{
-        id: "in-1",
-        url: inputImageUrl,
-        originalUrl: originalInputImage,
-      }];
+      const inputPersisted: any[] = [
+        {
+          id: "in-1",
+          url: inputImageUrl,
+          originalUrl: originalInputImage,
+        },
+      ];
       if (inputImageStoragePath) {
         inputPersisted[0].storagePath = inputImageStoragePath;
       }
-      await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+      await generationHistoryRepository.update(uid, historyId, {
+        inputImages: inputPersisted,
+      } as any);
     } catch (e) {
-      console.warn("[replicateService.multiangle] Failed to save inputImages:", e);
+      console.warn(
+        "[replicateService.multiangle] Failed to save inputImages:",
+        e,
+      );
     }
   }
 
@@ -1082,11 +1178,27 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
     const input: any = {
       image: body.image,
       prompt: body.prompt || "", // User specified prompt from UI
-      rotate_degrees: typeof body.rotate_degrees === 'number' ? Math.max(-90, Math.min(90, body.rotate_degrees)) : 0,
-      move_forward: typeof body.move_forward === 'number' ? Math.max(0, Math.min(50, body.move_forward)) : 0, // User sample showed 2.5, keep range reasonable
-      vertical_tilt: typeof body.vertical_tilt === 'number' ? body.vertical_tilt : 0,
+      rotate_degrees:
+        typeof body.rotate_degrees === "number"
+          ? Math.max(-90, Math.min(90, body.rotate_degrees))
+          : 0,
+      move_forward:
+        typeof body.move_forward === "number"
+          ? Math.max(0, Math.min(50, body.move_forward))
+          : 0, // User sample showed 2.5, keep range reasonable
+      vertical_tilt:
+        typeof body.vertical_tilt === "number" ? body.vertical_tilt : 0,
       use_wide_angle: body.wide_angle === true, // Mapped from wide_angle to use_wide_angle
-      aspect_ratio: ["match_input_image", "1:1", "16:9", "9:16", "4:3", "3:4"].includes(body.aspect_ratio) ? body.aspect_ratio : "match_input_image",
+      aspect_ratio: [
+        "match_input_image",
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4",
+      ].includes(body.aspect_ratio)
+        ? body.aspect_ratio
+        : "match_input_image",
       lora_weights: "dx8152/Qwen-Edit-2509-Multiple-angles", // REQUIRED
       lora_scale: 3, // User specified default
       true_guidance_scale: 8, // User specified default
@@ -1099,13 +1211,22 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
     let version = body.version;
     if (!version) {
       try {
-        console.log("[replicateService.multiangle] Fetching latest version for", modelBase);
-        const [owner, name] = modelBase.split('/');
+        console.log(
+          "[replicateService.multiangle] Fetching latest version for",
+          modelBase,
+        );
+        const [owner, name] = modelBase.split("/");
         const modelData = await replicate.models.get(owner, name);
         version = modelData.latest_version?.id;
-        console.log("[replicateService.multiangle] Resolved latest version:", version);
+        console.log(
+          "[replicateService.multiangle] Resolved latest version:",
+          version,
+        );
       } catch (verErr: any) {
-        console.warn("[replicateService.multiangle] Failed to fetch latest version, falling back to base model string:", verErr.message);
+        console.warn(
+          "[replicateService.multiangle] Failed to fetch latest version, falling back to base model string:",
+          verErr.message,
+        );
       }
     }
 
@@ -1115,7 +1236,10 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
     // 5 min timeout
     const REPLICATE_TIMEOUT = 5 * 60 * 1000;
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Replicate API call timed out")), REPLICATE_TIMEOUT);
+      setTimeout(
+        () => reject(new Error("Replicate API call timed out")),
+        REPLICATE_TIMEOUT,
+      );
     });
 
     const output: any = await Promise.race([
@@ -1134,22 +1258,38 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
     }
 
     if (!outputUrls.length) {
-      console.error("[replicateService.multiangle] No output URL. Raw output:", JSON.stringify(output, null, 2));
+      console.error(
+        "[replicateService.multiangle] No output URL. Raw output:",
+        JSON.stringify(output, null, 2),
+      );
       throw new Error("No output URL returned by Replicate");
     }
-
   } catch (e: any) {
-    console.error("[replicateService.multiangle] error details:", JSON.stringify(e, Object.getOwnPropertyNames(e), 2));
+    console.error(
+      "[replicateService.multiangle] error details:",
+      JSON.stringify(e, Object.getOwnPropertyNames(e), 2),
+    );
     const errorMessage = e?.message || "Replicate generation failed";
     try {
-      await replicateRepository.updateGenerationRecord(legacyId, { status: "failed", error: errorMessage });
-    } catch { }
-    await generationHistoryRepository.update(uid, historyId, { status: "failed", error: errorMessage } as any);
+      await replicateRepository.updateGenerationRecord(legacyId, {
+        status: "failed",
+        error: errorMessage,
+      });
+    } catch {}
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: errorMessage,
+    } as any);
     throw new ApiError(errorMessage, 502, e);
   }
 
   // Upload outputs
-  const uploadedImages: Array<{ id: string; url: string; storagePath?: string; originalUrl: string; }> = [];
+  const uploadedImages: Array<{
+    id: string;
+    url: string;
+    storagePath?: string;
+    originalUrl: string;
+  }> = [];
   try {
     const username = creator?.username || uid;
     let idx = 1;
@@ -1183,12 +1323,22 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
           });
         }
       } catch {
-        uploadedImages.push({ id: `replicate-${Date.now()}-${idx}`, url: out, originalUrl: out });
+        uploadedImages.push({
+          id: `replicate-${Date.now()}-${idx}`,
+          url: out,
+          originalUrl: out,
+        });
       }
       idx++;
     }
   } catch {
-    uploadedImages.push(...outputUrls.map((out, i) => ({ id: `replicate-${Date.now()}-${i + 1}`, url: out, originalUrl: out })));
+    uploadedImages.push(
+      ...outputUrls.map((out, i) => ({
+        id: `replicate-${Date.now()}-${i + 1}`,
+        url: out,
+        originalUrl: out,
+      })),
+    );
   }
 
   const scoredImages = await aestheticScoreService.scoreImages(uploadedImages);
@@ -1202,7 +1352,12 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
   };
 
   await generationHistoryRepository.update(uid, historyId, updateData);
-  try { await replicateRepository.updateGenerationRecord(legacyId, { status: "completed", images: scoredImages as any }); } catch { }
+  try {
+    await replicateRepository.updateGenerationRecord(legacyId, {
+      status: "completed",
+      images: scoredImages as any,
+    });
+  } catch {}
 
   markGenerationCompleted(uid, historyId, {
     status: "completed",
@@ -1219,16 +1374,21 @@ export async function multiangle(uid: string, body: any, ctx: any = {}) {
         uid,
         historyId,
         ctx.creditCost,
-        'replicate-multiangle',
+        "replicate-multiangle",
         {
           model: modelBase,
           ...(ctx.meta || {}),
-          pricingVersion: ctx.pricingVersion || 'v1',
-        }
+          pricingVersion: ctx.pricingVersion || "v1",
+        },
       );
-      console.log(`[replicateService.multiangle] Debited ${ctx.creditCost} credits for ${uid}`);
+      console.log(
+        `[replicateService.multiangle] Debited ${ctx.creditCost} credits for ${uid}`,
+      );
     } catch (error) {
-      console.error('[replicateService.multiangle] Failed to deduct credits:', error);
+      console.error(
+        "[replicateService.multiangle] Failed to deduct credits:",
+        error,
+      );
     }
   }
 
@@ -1297,10 +1457,14 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
   } as any);
 
   const legacyId = await replicateRepository.createGenerationRecord(
-    { prompt: body.prompt || "[Next Scene]", model: modelBase, isPublic: body.isPublic === true },
+    {
+      prompt: body.prompt || "[Next Scene]",
+      model: modelBase,
+      isPublic: body.isPublic === true,
+    },
     creator
       ? { uid, username: creator.username, email: (creator as any)?.email }
-      : { uid }
+      : { uid },
   );
 
   // Track the original input image URL for saving to database
@@ -1317,7 +1481,7 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
       if (dataUriSize > maxDataUriSize) {
         throw new ApiError(
           `Image data URI is too large (${Math.round(dataUriSize / 1024 / 1024)}MB). Maximum size is 10MB.`,
-          400
+          400,
         );
       }
       const stored = await uploadDataUriToZata({
@@ -1325,12 +1489,16 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
         keyPrefix: `users/${username}/input/${historyId}`,
         fileName: "source",
       });
-      if (!stored?.publicUrl) throw new Error("Failed to upload image to storage");
+      if (!stored?.publicUrl)
+        throw new Error("Failed to upload image to storage");
       body.image = stored.publicUrl;
       inputImageUrl = stored.publicUrl;
       inputImageStoragePath = (stored as any).key;
     } catch (e: any) {
-      console.error("[replicateService.nextScene] Failed to upload data URI", e);
+      console.error(
+        "[replicateService.nextScene] Failed to upload data URI",
+        e,
+      );
       throw new ApiError("Failed to upload input image.", 500, e);
     }
   } else if (typeof body.image === "string" && body.image.trim().length > 0) {
@@ -1351,7 +1519,10 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
         body.image = stored.publicUrl;
       }
     } catch (e: any) {
-      console.warn("[replicateService.nextScene] Failed to upload input URL to Zata, using original URL", e?.message || e);
+      console.warn(
+        "[replicateService.nextScene] Failed to upload input URL to Zata, using original URL",
+        e?.message || e,
+      );
       inputImageUrl = body.image;
     }
   }
@@ -1359,27 +1530,36 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
   // Save input image to database
   if (inputImageUrl) {
     try {
-      const inputPersisted: any[] = [{
-        id: "in-1",
-        url: inputImageUrl,
-        originalUrl: originalInputImage,
-      }];
+      const inputPersisted: any[] = [
+        {
+          id: "in-1",
+          url: inputImageUrl,
+          originalUrl: originalInputImage,
+        },
+      ];
       if (inputImageStoragePath) {
         inputPersisted[0].storagePath = inputImageStoragePath;
       }
-      await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+      await generationHistoryRepository.update(uid, historyId, {
+        inputImages: inputPersisted,
+      } as any);
     } catch (e) {
-      console.warn("[replicateService.nextScene] Failed to save inputImages:", e);
+      console.warn(
+        "[replicateService.nextScene] Failed to save inputImages:",
+        e,
+      );
     }
   }
 
   let outputUrls: string[] = [];
   try {
-    let finalPrompt = body.prompt || "Next Scene: The camera pulls back to reveal the entire landscape";
+    let finalPrompt =
+      body.prompt ||
+      "Next Scene: The camera pulls back to reveal the entire landscape";
 
     // For MultiScene, inject the strict base prompt
     if (isMultiScene) {
-      // If user provided a prompt, append it or merge it. 
+      // If user provided a prompt, append it or merge it.
       // The instruction says "this will be base prompt so make it like that".
       // We'll treat user prompt as the scene description to be analyzed.
       finalPrompt = `${MULTISCENE_BASE_PROMPT}\n\nScene Description: ${body.prompt || "A cinematic scene"}`;
@@ -1393,9 +1573,16 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
       lora_weights: body.lora_weights || "",
       output_format: "png",
       output_quality: 95,
-      true_guidance_scale: body.true_guidance_scale !== undefined ? Number(body.true_guidance_scale) : 0,
-      guidance_scale: body.guidance_scale !== undefined ? Number(body.guidance_scale) : 3.5,
-      num_inference_steps: body.num_inference_steps !== undefined ? Number(body.num_inference_steps) : 25,
+      true_guidance_scale:
+        body.true_guidance_scale !== undefined
+          ? Number(body.true_guidance_scale)
+          : 0,
+      guidance_scale:
+        body.guidance_scale !== undefined ? Number(body.guidance_scale) : 3.5,
+      num_inference_steps:
+        body.num_inference_steps !== undefined
+          ? Number(body.num_inference_steps)
+          : 25,
     };
 
     // Dynamically resolve latest version for robustness, though modelBase usually works for Replicate models with slash
@@ -1409,7 +1596,10 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
     // 5 min timeout
     const REPLICATE_TIMEOUT = 5 * 60 * 1000;
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Replicate API call timed out")), REPLICATE_TIMEOUT);
+      setTimeout(
+        () => reject(new Error("Replicate API call timed out")),
+        REPLICATE_TIMEOUT,
+      );
     });
 
     const output: any = await Promise.race([
@@ -1429,22 +1619,38 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
     }
 
     if (!outputUrls.length) {
-      console.error("[replicateService.nextScene] No output URL. Raw output:", JSON.stringify(output, null, 2));
+      console.error(
+        "[replicateService.nextScene] No output URL. Raw output:",
+        JSON.stringify(output, null, 2),
+      );
       throw new Error("No output URL returned by Replicate");
     }
-
   } catch (e: any) {
-    console.error("[replicateService.nextScene] error details:", JSON.stringify(e, Object.getOwnPropertyNames(e), 2));
+    console.error(
+      "[replicateService.nextScene] error details:",
+      JSON.stringify(e, Object.getOwnPropertyNames(e), 2),
+    );
     const errorMessage = e?.message || "Replicate generation failed";
     try {
-      await replicateRepository.updateGenerationRecord(legacyId, { status: "failed", error: errorMessage });
-    } catch { }
-    await generationHistoryRepository.update(uid, historyId, { status: "failed", error: errorMessage } as any);
+      await replicateRepository.updateGenerationRecord(legacyId, {
+        status: "failed",
+        error: errorMessage,
+      });
+    } catch {}
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: errorMessage,
+    } as any);
     throw new ApiError(errorMessage, 502, e);
   }
 
   // Upload outputs
-  const uploadedImages: Array<{ id: string; url: string; storagePath?: string; originalUrl: string; }> = [];
+  const uploadedImages: Array<{
+    id: string;
+    url: string;
+    storagePath?: string;
+    originalUrl: string;
+  }> = [];
   try {
     const username = creator?.username || uid;
     let idx = 1;
@@ -1478,12 +1684,22 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
           });
         }
       } catch {
-        uploadedImages.push({ id: `replicate-${Date.now()}-${idx}`, url: out, originalUrl: out });
+        uploadedImages.push({
+          id: `replicate-${Date.now()}-${idx}`,
+          url: out,
+          originalUrl: out,
+        });
       }
       idx++;
     }
   } catch {
-    uploadedImages.push(...outputUrls.map((out, i) => ({ id: `replicate-${Date.now()}-${i + 1}`, url: out, originalUrl: out })));
+    uploadedImages.push(
+      ...outputUrls.map((out, i) => ({
+        id: `replicate-${Date.now()}-${i + 1}`,
+        url: out,
+        originalUrl: out,
+      })),
+    );
   }
 
   const scoredImages = await aestheticScoreService.scoreImages(uploadedImages);
@@ -1497,7 +1713,12 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
   };
 
   await generationHistoryRepository.update(uid, historyId, updateData);
-  try { await replicateRepository.updateGenerationRecord(legacyId, { status: "completed", images: scoredImages as any }); } catch { }
+  try {
+    await replicateRepository.updateGenerationRecord(legacyId, {
+      status: "completed",
+      images: scoredImages as any,
+    });
+  } catch {}
 
   markGenerationCompleted(uid, historyId, {
     status: "completed",
@@ -1514,16 +1735,21 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
         uid,
         historyId,
         ctx.creditCost,
-        'replicate-next-scene',
+        "replicate-next-scene",
         {
           model: modelBase,
           ...(ctx.meta || {}),
-          pricingVersion: ctx.pricingVersion || 'v1',
-        }
+          pricingVersion: ctx.pricingVersion || "v1",
+        },
       );
-      console.log(`[replicateService.nextScene] Debited ${ctx.creditCost} credits for ${uid}`);
+      console.log(
+        `[replicateService.nextScene] Debited ${ctx.creditCost} credits for ${uid}`,
+      );
     } catch (error) {
-      console.error('[replicateService.nextScene] Failed to deduct credits:', error);
+      console.error(
+        "[replicateService.nextScene] Failed to deduct credits:",
+        error,
+      );
     }
   }
 
@@ -1537,13 +1763,15 @@ export async function nextScene(uid: string, body: any, ctx: any = {}) {
 }
 
 export async function generateImage(uid: string, body: any, ctx: any = {}) {
-  console.log('[DEBUG-DEPLOY-CHECK-V1] generateImage called', { model: body?.model });
+  console.log("[DEBUG-DEPLOY-CHECK-V1] generateImage called", {
+    model: body?.model,
+  });
   // env.replicateApiKey already handles REPLICATE_API_TOKEN as fallback in env.ts
   const key = env.replicateApiKey as string;
   if (!key) {
     // eslint-disable-next-line no-console
     console.error(
-      "[replicateService.generateImage] Missing REPLICATE_API_TOKEN"
+      "[replicateService.generateImage] Missing REPLICATE_API_TOKEN",
     );
     throw new ApiError("Replicate API key not configured", 500);
   }
@@ -1552,47 +1780,57 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
   const replicate = new Replicate({ auth: key });
 
   const normalizeModelAlias = (raw: string): string => {
-    const s = String(raw || '').trim();
-    const trimmed = String(s || '').trim();
+    const s = String(raw || "").trim();
+    const trimmed = String(s || "").trim();
     const lower = trimmed.toLowerCase();
 
     // Strip an optional "replicate/" prefix used by some frontend mappings.
-    const withoutReplicatePrefix = lower.startsWith('replicate/')
-      ? trimmed.substring('replicate/'.length)
+    const withoutReplicatePrefix = lower.startsWith("replicate/")
+      ? trimmed.substring("replicate/".length)
       : trimmed;
     const lr = withoutReplicatePrefix.toLowerCase();
 
     // If it's already a valid owner/name reference, keep it (minus replicate/ prefix).
-    if (lr.startsWith('qwen/')) return withoutReplicatePrefix;
+    if (lr.startsWith("qwen/")) return withoutReplicatePrefix;
 
     // Qwen Image Edit
-    if (lr === 'qwen-image-edit' || lr === 'qwen-image-edit-2511' || lr.includes('qwen-image-edit-2511')) {
-      return 'qwen/qwen-image-edit-2511';
+    if (
+      lr === "qwen-image-edit" ||
+      lr === "qwen-image-edit-2511" ||
+      lr.includes("qwen-image-edit-2511")
+    ) {
+      return "qwen/qwen-image-edit-2511";
     }
-    if (lr === 'qwen-image-edit-2512' || lr.includes('qwen-image-edit-2512')) {
-      return 'qwen/qwen-image-edit-2512';
+    if (lr === "qwen-image-edit-2512" || lr.includes("qwen-image-edit-2512")) {
+      return "qwen/qwen-image-edit-2512";
     }
-    if (lr.includes('qwen-image-edit')) {
+    if (lr.includes("qwen-image-edit")) {
       // Unknown edit variant: default to 2511 to be safe.
-      return lr.includes('2512') ? 'qwen/qwen-image-edit-2512' : 'qwen/qwen-image-edit-2511';
+      return lr.includes("2512")
+        ? "qwen/qwen-image-edit-2512"
+        : "qwen/qwen-image-edit-2511";
     }
 
     // Qwen Image (non-edit)
-    if (lr === 'qwen-image-2511' || lr.includes('qwen-image-2511')) return 'qwen/qwen-image-2511';
-    if (lr === 'qwen-image-2512' || lr.includes('qwen-image-2512')) return 'qwen/qwen-image-2512';
-    if (lr.includes('qwen-image-251')) {
+    if (lr === "qwen-image-2511" || lr.includes("qwen-image-2511"))
+      return "qwen/qwen-image-2511";
+    if (lr === "qwen-image-2512" || lr.includes("qwen-image-2512"))
+      return "qwen/qwen-image-2512";
+    if (lr.includes("qwen-image-251")) {
       // Generic fallback: keep the 2511 base unless 2512 is explicitly mentioned.
-      return lr.includes('2512') ? 'qwen/qwen-image-2512' : 'qwen/qwen-image-2511';
+      return lr.includes("2512")
+        ? "qwen/qwen-image-2512"
+        : "qwen/qwen-image-2511";
     }
 
-    if (lr === 'seedream-5-lite') {
-      return 'bytedance/seedream-5-lite';
+    if (lr === "seedream-5-lite") {
+      return "bytedance/seedream-5-lite";
     }
-    if (lr === 'nano-banana-2') {
-      return 'google/nano-banana-2';
+    if (lr === "nano-banana-2") {
+      return "google/nano-banana-2";
     }
-    if (lr === 'recraft-v4') {
-      return 'recraft-ai/recraft-v4';
+    if (lr === "recraft-v4") {
+      return "recraft-ai/recraft-v4";
     }
 
     return trimmed;
@@ -1600,51 +1838,65 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
 
   const ensureValidReplicateModelRef = (raw: string): string => {
     const s = normalizeModelAlias(raw);
-    const trimmed = String(s || '').trim();
-    const base = trimmed.includes(':') ? trimmed.split(':')[0] : trimmed;
+    const trimmed = String(s || "").trim();
+    const base = trimmed.includes(":") ? trimmed.split(":")[0] : trimmed;
 
     // Replicate requires owner/name or owner/name:version.
-    if (!base.includes('/')) {
+    if (!base.includes("/")) {
       // Known aliases we intentionally support
       const lower = base.toLowerCase();
-      if (lower.includes('qwen-image-edit')) {
-        if (lower.includes('2512')) return 'qwen/qwen-image-edit-2512';
-        return 'qwen/qwen-image-edit-2511';
+      if (lower.includes("qwen-image-edit")) {
+        if (lower.includes("2512")) return "qwen/qwen-image-edit-2512";
+        return "qwen/qwen-image-edit-2511";
       }
-      if (lower.includes('qwen-image-2512')) return 'qwen/qwen-image-2512';
-      if (lower.includes('qwen-image-2511')) return 'qwen/qwen-image-2511';
-      if (lower.includes('recraft-v4')) return 'recraft-ai/recraft-v4';
+      if (lower.includes("qwen-image-2512")) return "qwen/qwen-image-2512";
+      if (lower.includes("qwen-image-2511")) return "qwen/qwen-image-2511";
+      if (lower.includes("recraft-v4")) return "recraft-ai/recraft-v4";
       throw new ApiError(
         `Invalid replicate model reference: ${trimmed}. Expected owner/name or owner/name:version`,
-        400
+        400,
       );
     }
     return trimmed;
   };
 
   const modelBase = normalizeModelAlias(
-    body?.model && String(body.model).length > 0 ? String(body.model) : 'bytedance/seedream-4'
+    body?.model && String(body.model).length > 0
+      ? String(body.model)
+      : "bytedance/seedream-4",
   ).trim();
   const creator = await authRepository.getUserById(uid);
-  const storageKeyPrefixOverride: string | undefined = (body as any)?.storageKeyPrefixOverride;
+  const storageKeyPrefixOverride: string | undefined = (body as any)
+    ?.storageKeyPrefixOverride;
   const aspectRatio = body.aspect_ratio || body.frameSize || null;
   const lowerModelBase = modelBase.toLowerCase();
-  const isQwenImageEdit = lowerModelBase.includes('qwen-image-edit');
+  const isQwenImageEdit = lowerModelBase.includes("qwen-image-edit");
   // Treat any qwen image model (edit or non-edit, 2511/2512) as supporting an input image.
-  const isQwenImageModel = lowerModelBase.includes('qwen-image');
-  const isQwen2 = modelBase === 'qwen/qwen-image-2';
-  const isQwen2Pro = modelBase === 'qwen/qwen-image-2-pro';
-  const hasUploadedImages = Array.isArray((body as any)?.uploadedImages) && (body as any).uploadedImages.length > 0;
+  const isQwenImageModel = lowerModelBase.includes("qwen-image");
+  const isQwen2 = modelBase === "qwen/qwen-image-2";
+  const isQwen2Pro = modelBase === "qwen/qwen-image-2-pro";
+  const hasUploadedImages =
+    Array.isArray((body as any)?.uploadedImages) &&
+    (body as any).uploadedImages.length > 0;
 
-  const rawGenerationType = typeof (body as any)?.generationType === 'string'
-    ? String((body as any).generationType).trim().toLowerCase()
-    : '';
-  const normalizedGenerationType = rawGenerationType === 'text-to-image' || rawGenerationType === 'image-to-image'
-    ? rawGenerationType
-    : '';
+  const rawGenerationType =
+    typeof (body as any)?.generationType === "string"
+      ? String((body as any).generationType)
+          .trim()
+          .toLowerCase()
+      : "";
+  const normalizedGenerationType =
+    rawGenerationType === "text-to-image" ||
+    rawGenerationType === "image-to-image"
+      ? rawGenerationType
+      : "";
   // IMPORTANT: Do not force image-to-image just because the model alias contains "qwen-image-edit".
   // Respect an explicit generationType from the client; otherwise infer it from whether images were provided.
-  const effectiveGenerationType = normalizedGenerationType || ((isQwenImageModel && hasUploadedImages) ? 'image-to-image' : 'text-to-image');
+  const effectiveGenerationType =
+    normalizedGenerationType ||
+    (isQwenImageModel && hasUploadedImages
+      ? "image-to-image"
+      : "text-to-image");
 
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
@@ -1662,7 +1914,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     { prompt: body.prompt, model: modelBase, isPublic: body.isPublic === true },
     creator
       ? { uid, username: creator.username, email: (creator as any)?.email }
-      : { uid }
+      : { uid },
   );
 
   // Do not upload input data URIs to Zata; pass directly to provider
@@ -1676,25 +1928,30 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     // the edit variant or the non-edit image variant; both can accept an input image.
     if (isQwenImageModel) {
       // Choose correct qwen model slug/version based on requested alias
-      const isTextToImage = effectiveGenerationType === 'text-to-image';
-      if (lowerModelBase.includes('2512')) {
+      const isTextToImage = effectiveGenerationType === "text-to-image";
+      if (lowerModelBase.includes("2512")) {
         // If the user selected an "edit" alias but is doing text-to-image, route to the non-edit T2I model.
-        replicateModelBase = (!isTextToImage && isQwenImageEdit) ? 'qwen/qwen-image-edit-2512' : 'qwen/qwen-image-2512';
+        replicateModelBase =
+          !isTextToImage && isQwenImageEdit
+            ? "qwen/qwen-image-edit-2512"
+            : "qwen/qwen-image-2512";
       } else if (isQwen2) {
-        replicateModelBase = 'qwen/qwen-image-2';
+        replicateModelBase = "qwen/qwen-image-2";
       } else if (isQwen2Pro) {
-        replicateModelBase = 'qwen/qwen-image-2-pro';
+        replicateModelBase = "qwen/qwen-image-2-pro";
       } else {
         // IMPORTANT: Replicate does not expose a working "qwen/qwen-image-2511" in our usage;
         // qwen-image-edit-2511 should always route to the edit model to avoid 404s.
-        replicateModelBase = isQwenImageEdit ? 'qwen/qwen-image-edit-2511' : 'qwen/qwen-image-2511';
+        replicateModelBase = isQwenImageEdit
+          ? "qwen/qwen-image-edit-2511"
+          : "qwen/qwen-image-2511";
       }
 
       // Gather candidate images from multiple possible input fields and
       // normalize entries (strings or objects) into an array of URI strings.
       const rawCandidates: any[] = Array.isArray(rest.image)
         ? rest.image
-        : (typeof rest.image === 'string' && rest.image.length > 5)
+        : typeof rest.image === "string" && rest.image.length > 5
           ? [rest.image]
           : Array.isArray((body as any)?.uploadedImages)
             ? (body as any).uploadedImages
@@ -1704,24 +1961,26 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
 
       const images = rawCandidates
         .map((it: any) => {
-          if (!it) return '';
-          if (typeof it === 'string') return it.trim();
-          if (typeof it === 'object') {
+          if (!it) return "";
+          if (typeof it === "string") return it.trim();
+          if (typeof it === "object") {
             // Support common object shapes coming from frontend: { url }, { originalUrl }, { src }
-            if (typeof it.url === 'string' && it.url.length > 0) return it.url.trim();
-            if (typeof it.originalUrl === 'string' && it.originalUrl.length > 0)
+            if (typeof it.url === "string" && it.url.length > 0)
+              return it.url.trim();
+            if (typeof it.originalUrl === "string" && it.originalUrl.length > 0)
               return it.originalUrl.trim();
-            if (typeof it.src === 'string' && it.src.length > 0) return it.src.trim();
+            if (typeof it.src === "string" && it.src.length > 0)
+              return it.src.trim();
           }
-          return '';
+          return "";
         })
         .filter((u: string) => u.length > 0)
         .slice(0, 8);
 
       // Only require an image when the request is image-to-image.
       // (Selecting a qwen "edit" alias should NOT force image-to-image when the client requested text-to-image.)
-      if (effectiveGenerationType === 'image-to-image' && images.length === 0) {
-        throw new ApiError('image is required for image-to-image', 400);
+      if (effectiveGenerationType === "image-to-image" && images.length === 0) {
+        throw new ApiError("image is required for image-to-image", 400);
       }
 
       // Replicate validates image inputs as "uri" (must be data: or http(s) or other valid URI).
@@ -1751,13 +2010,16 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         }
 
         // Proxy URL -> extract storage path and convert to Zata URL
-        const isProxyUrl = /^\/api\/proxy\/resource\//i.test(img) || /^\/proxy\/resource\//i.test(img);
+        const isProxyUrl =
+          /^\/api\/proxy\/resource\//i.test(img) ||
+          /^\/proxy\/resource\//i.test(img);
         if (isProxyUrl) {
           const match = img.match(/\/(?:api\/)?proxy\/resource\/(.+)$/i);
           if (match && match[1]) {
             const storagePath = decodeURIComponent(match[1]);
             if (env.zataPrefix) {
-              const zataUrl = env.zataPrefix.replace(/\/$/, '') + '/' + storagePath;
+              const zataUrl =
+                env.zataPrefix.replace(/\/$/, "") + "/" + storagePath;
               resolvedImages.push(zataUrl);
               continue;
             }
@@ -1765,8 +2027,8 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         }
 
         // If we got a bare storage path like "users/...", make it a Zata URL
-        if (!img.startsWith('/') && env.zataPrefix && /^users\//i.test(img)) {
-          resolvedImages.push(env.zataPrefix.replace(/\/$/, '') + '/' + img);
+        if (!img.startsWith("/") && env.zataPrefix && /^users\//i.test(img)) {
+          resolvedImages.push(env.zataPrefix.replace(/\/$/, "") + "/" + img);
           continue;
         }
 
@@ -1783,26 +2045,33 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
           // keep going to final error
         }
 
-        throw new ApiError(`Invalid image uri for qwen-image-edit: ${img}`, 400);
+        throw new ApiError(
+          `Invalid image uri for qwen-image-edit: ${img}`,
+          400,
+        );
       }
 
-      if (effectiveGenerationType === 'image-to-image' && resolvedImages.length === 0) {
-        throw new ApiError('image is required for image-to-image', 400);
+      if (
+        effectiveGenerationType === "image-to-image" &&
+        resolvedImages.length === 0
+      ) {
+        throw new ApiError("image is required for image-to-image", 400);
       }
 
       // Persist input images to history so the frontend preview modal can display "Your Upload".
       // Normalize to the same structure used elsewhere in the app (id/url/storagePath/originalUrl).
       if (resolvedImages.length > 0) {
         const inputPersisted = resolvedImages.map((u, i) => {
-          const url = String(u || '').trim();
-          let storagePath = '';
+          const url = String(u || "").trim();
+          let storagePath = "";
           try {
             if (env.zataPrefix) {
-              const prefix = env.zataPrefix.replace(/\/+$/, '') + '/';
-              if (url.startsWith(prefix)) storagePath = url.substring(prefix.length);
+              const prefix = env.zataPrefix.replace(/\/+$/, "") + "/";
+              if (url.startsWith(prefix))
+                storagePath = url.substring(prefix.length);
             }
             if (!storagePath && /^users\//i.test(url)) storagePath = url;
-          } catch { }
+          } catch {}
           return {
             id: `in-${i + 1}`,
             url,
@@ -1812,56 +2081,100 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
           };
         });
         try {
-          await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+          await generationHistoryRepository.update(uid, historyId, {
+            inputImages: inputPersisted,
+          } as any);
         } catch (e) {
-          console.warn('[replicateService.generateImage][qwen] Failed to persist inputImages', e);
+          console.warn(
+            "[replicateService.generateImage][qwen] Failed to persist inputImages",
+            e,
+          );
         }
       }
 
       // Replicate's Qwen image models validate `input.image` as an array.
       // Qwen Image 2 and Pro take a single URI string.
       if (resolvedImages.length > 0) {
-        input.image = (isQwen2 || isQwen2Pro) ? resolvedImages[0] : resolvedImages;
+        input.image =
+          isQwen2 || isQwen2Pro ? resolvedImages[0] : resolvedImages;
 
         // Persist reference images so the frontend preview modal can show "Your Upload".
         // (Many UI flows read entry.inputImages; without this, Qwen edits appear to have no upload.)
         try {
-          const inputImages = resolvedImages.map((url, idx) => ({ id: `in-${idx + 1}`, url, originalUrl: url }));
-          await generationHistoryRepository.update(uid, historyId, { inputImages } as any);
+          const inputImages = resolvedImages.map((url, idx) => ({
+            id: `in-${idx + 1}`,
+            url,
+            originalUrl: url,
+          }));
+          await generationHistoryRepository.update(uid, historyId, {
+            inputImages,
+          } as any);
         } catch (e) {
           // non-fatal
-          console.warn('[replicateService.generateImage][qwen] Failed to persist inputImages', e);
+          console.warn(
+            "[replicateService.generateImage][qwen] Failed to persist inputImages",
+            e,
+          );
         }
       }
 
       // Prefer explicit aspect_ratio; fallback to frameSize mapping
-      const aspect = rest.aspect_ratio ?? aspectRatio ?? ((!isTextToImage && isQwenImageEdit) ? 'match_input_image' : '16:9');
-      const requestedAspect = String(aspect || '').trim();
-      const allowedQwenAspect = (isQwen2 || isQwen2Pro)
-        ? new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '2:1', '1:2'])
-        : new Set(['1:1', '16:9', '9:16', '4:3', '3:4', 'match_input_image']);
+      const aspect =
+        rest.aspect_ratio ??
+        aspectRatio ??
+        (!isTextToImage && isQwenImageEdit ? "match_input_image" : "16:9");
+      const requestedAspect = String(aspect || "").trim();
+      const allowedQwenAspect =
+        isQwen2 || isQwen2Pro
+          ? new Set([
+              "1:1",
+              "16:9",
+              "9:16",
+              "4:3",
+              "3:4",
+              "3:2",
+              "2:3",
+              "2:1",
+              "1:2",
+            ])
+          : new Set(["1:1", "16:9", "9:16", "4:3", "3:4", "match_input_image"]);
       input.aspect_ratio = allowedQwenAspect.has(requestedAspect)
         ? requestedAspect
-        : ((isQwen2 || isQwen2Pro) ? '1:1' : ((!isTextToImage && isQwenImageEdit) ? 'match_input_image' : '16:9'));
+        : isQwen2 || isQwen2Pro
+          ? "1:1"
+          : !isTextToImage && isQwenImageEdit
+            ? "match_input_image"
+            : "16:9";
 
       // Qwen schema uses output_format values: webp | jpg | png
       if (rest.output_format != null) {
         const f = String(rest.output_format);
-        input.output_format = f === 'jpeg' ? 'jpg' : f;
+        input.output_format = f === "jpeg" ? "jpg" : f;
       }
 
-      if (rest.output_quality != null && Number.isFinite(Number(rest.output_quality))) {
-        input.output_quality = Math.max(1, Math.min(100, Number(rest.output_quality)));
+      if (
+        rest.output_quality != null &&
+        Number.isFinite(Number(rest.output_quality))
+      ) {
+        input.output_quality = Math.max(
+          1,
+          Math.min(100, Number(rest.output_quality)),
+        );
       }
 
-      if (typeof rest.go_fast === 'boolean') input.go_fast = rest.go_fast;
-      if (typeof rest.disable_safety_checker === 'boolean') input.disable_safety_checker = rest.disable_safety_checker;
-      if (rest.seed != null && Number.isInteger(Number(rest.seed))) input.seed = Number(rest.seed);
+      if (typeof rest.go_fast === "boolean") input.go_fast = rest.go_fast;
+      if (typeof rest.disable_safety_checker === "boolean")
+        input.disable_safety_checker = rest.disable_safety_checker;
+      if (rest.seed != null && Number.isInteger(Number(rest.seed)))
+        input.seed = Number(rest.seed);
       // Optional additional qwen parameters supported by 2512 schema
       if (rest.guidance != null && Number.isFinite(Number(rest.guidance))) {
         input.guidance = Number(rest.guidance);
       }
-      if (rest.num_inference_steps != null && Number.isInteger(Number(rest.num_inference_steps))) {
+      if (
+        rest.num_inference_steps != null &&
+        Number.isInteger(Number(rest.num_inference_steps))
+      ) {
         input.num_inference_steps = Number(rest.num_inference_steps);
       }
       if (rest.strength != null && Number.isFinite(Number(rest.strength))) {
@@ -1869,40 +2182,62 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       }
       // Support matching input image and prompt expansion for Qwen 2 and Pro
       if (isQwen2 || isQwen2Pro) {
-        if (typeof rest.match_input_image === 'boolean') input.match_input_image = rest.match_input_image;
-        if (typeof rest.enable_prompt_expansion === 'boolean') input.enable_prompt_expansion = rest.enable_prompt_expansion;
-        if (rest.negative_prompt != null) input.negative_prompt = String(rest.negative_prompt);
+        if (typeof rest.match_input_image === "boolean")
+          input.match_input_image = rest.match_input_image;
+        if (typeof rest.enable_prompt_expansion === "boolean")
+          input.enable_prompt_expansion = rest.enable_prompt_expansion;
+        if (rest.negative_prompt != null)
+          input.negative_prompt = String(rest.negative_prompt);
       }
       // Support frontend size presets (e.g. "1K", "2K") mapped to explicit width/height
       // when an aspect ratio is selected. This ensures consistent output sizes
       // across QWEN image models (including qwen-image-2512 which supports larger max dims).
-      const PRESET_DIMENSIONS: Record<string, Record<string, { w: number; h: number }>> = {
-        '1K': {
-          '1:1': { w: 1024, h: 1024 },
-          '16:9': { w: 1024, h: 576 },
-          '9:16': { w: 576, h: 1024 },
-          '4:3': { w: 1024, h: 768 },
-          '3:4': { w: 768, h: 1024 },
-          '3:2': { w: 1024, h: 683 },
-          '2:3': { w: 683, h: 1024 },
+      const PRESET_DIMENSIONS: Record<
+        string,
+        Record<string, { w: number; h: number }>
+      > = {
+        "1K": {
+          "1:1": { w: 1024, h: 1024 },
+          "16:9": { w: 1024, h: 576 },
+          "9:16": { w: 576, h: 1024 },
+          "4:3": { w: 1024, h: 768 },
+          "3:4": { w: 768, h: 1024 },
+          "3:2": { w: 1024, h: 683 },
+          "2:3": { w: 683, h: 1024 },
         },
-        '2K': {
-          '1:1': { w: 2048, h: 2048 },
-          '16:9': { w: 2048, h: 1152 },
-          '9:16': { w: 1152, h: 2048 },
-          '4:3': { w: 2048, h: 1536 },
-          '3:4': { w: 1536, h: 2048 },
-          '3:2': { w: 2048, h: 1365 },
-          '2:3': { w: 1365, h: 2048 },
+        "2K": {
+          "1:1": { w: 2048, h: 2048 },
+          "16:9": { w: 2048, h: 1152 },
+          "9:16": { w: 1152, h: 2048 },
+          "4:3": { w: 2048, h: 1536 },
+          "3:4": { w: 1536, h: 2048 },
+          "3:2": { w: 2048, h: 1365 },
+          "2:3": { w: 1365, h: 2048 },
         },
       };
       // Determine requested preset (accept rest.size, rest.resolution, or rest.preset)
-      const requestedPreset = (rest.size || rest.resolution || rest.preset || '').toString();
+      const requestedPreset = (
+        rest.size ||
+        rest.resolution ||
+        rest.preset ||
+        ""
+      ).toString();
       // Use aspect as determined earlier (explicit aspect_ratio or frameSize fallback)
-      const effectiveAspect = String(rest.aspect_ratio ?? aspectRatio ?? ((!isTextToImage && isQwenImageEdit) ? 'match_input_image' : '16:9'));
+      const effectiveAspect = String(
+        rest.aspect_ratio ??
+          aspectRatio ??
+          (!isTextToImage && isQwenImageEdit ? "match_input_image" : "16:9"),
+      );
       // Model-specific max dimension (qwen-image-2512 supports up to 2512)
-      const modelMax = replicateModelBase && String(replicateModelBase).includes('2512') ? 2512 : 2048;
-      if (requestedPreset && PRESET_DIMENSIONS[requestedPreset] && PRESET_DIMENSIONS[requestedPreset][effectiveAspect]) {
+      const modelMax =
+        replicateModelBase && String(replicateModelBase).includes("2512")
+          ? 2512
+          : 2048;
+      if (
+        requestedPreset &&
+        PRESET_DIMENSIONS[requestedPreset] &&
+        PRESET_DIMENSIONS[requestedPreset][effectiveAspect]
+      ) {
         // Only set width/height from preset when frontend did not explicitly pass width/height
         if (rest.width == null && rest.height == null) {
           const dims = PRESET_DIMENSIONS[requestedPreset][effectiveAspect];
@@ -1916,18 +2251,38 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       // Width/height only used when aspect_ratio='custom' (or when frontend passes explicit width/height)
       if (rest.width != null && Number.isInteger(Number(rest.width))) {
         // Clamp to model-supported bounds (256-2048 per schema)
-        input.width = Math.max(256, Math.min(replicateModelBase && String(replicateModelBase).includes('2512') ? 2512 : 2048, Number(rest.width)));
+        input.width = Math.max(
+          256,
+          Math.min(
+            replicateModelBase && String(replicateModelBase).includes("2512")
+              ? 2512
+              : 2048,
+            Number(rest.width),
+          ),
+        );
         // IMPORTANT: Do not force aspect_ratio='custom' for Qwen models.
       }
       if (rest.height != null && Number.isInteger(Number(rest.height))) {
-        input.height = Math.max(256, Math.min(replicateModelBase && String(replicateModelBase).includes('2512') ? 2512 : 2048, Number(rest.height)));
+        input.height = Math.max(
+          256,
+          Math.min(
+            replicateModelBase && String(replicateModelBase).includes("2512")
+              ? 2512
+              : 2048,
+            Number(rest.height),
+          ),
+        );
       }
 
       // Support multiple outputs for Qwen models.
       // Replicate Qwen image models typically return a single image per run, so we fan-out internally.
       // Accept `num_images` (preferred) and also `n` (legacy UI field).
       const requestedQwenCountRaw =
-        rest.num_images != null ? rest.num_images : rest.n != null ? rest.n : undefined;
+        rest.num_images != null
+          ? rest.num_images
+          : rest.n != null
+            ? rest.n
+            : undefined;
       if (requestedQwenCountRaw != null) {
         const n = Number(requestedQwenCountRaw);
         if (Number.isFinite(n)) {
@@ -1938,7 +2293,10 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
 
     // Seedream 4.5 mapping removed – model now handled via FAL.
     // Seedream schema mapping
-    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
+    if (
+      modelBase === "bytedance/seedream-4" ||
+      modelBase === "bytedance/seedream-5-lite"
+    ) {
       // size handling
       const size = rest.size || "2K";
       if (["1K", "2K", "3K", "4K", "custom"].includes(String(size)))
@@ -1952,12 +2310,22 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       // sequential image generation
       if (rest.sequential_image_generation)
         input.sequential_image_generation = String(
-          rest.sequential_image_generation
+          rest.sequential_image_generation,
         );
       // max_images mapping (UI often sends `n` or `imageCount`)
-      const requestedSeedreamCountRaw = rest.max_images != null ? rest.max_images : rest.num_images != null ? rest.num_images : rest.n != null ? rest.n : undefined;
+      const requestedSeedreamCountRaw =
+        rest.max_images != null
+          ? rest.max_images
+          : rest.num_images != null
+            ? rest.num_images
+            : rest.n != null
+              ? rest.n
+              : undefined;
       if (requestedSeedreamCountRaw != null)
-        input.max_images = Math.max(1, Math.min(15, Number(requestedSeedreamCountRaw)));
+        input.max_images = Math.max(
+          1,
+          Math.min(15, Number(requestedSeedreamCountRaw)),
+        );
       // If user requests multiple images, Seedream requires sequential generation to be 'auto'
       if (
         (input.max_images ?? 1) > 1 &&
@@ -2016,7 +2384,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         // Normalize any out-of-range aspect ratios to Seedream's allowed bounds (0.33–3.0)
         async function normalizeIfNeeded(
           url: string,
-          idx: number
+          idx: number,
         ): Promise<string> {
           try {
             let buf: Buffer | null = null;
@@ -2120,10 +2488,18 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         // Save input images to database
         if (inputPersisted.length > 0) {
           try {
-            await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-            console.log('[replicateService.generateImage] Saved inputImages to database', { historyId, count: inputPersisted.length });
+            await generationHistoryRepository.update(uid, historyId, {
+              inputImages: inputPersisted,
+            } as any);
+            console.log(
+              "[replicateService.generateImage] Saved inputImages to database",
+              { historyId, count: inputPersisted.length },
+            );
           } catch (e) {
-            console.warn('[replicateService.generateImage] Failed to save inputImages:', e);
+            console.warn(
+              "[replicateService.generateImage] Failed to save inputImages:",
+              e,
+            );
           }
         }
       }
@@ -2141,27 +2517,67 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     }
     if (modelBase === "recraft-ai/recraft-v4") {
       const allowedAspect = new Set([
-        '1:1', '4:3', '3:4', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '14:10', '10:14', '4:5', '5:4', '6:10'
+        "1:1",
+        "4:3",
+        "3:4",
+        "3:2",
+        "2:3",
+        "16:9",
+        "9:16",
+        "1:2",
+        "2:1",
+        "14:10",
+        "10:14",
+        "4:5",
+        "5:4",
+        "6:10",
       ]);
       const allowedSize = new Set([
-        '1024x1024', '1536x768', '768x1536', '1280x832', '832x1280', '1216x896', '896x1216', '1152x896', '896x1152', '832x1344', '1280x896', '896x1280', '1344x768', '768x1344'
+        "1024x1024",
+        "1536x768",
+        "768x1536",
+        "1280x832",
+        "832x1280",
+        "1216x896",
+        "896x1216",
+        "1152x896",
+        "896x1152",
+        "832x1344",
+        "1280x896",
+        "896x1280",
+        "1344x768",
+        "768x1344",
       ]);
 
-      const requestedAspect = String(rest.aspect_ratio || rest.frameSize || '').trim();
-      if (requestedAspect && requestedAspect !== 'Not set' && allowedAspect.has(requestedAspect)) {
+      const requestedAspect = String(
+        rest.aspect_ratio || rest.frameSize || "",
+      ).trim();
+      if (
+        requestedAspect &&
+        requestedAspect !== "Not set" &&
+        allowedAspect.has(requestedAspect)
+      ) {
         input.aspect_ratio = requestedAspect;
       }
 
-      const requestedSize = String(rest.size || '').trim();
+      const requestedSize = String(rest.size || "").trim();
       if (requestedSize && allowedSize.has(requestedSize)) {
         input.size = requestedSize;
       } else if (!input.aspect_ratio) {
-        input.size = '1024x1024';
+        input.size = "1024x1024";
       }
 
-      replicateModelBase = 'recraft-ai/recraft-v4';
-      const requestedCountRaw = rest.num_images != null ? rest.num_images : rest.n != null ? rest.n : undefined;
-      const requestedCount = Math.max(1, Math.min(4, Number(requestedCountRaw ?? 1)));
+      replicateModelBase = "recraft-ai/recraft-v4";
+      const requestedCountRaw =
+        rest.num_images != null
+          ? rest.num_images
+          : rest.n != null
+            ? rest.n
+            : undefined;
+      const requestedCount = Math.max(
+        1,
+        Math.min(4, Number(requestedCountRaw ?? 1)),
+      );
       (body as any).__num_images = requestedCount;
     }
     // Leonardo Phoenix 1.0 mapping
@@ -2188,21 +2604,42 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         input.steps = Math.max(1, Math.min(100, Number(input.steps)));
       if (!input.resolution) input.resolution = "1024";
       // Magic Image Refiner uses input.image - save it as inputImages
-      if (rest.image && typeof rest.image === 'string') {
+      if (rest.image && typeof rest.image === "string") {
         try {
           const username = creator?.username || uid;
           const keyPrefix = `users/${username}/input/${historyId}`;
           const inputPersisted: any[] = [];
           const stored = /^data:/i.test(rest.image)
-            ? await uploadDataUriToZata({ dataUri: rest.image, keyPrefix, fileName: 'input-1' })
-            : await uploadFromUrlToZata({ sourceUrl: rest.image, keyPrefix, fileName: 'input-1' });
-          inputPersisted.push({ id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: rest.image });
+            ? await uploadDataUriToZata({
+                dataUri: rest.image,
+                keyPrefix,
+                fileName: "input-1",
+              })
+            : await uploadFromUrlToZata({
+                sourceUrl: rest.image,
+                keyPrefix,
+                fileName: "input-1",
+              });
+          inputPersisted.push({
+            id: "in-1",
+            url: stored.publicUrl,
+            storagePath: (stored as any).key,
+            originalUrl: rest.image,
+          });
           if (inputPersisted.length > 0) {
-            await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-            console.log('[replicateService.generateImage] Saved inputImages for Magic Image Refiner', { historyId });
+            await generationHistoryRepository.update(uid, historyId, {
+              inputImages: inputPersisted,
+            } as any);
+            console.log(
+              "[replicateService.generateImage] Saved inputImages for Magic Image Refiner",
+              { historyId },
+            );
           }
         } catch (e) {
-          console.warn('[replicateService.generateImage] Failed to save inputImages for Magic Image Refiner:', e);
+          console.warn(
+            "[replicateService.generateImage] Failed to save inputImages for Magic Image Refiner:",
+            e,
+          );
         }
       }
     }
@@ -2240,39 +2677,87 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         const inputPersisted: any[] = [];
         let idx = 0;
         // Save main input image
-        if (rest.image && typeof rest.image === 'string') {
+        if (rest.image && typeof rest.image === "string") {
           try {
             const stored = /^data:/i.test(rest.image)
-              ? await uploadDataUriToZata({ dataUri: rest.image, keyPrefix, fileName: `input-${++idx}` })
-              : await uploadFromUrlToZata({ sourceUrl: rest.image, keyPrefix, fileName: `input-${++idx}` });
-            inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: rest.image });
-          } catch { }
+              ? await uploadDataUriToZata({
+                  dataUri: rest.image,
+                  keyPrefix,
+                  fileName: `input-${++idx}`,
+                })
+              : await uploadFromUrlToZata({
+                  sourceUrl: rest.image,
+                  keyPrefix,
+                  fileName: `input-${++idx}`,
+                });
+            inputPersisted.push({
+              id: `in-${idx}`,
+              url: stored.publicUrl,
+              storagePath: (stored as any).key,
+              originalUrl: rest.image,
+            });
+          } catch {}
         }
         // Save style reference images
-        if (Array.isArray(rest.style_reference_images) && rest.style_reference_images.length > 0) {
+        if (
+          Array.isArray(rest.style_reference_images) &&
+          rest.style_reference_images.length > 0
+        ) {
           for (const refImg of rest.style_reference_images.slice(0, 10)) {
-            if (!refImg || typeof refImg !== 'string') continue;
+            if (!refImg || typeof refImg !== "string") continue;
             try {
               const stored = /^data:/i.test(refImg)
-                ? await uploadDataUriToZata({ dataUri: refImg, keyPrefix, fileName: `input-${++idx}` })
-                : await uploadFromUrlToZata({ sourceUrl: refImg, keyPrefix, fileName: `input-${++idx}` });
-              inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: refImg });
-            } catch { }
+                ? await uploadDataUriToZata({
+                    dataUri: refImg,
+                    keyPrefix,
+                    fileName: `input-${++idx}`,
+                  })
+                : await uploadFromUrlToZata({
+                    sourceUrl: refImg,
+                    keyPrefix,
+                    fileName: `input-${++idx}`,
+                  });
+              inputPersisted.push({
+                id: `in-${idx}`,
+                url: stored.publicUrl,
+                storagePath: (stored as any).key,
+                originalUrl: refImg,
+              });
+            } catch {}
           }
         }
         if (inputPersisted.length > 0) {
-          await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-          console.log('[replicateService.generateImage] Saved inputImages for Ideogram', { historyId, count: inputPersisted.length });
+          await generationHistoryRepository.update(uid, historyId, {
+            inputImages: inputPersisted,
+          } as any);
+          console.log(
+            "[replicateService.generateImage] Saved inputImages for Ideogram",
+            { historyId, count: inputPersisted.length },
+          );
         }
       } catch (e) {
-        console.warn('[replicateService.generateImage] Failed to save inputImages for Ideogram:', e);
+        console.warn(
+          "[replicateService.generateImage] Failed to save inputImages for Ideogram:",
+          e,
+        );
       }
       // No additional clamping required; validator enforces enumerations and limits
     }
     // P-Image mapping (prunaai/p-image)
     if (modelBase === "prunaai/p-image" || modelBase === "p-image") {
-      const allowedAspect = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', 'custom']);
-      const aspect = allowedAspect.has(String(rest.aspect_ratio)) ? String(rest.aspect_ratio) : '16:9';
+      const allowedAspect = new Set([
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4",
+        "3:2",
+        "2:3",
+        "custom",
+      ]);
+      const aspect = allowedAspect.has(String(rest.aspect_ratio))
+        ? String(rest.aspect_ratio)
+        : "16:9";
       input.aspect_ratio = aspect;
       if (rest.num_images != null) {
         const n = Number(rest.num_images);
@@ -2290,7 +2775,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
 
       // Default width/height to max 1440 while respecting aspect ratio
       const setDefaultDims = (ratio: string) => {
-        const [wStr, hStr] = ratio.split(':');
+        const [wStr, hStr] = ratio.split(":");
         const w = Number(wStr) || 1;
         const h = Number(hStr) || 1;
         const aspectVal = w / h;
@@ -2311,7 +2796,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       if (rest.height != null) input.height = clampDim(Number(rest.height));
 
       // If custom aspect ratio selected but width/height not provided, default to max 1440 each
-      if (aspect === 'custom') {
+      if (aspect === "custom") {
         if (input.width == null) input.width = 1440;
         if (input.height == null) input.height = 1440;
         input.width = clampDim(input.width);
@@ -2323,25 +2808,42 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         }
       }
 
-      if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
-      if (typeof rest.prompt_upsampling === 'boolean') input.prompt_upsampling = rest.prompt_upsampling;
-      if (typeof rest.disable_safety_checker === 'boolean') input.disable_safety_checker = rest.disable_safety_checker;
+      if (rest.seed != null && Number.isInteger(rest.seed))
+        input.seed = rest.seed;
+      if (typeof rest.prompt_upsampling === "boolean")
+        input.prompt_upsampling = rest.prompt_upsampling;
+      if (typeof rest.disable_safety_checker === "boolean")
+        input.disable_safety_checker = rest.disable_safety_checker;
 
       // Handle image-to-image: P-Image supports image_input parameter for image-to-image generation
-      if (rest.image_input && Array.isArray(rest.image_input) && rest.image_input.length > 0) {
+      if (
+        rest.image_input &&
+        Array.isArray(rest.image_input) &&
+        rest.image_input.length > 0
+      ) {
         // P-Image uses 'image' parameter (single image) for image-to-image, not 'image_input'
         // Take the first image from image_input array
         input.image = rest.image_input[0];
-        console.log('[replicateService] P-Image: Using image-to-image mode with source image');
-      } else if (rest.image && typeof rest.image === 'string' && rest.image.length > 0) {
+        console.log(
+          "[replicateService] P-Image: Using image-to-image mode with source image",
+        );
+      } else if (
+        rest.image &&
+        typeof rest.image === "string" &&
+        rest.image.length > 0
+      ) {
         // Also support direct 'image' parameter
         input.image = rest.image;
-        console.log('[replicateService] P-Image: Using image-to-image mode with direct image parameter');
+        console.log(
+          "[replicateService] P-Image: Using image-to-image mode with direct image parameter",
+        );
       }
     }
     // P-Image-Edit mapping (prunaai/p-image-edit) - image-to-image only
     if (modelBase === "prunaai/p-image-edit" || modelBase === "p-image-edit") {
-      const images = Array.isArray(rest.images) ? rest.images.filter((i: any) => typeof i === 'string') : [];
+      const images = Array.isArray(rest.images)
+        ? rest.images.filter((i: any) => typeof i === "string")
+        : [];
       if (images.length === 0) {
         throw new ApiError("P-Image-Edit requires at least one image", 400);
       }
@@ -2353,15 +2855,25 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
           (body as any).__num_images = input.num_images;
         }
       }
-      const allowedAspect = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3']);
-      const aspect = allowedAspect.has(String(rest.aspect_ratio)) ? String(rest.aspect_ratio) : '1:1';
+      const allowedAspect = new Set([
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4",
+        "3:2",
+        "2:3",
+      ]);
+      const aspect = allowedAspect.has(String(rest.aspect_ratio))
+        ? String(rest.aspect_ratio)
+        : "1:1";
       input.aspect_ratio = aspect;
 
       // Clamp width/height to <=1024 and divisible by 16; if missing, derive from aspect with max edge 1024
       const round16 = (v: number) => Math.round(v / 16) * 16;
       const clamp = (v: number) => Math.max(256, Math.min(1024, round16(v)));
       const deriveDims = (ratio: string) => {
-        const [wStr, hStr] = ratio.split(':');
+        const [wStr, hStr] = ratio.split(":");
         const w = Number(wStr) || 1;
         const h = Number(hStr) || 1;
         const aspectVal = w / h;
@@ -2390,9 +2902,11 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         input.height = input.height ?? dims.height;
       }
 
-      if (rest.seed != null && Number.isInteger(rest.seed)) input.seed = rest.seed;
-      if (typeof rest.turbo === 'boolean') input.turbo = rest.turbo;
-      if (typeof rest.disable_safety_checker === 'boolean') input.disable_safety_checker = rest.disable_safety_checker;
+      if (rest.seed != null && Number.isInteger(rest.seed))
+        input.seed = rest.seed;
+      if (typeof rest.turbo === "boolean") input.turbo = rest.turbo;
+      if (typeof rest.disable_safety_checker === "boolean")
+        input.disable_safety_checker = rest.disable_safety_checker;
 
       // Persist input images to history for edit flows
       try {
@@ -2401,23 +2915,42 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         const inputPersisted: any[] = [];
         let idx = 0;
         for (const img of images) {
-          if (!img || typeof img !== 'string') continue;
+          if (!img || typeof img !== "string") continue;
           try {
             const stored = /^data:/i.test(img)
-              ? await uploadDataUriToZata({ dataUri: img, keyPrefix, fileName: `p-image-edit-${++idx}` })
-              : await uploadFromUrlToZata({ sourceUrl: img, keyPrefix, fileName: `p-image-edit-${++idx}` });
-            inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: img });
-          } catch { }
+              ? await uploadDataUriToZata({
+                  dataUri: img,
+                  keyPrefix,
+                  fileName: `p-image-edit-${++idx}`,
+                })
+              : await uploadFromUrlToZata({
+                  sourceUrl: img,
+                  keyPrefix,
+                  fileName: `p-image-edit-${++idx}`,
+                });
+            inputPersisted.push({
+              id: `in-${idx}`,
+              url: stored.publicUrl,
+              storagePath: (stored as any).key,
+              originalUrl: img,
+            });
+          } catch {}
         }
         if (inputPersisted.length > 0) {
-          await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+          await generationHistoryRepository.update(uid, historyId, {
+            inputImages: inputPersisted,
+          } as any);
         }
-      } catch { }
+      } catch {}
     }
     // New Turbo Model mapping (z-image-turbo)
     // Using actual Replicate model identifier: prunaai/z-image-turbo with version hash
-    if (modelBase === "z-image-turbo" || modelBase === "new-turbo-model" || modelBase === "placeholder-model-name") {
-      console.log('[replicateService] Z Image Turbo request:', {
+    if (
+      modelBase === "z-image-turbo" ||
+      modelBase === "new-turbo-model" ||
+      modelBase === "placeholder-model-name"
+    ) {
+      console.log("[replicateService] Z Image Turbo request:", {
         width: rest.width,
         height: rest.height,
         num_inference_steps: rest.num_inference_steps,
@@ -2426,7 +2959,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         output_format: rest.output_format,
         output_quality: rest.output_quality,
         image_input: !!rest.image_input,
-        image: !!rest.image
+        image: !!rest.image,
       });
 
       // Map all supported parameters from schema
@@ -2456,14 +2989,19 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         const baseW = Number(input.width);
         const baseH = Number(input.height);
         const round16 = (v: number) => Math.round(v / 16) * 16;
-        const clampDim = (v: number) => Math.max(minDim, Math.min(maxDim, round16(v)));
+        const clampDim = (v: number) =>
+          Math.max(minDim, Math.min(maxDim, round16(v)));
         const tokensOk = (w: number, h: number) => {
           const lw = Math.floor(w / 16);
           const lh = Math.floor(h / 16);
           return (lw * lh) % 32 === 0;
         };
 
-        if (Number.isFinite(baseW) && Number.isFinite(baseH) && !tokensOk(baseW, baseH)) {
+        if (
+          Number.isFinite(baseW) &&
+          Number.isFinite(baseH) &&
+          !tokensOk(baseW, baseH)
+        ) {
           const baseRatio = baseW / baseH;
           let bestW = baseW;
           let bestH = baseH;
@@ -2492,15 +3030,18 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
           }
 
           if (bestW !== baseW || bestH !== baseH) {
-            console.log('[replicateService] Z Image Turbo adjusted dims for provider compatibility:', {
-              requested: { width: baseW, height: baseH },
-              adjusted: { width: bestW, height: bestH },
-            });
+            console.log(
+              "[replicateService] Z Image Turbo adjusted dims for provider compatibility:",
+              {
+                requested: { width: baseW, height: baseH },
+                adjusted: { width: bestW, height: bestH },
+              },
+            );
             input.width = bestW;
             input.height = bestH;
           }
         }
-      } catch { }
+      } catch {}
 
       // Updated schema mapping for prunaai/z-image-turbo
       // Required: prompt (already set).
@@ -2514,42 +3055,59 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       }
 
       // go_fast default true
-      input.go_fast = typeof rest.go_fast === 'boolean' ? rest.go_fast : true;
+      input.go_fast = typeof rest.go_fast === "boolean" ? rest.go_fast : true;
 
       // output_format default "jpg" (schema allows png|jpg|webp)
       {
-        const rawFmt = rest.output_format != null ? String(rest.output_format).toLowerCase() : 'jpg';
-        const fmt = rawFmt === 'jpeg' ? 'jpg' : rawFmt;
-        input.output_format = ['png', 'jpg', 'webp'].includes(fmt) ? fmt : 'jpg';
+        const rawFmt =
+          rest.output_format != null
+            ? String(rest.output_format).toLowerCase()
+            : "jpg";
+        const fmt = rawFmt === "jpeg" ? "jpg" : rawFmt;
+        input.output_format = ["png", "jpg", "webp"].includes(fmt)
+          ? fmt
+          : "jpg";
       }
 
       // guidance_scale default 0 (Turbo should be 0)
       {
-        const gs = rest.guidance_scale != null && Number.isFinite(Number(rest.guidance_scale))
-          ? Number(rest.guidance_scale)
-          : 0;
+        const gs =
+          rest.guidance_scale != null &&
+          Number.isFinite(Number(rest.guidance_scale))
+            ? Number(rest.guidance_scale)
+            : 0;
         input.guidance_scale = Math.max(0, Math.min(20, gs));
       }
 
       // output_quality default 80
       {
-        const oq = rest.output_quality != null && Number.isFinite(Number(rest.output_quality))
-          ? Number(rest.output_quality)
-          : 80;
+        const oq =
+          rest.output_quality != null &&
+          Number.isFinite(Number(rest.output_quality))
+            ? Number(rest.output_quality)
+            : 80;
         input.output_quality = Math.max(0, Math.min(100, Math.round(oq)));
       }
 
       // num_inference_steps default 8
       {
-        const steps = rest.num_inference_steps != null && Number.isFinite(Number(rest.num_inference_steps))
-          ? Number(rest.num_inference_steps)
-          : 8;
-        input.num_inference_steps = Math.max(1, Math.min(50, Math.round(steps)));
+        const steps =
+          rest.num_inference_steps != null &&
+          Number.isFinite(Number(rest.num_inference_steps))
+            ? Number(rest.num_inference_steps)
+            : 8;
+        input.num_inference_steps = Math.max(
+          1,
+          Math.min(50, Math.round(steps)),
+        );
       }
 
       // Support num_images parameter for multiple image generation
       // If num_images is provided, we'll handle it by making multiple calls internally
-      const numImages = rest.num_images != null ? Math.max(1, Math.min(4, Number(rest.num_images))) : 1;
+      const numImages =
+        rest.num_images != null
+          ? Math.max(1, Math.min(4, Number(rest.num_images)))
+          : 1;
       // Map frontend model name to actual Replicate model identifier
       // Actual Replicate model: prunaai/z-image-turbo with version hash from DEFAULT_VERSION_BY_MODEL
       const ACTUAL_REPLICATE_MODEL = "prunaai/z-image-turbo";
@@ -2564,62 +3122,94 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     }
     // GPT Image 1.5 mapping
     if (modelBase === "openai/gpt-image-1.5") {
-      const coerceGptImage15AspectRatio = (raw: unknown): '1:1' | '3:2' | '2:3' => {
-        const trimmed = String(raw ?? '').trim();
-        if (trimmed === '1:1' || trimmed === '3:2' || trimmed === '2:3') return trimmed;
+      const coerceGptImage15AspectRatio = (
+        raw: unknown,
+      ): "1:1" | "3:2" | "2:3" => {
+        const trimmed = String(raw ?? "").trim();
+        if (trimmed === "1:1" || trimmed === "3:2" || trimmed === "2:3")
+          return trimmed;
 
         const match = trimmed.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
-        if (!match) return '1:1';
+        if (!match) return "1:1";
         const a = Number(match[1]);
         const b = Number(match[2]);
-        if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return '1:1';
+        if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0)
+          return "1:1";
         const ratio = a / b;
-        if (ratio > 1.05) return '3:2';
-        if (ratio < 0.95) return '2:3';
-        return '1:1';
+        if (ratio > 1.05) return "3:2";
+        if (ratio < 0.95) return "2:3";
+        return "1:1";
       };
 
       // Map all supported parameters from schema
-      if (rest.quality && ['low', 'medium', 'high', 'auto'].includes(String(rest.quality))) {
+      if (
+        rest.quality &&
+        ["low", "medium", "high", "auto"].includes(String(rest.quality))
+      ) {
         input.quality = String(rest.quality);
       } else {
-        input.quality = 'low'; // Default to low quality
+        input.quality = "low"; // Default to low quality
       }
       // Respect requested aspect ratio (coerce to the only supported set: 1:1 | 3:2 | 2:3).
-      input.aspect_ratio = coerceGptImage15AspectRatio(rest.aspect_ratio ?? rest.frameSize);
+      input.aspect_ratio = coerceGptImage15AspectRatio(
+        rest.aspect_ratio ?? rest.frameSize,
+      );
       // The frontend commonly sends `n`; schema uses `number_of_images`.
       const requestedImagesRaw =
-        rest.number_of_images != null ? rest.number_of_images : rest.n != null ? rest.n : undefined;
+        rest.number_of_images != null
+          ? rest.number_of_images
+          : rest.n != null
+            ? rest.n
+            : undefined;
       if (requestedImagesRaw != null) {
-        input.number_of_images = Math.max(1, Math.min(10, Number(requestedImagesRaw)));
+        input.number_of_images = Math.max(
+          1,
+          Math.min(10, Number(requestedImagesRaw)),
+        );
       } else {
         input.number_of_images = 1; // Default per schema
       }
-      if (rest.output_format && ['png', 'jpeg', 'webp', 'jpg'].includes(String(rest.output_format))) {
+      if (
+        rest.output_format &&
+        ["png", "jpeg", "webp", "jpg"].includes(String(rest.output_format))
+      ) {
         // Map 'jpg' to 'jpeg' (API expects 'jpeg')
         const format = String(rest.output_format);
-        input.output_format = format === 'jpg' ? 'jpeg' : format;
+        input.output_format = format === "jpg" ? "jpeg" : format;
       } else {
-        input.output_format = 'jpeg'; // Default to jpeg (jpg)
+        input.output_format = "jpeg"; // Default to jpeg (jpg)
       }
-      if (rest.background && ['auto', 'transparent', 'opaque'].includes(String(rest.background))) {
+      if (
+        rest.background &&
+        ["auto", "transparent", "opaque"].includes(String(rest.background))
+      ) {
         input.background = String(rest.background);
       } else {
-        input.background = 'auto'; // Default per schema
+        input.background = "auto"; // Default per schema
       }
-      if (rest.moderation && ['auto', 'low'].includes(String(rest.moderation))) {
+      if (
+        rest.moderation &&
+        ["auto", "low"].includes(String(rest.moderation))
+      ) {
         input.moderation = String(rest.moderation);
       } else {
-        input.moderation = 'auto'; // Default per schema
+        input.moderation = "auto"; // Default per schema
       }
       if (rest.output_compression != null) {
-        input.output_compression = Math.max(0, Math.min(100, Number(rest.output_compression)));
+        input.output_compression = Math.max(
+          0,
+          Math.min(100, Number(rest.output_compression)),
+        );
       } else {
         input.output_compression = 90; // Default per schema
       }
       // Handle input_images for I2I - map from uploadedImages if present
       const inputImagesSource = rest.input_images || rest.uploadedImages;
-      if (inputImagesSource && Array.isArray(inputImagesSource) && inputImagesSource.length > 0) {
+      if (
+        inputImagesSource &&
+        Array.isArray(inputImagesSource) &&
+        inputImagesSource.length > 0
+      ) {
         const username = creator?.username || uid;
         const keyPrefix = `users/${username}/input/${historyId}`;
         const inputPersisted: any[] = [];
@@ -2642,23 +3232,30 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
               });
             } else if (typeof img === "string") {
               // Check if it's a proxy URL, Zata URL, or absolute URL
-              const isProxyUrl = /^\/api\/proxy\/resource\//i.test(img) || /^\/proxy\/resource\//i.test(img);
-              const isZataUrl = env.zataPrefix && img.startsWith(env.zataPrefix);
-              const isAbsoluteUrl = img.startsWith("http://") || img.startsWith("https://");
+              const isProxyUrl =
+                /^\/api\/proxy\/resource\//i.test(img) ||
+                /^\/proxy\/resource\//i.test(img);
+              const isZataUrl =
+                env.zataPrefix && img.startsWith(env.zataPrefix);
+              const isAbsoluteUrl =
+                img.startsWith("http://") || img.startsWith("https://");
 
               if (isProxyUrl) {
                 // Extract storage path from proxy URL and construct Zata URL
                 try {
                   // Match proxy URL pattern: /api/proxy/resource/... or /proxy/resource/...
                   // Extract everything after /proxy/resource/ or /api/proxy/resource/
-                  const storagePathMatch = img.match(/\/proxy\/resource\/(.+)$/i);
+                  const storagePathMatch = img.match(
+                    /\/proxy\/resource\/(.+)$/i,
+                  );
                   if (storagePathMatch && storagePathMatch[1]) {
                     // Decode URL-encoded path (e.g., users%2Fvivek -> users/vivek)
                     const storagePath = decodeURIComponent(storagePathMatch[1]);
 
                     // Construct Zata URL using zataPrefix
                     if (env.zataPrefix) {
-                      const zataUrl = env.zataPrefix.replace(/\/$/, '') + '/' + storagePath;
+                      const zataUrl =
+                        env.zataPrefix.replace(/\/$/, "") + "/" + storagePath;
                       resolvedImages.push(zataUrl);
                       inputPersisted.push({
                         id: `in-${i + 1}`,
@@ -2666,16 +3263,26 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
                         storagePath: storagePath,
                       });
                     } else {
-                      console.warn(`[gpt-image-1.5] zataPrefix not configured, cannot convert proxy URL for image ${i + 1}`);
-                      throw new Error('Zata prefix not configured');
+                      console.warn(
+                        `[gpt-image-1.5] zataPrefix not configured, cannot convert proxy URL for image ${i + 1}`,
+                      );
+                      throw new Error("Zata prefix not configured");
                     }
                   } else {
-                    throw new Error('Failed to extract storage path from proxy URL');
+                    throw new Error(
+                      "Failed to extract storage path from proxy URL",
+                    );
                   }
                 } catch (uploadErr) {
-                  console.error(`[gpt-image-1.5] Failed to process proxy URL ${i + 1}:`, uploadErr);
+                  console.error(
+                    `[gpt-image-1.5] Failed to process proxy URL ${i + 1}:`,
+                    uploadErr,
+                  );
                   // If we can't convert, we must fail - proxy URLs can't be used directly with Replicate
-                  throw new ApiError(`Failed to convert proxy URL to accessible URL for image ${i + 1}: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`, 400);
+                  throw new ApiError(
+                    `Failed to convert proxy URL to accessible URL for image ${i + 1}: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`,
+                    400,
+                  );
                 }
               } else if (isZataUrl) {
                 // Already a Zata URL, use directly
@@ -2707,19 +3314,27 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
                     storagePath: uploaded.key,
                   });
                 } catch (uploadErr) {
-                  console.warn(`[gpt-image-1.5] Failed to process URL ${i + 1}:`, uploadErr);
+                  console.warn(
+                    `[gpt-image-1.5] Failed to process URL ${i + 1}:`,
+                    uploadErr,
+                  );
                 }
               }
             }
           } catch (e) {
-            console.warn(`[gpt-image-1.5] Failed to process input image ${i + 1}:`, e);
+            console.warn(
+              `[gpt-image-1.5] Failed to process input image ${i + 1}:`,
+              e,
+            );
           }
         }
         if (resolvedImages.length > 0) {
           input.input_images = resolvedImages;
         }
         if (inputPersisted.length > 0) {
-          await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+          await generationHistoryRepository.update(uid, historyId, {
+            inputImages: inputPersisted,
+          } as any);
         }
       }
       replicateModelBase = "openai/gpt-image-1.5";
@@ -2739,7 +3354,10 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     // Google Nano Banana 2 mapping
     if (modelBase === "google/nano-banana-2") {
       // resolution: 1K, 2K, 4K (default 1K)
-      if (rest.resolution && ["1K", "2K", "4K"].includes(String(rest.resolution))) {
+      if (
+        rest.resolution &&
+        ["1K", "2K", "4K"].includes(String(rest.resolution))
+      ) {
         input.resolution = String(rest.resolution);
       } else {
         input.resolution = "1K";
@@ -2753,18 +3371,25 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       }
 
       // grounding booleans
-      if (rest.google_search != null) input.google_search = !!rest.google_search;
+      if (rest.google_search != null)
+        input.google_search = !!rest.google_search;
       if (rest.image_search != null) input.image_search = !!rest.image_search;
 
       // output format
-      if (rest.output_format && ["jpg", "png"].includes(String(rest.output_format).toLowerCase())) {
+      if (
+        rest.output_format &&
+        ["jpg", "png"].includes(String(rest.output_format).toLowerCase())
+      ) {
         input.output_format = String(rest.output_format).toLowerCase();
       }
 
       // image_input: supports up to 14 images.
       const username = creator?.username || uid;
-      let images: string[] = Array.isArray(rest.image_input) ? rest.image_input.slice(0, 14) : [];
-      if (!images.length && typeof rest.image === "string" && rest.image.length) images = [rest.image];
+      let images: string[] = Array.isArray(rest.image_input)
+        ? rest.image_input.slice(0, 14)
+        : [];
+      if (!images.length && typeof rest.image === "string" && rest.image.length)
+        images = [rest.image];
 
       if (images.length > 0) {
         const resolved: string[] = [];
@@ -2787,7 +3412,11 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
               });
             } else {
               resolved.push(img);
-              inputPersisted.push({ id: `in-${i + 1}`, url: img, originalUrl: img });
+              inputPersisted.push({
+                id: `in-${i + 1}`,
+                url: img,
+                originalUrl: img,
+              });
             }
           } catch {
             resolved.push(img);
@@ -2796,9 +3425,14 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         if (resolved.length > 0) input.image_input = resolved;
         if (inputPersisted.length > 0) {
           try {
-            await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
+            await generationHistoryRepository.update(uid, historyId, {
+              inputImages: inputPersisted,
+            } as any);
           } catch (e) {
-            console.warn("[replicateService] failed to persist nano-banana-2 inputs", e);
+            console.warn(
+              "[replicateService] failed to persist nano-banana-2 inputs",
+              e,
+            );
           }
         }
       }
@@ -2815,9 +3449,12 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       resolvedModelSpec: modelSpec,
       hasImage: !!rest.image,
       inputKeys: Object.keys(input),
-      modelSpecIncludesVersion: modelSpec.includes(':'),
+      modelSpecIncludesVersion: modelSpec.includes(":"),
     });
-    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
+    if (
+      modelBase === "bytedance/seedream-4" ||
+      modelBase === "bytedance/seedream-5-lite"
+    ) {
       try {
         const preDump = {
           incoming_image_input_count: Array.isArray(rest.image_input)
@@ -2825,16 +3462,19 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
             : 0,
           incoming_first_is_data_uri: Array.isArray(rest.image_input)
             ? typeof rest.image_input[0] === "string" &&
-            rest.image_input[0]?.startsWith("data:")
+              rest.image_input[0]?.startsWith("data:")
             : false,
         };
         console.debug(
           "[seedream] incoming image_input summary",
-          JSON.stringify(preDump)
+          JSON.stringify(preDump),
         );
-      } catch { }
+      } catch {}
     }
-    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
+    if (
+      modelBase === "bytedance/seedream-4" ||
+      modelBase === "bytedance/seedream-5-lite"
+    ) {
       try {
         // Deep print for Seedream I2I debugging
         const dump = {
@@ -2854,22 +3494,33 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         };
         // eslint-disable-next-line no-console
         console.debug("[seedream] input dump", JSON.stringify(dump, null, 2));
-      } catch { }
+      } catch {}
     }
     // Handle num_images fan-out for models that need parallel calls
     // Supported: z-image-turbo, P-Image / P-Image-Edit, GPT Image 1.5, and Qwen image models.
     let output: any;
     const numImages = (body as any).__num_images || 1;
-    const isZTurbo = (modelBase === "new-turbo-model" || modelBase === "placeholder-model-name");
+    const isZTurbo =
+      modelBase === "new-turbo-model" || modelBase === "placeholder-model-name";
     const isPImage = replicateModelBase === "prunaai/p-image";
     const isPImageEdit = replicateModelBase === "prunaai/p-image-edit";
     const isGptImage15 = replicateModelBase === "openai/gpt-image-1.5";
-    const isRecraftV4 = replicateModelBase === 'recraft-ai/recraft-v4';
+    const isRecraftV4 = replicateModelBase === "recraft-ai/recraft-v4";
 
-    const lowerReplicateModelBase = String(replicateModelBase || '').toLowerCase();
-    const isQwenImage = lowerReplicateModelBase.startsWith('qwen/qwen-image');
+    const lowerReplicateModelBase = String(
+      replicateModelBase || "",
+    ).toLowerCase();
+    const isQwenImage = lowerReplicateModelBase.startsWith("qwen/qwen-image");
 
-    if ((isZTurbo || isPImage || isPImageEdit || isGptImage15 || isQwenImage || isRecraftV4) && numImages > 1) {
+    if (
+      (isZTurbo ||
+        isPImage ||
+        isPImageEdit ||
+        isGptImage15 ||
+        isQwenImage ||
+        isRecraftV4) &&
+      numImages > 1
+    ) {
       // Make multiple parallel calls
       const outputPromises = Array.from({ length: numImages }, async () => {
         return await replicate.run(modelSpec as any, { input });
@@ -2893,10 +3544,13 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     console.log(
       "[replicateService.generateImage] output",
       typeof output,
-      Array.isArray(output) ? output.length : "n/a"
+      Array.isArray(output) ? output.length : "n/a",
     );
     console.log("[replicateService.generateImage] output", output);
-    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
+    if (
+      modelBase === "bytedance/seedream-4" ||
+      modelBase === "bytedance/seedream-5-lite"
+    ) {
       try {
         if (Array.isArray(output)) {
           const first = output[0];
@@ -2912,7 +3566,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
           // Deep inspect entire array with safe depth
           console.debug(
             "[seedream] output full inspect",
-            util.inspect(output, { depth: 4, maxArrayLength: 50 })
+            util.inspect(output, { depth: 4, maxArrayLength: 50 }),
           );
           // Attempt to resolve urls for each item with logging
           for (let i = 0; i < output.length; i++) {
@@ -2920,13 +3574,14 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
               const val = output[i];
               const url = await resolveItemUrl(val);
               console.debug(
-                `[seedream] output[${i}] typeof=${typeof val} hasUrlFn=${typeof val?.url === "function"
-                } resolvedUrl=${url || "<none>"}`
+                `[seedream] output[${i}] typeof=${typeof val} hasUrlFn=${
+                  typeof val?.url === "function"
+                } resolvedUrl=${url || "<none>"}`,
               );
             } catch (e) {
               console.debug(
                 `[seedream] output[${i}] resolve error`,
-                (e as any)?.message || e
+                (e as any)?.message || e,
               );
             }
           }
@@ -2935,10 +3590,10 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
           console.debug("[seedream] output object keys", Object.keys(output));
           console.debug(
             "[seedream] output full inspect",
-            util.inspect(output, { depth: 4 })
+            util.inspect(output, { depth: 4 }),
           );
         }
-      } catch { }
+      } catch {}
     }
     // Seedream returns an array of urls per schema; handle multiple
     // Skip if outputUrls already set (for z-turbo num_images handling)
@@ -2946,19 +3601,24 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       outputUrls = await resolveOutputUrls(output);
     }
     // If fewer images returned than requested, fall back to sequential reruns
-    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
+    if (
+      modelBase === "bytedance/seedream-4" ||
+      modelBase === "bytedance/seedream-5-lite"
+    ) {
       const requested =
         typeof input.max_images === "number" ? input.max_images : 1;
       if (requested > 1 && outputUrls.length < requested) {
         // eslint-disable-next-line no-console
         console.warn(
-          `[seedream] provider returned ${outputUrls.length
-          }/${requested}; running additional ${requested - outputUrls.length
-          } times sequentially`
+          `[seedream] provider returned ${
+            outputUrls.length
+          }/${requested}; running additional ${
+            requested - outputUrls.length
+          } times sequentially`,
         );
         const runsNeeded = Math.max(
           0,
-          Math.min(15, requested - outputUrls.length)
+          Math.min(15, requested - outputUrls.length),
         );
         for (let i = 0; i < runsNeeded; i++) {
           try {
@@ -2977,7 +3637,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
             // eslint-disable-next-line no-console
             console.error(
               "[seedream] sequential fallback run failed",
-              (e as any)?.message || e
+              (e as any)?.message || e,
             );
           }
           if (outputUrls.length >= requested) break;
@@ -2988,7 +3648,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       // Fallback: Replicate returned file-like streams; read and upload to Zata directly
       // eslint-disable-next-line no-console
       console.warn(
-        "[replicateService.generateImage] no URL strings; attempting stream->buffer->Zata fallback"
+        "[replicateService.generateImage] no URL strings; attempting stream->buffer->Zata fallback",
       );
       const username = creator?.username || uid;
       const uploadedUrls: string[] = [];
@@ -3009,7 +3669,9 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
             const dataUri = `data:image/png;base64,${b64}`; // best-effort default; Replicate images are typically PNG/JPG
             const uploaded = await uploadDataUriToZata({
               dataUri,
-              keyPrefix: storageKeyPrefixOverride || `users/${username}/image/${historyId}`,
+              keyPrefix:
+                storageKeyPrefixOverride ||
+                `users/${username}/image/${historyId}`,
               fileName: `${buildReplicateImageFileName(historyId, i)}.png`,
             });
             uploadedUrls.push(uploaded.publicUrl);
@@ -3018,7 +3680,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
           // eslint-disable-next-line no-console
           console.error(
             "[replicateService.generateImage] stream fallback upload failed",
-            (e as any)?.message || e
+            (e as any)?.message || e,
           );
         }
       }
@@ -3029,9 +3691,9 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         // eslint-disable-next-line no-console
         console.error(
           "[replicateService.generateImage] no urls – raw output dump (truncated)",
-          JSON.stringify(output, null, 2).slice(0, 2000)
+          JSON.stringify(output, null, 2).slice(0, 2000),
         );
-      } catch { }
+      } catch {}
       throw new Error("No output URL returned by Replicate");
     }
   } catch (e: any) {
@@ -3046,8 +3708,11 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
 
     // IMPORTANT: if we intentionally threw an ApiError (e.g. validation),
     // do not mask it as a 502. Surface the original status code to the client.
-    const isApiError = e instanceof ApiError || (e && typeof e?.statusCode === 'number');
-    const apiStatusCode: number | undefined = isApiError ? Number(e.statusCode) : undefined;
+    const isApiError =
+      e instanceof ApiError || (e && typeof e?.statusCode === "number");
+    const apiStatusCode: number | undefined = isApiError
+      ? Number(e.statusCode)
+      : undefined;
 
     // Extract more detailed error message
     let errorMessage = "Replicate generation failed";
@@ -3057,7 +3722,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       errorMessage = e.response.data.detail;
     } else if (e?.response?.data?.error) {
       errorMessage = e.response.data.error;
-    } else if (typeof e === 'string') {
+    } else if (typeof e === "string") {
       errorMessage = e;
     }
 
@@ -3066,13 +3731,18 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         status: "failed",
         error: errorMessage || "Replicate failed",
       });
-    } catch { }
+    } catch {}
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
       error: errorMessage || "Replicate failed",
     } as any);
 
-    if (isApiError && apiStatusCode && apiStatusCode >= 400 && apiStatusCode < 500) {
+    if (
+      isApiError &&
+      apiStatusCode &&
+      apiStatusCode >= 400 &&
+      apiStatusCode < 500
+    ) {
       throw new ApiError(errorMessage || "Bad Request", apiStatusCode, e?.data);
     }
     throw new ApiError(errorMessage || "Replicate generation failed", 502, e);
@@ -3092,7 +3762,8 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       try {
         const uploaded = await uploadFromUrlToZata({
           sourceUrl: out,
-          keyPrefix: storageKeyPrefixOverride || `users/${username}/image/${historyId}`,
+          keyPrefix:
+            storageKeyPrefixOverride || `users/${username}/image/${historyId}`,
           fileName: buildReplicateImageFileName(historyId, idx - 1),
         });
         uploadedImages.push({
@@ -3117,7 +3788,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         id: `replicate-${Date.now()}-${i + 1}`,
         url: out,
         originalUrl: out,
-      }))
+      })),
     );
   }
 
@@ -3132,22 +3803,32 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     aestheticScore: highestScore,
   };
   // Preserve inputImages if they exist
-  if (existing && Array.isArray((existing as any).inputImages) && (existing as any).inputImages.length > 0) {
+  if (
+    existing &&
+    Array.isArray((existing as any).inputImages) &&
+    (existing as any).inputImages.length > 0
+  ) {
     updateData.inputImages = (existing as any).inputImages;
   }
   await generationHistoryRepository.update(uid, historyId, updateData);
-  try { console.log('[Replicate.generateImage] History updated with scores', { historyId, imageCount: scoredImages.length, highestScore }); } catch { }
+  try {
+    console.log("[Replicate.generateImage] History updated with scores", {
+      historyId,
+      imageCount: scoredImages.length,
+      highestScore,
+    });
+  } catch {}
   try {
     await replicateRepository.updateGenerationRecord(legacyId, {
       status: "completed",
       images: scoredImages as any,
     });
-  } catch { }
+  } catch {}
   // Trigger optimization and re-enqueue mirror update (non-blocking)
   try {
     console.log(
       "[replicateService.generateImage] triggering markGenerationCompleted",
-      { uid, historyId, isPublic: body?.isPublic === true }
+      { uid, historyId, isPublic: body?.isPublic === true },
     );
     markGenerationCompleted(uid, historyId, {
       status: "completed",
@@ -3156,13 +3837,13 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     }).catch((e: any) =>
       console.error(
         "[replicateService.generateImage] markGenerationCompleted failed",
-        e
-      )
+        e,
+      ),
     );
   } catch (e) {
     console.warn(
       "[replicateService.generateImage] markGenerationCompleted call error",
-      e
+      e,
     );
   }
   // Robust mirror sync with retry logic
@@ -3175,16 +3856,21 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         uid,
         historyId,
         ctx.creditCost,
-        'replicate-generate',
+        "replicate-generate",
         {
           model: modelBase,
           ...(ctx.meta || {}),
-          pricingVersion: ctx.pricingVersion || 'v1',
-        }
+          pricingVersion: ctx.pricingVersion || "v1",
+        },
       );
-      console.log(`[replicateService.generateImage] Debited ${ctx.creditCost} credits for ${uid}`);
+      console.log(
+        `[replicateService.generateImage] Debited ${ctx.creditCost} credits for ${uid}`,
+      );
     } catch (error) {
-      console.error('[replicateService.generateImage] Failed to deduct credits:', error);
+      console.error(
+        "[replicateService.generateImage] Failed to deduct credits:",
+        error,
+      );
     }
   }
 
@@ -3199,13 +3885,17 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
 
 export async function qwenImageEditSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   // Support both 'image' and 'uploadedImages' (array or string) from the frontend
   let primaryImage = body?.image;
-  if (!primaryImage && Array.isArray(body?.uploadedImages) && body.uploadedImages.length > 0) {
+  if (
+    !primaryImage &&
+    Array.isArray(body?.uploadedImages) &&
+    body.uploadedImages.length > 0
+  ) {
     primaryImage = body.uploadedImages[0];
-  } else if (!primaryImage && typeof body?.uploadedImages === 'string') {
+  } else if (!primaryImage && typeof body?.uploadedImages === "string") {
     primaryImage = body.uploadedImages;
   }
 
@@ -3217,37 +3907,48 @@ export async function qwenImageEditSubmit(
 
   const key = env.replicateApiKey as string;
   if (!key) {
-    console.error("[replicateService.qwenImageEditSubmit] Missing REPLICATE_API_TOKEN");
+    console.error(
+      "[replicateService.qwenImageEditSubmit] Missing REPLICATE_API_TOKEN",
+    );
     throw new ApiError("Replicate API key not configured", 500);
   }
 
   const replicate = new Replicate({ auth: key });
-  const modelBase = String(body?.model || '').toLowerCase().includes('2512') ? 'qwen/qwen-image-2512' : 'qwen/qwen-image-edit-2511';
+  const modelBase = String(body?.model || "")
+    .toLowerCase()
+    .includes("2512")
+    ? "qwen/qwen-image-2512"
+    : "qwen/qwen-image-edit-2511";
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
     : ({ uid } as any);
 
   const aspect = ((): string => {
-    const a = String(body?.aspect_ratio ?? 'match_input_image');
-    const allowed = ['1:1', '16:9', '9:16', '4:3', '3:4', 'match_input_image'];
-    return allowed.includes(a) ? a : 'match_input_image';
+    const a = String(body?.aspect_ratio ?? "match_input_image");
+    const allowed = ["1:1", "16:9", "9:16", "4:3", "3:4", "match_input_image"];
+    return allowed.includes(a) ? a : "match_input_image";
   })();
 
   const outFormat = ((): string => {
-    const f = String(body?.output_format ?? 'webp');
-    return ['webp', 'jpg', 'png'].includes(f) ? f : 'webp';
+    const f = String(body?.output_format ?? "webp");
+    return ["webp", "jpg", "png"].includes(f) ? f : "webp";
   })();
 
-  const outputQuality = Number.isFinite(Number(body?.output_quality)) ? Number(body.output_quality) : 95;
-  const goFast = typeof body.go_fast === 'boolean' ? body.go_fast : true;
-  const disableSafety = typeof body.disable_safety_checker === 'boolean' ? body.disable_safety_checker : false;
+  const outputQuality = Number.isFinite(Number(body?.output_quality))
+    ? Number(body.output_quality)
+    : 95;
+  const goFast = typeof body.go_fast === "boolean" ? body.go_fast : true;
+  const disableSafety =
+    typeof body.disable_safety_checker === "boolean"
+      ? body.disable_safety_checker
+      : false;
 
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: body.prompt,
     model: modelBase,
-    generationType: 'image-to-image',
-    visibility: body.isPublic ? 'public' : 'private',
+    generationType: "image-to-image",
+    visibility: body.isPublic ? "public" : "private",
     isPublic: body.isPublic ?? false,
     createdBy,
     aspect_ratio: aspect,
@@ -3263,8 +3964,9 @@ export async function qwenImageEditSubmit(
     const keyPrefix = `users/${username}/input/${historyId}`;
     const urls: string[] = [];
     if (Array.isArray(primaryImage)) {
-      for (const it of primaryImage.slice(0, 8)) if (typeof it === 'string' && it.length > 5) urls.push(it);
-    } else if (typeof primaryImage === 'string' && primaryImage.length > 5) {
+      for (const it of primaryImage.slice(0, 8))
+        if (typeof it === "string" && it.length > 5) urls.push(it);
+    } else if (typeof primaryImage === "string" && primaryImage.length > 5) {
       urls.push(primaryImage);
     }
     const inputPersisted: any[] = [];
@@ -3272,16 +3974,34 @@ export async function qwenImageEditSubmit(
     for (const src of urls) {
       try {
         const stored = /^data:/i.test(src)
-          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
-          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
-        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
-      } catch (e) { /* ignore upload failures */ }
+          ? await uploadDataUriToZata({
+              dataUri: src,
+              keyPrefix,
+              fileName: `input-${++idx}`,
+            })
+          : await uploadFromUrlToZata({
+              sourceUrl: src,
+              keyPrefix,
+              fileName: `input-${++idx}`,
+            });
+        inputPersisted.push({
+          id: `in-${idx}`,
+          url: stored.publicUrl,
+          storagePath: (stored as any).key,
+          originalUrl: src,
+        });
+      } catch (e) {
+        /* ignore upload failures */
+      }
     }
-    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-  } catch { }
+    if (inputPersisted.length > 0)
+      await generationHistoryRepository.update(uid, historyId, {
+        inputImages: inputPersisted,
+      } as any);
+  } catch {}
 
   // Build replicate input
-  const is2512 = modelBase.includes('2512');
+  const is2512 = modelBase.includes("2512");
   const input: any = {
     prompt: body.prompt,
     // qwen/qwen-image-2512 expects a single string URI for the image field.
@@ -3295,48 +4015,72 @@ export async function qwenImageEditSubmit(
     go_fast: goFast,
     disable_safety_checker: disableSafety,
   };
-  if (body.seed != null && Number.isInteger(Number(body.seed))) input.seed = Number(body.seed);
+  if (body.seed != null && Number.isInteger(Number(body.seed)))
+    input.seed = Number(body.seed);
   // Additional fields supported by qwen-image-edit-2512
-  if (body.guidance != null && Number.isFinite(Number(body.guidance))) input.guidance = Number(body.guidance);
-  if (body.num_inference_steps != null && Number.isInteger(Number(body.num_inference_steps))) input.num_inference_steps = Number(body.num_inference_steps);
-  if (body.strength != null && Number.isFinite(Number(body.strength))) input.strength = Math.max(0, Math.min(1, Number(body.strength)));
-  if (body.width != null && Number.isInteger(Number(body.width))) input.width = Math.max(256, Math.min(2048, Number(body.width)));
-  if (body.height != null && Number.isInteger(Number(body.height))) input.height = Math.max(256, Math.min(2048, Number(body.height)));
+  if (body.guidance != null && Number.isFinite(Number(body.guidance)))
+    input.guidance = Number(body.guidance);
+  if (
+    body.num_inference_steps != null &&
+    Number.isInteger(Number(body.num_inference_steps))
+  )
+    input.num_inference_steps = Number(body.num_inference_steps);
+  if (body.strength != null && Number.isFinite(Number(body.strength)))
+    input.strength = Math.max(0, Math.min(1, Number(body.strength)));
+  if (body.width != null && Number.isInteger(Number(body.width)))
+    input.width = Math.max(256, Math.min(2048, Number(body.width)));
+  if (body.height != null && Number.isInteger(Number(body.height)))
+    input.height = Math.max(256, Math.min(2048, Number(body.height)));
 
   // Submit prediction to Replicate (queue-style)
-  let predictionId = '';
+  let predictionId = "";
   // Ensure replicateModelBase variable exists in this function scope for fallback attempts
   let replicateModelBase = modelBase;
   try {
     // Try a sequence of candidate model identifiers in case the exact versioned id isn't available on Replicate
     const candidates: string[] = [replicateModelBase];
-    const lower = String(replicateModelBase || '').toLowerCase();
-    if (lower.includes('qwen-image') || lower.includes('qwen/qwen-image')) {
+    const lower = String(replicateModelBase || "").toLowerCase();
+    if (lower.includes("qwen-image") || lower.includes("qwen/qwen-image")) {
       // Include a variety of qwen slugs as fallbacks.
-      if (!candidates.includes('qwen/qwen-image-2512')) candidates.push('qwen/qwen-image-2512');
-      if (!candidates.includes('qwen/qwen-image-edit-2512')) candidates.push('qwen/qwen-image-edit-2512');
-      if (!candidates.includes('qwen/qwen-image-edit-2511')) candidates.push('qwen/qwen-image-edit-2511');
-      if (!candidates.includes('qwen/qwen-image-edit')) candidates.push('qwen/qwen-image-edit');
+      if (!candidates.includes("qwen/qwen-image-2512"))
+        candidates.push("qwen/qwen-image-2512");
+      if (!candidates.includes("qwen/qwen-image-edit-2512"))
+        candidates.push("qwen/qwen-image-edit-2512");
+      if (!candidates.includes("qwen/qwen-image-edit-2511"))
+        candidates.push("qwen/qwen-image-edit-2511");
+      if (!candidates.includes("qwen/qwen-image-edit"))
+        candidates.push("qwen/qwen-image-edit");
     }
 
     let lastErr: any = null;
     for (const candidate of candidates) {
       try {
         let version: string | null = null;
-        try { version = await getLatestModelVersion(replicate, candidate); } catch (vErr) { /* ignore */ }
-        const pred = await replicate.predictions.create(version ? { version, input } : { model: candidate, input });
-        predictionId = (pred as any)?.id || '';
+        try {
+          version = await getLatestModelVersion(replicate, candidate);
+        } catch (vErr) {
+          /* ignore */
+        }
+        const pred = await replicate.predictions.create(
+          version ? { version, input } : { model: candidate, input },
+        );
+        predictionId = (pred as any)?.id || "";
         replicateModelBase = candidate; // record the successful candidate
-        if (!predictionId) throw new Error('Missing prediction id');
+        if (!predictionId) throw new Error("Missing prediction id");
         // success — break out of the retry loop
         lastErr = null;
         break;
       } catch (innerErr: any) {
         lastErr = innerErr;
         // If 404 (model not found), continue to next candidate; otherwise stop trying further
-        const status = innerErr?.response?.status || innerErr?.status || innerErr?.statusCode;
-        const msg = String(innerErr?.message || innerErr || '');
-        const looksLikeNotFound = /\b404\b|not\s*found/i.test(msg) || (status && Number(status) === 404);
+        const status =
+          innerErr?.response?.status ||
+          innerErr?.status ||
+          innerErr?.statusCode;
+        const msg = String(innerErr?.message || innerErr || "");
+        const looksLikeNotFound =
+          /\b404\b|not\s*found/i.test(msg) ||
+          (status && Number(status) === 404);
         if (looksLikeNotFound) {
           // try next candidate
           continue;
@@ -3348,22 +4092,39 @@ export async function qwenImageEditSubmit(
 
     if (!predictionId) {
       // All attempts failed — record last error
-      const errMsg = lastErr?.message || 'Replicate submit failed';
-      await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: errMsg } as any);
-      throw new ApiError(`Failed to submit Qwen image edit job: ${errMsg}`, 502, lastErr);
+      const errMsg = lastErr?.message || "Replicate submit failed";
+      await generationHistoryRepository.update(uid, historyId, {
+        status: "failed",
+        error: errMsg,
+      } as any);
+      throw new ApiError(
+        `Failed to submit Qwen image edit job: ${errMsg}`,
+        502,
+        lastErr,
+      );
     }
   } catch (e: any) {
-    await generationHistoryRepository.update(uid, historyId, { status: 'failed', error: e?.message || 'Replicate submit failed' } as any);
-    throw new ApiError(`Failed to submit Qwen image edit job: ${e?.message || e}`, 502, e);
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: e?.message || "Replicate submit failed",
+    } as any);
+    throw new ApiError(
+      `Failed to submit Qwen image edit job: ${e?.message || e}`,
+      502,
+      e,
+    );
   }
 
-  await generationHistoryRepository.update(uid, historyId, { provider: 'replicate', providerTaskId: predictionId } as any);
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: "replicate",
+    providerTaskId: predictionId,
+  } as any);
 
   return {
     requestId: predictionId,
     historyId,
     model: modelBase,
-    status: 'submitted',
+    status: "submitted",
   } as any;
 }
 
@@ -3384,7 +4145,7 @@ export const replicateService = {
 // SubmitReturn, resolveWanModelFast, ensureReplicate, and getLatestModelVersion
 // are imported from ./replicate/replicateUtils
 
-// All duplicate functions (wanT2vSubmit, multiangle, generateImage, wanI2V, wanT2V) 
+// All duplicate functions (wanT2vSubmit, multiangle, generateImage, wanI2V, wanT2V)
 // have been removed. They are now in ./replicate/replicateImageService.ts or below.
 // Video functions continue below
 
@@ -3393,7 +4154,6 @@ export const replicateService = {
 // Video functions continue below
 
 // Wan 2.5 Text-to-Video via Replicate
-
 
 // All duplicate image functions (upscale, multiangle, generateImage, etc.) have been removed.
 // They are now in ./replicate/replicateImageService.ts
@@ -3429,7 +4189,7 @@ function ensureReplicate(): any {
 
 async function getLatestModelVersion(
   replicate: any,
-  modelBase: string
+  modelBase: string,
 ): Promise<string | null> {
   try {
     // Prefer model slug with latest version lookup; fallback to using model slug directly in predictions.create
@@ -3449,7 +4209,7 @@ async function getLatestModelVersion(
 
 export async function wanT2vSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   const replicate = ensureReplicate();
@@ -3478,31 +4238,38 @@ export async function wanT2vSubmit(
   try {
     const { cost } = await computeWanVideoCost({
       body: {
-        mode: 't2v',
+        mode: "t2v",
         duration: durationSec,
         resolution: res,
         model: modelBase,
-      }
+      },
     } as any);
 
     const validation = await validateGenerationRequest(
       uid,
       cost,
-      estimateFileSize('video', { duration: durationSec, quality: 'medium' })
+      estimateFileSize("video", { duration: durationSec, quality: "medium" }),
     );
 
     if (!validation.valid) {
-      console.log('[wanT2vSubmit] Validation failed', { uid, reason: validation.reason, code: validation.code });
+      console.log("[wanT2vSubmit] Validation failed", {
+        uid,
+        reason: validation.reason,
+        code: validation.code,
+      });
       throw new ApiError(
-        validation.reason || 'Validation failed',
-        validation.code === 'STORAGE_QUOTA_EXCEEDED' ? 507 : 402
+        validation.reason || "Validation failed",
+        validation.code === "STORAGE_QUOTA_EXCEEDED" ? 507 : 402,
       );
     }
   } catch (e: any) {
     // If validation throws ApiError, propagate it
     if (e instanceof ApiError) throw e;
     // Otherwise, log and continue (cost calculation might fail for unknown models)
-    console.warn('[wanT2vSubmit] Validation check failed, continuing:', e?.message);
+    console.warn(
+      "[wanT2vSubmit] Validation check failed, continuing:",
+      e?.message,
+    );
   }
 
   const { historyId } = await generationHistoryRepository.create(uid, {
@@ -3541,7 +4308,7 @@ export async function wanT2vSubmit(
       hasVersion: !!version,
     });
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -3569,7 +4336,7 @@ export async function wanT2vSubmit(
 
 export async function wanI2vSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.image) throw new ApiError("image is required", 400);
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
@@ -3597,31 +4364,38 @@ export async function wanI2vSubmit(
   try {
     const { cost } = await computeWanVideoCost({
       body: {
-        mode: 'i2v',
+        mode: "i2v",
         duration: durationSec,
         resolution: res,
         model: modelBase,
-      }
+      },
     } as any);
 
     const validation = await validateGenerationRequest(
       uid,
       cost,
-      estimateFileSize('video', { duration: durationSec, quality: 'medium' })
+      estimateFileSize("video", { duration: durationSec, quality: "medium" }),
     );
 
     if (!validation.valid) {
-      console.log('[wanI2vSubmit] Validation failed', { uid, reason: validation.reason, code: validation.code });
+      console.log("[wanI2vSubmit] Validation failed", {
+        uid,
+        reason: validation.reason,
+        code: validation.code,
+      });
       throw new ApiError(
-        validation.reason || 'Validation failed',
-        validation.code === 'STORAGE_QUOTA_EXCEEDED' ? 507 : 402
+        validation.reason || "Validation failed",
+        validation.code === "STORAGE_QUOTA_EXCEEDED" ? 507 : 402,
       );
     }
   } catch (e: any) {
     // If validation throws ApiError, propagate it
     if (e instanceof ApiError) throw e;
     // Otherwise, log and continue (cost calculation might fail for unknown models)
-    console.warn('[wanI2vSubmit] Validation check failed, continuing:', e?.message);
+    console.warn(
+      "[wanI2vSubmit] Validation check failed, continuing:",
+      e?.message,
+    );
   }
 
   const { historyId } = await generationHistoryRepository.create(uid, {
@@ -3639,17 +4413,38 @@ export async function wanI2vSubmit(
   try {
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
-    if (typeof body.image === 'string' && body.image.length > 0) {
+    if (typeof body.image === "string" && body.image.length > 0) {
       const stored = /^data:/i.test(body.image)
-        ? await uploadDataUriToZata({ dataUri: body.image, keyPrefix, fileName: 'input-1' })
-        : await uploadFromUrlToZata({ sourceUrl: body.image, keyPrefix, fileName: 'input-1' });
+        ? await uploadDataUriToZata({
+            dataUri: body.image,
+            keyPrefix,
+            fileName: "input-1",
+          })
+        : await uploadFromUrlToZata({
+            sourceUrl: body.image,
+            keyPrefix,
+            fileName: "input-1",
+          });
       await generationHistoryRepository.update(uid, historyId, {
-        inputImages: [{ id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.image }],
+        inputImages: [
+          {
+            id: "in-1",
+            url: stored.publicUrl,
+            storagePath: (stored as any).key,
+            originalUrl: body.image,
+          },
+        ],
       } as any);
-      console.log('[replicateQueue.wanI2vSubmit] Saved inputImages to database', { historyId });
+      console.log(
+        "[replicateQueue.wanI2vSubmit] Saved inputImages to database",
+        { historyId },
+      );
     }
   } catch (e) {
-    console.warn('[replicateQueue.wanI2vSubmit] Failed to save inputImages:', e);
+    console.warn(
+      "[replicateQueue.wanI2vSubmit] Failed to save inputImages:",
+      e,
+    );
   }
 
   const input: any = {
@@ -3676,7 +4471,7 @@ export async function wanI2vSubmit(
       hasVersion: !!version,
     });
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -3704,22 +4499,28 @@ export async function wanI2vSubmit(
 
 export async function replicateQueueStatus(
   uid: string,
-  requestId: string
+  requestId: string,
 ): Promise<any> {
   const replicate = ensureReplicate();
   try {
     const status = await replicate.predictions.get(requestId);
-    console.log('[replicateQueueStatus] prediction status', { requestId, status: status.status });
+    console.log("[replicateQueueStatus] prediction status", {
+      requestId,
+      status: status.status,
+    });
 
     // STRICT CREDIT DEDUCTION: If status is succeeded, we must finalize (debit) immediately
-    if (status.status === 'succeeded') {
+    if (status.status === "succeeded") {
       try {
-        console.log('[replicateQueueStatus] Job succeeded, triggering strict finalization/debit', { requestId, uid });
+        console.log(
+          "[replicateQueueStatus] Job succeeded, triggering strict finalization/debit",
+          { requestId, uid },
+        );
         // Call replicateQueueResult to handle debit, storage, and history update
         const result = await replicateQueueResult(uid, requestId);
         return result;
       } catch (e) {
-        console.error('[replicateQueueStatus] Strict finalization failed', e);
+        console.error("[replicateQueueStatus] Strict finalization failed", e);
         // Fallback to returning raw status if finalization fails (though logic might be disconnected)
       }
     }
@@ -3740,14 +4541,14 @@ export async function replicateQueueStatus(
       throw new ApiError(
         `Prediction not found. The prediction ID "${requestId}" may be invalid, expired, or the prediction may have been deleted.`,
         404,
-        e
+        e,
       );
     }
 
     // Extract error message from response
     let errorMessage = e?.message || "Failed to fetch Replicate status";
     if (e?.response?.data) {
-      if (typeof e.response.data === 'string') {
+      if (typeof e.response.data === "string") {
         errorMessage = e.response.data;
       } else if (e.response.data.detail) {
         errorMessage = e.response.data.detail;
@@ -3769,7 +4570,7 @@ export async function replicateQueueStatus(
 export async function waitForPrediction(
   predictionId: string,
   timeoutMs: number = 5 * 60 * 1000,
-  intervalMs: number = 5000 // OPTIMIZED: Increased from 2s to 5s to reduce CPU load
+  intervalMs: number = 5000, // OPTIMIZED: Increased from 2s to 5s to reduce CPU load
 ): Promise<any> {
   const replicate = ensureReplicate();
   const startTime = Date.now();
@@ -3779,25 +4580,30 @@ export async function waitForPrediction(
     const prediction = await replicate.predictions.get(predictionId);
     const status = prediction.status;
 
-    if (status === 'succeeded') {
+    if (status === "succeeded") {
       return prediction;
-    } else if (status === 'failed' || status === 'canceled') {
-      throw new Error(`Prediction ${status}: ${prediction.error || 'Unknown error'}`);
+    } else if (status === "failed" || status === "canceled") {
+      throw new Error(
+        `Prediction ${status}: ${prediction.error || "Unknown error"}`,
+      );
     }
 
     pollCount++;
     // OPTIMIZED: Exponential backoff to reduce CPU load - start at 5s, increase gradually
-    const backoffInterval = Math.min(intervalMs * (1 + Math.floor(pollCount / 10)), 30000); // Max 30s
+    const backoffInterval = Math.min(
+      intervalMs * (1 + Math.floor(pollCount / 10)),
+      30000,
+    ); // Max 30s
 
     // Wait before next poll with exponential backoff
-    await new Promise(resolve => setTimeout(resolve, backoffInterval));
+    await new Promise((resolve) => setTimeout(resolve, backoffInterval));
   }
   throw new Error(`Prediction timed out after ${timeoutMs}ms`);
 }
 
 export async function replicateQueueResult(
   uid: string,
-  requestId: string
+  requestId: string,
 ): Promise<any> {
   const replicate = ensureReplicate();
   try {
@@ -3805,7 +4611,7 @@ export async function replicateQueueResult(
     const located = await generationHistoryRepository.findByProviderTaskId(
       uid,
       "replicate",
-      requestId
+      requestId,
     );
     if (!located) return result;
     const historyId = located.id;
@@ -3818,9 +4624,14 @@ export async function replicateQueueResult(
     let storagePath = "";
     let canvasProjectId: string | undefined;
     try {
-      const freshHistory = await generationHistoryRepository.get(uid, historyId);
-      canvasProjectId = (freshHistory as any)?.canvasProjectId || (located.item as any)?.canvasProjectId;
-    } catch { }
+      const freshHistory = await generationHistoryRepository.get(
+        uid,
+        historyId,
+      );
+      canvasProjectId =
+        (freshHistory as any)?.canvasProjectId ||
+        (located.item as any)?.canvasProjectId;
+    } catch {}
     try {
       const creator = await authRepository.getUserById(uid);
       const username = creator?.username || uid;
@@ -3834,7 +4645,7 @@ export async function replicateQueueResult(
       });
       storedUrl = uploaded.publicUrl;
       storagePath = uploaded.key;
-    } catch { }
+    } catch {}
     const videoItem: any = {
       id: requestId,
       url: storedUrl,
@@ -3845,7 +4656,9 @@ export async function replicateQueueResult(
     const scoredVideos = await aestheticScoreService.scoreVideos([videoItem]);
     const highestScore = aestheticScoreService.getHighestScore(scoredVideos);
     // Get current history to preserve duration/resolution/quality/inputImages if they exist
-    const currentHistory = await generationHistoryRepository.get(uid, historyId).catch(() => null);
+    const currentHistory = await generationHistoryRepository
+      .get(uid, historyId)
+      .catch(() => null);
     const inputFromPrediction = (result as any)?.input || {};
     const audioFromPrediction =
       typeof inputFromPrediction?.generate_audio === "boolean"
@@ -3862,23 +4675,33 @@ export async function replicateQueueResult(
       videos: scoredVideos,
       aestheticScore: highestScore,
       // Preserve duration and resolution from original history if they exist
-      ...(currentHistory && (currentHistory as any)?.duration ? { duration: (currentHistory as any).duration } : {}),
-      ...(currentHistory && (currentHistory as any)?.resolution ? { resolution: (currentHistory as any).resolution } : {}),
+      ...(currentHistory && (currentHistory as any)?.duration
+        ? { duration: (currentHistory as any).duration }
+        : {}),
+      ...(currentHistory && (currentHistory as any)?.resolution
+        ? { resolution: (currentHistory as any).resolution }
+        : {}),
       // Preserve quality field (for PixVerse models)
-      ...(currentHistory && (currentHistory as any)?.quality ? { quality: (currentHistory as any).quality } : {}),
+      ...(currentHistory && (currentHistory as any)?.quality
+        ? { quality: (currentHistory as any).quality }
+        : {}),
       // Preserve Seedance 1.5 fields if we have them (needed for correct pricing)
-      ...(currentHistory && typeof (currentHistory as any)?.generate_audio === "boolean"
+      ...(currentHistory &&
+      typeof (currentHistory as any)?.generate_audio === "boolean"
         ? { generate_audio: (currentHistory as any).generate_audio }
         : typeof audioFromPrediction === "boolean"
           ? { generate_audio: audioFromPrediction }
           : {}),
-      ...(currentHistory && typeof (currentHistory as any)?.aspect_ratio === "string"
+      ...(currentHistory &&
+      typeof (currentHistory as any)?.aspect_ratio === "string"
         ? { aspect_ratio: (currentHistory as any).aspect_ratio }
         : typeof aspectFromPrediction === "string"
           ? { aspect_ratio: aspectFromPrediction }
           : {}),
       // Preserve inputImages if they exist (for showing "Your Uploads" in UI)
-      ...(currentHistory && Array.isArray((currentHistory as any)?.inputImages) && (currentHistory as any).inputImages.length > 0
+      ...(currentHistory &&
+      Array.isArray((currentHistory as any)?.inputImages) &&
+      (currentHistory as any).inputImages.length > 0
         ? { inputImages: (currentHistory as any).inputImages }
         : {}),
       ...(canvasProjectId ? { canvasProjectId } : {}),
@@ -3896,22 +4719,33 @@ export async function replicateQueueResult(
           metadata: { format: "mp4" },
         });
       } catch (e) {
-        console.warn("[replicateQueueResult] Failed to create canvas media record", e);
+        console.warn(
+          "[replicateQueueResult] Failed to create canvas media record",
+          e,
+        );
       }
     }
     // Robust mirror sync with retry logic
     await syncToMirror(uid, historyId);
     // Compute and write debit (use stored history fields)
     let debitedCredits: number | null = null;
-    let debitStatus: 'WRITTEN' | 'SKIPPED' | 'ERROR' | null = null;
+    let debitStatus: "WRITTEN" | "SKIPPED" | "ERROR" | null = null;
     let fresh: any = null;
     try {
       fresh = await generationHistoryRepository.get(uid, historyId);
       const model = (fresh as any)?.model?.toString().toLowerCase() || "";
       // Determine mode from generationType first (most reliable), then fallback to model name
-      const generationType = String((fresh as any)?.generationType || "").toLowerCase();
-      const isI2vFromType = generationType.includes("image-to-video") || generationType.includes("image_to_video") || generationType === "i2v";
-      const modeGuess = isI2vFromType || (model.includes("i2v") && !model.includes("t2v")) ? "i2v" : "t2v";
+      const generationType = String(
+        (fresh as any)?.generationType || "",
+      ).toLowerCase();
+      const isI2vFromType =
+        generationType.includes("image-to-video") ||
+        generationType.includes("image_to_video") ||
+        generationType === "i2v";
+      const modeGuess =
+        isI2vFromType || (model.includes("i2v") && !model.includes("t2v"))
+          ? "i2v"
+          : "t2v";
       if (model.includes("wan-2.5")) {
         // Ensure duration and resolution have defaults if not stored in history
         const duration = (fresh as any)?.duration ?? 5;
@@ -3924,7 +4758,7 @@ export async function replicateQueueResult(
             model: (fresh as any)?.model,
           },
         } as any;
-        console.log('[replicateQueueResult] Computing WAN cost', {
+        console.log("[replicateQueueResult] Computing WAN cost", {
           historyId,
           model,
           modeGuess,
@@ -3934,21 +4768,25 @@ export async function replicateQueueResult(
           freshDuration: (fresh as any)?.duration,
           freshResolution: (fresh as any)?.resolution,
         });
-        const { cost, pricingVersion, meta } = await computeWanVideoCost(fakeReq);
-        console.log('[replicateQueueResult] WAN cost computed', { cost, pricingVersion, meta });
+        const { cost, pricingVersion, meta } =
+          await computeWanVideoCost(fakeReq);
+        console.log("[replicateQueueResult] WAN cost computed", {
+          cost,
+          pricingVersion,
+          meta,
+        });
         const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
           cost,
           `replicate.queue.wan-${modeGuess}`,
-          { ...meta, historyId, provider: "replicate", pricingVersion }
+          { ...meta, historyId, provider: "replicate", pricingVersion },
         );
         debitedCredits = cost;
         debitStatus = status;
       } else if (model.includes("kling-v2.")) {
-        const { computeKlingVideoCost } = await import(
-          "../utils/pricing/klingPricing"
-        );
+        const { computeKlingVideoCost } =
+          await import("../utils/pricing/klingPricing");
         // Ensure duration and resolution have defaults if not stored in history
         const duration = (fresh as any)?.duration ?? 5;
         const resolution = (fresh as any)?.resolution ?? "720p";
@@ -3962,7 +4800,7 @@ export async function replicateQueueResult(
             mode: (fresh as any)?.kling_mode || (fresh as any)?.mode,
           },
         } as any;
-        console.log('[replicateQueueResult] Computing Kling cost', {
+        console.log("[replicateQueueResult] Computing Kling cost", {
           historyId,
           model,
           modeGuess,
@@ -3973,30 +4811,40 @@ export async function replicateQueueResult(
           freshDuration: (fresh as any)?.duration,
           freshResolution: (fresh as any)?.resolution,
         });
-        const { cost, pricingVersion, meta } = await computeKlingVideoCost(fakeReq as any);
-        console.log('[replicateQueueResult] Kling cost computed', { cost, pricingVersion, meta });
+        const { cost, pricingVersion, meta } = await computeKlingVideoCost(
+          fakeReq as any,
+        );
+        console.log("[replicateQueueResult] Kling cost computed", {
+          cost,
+          pricingVersion,
+          meta,
+        });
         const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
           cost,
           `replicate.queue.kling-${modeGuess}`,
-          { ...meta, historyId, provider: "replicate", pricingVersion }
+          { ...meta, historyId, provider: "replicate", pricingVersion },
         );
         debitedCredits = cost;
         debitStatus = status;
       } else if (model.includes("seedance")) {
-        const { computeSeedanceVideoCost } = await import(
-          "../utils/pricing/seedancePricing"
-        );
+        const { computeSeedanceVideoCost } =
+          await import("../utils/pricing/seedancePricing");
         // Use generationType first (most reliable), then fallback to modeGuess
         const kindFromHistory =
-          (fresh as any)?.generationType && String((fresh as any)?.generationType).toLowerCase().includes("image")
+          (fresh as any)?.generationType &&
+          String((fresh as any)?.generationType)
+            .toLowerCase()
+            .includes("image")
             ? "i2v"
             : modeGuess;
         // Ensure duration and resolution have defaults if not stored in history
         const duration = (fresh as any)?.duration ?? 5;
         const resolution = (fresh as any)?.resolution ?? "1080p";
-        const audioFromPredictionInput = (result as any)?.input?.generate_audio ?? (result as any)?.input?.generateAudio;
+        const audioFromPredictionInput =
+          (result as any)?.input?.generate_audio ??
+          (result as any)?.input?.generateAudio;
         const fakeReq = {
           body: {
             kind: kindFromHistory,
@@ -4014,7 +4862,7 @@ export async function replicateQueueResult(
                     : false,
           },
         } as any;
-        console.log('[replicateQueueResult] Computing Seedance cost', {
+        console.log("[replicateQueueResult] Computing Seedance cost", {
           historyId,
           model,
           kindFromHistory,
@@ -4022,30 +4870,39 @@ export async function replicateQueueResult(
           resolution: resolution,
           generationType,
         });
-        const { cost, pricingVersion, meta } = await computeSeedanceVideoCost(fakeReq as any);
-        console.log('[replicateQueueResult] Seedance cost computed', { cost, pricingVersion, meta });
+        const { cost, pricingVersion, meta } = await computeSeedanceVideoCost(
+          fakeReq as any,
+        );
+        console.log("[replicateQueueResult] Seedance cost computed", {
+          cost,
+          pricingVersion,
+          meta,
+        });
         const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
           cost,
           `replicate.queue.seedance-${kindFromHistory}`,
-          { ...meta, historyId, provider: "replicate", pricingVersion }
+          { ...meta, historyId, provider: "replicate", pricingVersion },
         );
         debitedCredits = cost;
         debitStatus = status;
       } else if (model.includes("pixverse")) {
-        const { computePixverseVideoCost } = await import(
-          "../utils/pricing/pixversePricing"
-        );
+        const { computePixverseVideoCost } =
+          await import("../utils/pricing/pixversePricing");
         // Use generationType first (most reliable), then fallback to modeGuess
         const kindFromHistory =
-          (fresh as any)?.generationType && String((fresh as any)?.generationType).toLowerCase().includes("image")
+          (fresh as any)?.generationType &&
+          String((fresh as any)?.generationType)
+            .toLowerCase()
+            .includes("image")
             ? "i2v"
             : modeGuess;
         // Ensure duration and quality/resolution have defaults if not stored in history
         const duration = (fresh as any)?.duration ?? 5;
         // For PixVerse, quality is stored separately, but also check resolution as fallback
-        const quality = (fresh as any)?.quality || (fresh as any)?.resolution || "720p";
+        const quality =
+          (fresh as any)?.quality || (fresh as any)?.resolution || "720p";
         const fakeReq = {
           body: {
             kind: kindFromHistory,
@@ -4055,7 +4912,7 @@ export async function replicateQueueResult(
             model: (fresh as any)?.model,
           },
         } as any;
-        console.log('[replicateQueueResult] Computing PixVerse cost', {
+        console.log("[replicateQueueResult] Computing PixVerse cost", {
           historyId,
           model,
           kindFromHistory,
@@ -4065,21 +4922,32 @@ export async function replicateQueueResult(
           storedResolution: (fresh as any)?.resolution,
           generationType,
         });
-        const { cost, pricingVersion, meta } = await computePixverseVideoCost(fakeReq as any);
-        console.log('[replicateQueueResult] PixVerse cost computed', { cost, pricingVersion, meta });
+        const { cost, pricingVersion, meta } = await computePixverseVideoCost(
+          fakeReq as any,
+        );
+        console.log("[replicateQueueResult] PixVerse cost computed", {
+          cost,
+          pricingVersion,
+          meta,
+        });
         const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
           cost,
           `replicate.queue.pixverse-${kindFromHistory}`,
-          { ...meta, historyId, provider: "replicate", pricingVersion }
+          { ...meta, historyId, provider: "replicate", pricingVersion },
         );
         debitedCredits = cost;
         debitStatus = status;
-      } else if (model.includes("ltx-2.3-fast") || model.includes("ltx-2.3-pro")) {
+      } else if (
+        model.includes("ltx-2.3-fast") ||
+        model.includes("ltx-2.3-pro")
+      ) {
         const isProModel = model.includes("ltx-2.3-pro");
-        const { computeLtx23FastVideoCost } = await import("../utils/pricing/ltx23FastPricing");
-        const { computeLtx23ProVideoCost } = await import("../utils/pricing/ltx23ProPricing");
+        const { computeLtx23FastVideoCost } =
+          await import("../utils/pricing/ltx23FastPricing");
+        const { computeLtx23ProVideoCost } =
+          await import("../utils/pricing/ltx23ProPricing");
         // Ensure duration and resolution have defaults if not stored in history
         const duration = (fresh as any)?.duration ?? 6;
         const resolution = (fresh as any)?.resolution ?? "1080p";
@@ -4090,7 +4958,7 @@ export async function replicateQueueResult(
             model: (fresh as any)?.model,
           },
         } as any;
-        console.log('[replicateQueueResult] Computing LTX 2.3 cost', {
+        console.log("[replicateQueueResult] Computing LTX 2.3 cost", {
           historyId,
           model,
           duration: duration,
@@ -4101,27 +4969,32 @@ export async function replicateQueueResult(
         const { cost, pricingVersion, meta } = isProModel
           ? await computeLtx23ProVideoCost(fakeReq as any)
           : await computeLtx23FastVideoCost(fakeReq as any);
-        console.log('[replicateQueueResult] LTX 2.3 cost computed', { cost, pricingVersion, meta });
+        console.log("[replicateQueueResult] LTX 2.3 cost computed", {
+          cost,
+          pricingVersion,
+          meta,
+        });
         const status = await creditsRepository.writeDebitIfAbsent(
           uid,
           historyId,
           cost,
           `replicate.queue.${isProModel ? "ltx-2.3-pro" : "ltx-2.3-fast"}-${modeGuess}`,
-          { ...meta, historyId, provider: "replicate", pricingVersion }
+          { ...meta, historyId, provider: "replicate", pricingVersion },
         );
         debitedCredits = cost;
         debitStatus = status;
       } else if (model.includes("wan-2.2-animate-replace")) {
         const nowMs = Date.now();
         const parseMs = (v: any): number => {
-          const t = Date.parse(String(v || ''));
+          const t = Date.parse(String(v || ""));
           return Number.isFinite(t) ? t : NaN;
         };
 
         const startFromPrediction =
-          parseMs((result as any)?.started_at) || parseMs((result as any)?.created_at);
+          parseMs((result as any)?.started_at) ||
+          parseMs((result as any)?.created_at);
         const startFromHistory =
-          (typeof (fresh as any)?.providerRequestStartMs === 'number'
+          (typeof (fresh as any)?.providerRequestStartMs === "number"
             ? (fresh as any).providerRequestStartMs
             : Number((fresh as any)?.providerRequestStartMs)) ||
           parseMs((fresh as any)?.providerRequestStartAt);
@@ -4136,11 +5009,13 @@ export async function replicateQueueResult(
           parseMs((result as any)?.completed_at) ||
           parseMs((result as any)?.completedAt) ||
           parseMs((result as any)?.ended_at);
-        const endMs = Number.isFinite(endFromPrediction) ? endFromPrediction : nowMs;
+        const endMs = Number.isFinite(endFromPrediction)
+          ? endFromPrediction
+          : nowMs;
 
         const elapsedSeconds = Math.max(0, Math.ceil((endMs - startMs) / 1000));
         const cost = elapsedSeconds * 8;
-        const pricingVersion = 'wan2.2.time.v1';
+        const pricingVersion = "wan2.2.time.v1";
         const meta = {
           elapsedSeconds,
           creditsPerSecond: 8,
@@ -4148,11 +5023,13 @@ export async function replicateQueueResult(
           endMs,
           timingSource: {
             start: Number.isFinite(startFromPrediction)
-              ? 'prediction.started_at|created_at'
+              ? "prediction.started_at|created_at"
               : Number.isFinite(startFromHistory)
-                ? 'history.providerRequestStart*'
-                : 'now',
-            end: Number.isFinite(endFromPrediction) ? 'prediction.completed_at' : 'now',
+                ? "history.providerRequestStart*"
+                : "now",
+            end: Number.isFinite(endFromPrediction)
+              ? "prediction.completed_at"
+              : "now",
           },
         };
 
@@ -4161,21 +5038,22 @@ export async function replicateQueueResult(
           historyId,
           cost,
           `replicate.queue.wan-animate-replace`,
-          { ...meta, historyId, provider: "replicate", pricingVersion }
+          { ...meta, historyId, provider: "replicate", pricingVersion },
         );
         debitedCredits = cost;
         debitStatus = status;
       } else if (model.includes("wan-2.2-animate-animation")) {
         const nowMs = Date.now();
         const parseMs = (v: any): number => {
-          const t = Date.parse(String(v || ''));
+          const t = Date.parse(String(v || ""));
           return Number.isFinite(t) ? t : NaN;
         };
 
         const startFromPrediction =
-          parseMs((result as any)?.started_at) || parseMs((result as any)?.created_at);
+          parseMs((result as any)?.started_at) ||
+          parseMs((result as any)?.created_at);
         const startFromHistory =
-          (typeof (fresh as any)?.providerRequestStartMs === 'number'
+          (typeof (fresh as any)?.providerRequestStartMs === "number"
             ? (fresh as any).providerRequestStartMs
             : Number((fresh as any)?.providerRequestStartMs)) ||
           parseMs((fresh as any)?.providerRequestStartAt);
@@ -4190,11 +5068,13 @@ export async function replicateQueueResult(
           parseMs((result as any)?.completed_at) ||
           parseMs((result as any)?.completedAt) ||
           parseMs((result as any)?.ended_at);
-        const endMs = Number.isFinite(endFromPrediction) ? endFromPrediction : nowMs;
+        const endMs = Number.isFinite(endFromPrediction)
+          ? endFromPrediction
+          : nowMs;
 
         const elapsedSeconds = Math.max(0, Math.ceil((endMs - startMs) / 1000));
         const cost = elapsedSeconds * 8;
-        const pricingVersion = 'wan2.2.time.v1';
+        const pricingVersion = "wan2.2.time.v1";
         const meta = {
           elapsedSeconds,
           creditsPerSecond: 8,
@@ -4202,11 +5082,13 @@ export async function replicateQueueResult(
           endMs,
           timingSource: {
             start: Number.isFinite(startFromPrediction)
-              ? 'prediction.started_at|created_at'
+              ? "prediction.started_at|created_at"
               : Number.isFinite(startFromHistory)
-                ? 'history.providerRequestStart*'
-                : 'now',
-            end: Number.isFinite(endFromPrediction) ? 'prediction.completed_at' : 'now',
+                ? "history.providerRequestStart*"
+                : "now",
+            end: Number.isFinite(endFromPrediction)
+              ? "prediction.completed_at"
+              : "now",
           },
         };
 
@@ -4215,19 +5097,19 @@ export async function replicateQueueResult(
           historyId,
           cost,
           `replicate.queue.wan-animate-animation`,
-          { ...meta, historyId, provider: "replicate", pricingVersion }
+          { ...meta, historyId, provider: "replicate", pricingVersion },
         );
         debitedCredits = cost;
         debitStatus = status;
       }
     } catch (err: any) {
-      console.error('[replicateQueueResult] Credit debit error', {
+      console.error("[replicateQueueResult] Credit debit error", {
         historyId,
         error: err?.message || err,
         stack: err?.stack,
         model: (fresh as any)?.model,
       });
-      debitStatus = 'ERROR';
+      debitStatus = "ERROR";
     }
     return {
       videos: scoredVideos,
@@ -4254,7 +5136,7 @@ Object.assign(replicateService, {
 
 export async function klingT2vSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   const replicate = ensureReplicate();
@@ -4301,7 +5183,7 @@ export async function klingT2vSubmit(
   if (body.guidance_scale != null)
     input.guidance_scale = Math.max(
       0,
-      Math.min(1, Number(body.guidance_scale))
+      Math.min(1, Number(body.guidance_scale)),
     );
   if (body.negative_prompt != null)
     input.negative_prompt = String(body.negative_prompt);
@@ -4323,7 +5205,7 @@ export async function klingT2vSubmit(
       // eslint-disable-next-line no-console
       console.warn(
         "[klingT2vSubmit] Version lookup failed, will try direct model",
-        { modelBase, error: versionError?.message }
+        { modelBase, error: versionError?.message },
       );
       // Continue without version - will try direct model usage
     }
@@ -4335,7 +5217,7 @@ export async function klingT2vSubmit(
       input,
     });
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -4362,22 +5244,35 @@ export async function klingT2vSubmit(
     const statusCode = e?.statusCode || e?.response?.status || e?.status;
 
     // Check if error message contains HTML (Cloudflare error page)
-    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
+    if (
+      typeof errorMessage === "string" &&
+      errorMessage.includes("<!DOCTYPE html>")
+    ) {
       // Try to extract meaningful info from HTML error
-      if (errorMessage.includes('500: Internal server error') || errorMessage.includes('Error code 500')) {
-        errorMessage = "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
-      } else if (errorMessage.includes('502') || errorMessage.includes('Bad Gateway')) {
-        errorMessage = "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      if (
+        errorMessage.includes("500: Internal server error") ||
+        errorMessage.includes("Error code 500")
+      ) {
+        errorMessage =
+          "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else if (
+        errorMessage.includes("502") ||
+        errorMessage.includes("Bad Gateway")
+      ) {
+        errorMessage =
+          "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
       } else {
-        errorMessage = "Replicate service returned an error. Please try again in a few minutes.";
+        errorMessage =
+          "Replicate service returned an error. Please try again in a few minutes.";
       }
     } else {
       // Try to extract from response data
       if (e?.response?.data) {
-        if (typeof e.response.data === 'string') {
+        if (typeof e.response.data === "string") {
           // If it's an HTML string, use generic message
-          if (e.response.data.includes('<!DOCTYPE html>')) {
-            errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+          if (e.response.data.includes("<!DOCTYPE html>")) {
+            errorMessage =
+              "Replicate service is temporarily unavailable. Please try again in a few minutes.";
           } else {
             errorMessage = e.response.data;
           }
@@ -4390,37 +5285,37 @@ export async function klingT2vSubmit(
     }
 
     // Provide a more helpful error message for 404s
-    if (
-      statusCode === 404 ||
-      (errorMessage && errorMessage.includes("404"))
-    ) {
-      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${errorMessage || "Model not found"
-        }`;
+    if (statusCode === 404 || (errorMessage && errorMessage.includes("404"))) {
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${
+        errorMessage || "Model not found"
+      }`;
       throw new ApiError(notFoundMessage, 404, e);
     }
 
     // Handle 500 errors specifically
     if (statusCode === 500) {
       throw new ApiError(
-        errorMessage || "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
+        errorMessage ||
+          "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
         502,
-        e
+        e,
       );
     }
 
     // Handle 502 errors specifically
     if (statusCode === 502) {
       throw new ApiError(
-        errorMessage || "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
+        errorMessage ||
+          "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
         502,
-        e
+        e,
       );
     }
 
     throw new ApiError(
       `Failed to submit Kling T2V job: ${errorMessage}`,
       502,
-      e
+      e,
     );
   }
   await generationHistoryRepository.update(uid, historyId, {
@@ -4437,7 +5332,7 @@ export async function klingT2vSubmit(
 
 export async function klingI2vSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   const hasImg = !!(body?.image || body?.start_image);
@@ -4484,21 +5379,40 @@ export async function klingI2vSubmit(
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
     const urls: string[] = [];
-    if (typeof body.image === 'string' && body.image) urls.push(String(body.image));
-    if (typeof body.start_image === 'string' && body.start_image) urls.push(String(body.start_image));
-    if (typeof body.end_image === 'string' && body.end_image) urls.push(String(body.end_image));
+    if (typeof body.image === "string" && body.image)
+      urls.push(String(body.image));
+    if (typeof body.start_image === "string" && body.start_image)
+      urls.push(String(body.start_image));
+    if (typeof body.end_image === "string" && body.end_image)
+      urls.push(String(body.end_image));
     const inputPersisted: any[] = [];
     let idx = 0;
     for (const src of urls) {
       try {
         const stored = /^data:/i.test(src)
-          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
-          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
-        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
-      } catch { }
+          ? await uploadDataUriToZata({
+              dataUri: src,
+              keyPrefix,
+              fileName: `input-${++idx}`,
+            })
+          : await uploadFromUrlToZata({
+              sourceUrl: src,
+              keyPrefix,
+              fileName: `input-${++idx}`,
+            });
+        inputPersisted.push({
+          id: `in-${idx}`,
+          url: stored.publicUrl,
+          storagePath: (stored as any).key,
+          originalUrl: src,
+        });
+      } catch {}
     }
-    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-  } catch { }
+    if (inputPersisted.length > 0)
+      await generationHistoryRepository.update(uid, historyId, {
+        inputImages: inputPersisted,
+      } as any);
+  } catch {}
 
   const input: any = { prompt: body.prompt, duration: durationSec };
   if (body.image) input.image = String(body.image);
@@ -4508,7 +5422,7 @@ export async function klingI2vSubmit(
   if (body.guidance_scale != null)
     input.guidance_scale = Math.max(
       0,
-      Math.min(1, Number(body.guidance_scale))
+      Math.min(1, Number(body.guidance_scale)),
     );
   if (body.negative_prompt != null)
     input.negative_prompt = String(body.negative_prompt);
@@ -4519,7 +5433,7 @@ export async function klingI2vSubmit(
   try {
     const version = await getLatestModelVersion(replicate, modelBase);
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -4548,7 +5462,7 @@ Object.assign(replicateService, { klingT2vSubmit, klingI2vSubmit });
 
 export async function klingLipsyncSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.video_url && !body?.video_id) {
     throw new ApiError("video_url or video_id is required", 400);
@@ -4561,9 +5475,10 @@ export async function klingLipsyncSubmit(
   }
 
   const replicate = ensureReplicate();
-  const modelBase = body.model && String(body.model).length > 0
-    ? String(body.model)
-    : "kwaivgi/kling-lip-sync";
+  const modelBase =
+    body.model && String(body.model).length > 0
+      ? String(body.model)
+      : "kwaivgi/kling-lip-sync";
 
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
@@ -4586,15 +5501,32 @@ export async function klingLipsyncSubmit(
     const creator2 = await authRepository.getUserById(uid);
     const username = creator2?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
-    if (typeof body.video_url === 'string' && body.video_url) {
+    if (typeof body.video_url === "string" && body.video_url) {
       try {
         const stored = /^data:/i.test(body.video_url)
-          ? await uploadDataUriToZata({ dataUri: body.video_url, keyPrefix, fileName: 'input-video-1' })
-          : await uploadFromUrlToZata({ sourceUrl: body.video_url, keyPrefix, fileName: 'input-video-1' });
-        await generationHistoryRepository.update(uid, historyId, { inputVideos: [{ id: 'vin-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.video_url }] } as any);
-      } catch { }
+          ? await uploadDataUriToZata({
+              dataUri: body.video_url,
+              keyPrefix,
+              fileName: "input-video-1",
+            })
+          : await uploadFromUrlToZata({
+              sourceUrl: body.video_url,
+              keyPrefix,
+              fileName: "input-video-1",
+            });
+        await generationHistoryRepository.update(uid, historyId, {
+          inputVideos: [
+            {
+              id: "vin-1",
+              url: stored.publicUrl,
+              storagePath: (stored as any).key,
+              originalUrl: body.video_url,
+            },
+          ],
+        } as any);
+      } catch {}
     }
-  } catch { }
+  } catch {}
 
   const input: any = {};
 
@@ -4622,7 +5554,7 @@ export async function klingLipsyncSubmit(
   try {
     const version = await getLatestModelVersion(replicate, modelBase);
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -4653,7 +5585,7 @@ Object.assign(replicateService, { klingLipsyncSubmit });
 
 export async function wanAnimateReplaceSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   // Time-based billing for WAN 2.2 Animate happens post-success;
   // still ensure user credits doc exists upfront.
@@ -4668,9 +5600,10 @@ export async function wanAnimateReplaceSubmit(
   }
 
   const replicate = ensureReplicate();
-  const modelBase = body.model && String(body.model).length > 0
-    ? String(body.model)
-    : "wan-video/wan-2.2-animate-replace";
+  const modelBase =
+    body.model && String(body.model).length > 0
+      ? String(body.model)
+      : "wan-video/wan-2.2-animate-replace";
 
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
@@ -4694,24 +5627,55 @@ export async function wanAnimateReplaceSubmit(
     const username = creator?.username || uid;
     const base = `users/${username}/input/${historyId}`;
     const updates: any = {};
-    if (typeof body.video === 'string' && body.video) {
+    if (typeof body.video === "string" && body.video) {
       try {
         const stored = /^data:/i.test(body.video)
-          ? await uploadDataUriToZata({ dataUri: body.video, keyPrefix: base, fileName: 'input-video-1' })
-          : await uploadFromUrlToZata({ sourceUrl: body.video, keyPrefix: base, fileName: 'input-video-1' });
-        updates.inputVideos = [{ id: 'vin-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.video }];
-      } catch { }
+          ? await uploadDataUriToZata({
+              dataUri: body.video,
+              keyPrefix: base,
+              fileName: "input-video-1",
+            })
+          : await uploadFromUrlToZata({
+              sourceUrl: body.video,
+              keyPrefix: base,
+              fileName: "input-video-1",
+            });
+        updates.inputVideos = [
+          {
+            id: "vin-1",
+            url: stored.publicUrl,
+            storagePath: (stored as any).key,
+            originalUrl: body.video,
+          },
+        ];
+      } catch {}
     }
-    if (typeof body.character_image === 'string' && body.character_image) {
+    if (typeof body.character_image === "string" && body.character_image) {
       try {
         const stored = /^data:/i.test(body.character_image)
-          ? await uploadDataUriToZata({ dataUri: body.character_image, keyPrefix: base, fileName: 'input-1' })
-          : await uploadFromUrlToZata({ sourceUrl: body.character_image, keyPrefix: base, fileName: 'input-1' });
-        updates.inputImages = [{ id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.character_image }];
-      } catch { }
+          ? await uploadDataUriToZata({
+              dataUri: body.character_image,
+              keyPrefix: base,
+              fileName: "input-1",
+            })
+          : await uploadFromUrlToZata({
+              sourceUrl: body.character_image,
+              keyPrefix: base,
+              fileName: "input-1",
+            });
+        updates.inputImages = [
+          {
+            id: "in-1",
+            url: stored.publicUrl,
+            storagePath: (stored as any).key,
+            originalUrl: body.character_image,
+          },
+        ];
+      } catch {}
     }
-    if (Object.keys(updates).length > 0) await generationHistoryRepository.update(uid, historyId, updates);
-  } catch { }
+    if (Object.keys(updates).length > 0)
+      await generationHistoryRepository.update(uid, historyId, updates);
+  } catch {}
 
   const input: any = {
     video: resolveToPublicUrl(String(body.video)),
@@ -4722,7 +5686,7 @@ export async function wanAnimateReplaceSubmit(
   if (body.seed != null && Number.isInteger(Number(body.seed))) {
     input.seed = Number(body.seed);
   }
-  if (typeof body.go_fast === 'boolean') {
+  if (typeof body.go_fast === "boolean") {
     input.go_fast = body.go_fast;
   } else {
     input.go_fast = true; // Default
@@ -4732,12 +5696,12 @@ export async function wanAnimateReplaceSubmit(
   } else {
     input.refert_num = 1; // Default
   }
-  if (body.resolution === '720' || body.resolution === '480') {
+  if (body.resolution === "720" || body.resolution === "480") {
     input.resolution = String(body.resolution);
   } else {
-    input.resolution = '720'; // Default
+    input.resolution = "720"; // Default
   }
-  if (typeof body.merge_audio === 'boolean') {
+  if (typeof body.merge_audio === "boolean") {
     input.merge_audio = body.merge_audio;
   } else {
     input.merge_audio = true; // Default
@@ -4762,11 +5726,11 @@ export async function wanAnimateReplaceSubmit(
         providerRequestStartMs: requestStartMs,
         providerRequestStartAt: new Date(requestStartMs).toISOString(),
       } as any);
-    } catch { }
+    } catch {}
 
     const version = await getLatestModelVersion(replicate, modelBase);
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -4776,7 +5740,7 @@ export async function wanAnimateReplaceSubmit(
       e?.response?.data?.error ||
       e?.response?.data?.message ||
       e?.message ||
-      'Replicate submit failed';
+      "Replicate submit failed";
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
       error: String(upstreamMsg),
@@ -4803,7 +5767,7 @@ Object.assign(replicateService, { wanAnimateReplaceSubmit });
 
 export async function wanAnimateAnimationSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   // Time-based billing for WAN 2.2 Animate happens post-success;
   // still ensure user credits doc exists upfront.
@@ -4818,9 +5782,10 @@ export async function wanAnimateAnimationSubmit(
   }
 
   const replicate = ensureReplicate();
-  const modelBase = body.model && String(body.model).length > 0
-    ? String(body.model)
-    : "wan-video/wan-2.2-animate-animation";
+  const modelBase =
+    body.model && String(body.model).length > 0
+      ? String(body.model)
+      : "wan-video/wan-2.2-animate-animation";
 
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
@@ -4844,24 +5809,55 @@ export async function wanAnimateAnimationSubmit(
     const username = creator?.username || uid;
     const base = `users/${username}/input/${historyId}`;
     const updates: any = {};
-    if (typeof body.video === 'string' && body.video) {
+    if (typeof body.video === "string" && body.video) {
       try {
         const stored = /^data:/i.test(body.video)
-          ? await uploadDataUriToZata({ dataUri: body.video, keyPrefix: base, fileName: 'input-video-1' })
-          : await uploadFromUrlToZata({ sourceUrl: body.video, keyPrefix: base, fileName: 'input-video-1' });
-        updates.inputVideos = [{ id: 'vin-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.video }];
-      } catch { }
+          ? await uploadDataUriToZata({
+              dataUri: body.video,
+              keyPrefix: base,
+              fileName: "input-video-1",
+            })
+          : await uploadFromUrlToZata({
+              sourceUrl: body.video,
+              keyPrefix: base,
+              fileName: "input-video-1",
+            });
+        updates.inputVideos = [
+          {
+            id: "vin-1",
+            url: stored.publicUrl,
+            storagePath: (stored as any).key,
+            originalUrl: body.video,
+          },
+        ];
+      } catch {}
     }
-    if (typeof body.character_image === 'string' && body.character_image) {
+    if (typeof body.character_image === "string" && body.character_image) {
       try {
         const stored = /^data:/i.test(body.character_image)
-          ? await uploadDataUriToZata({ dataUri: body.character_image, keyPrefix: base, fileName: 'input-1' })
-          : await uploadFromUrlToZata({ sourceUrl: body.character_image, keyPrefix: base, fileName: 'input-1' });
-        updates.inputImages = [{ id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: body.character_image }];
-      } catch { }
+          ? await uploadDataUriToZata({
+              dataUri: body.character_image,
+              keyPrefix: base,
+              fileName: "input-1",
+            })
+          : await uploadFromUrlToZata({
+              sourceUrl: body.character_image,
+              keyPrefix: base,
+              fileName: "input-1",
+            });
+        updates.inputImages = [
+          {
+            id: "in-1",
+            url: stored.publicUrl,
+            storagePath: (stored as any).key,
+            originalUrl: body.character_image,
+          },
+        ];
+      } catch {}
     }
-    if (Object.keys(updates).length > 0) await generationHistoryRepository.update(uid, historyId, updates);
-  } catch { }
+    if (Object.keys(updates).length > 0)
+      await generationHistoryRepository.update(uid, historyId, updates);
+  } catch {}
 
   const input: any = {
     video: resolveToPublicUrl(String(body.video)),
@@ -4872,7 +5868,7 @@ export async function wanAnimateAnimationSubmit(
   if (body.seed != null && Number.isInteger(Number(body.seed))) {
     input.seed = Number(body.seed);
   }
-  if (typeof body.go_fast === 'boolean') {
+  if (typeof body.go_fast === "boolean") {
     input.go_fast = body.go_fast;
   } else {
     input.go_fast = true; // Default
@@ -4882,12 +5878,12 @@ export async function wanAnimateAnimationSubmit(
   } else {
     input.refert_num = 1; // Default
   }
-  if (body.resolution === '720' || body.resolution === '480') {
+  if (body.resolution === "720" || body.resolution === "480") {
     input.resolution = String(body.resolution);
   } else {
-    input.resolution = '720'; // Default
+    input.resolution = "720"; // Default
   }
-  if (typeof body.merge_audio === 'boolean') {
+  if (typeof body.merge_audio === "boolean") {
     input.merge_audio = body.merge_audio;
   } else {
     input.merge_audio = true; // Default
@@ -4912,11 +5908,11 @@ export async function wanAnimateAnimationSubmit(
         providerRequestStartMs: requestStartMs,
         providerRequestStartAt: new Date(requestStartMs).toISOString(),
       } as any);
-    } catch { }
+    } catch {}
 
     const version = await getLatestModelVersion(replicate, modelBase);
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -4926,7 +5922,7 @@ export async function wanAnimateAnimationSubmit(
       e?.response?.data?.error ||
       e?.response?.data?.message ||
       e?.message ||
-      'Replicate submit failed';
+      "Replicate submit failed";
     await generationHistoryRepository.update(uid, historyId, {
       status: "failed",
       error: String(upstreamMsg),
@@ -4953,20 +5949,23 @@ Object.assign(replicateService, { wanAnimateAnimationSubmit });
 
 export async function seedanceT2vSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   const replicate = ensureReplicate();
   const modelStr = String(body.model || "").toLowerCase();
   const speed = String(body.speed || "").toLowerCase();
-  const isSeedance15 = modelStr.includes('seedance-1.5') || speed.includes('1.5');
+  const isSeedance15 =
+    modelStr.includes("seedance-1.5") || speed.includes("1.5");
   const isLite =
     modelStr.includes("lite") || speed === "lite" || speed.includes("lite");
   // Correct model names on Replicate: bytedance/seedance-1-pro and bytedance/seedance-1-lite (not 1.0)
   // Seedance 1.5: bytedance/seedance-1.5-pro
   const modelBase = isSeedance15
-    ? 'bytedance/seedance-1.5-pro'
-    : (isLite ? "bytedance/seedance-1-lite" : "bytedance/seedance-1-pro");
+    ? "bytedance/seedance-1.5-pro"
+    : isLite
+      ? "bytedance/seedance-1-lite"
+      : "bytedance/seedance-1-pro";
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
@@ -4984,11 +5983,11 @@ export async function seedanceT2vSubmit(
   })();
   const res = isSeedance15
     ? undefined
-    : (((): string => {
-      const r = String(body?.resolution ?? "1080p").toLowerCase();
-      const m = r.match(/(480|720|1080)/);
-      return m ? `${m[1]}p` : "1080p";
-    })());
+    : ((): string => {
+        const r = String(body?.resolution ?? "1080p").toLowerCase();
+        const m = r.match(/(480|720|1080)/);
+        return m ? `${m[1]}p` : "1080p";
+      })();
   const audioFlag =
     typeof body.generate_audio === "boolean"
       ? body.generate_audio
@@ -5009,10 +6008,14 @@ export async function seedanceT2vSubmit(
 
   if (isSeedance15) {
     createPayload.aspect_ratio = aspect;
-    if (typeof audioFlag === "boolean") createPayload.generate_audio = audioFlag;
+    if (typeof audioFlag === "boolean")
+      createPayload.generate_audio = audioFlag;
   }
 
-  const { historyId } = await generationHistoryRepository.create(uid, createPayload as any);
+  const { historyId } = await generationHistoryRepository.create(
+    uid,
+    createPayload as any,
+  );
 
   // Seedance 1.5 fields were persisted during create above; no-op here.
 
@@ -5022,25 +6025,47 @@ export async function seedanceT2vSubmit(
     const keyPrefix = `users/${username}/input/${historyId}`;
     const urls: string[] = [];
     // First frame image
-    if (typeof body.image === 'string' && body.image.length > 5) urls.push(String(body.image));
+    if (typeof body.image === "string" && body.image.length > 5)
+      urls.push(String(body.image));
     // Last frame image
-    if (typeof body.last_frame_image === 'string' && body.last_frame_image.length > 5) urls.push(String(body.last_frame_image));
+    if (
+      typeof body.last_frame_image === "string" &&
+      body.last_frame_image.length > 5
+    )
+      urls.push(String(body.last_frame_image));
     // Reference images
     if (Array.isArray(body.reference_images)) {
-      for (const r of body.reference_images.slice(0, 4)) if (typeof r === 'string' && r.length > 5) urls.push(r);
+      for (const r of body.reference_images.slice(0, 4))
+        if (typeof r === "string" && r.length > 5) urls.push(r);
     }
     const inputPersisted: any[] = [];
     let idx = 0;
     for (const src of urls) {
       try {
         const stored = /^data:/i.test(src)
-          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
-          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
-        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
-      } catch { }
+          ? await uploadDataUriToZata({
+              dataUri: src,
+              keyPrefix,
+              fileName: `input-${++idx}`,
+            })
+          : await uploadFromUrlToZata({
+              sourceUrl: src,
+              keyPrefix,
+              fileName: `input-${++idx}`,
+            });
+        inputPersisted.push({
+          id: `in-${idx}`,
+          url: stored.publicUrl,
+          storagePath: (stored as any).key,
+          originalUrl: src,
+        });
+      } catch {}
     }
-    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-  } catch { }
+    if (inputPersisted.length > 0)
+      await generationHistoryRepository.update(uid, historyId, {
+        inputImages: inputPersisted,
+      } as any);
+  } catch {}
 
   const input: any = {
     prompt: body.prompt,
@@ -5054,19 +6079,24 @@ export async function seedanceT2vSubmit(
     // Seedance 1.5 uses aspect_ratio for T2V
     input.aspect_ratio = aspect;
     // Seedance 1.5 supports audio generation
-    if (typeof body.generate_audio === 'boolean') input.generate_audio = body.generate_audio;
-    else if (typeof body.generateAudio === 'boolean') input.generate_audio = body.generateAudio;
+    if (typeof body.generate_audio === "boolean")
+      input.generate_audio = body.generate_audio;
+    else if (typeof body.generateAudio === "boolean")
+      input.generate_audio = body.generateAudio;
   }
   if (body.seed != null && Number.isInteger(Number(body.seed)))
     input.seed = Number(body.seed);
   if (typeof body.camera_fixed === "boolean")
     input.camera_fixed = body.camera_fixed;
   // First frame image (for image-to-video generation with seedance T2V)
-  if (typeof body.image === 'string' && body.image.length > 5) {
+  if (typeof body.image === "string" && body.image.length > 5) {
     input.image = String(body.image);
   }
   // Last frame image (only works if first frame image is provided)
-  if (typeof body.last_frame_image === 'string' && body.last_frame_image.length > 5) {
+  if (
+    typeof body.last_frame_image === "string" &&
+    body.last_frame_image.length > 5
+  ) {
     input.last_frame_image = String(body.last_frame_image);
   }
   if (!isSeedance15) {
@@ -5079,14 +6109,15 @@ export async function seedanceT2vSubmit(
     ) {
       // Validate that reference images are not used with incompatible settings
       const hasFirstFrame = body.image && String(body.image).length > 5;
-      const hasLastFrame = body.last_frame_image && String(body.last_frame_image).length > 5;
+      const hasLastFrame =
+        body.last_frame_image && String(body.last_frame_image).length > 5;
       if (res === "1080p") {
         console.warn(
-          "[seedanceT2vSubmit] reference_images cannot be used with 1080p resolution, ignoring"
+          "[seedanceT2vSubmit] reference_images cannot be used with 1080p resolution, ignoring",
         );
       } else if (hasFirstFrame || hasLastFrame) {
         console.warn(
-          "[seedanceT2vSubmit] reference_images cannot be used with first/last frame images, ignoring"
+          "[seedanceT2vSubmit] reference_images cannot be used with first/last frame images, ignoring",
         );
       } else {
         input.reference_images = body.reference_images.slice(0, 4); // Limit to 4 images
@@ -5109,7 +6140,7 @@ export async function seedanceT2vSubmit(
       // eslint-disable-next-line no-console
       console.warn(
         "[seedanceT2vSubmit] Version lookup failed, will try direct model",
-        { modelBase, error: versionError?.message }
+        { modelBase, error: versionError?.message },
       );
       // Continue without version - will try direct model usage
     }
@@ -5121,7 +6152,7 @@ export async function seedanceT2vSubmit(
       input,
     });
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -5148,22 +6179,35 @@ export async function seedanceT2vSubmit(
     const statusCode = e?.statusCode || e?.response?.status || e?.status;
 
     // Check if error message contains HTML (Cloudflare error page)
-    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
+    if (
+      typeof errorMessage === "string" &&
+      errorMessage.includes("<!DOCTYPE html>")
+    ) {
       // Try to extract meaningful info from HTML error
-      if (errorMessage.includes('500: Internal server error') || errorMessage.includes('Error code 500')) {
-        errorMessage = "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
-      } else if (errorMessage.includes('502') || errorMessage.includes('Bad Gateway')) {
-        errorMessage = "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      if (
+        errorMessage.includes("500: Internal server error") ||
+        errorMessage.includes("Error code 500")
+      ) {
+        errorMessage =
+          "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else if (
+        errorMessage.includes("502") ||
+        errorMessage.includes("Bad Gateway")
+      ) {
+        errorMessage =
+          "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
       } else {
-        errorMessage = "Replicate service returned an error. Please try again in a few minutes.";
+        errorMessage =
+          "Replicate service returned an error. Please try again in a few minutes.";
       }
     } else {
       // Try to extract from response data
       if (e?.response?.data) {
-        if (typeof e.response.data === 'string') {
+        if (typeof e.response.data === "string") {
           // If it's an HTML string, use generic message
-          if (e.response.data.includes('<!DOCTYPE html>')) {
-            errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+          if (e.response.data.includes("<!DOCTYPE html>")) {
+            errorMessage =
+              "Replicate service is temporarily unavailable. Please try again in a few minutes.";
           } else {
             errorMessage = e.response.data;
           }
@@ -5176,37 +6220,37 @@ export async function seedanceT2vSubmit(
     }
 
     // Provide a more helpful error message for 404s
-    if (
-      statusCode === 404 ||
-      (errorMessage && errorMessage.includes("404"))
-    ) {
-      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${errorMessage || "Model not found"
-        }`;
+    if (statusCode === 404 || (errorMessage && errorMessage.includes("404"))) {
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${
+        errorMessage || "Model not found"
+      }`;
       throw new ApiError(notFoundMessage, 404, e);
     }
 
     // Handle 500 errors specifically
     if (statusCode === 500) {
       throw new ApiError(
-        errorMessage || "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
+        errorMessage ||
+          "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
         502,
-        e
+        e,
       );
     }
 
     // Handle 502 errors specifically
     if (statusCode === 502) {
       throw new ApiError(
-        errorMessage || "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
+        errorMessage ||
+          "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
         502,
-        e
+        e,
       );
     }
 
     throw new ApiError(
       `Failed to submit Seedance T2V job: ${errorMessage}`,
       502,
-      e
+      e,
     );
   }
   await generationHistoryRepository.update(uid, historyId, {
@@ -5223,21 +6267,24 @@ export async function seedanceT2vSubmit(
 
 export async function seedanceI2vSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   if (!body?.image) throw new ApiError("image is required", 400);
   const replicate = ensureReplicate();
   const modelStr = String(body.model || "").toLowerCase();
   const speed = String(body.speed || "").toLowerCase();
-  const isSeedance15 = modelStr.includes('seedance-1.5') || speed.includes('1.5');
+  const isSeedance15 =
+    modelStr.includes("seedance-1.5") || speed.includes("1.5");
   const isLite =
     modelStr.includes("lite") || speed === "lite" || speed.includes("lite");
   // Correct model names on Replicate: bytedance/seedance-1-pro and bytedance/seedance-1-lite (not 1.0)
   // Seedance 1.5: bytedance/seedance-1.5-pro
   const modelBase = isSeedance15
-    ? 'bytedance/seedance-1.5-pro'
-    : (isLite ? "bytedance/seedance-1-lite" : "bytedance/seedance-1-pro");
+    ? "bytedance/seedance-1.5-pro"
+    : isLite
+      ? "bytedance/seedance-1-lite"
+      : "bytedance/seedance-1-pro";
   const creator = await authRepository.getUserById(uid);
   const createdBy = creator
     ? { uid, username: creator.username, email: (creator as any)?.email }
@@ -5255,11 +6302,11 @@ export async function seedanceI2vSubmit(
   })();
   const res = isSeedance15
     ? undefined
-    : (((): string => {
-      const r = String(body?.resolution ?? "1080p").toLowerCase();
-      const m = r.match(/(480|720|1080)/);
-      return m ? `${m[1]}p` : "1080p";
-    })());
+    : ((): string => {
+        const r = String(body?.resolution ?? "1080p").toLowerCase();
+        const m = r.match(/(480|720|1080)/);
+        return m ? `${m[1]}p` : "1080p";
+      })();
   const audioFlag =
     typeof body.generate_audio === "boolean"
       ? body.generate_audio
@@ -5280,10 +6327,14 @@ export async function seedanceI2vSubmit(
 
   if (isSeedance15) {
     createPayloadImg.aspect_ratio = aspect;
-    if (typeof audioFlag === "boolean") createPayloadImg.generate_audio = audioFlag;
+    if (typeof audioFlag === "boolean")
+      createPayloadImg.generate_audio = audioFlag;
   }
 
-  const { historyId } = await generationHistoryRepository.create(uid, createPayloadImg as any);
+  const { historyId } = await generationHistoryRepository.create(
+    uid,
+    createPayloadImg as any,
+  );
   const input: any = {
     prompt: body.prompt,
     duration: durationSec,
@@ -5295,13 +6346,20 @@ export async function seedanceI2vSubmit(
     input.resolution = res;
   } else {
     // Seedance 1.5 supports audio generation
-    if (typeof body.generate_audio === 'boolean') input.generate_audio = body.generate_audio;
-    else if (typeof body.generateAudio === 'boolean') input.generate_audio = body.generateAudio;
+    if (typeof body.generate_audio === "boolean")
+      input.generate_audio = body.generate_audio;
+    else if (typeof body.generateAudio === "boolean")
+      input.generate_audio = body.generateAudio;
   }
 
-  if (body.seed != null && Number.isInteger(Number(body.seed))) input.seed = Number(body.seed);
-  if (typeof body.camera_fixed === 'boolean') input.camera_fixed = body.camera_fixed;
-  if (typeof body.last_frame_image === 'string' && body.last_frame_image.length > 5) {
+  if (body.seed != null && Number.isInteger(Number(body.seed)))
+    input.seed = Number(body.seed);
+  if (typeof body.camera_fixed === "boolean")
+    input.camera_fixed = body.camera_fixed;
+  if (
+    typeof body.last_frame_image === "string" &&
+    body.last_frame_image.length > 5
+  ) {
     input.last_frame_image = String(body.last_frame_image);
   }
 
@@ -5315,14 +6373,15 @@ export async function seedanceI2vSubmit(
     ) {
       // In I2V, `image` is always present (acts as first frame image), so reference_images are incompatible.
       const hasFirstFrame = true;
-      const hasLastFrame = body.last_frame_image && String(body.last_frame_image).length > 5;
-      if (res === '1080p') {
+      const hasLastFrame =
+        body.last_frame_image && String(body.last_frame_image).length > 5;
+      if (res === "1080p") {
         console.warn(
-          '[seedanceI2vSubmit] reference_images cannot be used with 1080p resolution or first/last frame images, ignoring'
+          "[seedanceI2vSubmit] reference_images cannot be used with 1080p resolution or first/last frame images, ignoring",
         );
       } else if (hasFirstFrame || hasLastFrame) {
         console.warn(
-          '[seedanceI2vSubmit] reference_images cannot be used with 1080p resolution or first/last frame images, ignoring'
+          "[seedanceI2vSubmit] reference_images cannot be used with 1080p resolution or first/last frame images, ignoring",
         );
       } else {
         input.reference_images = body.reference_images.slice(0, 4);
@@ -5335,23 +6394,44 @@ export async function seedanceI2vSubmit(
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
     const urls: string[] = [];
-    if (typeof body.image === 'string') urls.push(String(body.image));
-    if (typeof body.last_frame_image === 'string' && body.last_frame_image.length > 5) urls.push(String(body.last_frame_image));
+    if (typeof body.image === "string") urls.push(String(body.image));
+    if (
+      typeof body.last_frame_image === "string" &&
+      body.last_frame_image.length > 5
+    )
+      urls.push(String(body.last_frame_image));
     if (Array.isArray(body.reference_images)) {
-      for (const r of body.reference_images.slice(0, 4)) if (typeof r === 'string') urls.push(r);
+      for (const r of body.reference_images.slice(0, 4))
+        if (typeof r === "string") urls.push(r);
     }
     const inputPersisted: any[] = [];
     let idx = 0;
     for (const src of urls) {
       try {
         const stored = /^data:/i.test(src)
-          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
-          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
-        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
-      } catch { }
+          ? await uploadDataUriToZata({
+              dataUri: src,
+              keyPrefix,
+              fileName: `input-${++idx}`,
+            })
+          : await uploadFromUrlToZata({
+              sourceUrl: src,
+              keyPrefix,
+              fileName: `input-${++idx}`,
+            });
+        inputPersisted.push({
+          id: `in-${idx}`,
+          url: stored.publicUrl,
+          storagePath: (stored as any).key,
+          originalUrl: src,
+        });
+      } catch {}
     }
-    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-  } catch { }
+    if (inputPersisted.length > 0)
+      await generationHistoryRepository.update(uid, historyId, {
+        inputImages: inputPersisted,
+      } as any);
+  } catch {}
 
   let predictionId = "";
   try {
@@ -5368,7 +6448,7 @@ export async function seedanceI2vSubmit(
       // eslint-disable-next-line no-console
       console.warn(
         "[seedanceI2vSubmit] Version lookup failed, will try direct model",
-        { modelBase, error: versionError?.message }
+        { modelBase, error: versionError?.message },
       );
       // Continue without version - will try direct model usage
     }
@@ -5380,7 +6460,7 @@ export async function seedanceI2vSubmit(
       inputKeys: Object.keys(input),
     });
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -5407,22 +6487,35 @@ export async function seedanceI2vSubmit(
     const statusCode = e?.statusCode || e?.response?.status || e?.status;
 
     // Check if error message contains HTML (Cloudflare error page)
-    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
+    if (
+      typeof errorMessage === "string" &&
+      errorMessage.includes("<!DOCTYPE html>")
+    ) {
       // Try to extract meaningful info from HTML error
-      if (errorMessage.includes('500: Internal server error') || errorMessage.includes('Error code 500')) {
-        errorMessage = "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
-      } else if (errorMessage.includes('502') || errorMessage.includes('Bad Gateway')) {
-        errorMessage = "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      if (
+        errorMessage.includes("500: Internal server error") ||
+        errorMessage.includes("Error code 500")
+      ) {
+        errorMessage =
+          "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else if (
+        errorMessage.includes("502") ||
+        errorMessage.includes("Bad Gateway")
+      ) {
+        errorMessage =
+          "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
       } else {
-        errorMessage = "Replicate service returned an error. Please try again in a few minutes.";
+        errorMessage =
+          "Replicate service returned an error. Please try again in a few minutes.";
       }
     } else {
       // Try to extract from response data
       if (e?.response?.data) {
-        if (typeof e.response.data === 'string') {
+        if (typeof e.response.data === "string") {
           // If it's an HTML string, use generic message
-          if (e.response.data.includes('<!DOCTYPE html>')) {
-            errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+          if (e.response.data.includes("<!DOCTYPE html>")) {
+            errorMessage =
+              "Replicate service is temporarily unavailable. Please try again in a few minutes.";
           } else {
             errorMessage = e.response.data;
           }
@@ -5435,37 +6528,37 @@ export async function seedanceI2vSubmit(
     }
 
     // Provide a more helpful error message for 404s
-    if (
-      statusCode === 404 ||
-      (errorMessage && errorMessage.includes("404"))
-    ) {
-      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${errorMessage || "Model not found"
-        }`;
+    if (statusCode === 404 || (errorMessage && errorMessage.includes("404"))) {
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${
+        errorMessage || "Model not found"
+      }`;
       throw new ApiError(notFoundMessage, 404, e);
     }
 
     // Handle 500 errors specifically
     if (statusCode === 500) {
       throw new ApiError(
-        errorMessage || "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
+        errorMessage ||
+          "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
         502,
-        e
+        e,
       );
     }
 
     // Handle 502 errors specifically
     if (statusCode === 502) {
       throw new ApiError(
-        errorMessage || "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
+        errorMessage ||
+          "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
         502,
-        e
+        e,
       );
     }
 
     throw new ApiError(
       `Failed to submit Seedance I2V job: ${errorMessage}`,
       502,
-      e
+      e,
     );
   }
   await generationHistoryRepository.update(uid, historyId, {
@@ -5486,7 +6579,7 @@ Object.assign(replicateService, { seedanceT2vSubmit, seedanceI2vSubmit });
 
 export async function seedanceProFastT2vSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   const replicate = ensureReplicate();
@@ -5529,20 +6622,37 @@ export async function seedanceProFastT2vSubmit(
     const urls: string[] = [];
     // Reference images (if provided and compatible)
     if (Array.isArray(body.reference_images)) {
-      for (const r of body.reference_images.slice(0, 4)) if (typeof r === 'string' && r.length > 5) urls.push(r);
+      for (const r of body.reference_images.slice(0, 4))
+        if (typeof r === "string" && r.length > 5) urls.push(r);
     }
     const inputPersisted: any[] = [];
     let idx = 0;
     for (const src of urls) {
       try {
         const stored = /^data:/i.test(src)
-          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
-          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
-        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
-      } catch { }
+          ? await uploadDataUriToZata({
+              dataUri: src,
+              keyPrefix,
+              fileName: `input-${++idx}`,
+            })
+          : await uploadFromUrlToZata({
+              sourceUrl: src,
+              keyPrefix,
+              fileName: `input-${++idx}`,
+            });
+        inputPersisted.push({
+          id: `in-${idx}`,
+          url: stored.publicUrl,
+          storagePath: (stored as any).key,
+          originalUrl: src,
+        });
+      } catch {}
     }
-    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-  } catch { }
+    if (inputPersisted.length > 0)
+      await generationHistoryRepository.update(uid, historyId, {
+        inputImages: inputPersisted,
+      } as any);
+  } catch {}
 
   const input: any = {
     prompt: body.prompt,
@@ -5564,7 +6674,7 @@ export async function seedanceProFastT2vSubmit(
   ) {
     if (res === "1080p") {
       console.warn(
-        "[seedanceProFastT2vSubmit] reference_images cannot be used with 1080p resolution, ignoring"
+        "[seedanceProFastT2vSubmit] reference_images cannot be used with 1080p resolution, ignoring",
       );
     } else {
       input.reference_images = body.reference_images.slice(0, 4); // Limit to 4 images
@@ -5583,7 +6693,7 @@ export async function seedanceProFastT2vSubmit(
     } catch (versionError: any) {
       console.warn(
         "[seedanceProFastT2vSubmit] Version lookup failed, will try direct model",
-        { modelBase, error: versionError?.message }
+        { modelBase, error: versionError?.message },
       );
     }
 
@@ -5593,11 +6703,13 @@ export async function seedanceProFastT2vSubmit(
       input,
     });
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
-    console.log("[seedanceProFastT2vSubmit] Prediction created", { predictionId });
+    console.log("[seedanceProFastT2vSubmit] Prediction created", {
+      predictionId,
+    });
   } catch (e: any) {
     console.error("[seedanceProFastT2vSubmit] Error creating prediction", {
       modelBase,
@@ -5616,19 +6728,32 @@ export async function seedanceProFastT2vSubmit(
     let errorMessage = e?.message || "Replicate API error";
     const statusCode = e?.statusCode || e?.response?.status || e?.status;
 
-    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
-      if (errorMessage.includes('500: Internal server error') || errorMessage.includes('Error code 500')) {
-        errorMessage = "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
-      } else if (errorMessage.includes('502') || errorMessage.includes('Bad Gateway')) {
-        errorMessage = "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+    if (
+      typeof errorMessage === "string" &&
+      errorMessage.includes("<!DOCTYPE html>")
+    ) {
+      if (
+        errorMessage.includes("500: Internal server error") ||
+        errorMessage.includes("Error code 500")
+      ) {
+        errorMessage =
+          "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else if (
+        errorMessage.includes("502") ||
+        errorMessage.includes("Bad Gateway")
+      ) {
+        errorMessage =
+          "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
       } else {
-        errorMessage = "Replicate service returned an error. Please try again in a few minutes.";
+        errorMessage =
+          "Replicate service returned an error. Please try again in a few minutes.";
       }
     } else {
       if (e?.response?.data) {
-        if (typeof e.response.data === 'string') {
-          if (e.response.data.includes('<!DOCTYPE html>')) {
-            errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+        if (typeof e.response.data === "string") {
+          if (e.response.data.includes("<!DOCTYPE html>")) {
+            errorMessage =
+              "Replicate service is temporarily unavailable. Please try again in a few minutes.";
           } else {
             errorMessage = e.response.data;
           }
@@ -5640,35 +6765,35 @@ export async function seedanceProFastT2vSubmit(
       }
     }
 
-    if (
-      statusCode === 404 ||
-      (errorMessage && errorMessage.includes("404"))
-    ) {
-      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${errorMessage || "Model not found"
-        }`;
+    if (statusCode === 404 || (errorMessage && errorMessage.includes("404"))) {
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${
+        errorMessage || "Model not found"
+      }`;
       throw new ApiError(notFoundMessage, 404, e);
     }
 
     if (statusCode === 500) {
       throw new ApiError(
-        errorMessage || "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
+        errorMessage ||
+          "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
         502,
-        e
+        e,
       );
     }
 
     if (statusCode === 502) {
       throw new ApiError(
-        errorMessage || "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
+        errorMessage ||
+          "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
         502,
-        e
+        e,
       );
     }
 
     throw new ApiError(
       `Failed to submit Seedance Pro Fast T2V job: ${errorMessage}`,
       502,
-      e
+      e,
     );
   }
   await generationHistoryRepository.update(uid, historyId, {
@@ -5685,7 +6810,7 @@ export async function seedanceProFastT2vSubmit(
 
 export async function seedanceProFastI2vSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   if (!body?.image) throw new ApiError("image is required", 400);
@@ -5721,22 +6846,39 @@ export async function seedanceProFastI2vSubmit(
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
     const urls: string[] = [];
-    if (typeof body.image === 'string') urls.push(String(body.image));
+    if (typeof body.image === "string") urls.push(String(body.image));
     if (Array.isArray(body.reference_images)) {
-      for (const r of body.reference_images.slice(0, 4)) if (typeof r === 'string') urls.push(r);
+      for (const r of body.reference_images.slice(0, 4))
+        if (typeof r === "string") urls.push(r);
     }
     const inputPersisted: any[] = [];
     let idx = 0;
     for (const src of urls) {
       try {
         const stored = /^data:/i.test(src)
-          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
-          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
-        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
-      } catch { }
+          ? await uploadDataUriToZata({
+              dataUri: src,
+              keyPrefix,
+              fileName: `input-${++idx}`,
+            })
+          : await uploadFromUrlToZata({
+              sourceUrl: src,
+              keyPrefix,
+              fileName: `input-${++idx}`,
+            });
+        inputPersisted.push({
+          id: `in-${idx}`,
+          url: stored.publicUrl,
+          storagePath: (stored as any).key,
+          originalUrl: src,
+        });
+      } catch {}
     }
-    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-  } catch { }
+    if (inputPersisted.length > 0)
+      await generationHistoryRepository.update(uid, historyId, {
+        inputImages: inputPersisted,
+      } as any);
+  } catch {}
 
   const input: any = {
     prompt: body.prompt,
@@ -5758,7 +6900,7 @@ export async function seedanceProFastI2vSubmit(
   ) {
     if (res === "1080p") {
       console.warn(
-        "[seedanceProFastI2vSubmit] reference_images cannot be used with 1080p resolution, ignoring"
+        "[seedanceProFastI2vSubmit] reference_images cannot be used with 1080p resolution, ignoring",
       );
     } else {
       input.reference_images = body.reference_images.slice(0, 4); // Limit to 4 images
@@ -5777,7 +6919,7 @@ export async function seedanceProFastI2vSubmit(
     } catch (versionError: any) {
       console.warn(
         "[seedanceProFastI2vSubmit] Version lookup failed, will try direct model",
-        { modelBase, error: versionError?.message }
+        { modelBase, error: versionError?.message },
       );
     }
 
@@ -5787,11 +6929,13 @@ export async function seedanceProFastI2vSubmit(
       input,
     });
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
-    console.log("[seedanceProFastI2vSubmit] Prediction created", { predictionId });
+    console.log("[seedanceProFastI2vSubmit] Prediction created", {
+      predictionId,
+    });
   } catch (e: any) {
     console.error("[seedanceProFastI2vSubmit] Error creating prediction", {
       modelBase,
@@ -5810,19 +6954,32 @@ export async function seedanceProFastI2vSubmit(
     let errorMessage = e?.message || "Replicate API error";
     const statusCode = e?.statusCode || e?.response?.status || e?.status;
 
-    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
-      if (errorMessage.includes('500: Internal server error') || errorMessage.includes('Error code 500')) {
-        errorMessage = "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
-      } else if (errorMessage.includes('502') || errorMessage.includes('Bad Gateway')) {
-        errorMessage = "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+    if (
+      typeof errorMessage === "string" &&
+      errorMessage.includes("<!DOCTYPE html>")
+    ) {
+      if (
+        errorMessage.includes("500: Internal server error") ||
+        errorMessage.includes("Error code 500")
+      ) {
+        errorMessage =
+          "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else if (
+        errorMessage.includes("502") ||
+        errorMessage.includes("Bad Gateway")
+      ) {
+        errorMessage =
+          "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
       } else {
-        errorMessage = "Replicate service returned an error. Please try again in a few minutes.";
+        errorMessage =
+          "Replicate service returned an error. Please try again in a few minutes.";
       }
     } else {
       if (e?.response?.data) {
-        if (typeof e.response.data === 'string') {
-          if (e.response.data.includes('<!DOCTYPE html>')) {
-            errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+        if (typeof e.response.data === "string") {
+          if (e.response.data.includes("<!DOCTYPE html>")) {
+            errorMessage =
+              "Replicate service is temporarily unavailable. Please try again in a few minutes.";
           } else {
             errorMessage = e.response.data;
           }
@@ -5834,35 +6991,35 @@ export async function seedanceProFastI2vSubmit(
       }
     }
 
-    if (
-      statusCode === 404 ||
-      (errorMessage && errorMessage.includes("404"))
-    ) {
-      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${errorMessage || "Model not found"
-        }`;
+    if (statusCode === 404 || (errorMessage && errorMessage.includes("404"))) {
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. Please verify the model name is correct. Error: ${
+        errorMessage || "Model not found"
+      }`;
       throw new ApiError(notFoundMessage, 404, e);
     }
 
     if (statusCode === 500) {
       throw new ApiError(
-        errorMessage || "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
+        errorMessage ||
+          "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
         502,
-        e
+        e,
       );
     }
 
     if (statusCode === 502) {
       throw new ApiError(
-        errorMessage || "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
+        errorMessage ||
+          "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
         502,
-        e
+        e,
       );
     }
 
     throw new ApiError(
       `Failed to submit Seedance Pro Fast I2V job: ${errorMessage}`,
       502,
-      e
+      e,
     );
   }
   await generationHistoryRepository.update(uid, historyId, {
@@ -5877,13 +7034,16 @@ export async function seedanceProFastI2vSubmit(
   };
 }
 
-Object.assign(replicateService, { seedanceProFastT2vSubmit, seedanceProFastI2vSubmit });
+Object.assign(replicateService, {
+  seedanceProFastT2vSubmit,
+  seedanceProFastI2vSubmit,
+});
 
 // ============ Queue-style API for Replicate PixVerse v5 ============
 
 export async function pixverseT2vSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   const replicate = ensureReplicate();
@@ -5947,7 +7107,7 @@ export async function pixverseT2vSubmit(
       // eslint-disable-next-line no-console
       console.warn(
         "[pixverseT2vSubmit] Version lookup failed, will try direct model",
-        { modelBase, error: versionError?.message }
+        { modelBase, error: versionError?.message },
       );
       // Continue without version - will try direct model usage
     }
@@ -5960,7 +7120,8 @@ export async function pixverseT2vSubmit(
       aspect_ratio: input.aspect_ratio,
     };
     if (input.seed != null) cleanInput.seed = input.seed;
-    if (input.negative_prompt != null) cleanInput.negative_prompt = input.negative_prompt;
+    if (input.negative_prompt != null)
+      cleanInput.negative_prompt = input.negative_prompt;
 
     // eslint-disable-next-line no-console
     console.log("[pixverseT2vSubmit] Creating prediction", {
@@ -5971,7 +7132,9 @@ export async function pixverseT2vSubmit(
     });
 
     const pred = await replicate.predictions.create(
-      version ? { version, input: cleanInput } : { model: modelBase, input: cleanInput }
+      version
+        ? { version, input: cleanInput }
+        : { model: modelBase, input: cleanInput },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -5998,22 +7161,35 @@ export async function pixverseT2vSubmit(
     const statusCode = e?.statusCode || e?.response?.status || e?.status;
 
     // Check if error message contains HTML (Cloudflare error page)
-    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
+    if (
+      typeof errorMessage === "string" &&
+      errorMessage.includes("<!DOCTYPE html>")
+    ) {
       // Try to extract meaningful info from HTML error
-      if (errorMessage.includes('500: Internal server error') || errorMessage.includes('Error code 500')) {
-        errorMessage = "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
-      } else if (errorMessage.includes('502') || errorMessage.includes('Bad Gateway')) {
-        errorMessage = "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      if (
+        errorMessage.includes("500: Internal server error") ||
+        errorMessage.includes("Error code 500")
+      ) {
+        errorMessage =
+          "Replicate service is temporarily unavailable (500 Internal Server Error). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
+      } else if (
+        errorMessage.includes("502") ||
+        errorMessage.includes("Bad Gateway")
+      ) {
+        errorMessage =
+          "Replicate service is temporarily unavailable (502 Bad Gateway). This is a Replicate/Cloudflare issue. Please try again in a few minutes.";
       } else {
-        errorMessage = "Replicate service returned an error. Please try again in a few minutes.";
+        errorMessage =
+          "Replicate service returned an error. Please try again in a few minutes.";
       }
     } else {
       // Try to extract from response data
       if (e?.response?.data) {
-        if (typeof e.response.data === 'string') {
+        if (typeof e.response.data === "string") {
           // If it's an HTML string, use generic message
-          if (e.response.data.includes('<!DOCTYPE html>')) {
-            errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+          if (e.response.data.includes("<!DOCTYPE html>")) {
+            errorMessage =
+              "Replicate service is temporarily unavailable. Please try again in a few minutes.";
           } else {
             errorMessage = e.response.data;
           }
@@ -6026,37 +7202,37 @@ export async function pixverseT2vSubmit(
     }
 
     // Provide a more helpful error message for 404s
-    if (
-      statusCode === 404 ||
-      (errorMessage && errorMessage.includes("404"))
-    ) {
-      const notFoundMessage = `Model "${modelBase}" not found on Replicate. The model may have been removed or renamed. Please verify the model name is correct. Error: ${errorMessage || "Model not found"
-        }`;
+    if (statusCode === 404 || (errorMessage && errorMessage.includes("404"))) {
+      const notFoundMessage = `Model "${modelBase}" not found on Replicate. The model may have been removed or renamed. Please verify the model name is correct. Error: ${
+        errorMessage || "Model not found"
+      }`;
       throw new ApiError(notFoundMessage, 404, e);
     }
 
     // Handle 500 errors specifically
     if (statusCode === 500) {
       throw new ApiError(
-        errorMessage || "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
+        errorMessage ||
+          "Replicate service is experiencing issues (500 Internal Server Error). Please try again in a few minutes.",
         502,
-        e
+        e,
       );
     }
 
     // Handle 502 errors specifically
     if (statusCode === 502) {
       throw new ApiError(
-        errorMessage || "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
+        errorMessage ||
+          "Replicate service is temporarily unavailable (502 Bad Gateway). Please try again in a few minutes.",
         502,
-        e
+        e,
       );
     }
 
     throw new ApiError(
       `Failed to submit PixVerse T2V job: ${errorMessage}`,
       502,
-      e
+      e,
     );
   }
   await generationHistoryRepository.update(uid, historyId, {
@@ -6073,7 +7249,7 @@ export async function pixverseT2vSubmit(
 
 export async function pixverseI2vSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   if (!body?.image) throw new ApiError("image is required", 400);
@@ -6116,11 +7292,28 @@ export async function pixverseI2vSubmit(
     const src = String(body.image);
     if (src && src.length > 0) {
       const stored = /^data:/i.test(src)
-        ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: 'input-1' })
-        : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: 'input-1' });
-      await generationHistoryRepository.update(uid, historyId, { inputImages: [{ id: 'in-1', url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src }] } as any);
+        ? await uploadDataUriToZata({
+            dataUri: src,
+            keyPrefix,
+            fileName: "input-1",
+          })
+        : await uploadFromUrlToZata({
+            sourceUrl: src,
+            keyPrefix,
+            fileName: "input-1",
+          });
+      await generationHistoryRepository.update(uid, historyId, {
+        inputImages: [
+          {
+            id: "in-1",
+            url: stored.publicUrl,
+            storagePath: (stored as any).key,
+            originalUrl: src,
+          },
+        ],
+      } as any);
     }
-  } catch { }
+  } catch {}
 
   const input: any = {
     prompt: body.prompt,
@@ -6141,7 +7334,7 @@ export async function pixverseI2vSubmit(
   try {
     const version = await getLatestModelVersion(replicate, modelBase);
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -6170,7 +7363,7 @@ Object.assign(replicateService, { pixverseT2vSubmit, pixverseI2vSubmit });
 
 export async function ltx23FastT2vSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   const replicate = ensureReplicate();
@@ -6237,7 +7430,7 @@ export async function ltx23FastT2vSubmit(
     } catch (versionError: any) {
       console.warn(
         "[ltx23FastT2vSubmit] Version lookup failed, will try direct model",
-        { modelBase, error: versionError?.message }
+        { modelBase, error: versionError?.message },
       );
     }
 
@@ -6247,7 +7440,7 @@ export async function ltx23FastT2vSubmit(
       input,
     });
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -6267,21 +7460,33 @@ export async function ltx23FastT2vSubmit(
     let errorMessage = e?.message || "Replicate API error";
     const statusCode = e?.statusCode || e?.response?.status || e?.status;
 
-    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
-      errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+    if (
+      typeof errorMessage === "string" &&
+      errorMessage.includes("<!DOCTYPE html>")
+    ) {
+      errorMessage =
+        "Replicate service is temporarily unavailable. Please try again in a few minutes.";
     }
 
     if (statusCode === 404 || (errorMessage && errorMessage.includes("404"))) {
-      throw new ApiError(`Model "${modelBase}" not found on Replicate. Error: ${errorMessage}`, 404, e);
+      throw new ApiError(
+        `Model "${modelBase}" not found on Replicate. Error: ${errorMessage}`,
+        404,
+        e,
+      );
     }
     if (statusCode === 500 || statusCode === 502) {
-      throw new ApiError(errorMessage || "Replicate service is temporarily unavailable.", 502, e);
+      throw new ApiError(
+        errorMessage || "Replicate service is temporarily unavailable.",
+        502,
+        e,
+      );
     }
 
     throw new ApiError(
       `Failed to submit LTX 2.3 Fast T2V job: ${errorMessage}`,
       502,
-      e
+      e,
     );
   }
   await generationHistoryRepository.update(uid, historyId, {
@@ -6298,7 +7503,7 @@ export async function ltx23FastT2vSubmit(
 
 export async function ltx23FastI2vSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   if (!body?.image) throw new ApiError("image is required", 400);
@@ -6343,20 +7548,37 @@ export async function ltx23FastI2vSubmit(
     const username = creator?.username || uid;
     const keyPrefix = `users/${username}/input/${historyId}`;
     const urls: string[] = [];
-    if (typeof body.image === 'string') urls.push(String(body.image));
-    if (typeof body.last_frame_image === 'string') urls.push(String(body.last_frame_image));
+    if (typeof body.image === "string") urls.push(String(body.image));
+    if (typeof body.last_frame_image === "string")
+      urls.push(String(body.last_frame_image));
     const inputPersisted: any[] = [];
     let idx = 0;
     for (const src of urls) {
       try {
         const stored = /^data:/i.test(src)
-          ? await uploadDataUriToZata({ dataUri: src, keyPrefix, fileName: `input-${++idx}` })
-          : await uploadFromUrlToZata({ sourceUrl: src, keyPrefix, fileName: `input-${++idx}` });
-        inputPersisted.push({ id: `in-${idx}`, url: stored.publicUrl, storagePath: (stored as any).key, originalUrl: src });
-      } catch { }
+          ? await uploadDataUriToZata({
+              dataUri: src,
+              keyPrefix,
+              fileName: `input-${++idx}`,
+            })
+          : await uploadFromUrlToZata({
+              sourceUrl: src,
+              keyPrefix,
+              fileName: `input-${++idx}`,
+            });
+        inputPersisted.push({
+          id: `in-${idx}`,
+          url: stored.publicUrl,
+          storagePath: (stored as any).key,
+          originalUrl: src,
+        });
+      } catch {}
     }
-    if (inputPersisted.length > 0) await generationHistoryRepository.update(uid, historyId, { inputImages: inputPersisted } as any);
-  } catch { }
+    if (inputPersisted.length > 0)
+      await generationHistoryRepository.update(uid, historyId, {
+        inputImages: inputPersisted,
+      } as any);
+  } catch {}
 
   const input: any = {
     prompt: body.prompt,
@@ -6366,7 +7588,10 @@ export async function ltx23FastI2vSubmit(
     aspect_ratio: aspect,
     fps,
   };
-  if (typeof body.last_frame_image === 'string' && body.last_frame_image.length > 0) {
+  if (
+    typeof body.last_frame_image === "string" &&
+    body.last_frame_image.length > 0
+  ) {
     input.last_frame_image = body.last_frame_image;
   }
   if (body.seed != null && Number.isInteger(Number(body.seed)))
@@ -6391,7 +7616,7 @@ export async function ltx23FastI2vSubmit(
     } catch (versionError: any) {
       console.warn(
         "[ltx23FastI2vSubmit] Version lookup failed, will try direct model",
-        { modelBase, error: versionError?.message }
+        { modelBase, error: versionError?.message },
       );
     }
 
@@ -6401,7 +7626,7 @@ export async function ltx23FastI2vSubmit(
       input,
     });
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -6421,21 +7646,33 @@ export async function ltx23FastI2vSubmit(
     let errorMessage = e?.message || "Replicate API error";
     const statusCode = e?.statusCode || e?.response?.status || e?.status;
 
-    if (typeof errorMessage === 'string' && errorMessage.includes('<!DOCTYPE html>')) {
-      errorMessage = "Replicate service is temporarily unavailable. Please try again in a few minutes.";
+    if (
+      typeof errorMessage === "string" &&
+      errorMessage.includes("<!DOCTYPE html>")
+    ) {
+      errorMessage =
+        "Replicate service is temporarily unavailable. Please try again in a few minutes.";
     }
 
     if (statusCode === 404 || (errorMessage && errorMessage.includes("404"))) {
-      throw new ApiError(`Model "${modelBase}" not found on Replicate. Error: ${errorMessage}`, 404, e);
+      throw new ApiError(
+        `Model "${modelBase}" not found on Replicate. Error: ${errorMessage}`,
+        404,
+        e,
+      );
     }
     if (statusCode === 500 || statusCode === 502) {
-      throw new ApiError(errorMessage || "Replicate service is temporarily unavailable.", 502, e);
+      throw new ApiError(
+        errorMessage || "Replicate service is temporarily unavailable.",
+        502,
+        e,
+      );
     }
 
     throw new ApiError(
       `Failed to submit LTX 2.3 Fast I2V job: ${errorMessage}`,
       502,
-      e
+      e,
     );
   }
   await generationHistoryRepository.update(uid, historyId, {
@@ -6452,7 +7689,7 @@ export async function ltx23FastI2vSubmit(
 
 export async function ltx23ProT2vSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   const replicate = ensureReplicate();
@@ -6501,22 +7738,31 @@ export async function ltx23ProT2vSubmit(
     aspect_ratio: aspect,
     fps,
   };
-  if (body.seed != null && Number.isInteger(Number(body.seed))) input.seed = Number(body.seed);
-  if (body.camera_motion && body.camera_motion !== "none") input.camera_motion = String(body.camera_motion);
+  if (body.seed != null && Number.isInteger(Number(body.seed)))
+    input.seed = Number(body.seed);
+  if (body.camera_motion && body.camera_motion !== "none")
+    input.camera_motion = String(body.camera_motion);
   input.generate_audio = body.generate_audio === false ? false : true;
-  if (typeof body.audio === "string" && body.audio.length > 0) input.audio = body.audio;
-  if (typeof body.video === "string" && body.video.length > 0) input.video = body.video;
-  if (typeof body.task === "string" && body.task.length > 0) input.task = body.task;
-  if (typeof body.extend_mode === "string" && body.extend_mode.length > 0) input.extend_mode = body.extend_mode;
-  if (typeof body.retake_mode === "string" && body.retake_mode.length > 0) input.retake_mode = body.retake_mode;
-  if (body.retake_start_time != null) input.retake_start_time = Number(body.retake_start_time);
-  if (body.retake_duration != null) input.retake_duration = Number(body.retake_duration);
+  if (typeof body.audio === "string" && body.audio.length > 0)
+    input.audio = body.audio;
+  if (typeof body.video === "string" && body.video.length > 0)
+    input.video = body.video;
+  if (typeof body.task === "string" && body.task.length > 0)
+    input.task = body.task;
+  if (typeof body.extend_mode === "string" && body.extend_mode.length > 0)
+    input.extend_mode = body.extend_mode;
+  if (typeof body.retake_mode === "string" && body.retake_mode.length > 0)
+    input.retake_mode = body.retake_mode;
+  if (body.retake_start_time != null)
+    input.retake_start_time = Number(body.retake_start_time);
+  if (body.retake_duration != null)
+    input.retake_duration = Number(body.retake_duration);
 
   let predictionId = "";
   try {
     const version = await getLatestModelVersion(replicate, modelBase);
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -6525,7 +7771,11 @@ export async function ltx23ProT2vSubmit(
       status: "failed",
       error: e?.message || "Replicate submit failed",
     } as any);
-    throw new ApiError(`Failed to submit LTX 2.3 Pro T2V job: ${e?.message || "Replicate API error"}`, 502, e);
+    throw new ApiError(
+      `Failed to submit LTX 2.3 Pro T2V job: ${e?.message || "Replicate API error"}`,
+      502,
+      e,
+    );
   }
   await generationHistoryRepository.update(uid, historyId, {
     provider: "replicate",
@@ -6541,7 +7791,7 @@ export async function ltx23ProT2vSubmit(
 
 export async function ltx23ProI2vSubmit(
   uid: string,
-  body: any
+  body: any,
 ): Promise<SubmitReturn> {
   if (!body?.prompt) throw new ApiError("prompt is required", 400);
   if (!body?.image) throw new ApiError("image is required", 400);
@@ -6592,23 +7842,36 @@ export async function ltx23ProI2vSubmit(
     aspect_ratio: aspect,
     fps,
   };
-  if (typeof body.last_frame_image === "string" && body.last_frame_image.length > 0) input.last_frame_image = body.last_frame_image;
-  if (body.seed != null && Number.isInteger(Number(body.seed))) input.seed = Number(body.seed);
-  if (body.camera_motion && body.camera_motion !== "none") input.camera_motion = String(body.camera_motion);
+  if (
+    typeof body.last_frame_image === "string" &&
+    body.last_frame_image.length > 0
+  )
+    input.last_frame_image = body.last_frame_image;
+  if (body.seed != null && Number.isInteger(Number(body.seed)))
+    input.seed = Number(body.seed);
+  if (body.camera_motion && body.camera_motion !== "none")
+    input.camera_motion = String(body.camera_motion);
   input.generate_audio = body.generate_audio === false ? false : true;
-  if (typeof body.audio === "string" && body.audio.length > 0) input.audio = body.audio;
-  if (typeof body.video === "string" && body.video.length > 0) input.video = body.video;
-  if (typeof body.task === "string" && body.task.length > 0) input.task = body.task;
-  if (typeof body.extend_mode === "string" && body.extend_mode.length > 0) input.extend_mode = body.extend_mode;
-  if (typeof body.retake_mode === "string" && body.retake_mode.length > 0) input.retake_mode = body.retake_mode;
-  if (body.retake_start_time != null) input.retake_start_time = Number(body.retake_start_time);
-  if (body.retake_duration != null) input.retake_duration = Number(body.retake_duration);
+  if (typeof body.audio === "string" && body.audio.length > 0)
+    input.audio = body.audio;
+  if (typeof body.video === "string" && body.video.length > 0)
+    input.video = body.video;
+  if (typeof body.task === "string" && body.task.length > 0)
+    input.task = body.task;
+  if (typeof body.extend_mode === "string" && body.extend_mode.length > 0)
+    input.extend_mode = body.extend_mode;
+  if (typeof body.retake_mode === "string" && body.retake_mode.length > 0)
+    input.retake_mode = body.retake_mode;
+  if (body.retake_start_time != null)
+    input.retake_start_time = Number(body.retake_start_time);
+  if (body.retake_duration != null)
+    input.retake_duration = Number(body.retake_duration);
 
   let predictionId = "";
   try {
     const version = await getLatestModelVersion(replicate, modelBase);
     const pred = await replicate.predictions.create(
-      version ? { version, input } : { model: modelBase, input }
+      version ? { version, input } : { model: modelBase, input },
     );
     predictionId = (pred as any)?.id || "";
     if (!predictionId) throw new Error("Missing prediction id");
@@ -6617,7 +7880,11 @@ export async function ltx23ProI2vSubmit(
       status: "failed",
       error: e?.message || "Replicate submit failed",
     } as any);
-    throw new ApiError(`Failed to submit LTX 2.3 Pro I2V job: ${e?.message || "Replicate API error"}`, 502, e);
+    throw new ApiError(
+      `Failed to submit LTX 2.3 Pro I2V job: ${e?.message || "Replicate API error"}`,
+      502,
+      e,
+    );
   }
   await generationHistoryRepository.update(uid, historyId, {
     provider: "replicate",
@@ -6635,11 +7902,7 @@ Object.assign(replicateService, {
   ltx23FastT2vSubmit,
   ltx23FastI2vSubmit,
   ltx23ProT2vSubmit,
-  ltx23ProI2vSubmit
+  ltx23ProI2vSubmit,
 });
 
-
 // ... existing code ...
-
-
-

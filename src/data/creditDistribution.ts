@@ -108,7 +108,6 @@ export const creditDistributionData: ModelCreditInfo[] = [
     },
   },
 
-
   // Imagen 4 family (Google) - image generation
   {
     srNo: 6.1,
@@ -238,7 +237,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.03,
     userCost: 2.83,
     creditsPerGeneration: 5660,
-    plans: { planA: 2.183745583, planB: 4.367491166, planC: 10.91872792, planD: 34.93992933, free: 0.3533568905 },
+    plans: {
+      planA: 2.183745583,
+      planB: 4.367491166,
+      planC: 10.91872792,
+      planD: 34.93992933,
+      free: 0.3533568905,
+    },
   },
   {
     srNo: 51.3,
@@ -262,9 +267,14 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.03,
     userCost: 2.83,
     creditsPerGeneration: 5660,
-    plans: { planA: 2.183745583, planB: 4.367491166, planC: 10.91872792, planD: 34.93992933, free: 0.3533568905 },
+    plans: {
+      planA: 2.183745583,
+      planB: 4.367491166,
+      planC: 10.91872792,
+      planD: 34.93992933,
+      free: 0.3533568905,
+    },
   },
-
 
   {
     srNo: 52.5,
@@ -273,7 +283,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.03,
     userCost: 0.28,
     creditsPerGeneration: 560,
-    plans: { planA: 22.07142857, planB: 44.14285714, planC: 110.3571429, planD: 353.1428571, free: 3.571428571 },
+    plans: {
+      planA: 22.07142857,
+      planB: 44.14285714,
+      planC: 110.3571429,
+      planD: 353.1428571,
+      free: 3.571428571,
+    },
   },
   {
     srNo: 52.6,
@@ -282,7 +298,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.03,
     userCost: 0.48,
     creditsPerGeneration: 960,
-    plans: { planA: 12.875, planB: 25.75, planC: 64.375, planD: 206, free: 2.083333333 },
+    plans: {
+      planA: 12.875,
+      planB: 25.75,
+      planC: 64.375,
+      planD: 206,
+      free: 2.083333333,
+    },
   },
   {
     srNo: 52.7,
@@ -291,7 +313,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.03,
     userCost: 0.53,
     creditsPerGeneration: 1060,
-    plans: { planA: 11.66037736, planB: 23.32075472, planC: 58.30188679, planD: 186.5660377, free: 1.886792453 },
+    plans: {
+      planA: 11.66037736,
+      planB: 23.32075472,
+      planC: 58.30188679,
+      planD: 186.5660377,
+      free: 1.886792453,
+    },
   },
   {
     srNo: 52.8,
@@ -300,7 +328,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.03,
     userCost: 0.93,
     creditsPerGeneration: 1860,
-    plans: { planA: 6.64516129, planB: 13.29032258, planC: 33.22580645, planD: 106.3225806, free: 1.075268817 },
+    plans: {
+      planA: 6.64516129,
+      planB: 13.29032258,
+      planC: 33.22580645,
+      planD: 106.3225806,
+      free: 1.075268817,
+    },
   },
   {
     srNo: 7,
@@ -608,7 +642,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     modelName: "Minimax-Hailuo-2.3 768P 6s",
     priceToPay: 0.28,
     overCharge: 0.02,
-    userCost: 0.30,
+    userCost: 0.3,
     creditsPerGeneration: 600,
     plans: {
       planA: 20.6,
@@ -2291,7 +2325,6 @@ export const creditDistributionData: ModelCreditInfo[] = [
     },
   },
 
-
   {
     srNo: 109,
     modelName: "Veo 3.1 T2V 6s AUDIO ON",
@@ -2451,7 +2484,6 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planD: 156.952381,
       free: 1.587301587,
     },
-
   },
 
   {
@@ -2484,12 +2516,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planD: 229.9534884,
       free: 2.325581395,
     },
-
   },
-
-
-
-
 
   {
     srNo: 113,
@@ -2555,8 +2582,6 @@ export const creditDistributionData: ModelCreditInfo[] = [
     },
   },
 
-
-
   {
     srNo: 114,
     modelName: "Veo 3.1 Fast T2V 8s AUDIO ON",
@@ -2572,7 +2597,6 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 0.8130081301,
     },
   },
-
 
   // Veo 3.1 Fast (FAL) - I2V (also S2V) 8s
   {
@@ -2590,7 +2614,6 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 0.8130081301,
     },
   },
-
 
   {
     srNo: 114.1,
@@ -2656,7 +2679,6 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 2.325581395,
     },
   },
-
 
   {
     srNo: 117,
@@ -2770,7 +2792,6 @@ export const creditDistributionData: ModelCreditInfo[] = [
     },
   },
 
-
   {
     srNo: 120.1,
     modelName: "Sora 2 Pro I2V 8s 720p",
@@ -2786,7 +2807,6 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 0.4115226337,
     },
   },
-
 
   {
     srNo: 121,
@@ -2819,7 +2839,6 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 0.2754820937,
     },
   },
-
 
   // Sora 2 Pro (FAL) - 1080p
   {
@@ -2885,7 +2904,6 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 0.2481389578,
     },
   },
-
 
   {
     srNo: 124,
@@ -3210,8 +3228,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planD: 353.1428571,
       free: 3.571428571,
     },
-  }
-  , {
+  },
+  {
     srNo: 144,
     modelName: "Runway Act-Two 10s",
     priceToPay: 0.5,
@@ -3225,8 +3243,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planD: 186.5660377,
       free: 1.886792453,
     },
-  }
-  , {
+  },
+  {
     srNo: 145,
     modelName: "FLUX.2 [pro] 1080p",
     priceToPay: 0.03,
@@ -3255,10 +3273,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planD: 1797.818182,
       free: 18.18181818,
     },
-  }
-
-
-  , {
+  },
+  {
     srNo: 146,
     modelName: "FLUX.2 [pro] 2K",
     priceToPay: 0.07,
@@ -3287,9 +3303,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planD: 1040.842105,
       free: 10.52631579,
     },
-  }
-
-  , {
+  },
+  {
     srNo: 147,
     modelName: "Ideogram 3 Turbo",
     priceToPay: 0.03,
@@ -3303,8 +3318,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planD: 2472,
       free: 25,
     },
-  }
-  , {
+  },
+  {
     srNo: 148,
     modelName: "Nano banana Pro 1K",
     priceToPay: 0.15,
@@ -3318,8 +3333,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planD: 618,
       free: 6.25,
     },
-  }
-  , {
+  },
+  {
     srNo: 149,
     modelName: "Nano banana Pro 2K",
     priceToPay: 0.15,
@@ -3333,8 +3348,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planD: 618,
       free: 6.25,
     },
-  }
-  , {
+  },
+  {
     srNo: 150,
     modelName: "Nano banana Pro 4K",
     priceToPay: 0.3,
@@ -3348,8 +3363,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planD: 318.9677419,
       free: 3.225806452,
     },
-  }
-  , {
+  },
+  {
     srNo: 151,
     modelName: "Z Image Turbo",
     priceToPay: 0.003,
@@ -3363,8 +3378,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planD: 7606.153846,
       free: 76.92307692,
     },
-  }
-  , {
+  },
+  {
     srNo: 152,
     modelName: "Recraft Vectorize",
     priceToPay: 0.003,
@@ -3378,8 +3393,8 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planD: 3015.384615,
       free: 30.76923077,
     },
-  }
-  , {
+  },
+  {
     srNo: 153,
     modelName: "Image to SVG",
     priceToPay: 0.005,
@@ -3618,7 +3633,6 @@ export const creditDistributionData: ModelCreditInfo[] = [
     },
   },
 
-
   {
     srNo: 167,
     modelName: "birefnet V2V background removal $0.00111 per compute second. ",
@@ -3798,7 +3812,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.015,
     userCost: 0.09,
     creditsPerGeneration: 180,
-    plans: { planA: 68.66666667, planB: 137.3333333, planC: 343.3333333, planD: 1098.666667, free: 11.11111111 },
+    plans: {
+      planA: 68.66666667,
+      planB: 137.3333333,
+      planC: 343.3333333,
+      planD: 1098.666667,
+      free: 11.11111111,
+    },
   },
   {
     srNo: 178,
@@ -3807,7 +3827,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.015,
     userCost: 0.14,
     creditsPerGeneration: 280,
-    plans: { planA: 44.14285714, planB: 88.28571429, planC: 220.7142857, planD: 706.2857143, free: 7.142857143 },
+    plans: {
+      planA: 44.14285714,
+      planB: 88.28571429,
+      planC: 220.7142857,
+      planD: 706.2857143,
+      free: 7.142857143,
+    },
   },
   {
     srNo: 179,
@@ -3816,7 +3842,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.015,
     userCost: 0.315,
     creditsPerGeneration: 630,
-    plans: { planA: 19.61904762, planB: 39.23809524, planC: 98.0952381, planD: 313.9047619, free: 3.174603175 },
+    plans: {
+      planA: 19.61904762,
+      planB: 39.23809524,
+      planC: 98.0952381,
+      planD: 313.9047619,
+      free: 3.174603175,
+    },
   },
 
   {
@@ -3826,7 +3858,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.015,
     userCost: 0.265,
     creditsPerGeneration: 530,
-    plans: { planA: 23.32075472, planB: 46.64150943, planC: 116.6037736, planD: 373.1320755, free: 3.773584906 },
+    plans: {
+      planA: 23.32075472,
+      planB: 46.64150943,
+      planC: 116.6037736,
+      planD: 373.1320755,
+      free: 3.773584906,
+    },
   },
   {
     srNo: 181,
@@ -3835,7 +3873,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.015,
     userCost: 0.615,
     creditsPerGeneration: 1230,
-    plans: { planA: 10.04878049, planB: 20.09756098, planC: 50.24390244, planD: 160.7804878, free: 1.62601626 },
+    plans: {
+      planA: 10.04878049,
+      planB: 20.09756098,
+      planC: 50.24390244,
+      planD: 160.7804878,
+      free: 1.62601626,
+    },
   },
 
   {
@@ -3845,7 +3889,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.015,
     userCost: 0.165,
     creditsPerGeneration: 330,
-    plans: { planA: 37.45454545, planB: 74.90909091, planC: 187.2727273, planD: 599.2727273, free: 6.060606061 },
+    plans: {
+      planA: 37.45454545,
+      planB: 74.90909091,
+      planC: 187.2727273,
+      planD: 599.2727273,
+      free: 6.060606061,
+    },
   },
 
   {
@@ -3855,8 +3905,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.146,
     creditsPerGeneration: 292,
-    plans: { planA: 42.32876712, planB: 84.65753425, planC: 211.6438356, planD: 677.260274, free: 6.849315068 },
-
+    plans: {
+      planA: 42.32876712,
+      planB: 84.65753425,
+      planC: 211.6438356,
+      planD: 677.260274,
+      free: 6.849315068,
+    },
   },
   {
     srNo: 184,
@@ -3865,7 +3920,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.23,
     creditsPerGeneration: 46,
-    plans: { planA: 268.6956522, planB: 537.3913043, planC: 1343.478261, planD: 4299.130435, free: 43.47826087 },
+    plans: {
+      planA: 268.6956522,
+      planB: 537.3913043,
+      planC: 1343.478261,
+      planD: 4299.130435,
+      free: 43.47826087,
+    },
   },
   {
     srNo: 185,
@@ -3874,7 +3935,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.06,
     creditsPerGeneration: 120,
-    plans: { planA: 103, planB: 206, planC: 515, planD: 1648, free: 16.66666667 },
+    plans: {
+      planA: 103,
+      planB: 206,
+      planC: 515,
+      planD: 1648,
+      free: 16.66666667,
+    },
   },
   {
     srNo: 186,
@@ -3883,7 +3950,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.146,
     creditsPerGeneration: 292,
-    plans: { planA: 42.32876712, planB: 84.65753425, planC: 211.6438356, planD: 677.260274, free: 6.849315068 },
+    plans: {
+      planA: 42.32876712,
+      planB: 84.65753425,
+      planC: 211.6438356,
+      planD: 677.260274,
+      free: 6.849315068,
+    },
   },
 
   {
@@ -3893,7 +3966,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.03,
     userCost: 0.37,
     creditsPerGeneration: 740,
-    plans: { planA: 16.7027027, planB: 33.40540541, planC: 83.51351351, planD: 267.2432432, free: 2.702702703 },
+    plans: {
+      planA: 16.7027027,
+      planB: 33.40540541,
+      planC: 83.51351351,
+      planD: 267.2432432,
+      free: 2.702702703,
+    },
   },
   {
     srNo: 188,
@@ -3902,7 +3981,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.02,
     userCost: 0.72,
     creditsPerGeneration: 1440,
-    plans: { planA: 8.583333333, planB: 17.16666667, planC: 42.91666667, planD: 137.3333333, free: 1.388888889 },
+    plans: {
+      planA: 8.583333333,
+      planB: 17.16666667,
+      planC: 42.91666667,
+      planD: 137.3333333,
+      free: 1.388888889,
+    },
   },
 
   {
@@ -3912,7 +3997,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.02,
     userCost: 0.72,
     creditsPerGeneration: 1440,
-    plans: { planA: 8.583333333, planB: 17.16666667, planC: 42.91666667, planD: 137.3333333, free: 1.388888889 },
+    plans: {
+      planA: 8.583333333,
+      planB: 17.16666667,
+      planC: 42.91666667,
+      planD: 137.3333333,
+      free: 1.388888889,
+    },
   },
 
   {
@@ -3922,7 +4013,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.02,
     userCost: 1.42,
     creditsPerGeneration: 2840,
-    plans: { planA: 4.352112676, planB: 8.704225352, planC: 21.76056338, planD: 69.63380282, free: 0.7042253521 },
+    plans: {
+      planA: 4.352112676,
+      planB: 8.704225352,
+      planC: 21.76056338,
+      planD: 69.63380282,
+      free: 0.7042253521,
+    },
   },
 
   {
@@ -3932,7 +4029,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.114,
     creditsPerGeneration: 228,
-    plans: { planA: 54.21052632, planB: 108.4210526, planC: 271.0526316, planD: 867.3684211, free: 8.771929825 },
+    plans: {
+      planA: 54.21052632,
+      planB: 108.4210526,
+      planC: 271.0526316,
+      planD: 867.3684211,
+      free: 8.771929825,
+    },
   },
   {
     srNo: 192,
@@ -3941,7 +4044,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.166,
     creditsPerGeneration: 332,
-    plans: { planA: 37.22891566, planB: 74.45783133, planC: 186.1445783, planD: 595.6626506, free: 6.024096386 },
+    plans: {
+      planA: 37.22891566,
+      planB: 74.45783133,
+      planC: 186.1445783,
+      planD: 595.6626506,
+      free: 6.024096386,
+    },
   },
   {
     srNo: 193,
@@ -3950,7 +4059,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.218,
     creditsPerGeneration: 436,
-    plans: { planA: 28.34862385, planB: 56.69724771, planC: 141.7431193, planD: 453.5779817, free: 4.587155963 },
+    plans: {
+      planA: 28.34862385,
+      planB: 56.69724771,
+      planC: 141.7431193,
+      planD: 453.5779817,
+      free: 4.587155963,
+    },
   },
   {
     srNo: 194,
@@ -3959,7 +4074,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.27,
     creditsPerGeneration: 540,
-    plans: { planA: 22.88888889, planB: 45.77777778, planC: 114.4444444, planD: 366.2222222, free: 3.703703704 },
+    plans: {
+      planA: 22.88888889,
+      planB: 45.77777778,
+      planC: 114.4444444,
+      planD: 366.2222222,
+      free: 3.703703704,
+    },
   },
   {
     srNo: 195,
@@ -3968,7 +4089,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.322,
     creditsPerGeneration: 644,
-    plans: { planA: 19.19254658, planB: 38.38509317, planC: 95.96273292, planD: 307.0807453, free: 3.105590062 },
+    plans: {
+      planA: 19.19254658,
+      planB: 38.38509317,
+      planC: 95.96273292,
+      planD: 307.0807453,
+      free: 3.105590062,
+    },
   },
   {
     srNo: 196,
@@ -3977,7 +4104,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.374,
     creditsPerGeneration: 748,
-    plans: { planA: 16.52406417, planB: 33.04812834, planC: 82.62032086, planD: 264.3850267, free: 2.673796791 },
+    plans: {
+      planA: 16.52406417,
+      planB: 33.04812834,
+      planC: 82.62032086,
+      planD: 264.3850267,
+      free: 2.673796791,
+    },
   },
   {
     srNo: 197,
@@ -3986,7 +4119,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.426,
     creditsPerGeneration: 852,
-    plans: { planA: 14.50704225, planB: 29.01408451, planC: 72.53521127, planD: 232.1126761, free: 2.34741784 },
+    plans: {
+      planA: 14.50704225,
+      planB: 29.01408451,
+      planC: 72.53521127,
+      planD: 232.1126761,
+      free: 2.34741784,
+    },
   },
   {
     srNo: 198,
@@ -3995,7 +4134,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.478,
     creditsPerGeneration: 956,
-    plans: { planA: 12.92887029, planB: 25.85774059, planC: 64.64435146, planD: 206.8619247, free: 2.092050209 },
+    plans: {
+      planA: 12.92887029,
+      planB: 25.85774059,
+      planC: 64.64435146,
+      planD: 206.8619247,
+      free: 2.092050209,
+    },
   },
   {
     srNo: 199,
@@ -4004,7 +4149,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.53,
     creditsPerGeneration: 1060,
-    plans: { planA: 11.66037736, planB: 23.32075472, planC: 58.30188679, planD: 186.5660377, free: 1.886792453 },
+    plans: {
+      planA: 11.66037736,
+      planB: 23.32075472,
+      planC: 58.30188679,
+      planD: 186.5660377,
+      free: 1.886792453,
+    },
   },
   {
     srNo: 200,
@@ -4013,7 +4164,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.582,
     creditsPerGeneration: 1164,
-    plans: { planA: 10.6185567, planB: 21.2371134, planC: 53.09278351, planD: 169.8969072, free: 1.718213058 },
+    plans: {
+      planA: 10.6185567,
+      planB: 21.2371134,
+      planC: 53.09278351,
+      planD: 169.8969072,
+      free: 1.718213058,
+    },
   },
   {
     srNo: 201,
@@ -4022,7 +4179,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.634,
     creditsPerGeneration: 1268,
-    plans: { planA: 9.747634069, planB: 19.49526814, planC: 48.73817035, planD: 155.9621451, free: 1.577287066 },
+    plans: {
+      planA: 9.747634069,
+      planB: 19.49526814,
+      planC: 48.73817035,
+      planD: 155.9621451,
+      free: 1.577287066,
+    },
   },
 
   {
@@ -4032,7 +4195,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.062,
     creditsPerGeneration: 124,
-    plans: { planA: 99.67741935, planB: 199.3548387, planC: 498.3870968, planD: 1594.83871, free: 16.12903226 },
+    plans: {
+      planA: 99.67741935,
+      planB: 199.3548387,
+      planC: 498.3870968,
+      planD: 1594.83871,
+      free: 16.12903226,
+    },
   },
   {
     srNo: 203,
@@ -4041,7 +4210,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.088,
     creditsPerGeneration: 176,
-    plans: { planA: 70.22727273, planB: 140.4545455, planC: 351.1363636, planD: 1123.636364, free: 11.36363636 },
+    plans: {
+      planA: 70.22727273,
+      planB: 140.4545455,
+      planC: 351.1363636,
+      planD: 1123.636364,
+      free: 11.36363636,
+    },
   },
   {
     srNo: 204,
@@ -4050,7 +4225,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.114,
     creditsPerGeneration: 228,
-    plans: { planA: 54.21052632, planB: 108.4210526, planC: 271.0526316, planD: 867.3684211, free: 8.771929825 },
+    plans: {
+      planA: 54.21052632,
+      planB: 108.4210526,
+      planC: 271.0526316,
+      planD: 867.3684211,
+      free: 8.771929825,
+    },
   },
   {
     srNo: 205,
@@ -4059,7 +4240,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.14,
     creditsPerGeneration: 280,
-    plans: { planA: 44.14285714, planB: 88.28571429, planC: 220.7142857, planD: 706.2857143, free: 7.142857143 },
+    plans: {
+      planA: 44.14285714,
+      planB: 88.28571429,
+      planC: 220.7142857,
+      planD: 706.2857143,
+      free: 7.142857143,
+    },
   },
   {
     srNo: 206,
@@ -4068,7 +4255,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.166,
     creditsPerGeneration: 332,
-    plans: { planA: 37.22891566, planB: 74.45783133, planC: 186.1445783, planD: 595.6626506, free: 6.024096386 },
+    plans: {
+      planA: 37.22891566,
+      planB: 74.45783133,
+      planC: 186.1445783,
+      planD: 595.6626506,
+      free: 6.024096386,
+    },
   },
   {
     srNo: 207,
@@ -4077,7 +4270,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.192,
     creditsPerGeneration: 384,
-    plans: { planA: 32.1875, planB: 64.375, planC: 160.9375, planD: 515, free: 5.208333333 },
+    plans: {
+      planA: 32.1875,
+      planB: 64.375,
+      planC: 160.9375,
+      planD: 515,
+      free: 5.208333333,
+    },
   },
   {
     srNo: 208,
@@ -4086,7 +4285,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.218,
     creditsPerGeneration: 436,
-    plans: { planA: 28.34862385, planB: 56.69724771, planC: 141.7431193, planD: 453.5779817, free: 4.587155963 },
+    plans: {
+      planA: 28.34862385,
+      planB: 56.69724771,
+      planC: 141.7431193,
+      planD: 453.5779817,
+      free: 4.587155963,
+    },
   },
   {
     srNo: 209,
@@ -4095,7 +4300,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.244,
     creditsPerGeneration: 488,
-    plans: { planA: 25.32786885, planB: 50.6557377, planC: 126.6393443, planD: 405.2459016, free: 4.098360656 },
+    plans: {
+      planA: 25.32786885,
+      planB: 50.6557377,
+      planC: 126.6393443,
+      planD: 405.2459016,
+      free: 4.098360656,
+    },
   },
   {
     srNo: 210,
@@ -4104,7 +4315,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.27,
     creditsPerGeneration: 540,
-    plans: { planA: 22.88888889, planB: 45.77777778, planC: 114.4444444, planD: 366.2222222, free: 3.703703704 },
+    plans: {
+      planA: 22.88888889,
+      planB: 45.77777778,
+      planC: 114.4444444,
+      planD: 366.2222222,
+      free: 3.703703704,
+    },
   },
   {
     srNo: 211,
@@ -4113,7 +4330,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.296,
     creditsPerGeneration: 592,
-    plans: { planA: 20.87837838, planB: 41.75675676, planC: 104.3918919, planD: 334.0540541, free: 3.378378378 },
+    plans: {
+      planA: 20.87837838,
+      planB: 41.75675676,
+      planC: 104.3918919,
+      planD: 334.0540541,
+      free: 3.378378378,
+    },
   },
   {
     srNo: 212,
@@ -4122,7 +4345,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     overCharge: 0.01,
     userCost: 0.322,
     creditsPerGeneration: 644,
-    plans: { planA: 19.19254658, planB: 38.38509317, planC: 95.96273292, planD: 307.0807453, free: 3.105590062 },
+    plans: {
+      planA: 19.19254658,
+      planB: 38.38509317,
+      planC: 95.96273292,
+      planD: 307.0807453,
+      free: 3.105590062,
+    },
   },
 
   {
@@ -4137,10 +4366,9 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 309,
       planC: 772.5,
       planD: 2472,
-      free: 25
+      free: 25,
     },
   },
-
 
   {
     srNo: 214,
@@ -4154,10 +4382,9 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 412,
       planC: 1030,
       planD: 3296,
-      free: 33.33333333
+      free: 33.33333333,
     },
   },
-
 
   {
     srNo: 214,
@@ -4171,7 +4398,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 6180,
       planC: 15450,
       planD: 49440,
-      free: 500
+      free: 500,
     },
   },
 
@@ -4187,7 +4414,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 3090,
       planC: 7725,
       planD: 24720,
-      free: 250
+      free: 250,
     },
   },
   {
@@ -4202,7 +4429,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
       planB: 3090,
       planC: 7725,
       planD: 24720,
-      free: 250
+      free: 250,
     },
   },
 
@@ -4622,33 +4849,24 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 0.3436426117,
     },
   },
-
-
-
-
-
-
-
-
-
 ];
 
 // Helper functions for easy access
 export const getModelByName = (
-  modelName: string
+  modelName: string,
 ): ModelCreditInfo | undefined => {
   return creditDistributionData.find((model) => model.modelName === modelName);
 };
 
 export const getModelsByProvider = (provider: string): ModelCreditInfo[] => {
   return creditDistributionData.filter((model) =>
-    model.modelName.toLowerCase().includes(provider.toLowerCase())
+    model.modelName.toLowerCase().includes(provider.toLowerCase()),
   );
 };
 
 export const getCreditCostForPlan = (
   modelName: string,
-  plan: keyof CreditDistributionPlan
+  plan: keyof CreditDistributionPlan,
 ): number | undefined => {
   const model = getModelByName(modelName);
   return model?.plans[plan];
