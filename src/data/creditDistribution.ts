@@ -1260,14 +1260,14 @@ export const creditDistributionData: ModelCreditInfo[] = [
     modelName: "replicate/bytedance/seedream-5-lite",
     priceToPay: 0.034, // approximate based on 90 credits
     overCharge: 0.011,
-    userCost: 0.05,
-    creditsPerGeneration: 100,
+    userCost: 0.045,
+    creditsPerGeneration: 90,
     plans: {
-      planA: 123.6,
-      planB: 247.2,
-      planC: 618,
-      planD: 1977.6,
-      free: 20,
+      planA: 137.33333333333334,
+      planB: 274.6666666666667,
+      planC: 686.6666666666666,
+      planD: 2197.3333333333335,
+      free: 22.22222222222222,
     },
   },
   {
