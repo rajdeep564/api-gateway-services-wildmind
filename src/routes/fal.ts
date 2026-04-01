@@ -99,7 +99,7 @@ router.post(
   validateFalGenerate,
   makeCreditCost("fal", "generate", computeFalImageCost),
   validateStorage("image"),
-  falController.generate
+  falController.generate,
 );
 
 // ElevenLabs Text-to-Dialogue (explicit route)
@@ -109,7 +109,7 @@ router.post(
   validateFalElevenDialogue as any,
   makeCreditCost("fal", "generate", computeFalElevenDialogueCost) as any,
   validateStorage("audio") as any,
-  falController.generate as any
+  falController.generate as any,
 );
 
 // ElevenLabs Text-to-Speech (TTS)
@@ -119,7 +119,7 @@ router.post(
   validateFalElevenTts as any,
   makeCreditCost("fal", "generate", computeFalElevenTtsCost) as any,
   validateStorage("audio") as any,
-  falController.generate as any
+  falController.generate as any,
 );
 
 // ElevenLabs Sound Effects (SFX)
@@ -129,7 +129,7 @@ router.post(
   validateFalElevenSfx as any,
   makeCreditCost("fal", "generate", computeFalElevenSfxCost) as any,
   validateStorage("audio") as any,
-  falController.generate as any
+  falController.generate as any,
 );
 
 // Maya Text-to-Speech (Maya-1-Voice)
@@ -139,7 +139,7 @@ router.post(
   validateFalMayaTts as any,
   makeCreditCost("fal", "generate", computeFalMayaTtsCost) as any,
   validateStorage("audio") as any,
-  falController.generate as any
+  falController.generate as any,
 );
 
 // Chatterbox Multilingual Text-to-Speech
@@ -147,9 +147,13 @@ router.post(
   "/chatterbox/multilingual",
   requireAuth,
   validateFalChatterboxMultilingual as any,
-  makeCreditCost("fal", "generate", computeFalChatterboxMultilingualCost) as any,
+  makeCreditCost(
+    "fal",
+    "generate",
+    computeFalChatterboxMultilingualCost,
+  ) as any,
   validateStorage("audio") as any,
-  falController.generate as any
+  falController.generate as any,
 );
 
 // Chatterbox Speech-to-Speech (resemble-ai/chatterboxhd)
@@ -159,28 +163,24 @@ router.post(
   validateFalChatterboxSts as any,
   makeCreditCost("fal", "generate", computeFalImageCost) as any,
   validateStorage("audio") as any,
-  falController.generate as any
+  falController.generate as any,
 );
 
 // Upload voice file for custom voice (Chatterbox TTS)
-router.post(
-  "/upload-voice",
-  requireAuth,
-  (falController as any).uploadVoice
-);
+router.post("/upload-voice", requireAuth, (falController as any).uploadVoice);
 
 // List user's uploaded audio files
 router.get(
   "/audio-files",
   requireAuth,
-  (falController as any).listUserAudioFiles
+  (falController as any).listUserAudioFiles,
 );
 
 // Delete an uploaded audio file
 router.delete(
   "/audio-files/:audioId",
   requireAuth,
-  (falController as any).deleteUserAudioFile
+  (falController as any).deleteUserAudioFile,
 );
 
 // Image utilities
@@ -190,23 +190,27 @@ router.post(
   validateFalImage2Svg as any,
   makeCreditCost("fal", "image2svg", computeFalImage2SvgCost) as any,
   validateStorage("image") as any,
-  (falController as any).image2svg
+  (falController as any).image2svg,
 );
 router.post(
   "/outpaint",
   requireAuth as any,
   validateFalOutpaint as any,
-  makeCreditCost("fal", "outpaint", (req) => computeFalOutpaintCost(req)) as any,
+  makeCreditCost("fal", "outpaint", (req) =>
+    computeFalOutpaintCost(req),
+  ) as any,
   validateStorage("image") as any,
-  (falController as any).outpaintImage
+  (falController as any).outpaintImage,
 );
 // Bria Expand (image outpaint with resizing)
 router.post(
   "/bria/expand",
   requireAuth as any,
   validateFalBriaExpand as any,
-  makeCreditCost("fal", "bria_expand", (req) => computeFalOutpaintCost(req)) as any,
-  (falController as any).briaExpandImage
+  makeCreditCost("fal", "bria_expand", (req) =>
+    computeFalOutpaintCost(req),
+  ) as any,
+  (falController as any).briaExpandImage,
 );
 router.post(
   "/recraft/vectorize",
@@ -215,17 +219,19 @@ router.post(
   makeCreditCost(
     "fal",
     "recraft_vectorize",
-    computeFalRecraftVectorizeCost
+    computeFalRecraftVectorizeCost,
   ) as any,
-  (falController as any).recraftVectorize
+  (falController as any).recraftVectorize,
 );
 // Bria GenFill (image inpainting/replace)
 router.post(
   "/bria/genfill",
   requireAuth as any,
   validateFalBriaGenfill as any,
-  makeCreditCost("fal", "bria_genfill", (req) => computeFalBriaGenfillCost(req)) as any,
-  (falController as any).briaGenfill
+  makeCreditCost("fal", "bria_genfill", (req) =>
+    computeFalBriaGenfillCost(req),
+  ) as any,
+  (falController as any).briaGenfill,
 );
 // Topaz Image Upscaler (per-megapixel dynamic pricing)
 router.post(
@@ -233,9 +239,9 @@ router.post(
   requireAuth as any,
   validateFalTopazUpscaleImage as any,
   makeCreditCost("fal", "topaz_upscale_image", (req) =>
-    computeFalTopazUpscaleImageCost(req)
+    computeFalTopazUpscaleImageCost(req),
   ) as any,
-  (falController as any).topazUpscaleImage
+  (falController as any).topazUpscaleImage,
 );
 
 // SeedVR Image Upscaler (factor-only)
@@ -244,9 +250,9 @@ router.post(
   requireAuth as any,
   validateFalSeedvrUpscaleImage as any,
   makeCreditCost("fal", "seedvr_upscale_image", (req) =>
-    computeFalSeedVrUpscaleImageCost(req)
+    computeFalSeedVrUpscaleImageCost(req),
   ) as any,
-  (falController as any).seedvrUpscaleImage
+  (falController as any).seedvrUpscaleImage,
 );
 // SeedVR2 Video Upscaler
 router.post(
@@ -254,9 +260,9 @@ router.post(
   requireAuth as any,
   validateFalSeedvrUpscale as any,
   makeCreditCost("fal", "seedvr_upscale", (req) =>
-    computeFalSeedVrUpscaleCost(req)
+    computeFalSeedVrUpscaleCost(req),
   ) as any,
-  (falController as any).seedvrUpscale
+  (falController as any).seedvrUpscale,
 );
 
 // BiRefNet v2 Video Background Removal
@@ -264,8 +270,10 @@ router.post(
   "/birefnet/v2/video/remove-bg",
   requireAuth as any,
   validateFalBirefnetVideo as any,
-  makeCreditCost("fal", "birefnet_video", (req) => computeFalBirefnetVideoCost(req)) as any,
-  (falController as any).birefnetVideo
+  makeCreditCost("fal", "birefnet_video", (req) =>
+    computeFalBirefnetVideoCost(req),
+  ) as any,
+  (falController as any).birefnetVideo,
 );
 // Queue style endpoints
 router.post(
@@ -273,38 +281,38 @@ router.post(
   requireAuth as any,
   validateFalVeoTextToVideoSubmit as any,
   makeCreditCost("fal", "veo_t2v_submit", (req) =>
-    computeFalVeoTtvSubmitCost(req, false)
+    computeFalVeoTtvSubmitCost(req, false),
   ) as any,
   validateStorage("video") as any,
-  falController.veoTtvSubmit as any
+  falController.veoTtvSubmit as any,
 );
 router.post(
   "/veo3/text-to-video/fast/submit",
   requireAuth as any,
   validateFalVeoTextToVideoFastSubmit as any,
   makeCreditCost("fal", "veo_t2v_fast_submit", (req) =>
-    computeFalVeoTtvSubmitCost(req, true)
+    computeFalVeoTtvSubmitCost(req, true),
   ) as any,
   validateStorage("video") as any,
-  falController.veoTtvFastSubmit as any
+  falController.veoTtvFastSubmit as any,
 );
 router.post(
   "/veo3/image-to-video/submit",
   requireAuth as any,
   validateFalVeoImageToVideoSubmit as any,
   makeCreditCost("fal", "veo_i2v_submit", (req) =>
-    computeFalVeoI2vSubmitCost(req, false)
+    computeFalVeoI2vSubmitCost(req, false),
   ) as any,
-  falController.veoI2vSubmit as any
+  falController.veoI2vSubmit as any,
 );
 router.post(
   "/veo3/image-to-video/fast/submit",
   requireAuth as any,
   validateFalVeoImageToVideoFastSubmit as any,
   makeCreditCost("fal", "veo_i2v_fast_submit", (req) =>
-    computeFalVeoI2vSubmitCost(req, true)
+    computeFalVeoI2vSubmitCost(req, true),
   ) as any,
-  falController.veoI2vFastSubmit as any
+  falController.veoI2vFastSubmit as any,
 );
 // Kling o1 First/Last Frame to Video
 router.post(
@@ -312,9 +320,9 @@ router.post(
   requireAuth as any,
   validateFalKlingO1FirstLastSubmit as any,
   makeCreditCost("fal", "kling_o1_first_last_submit", (req) =>
-    computeFalKlingO1SubmitCost(req)
+    computeFalKlingO1SubmitCost(req),
   ) as any,
-  (falController as any).klingO1FirstLastSubmit
+  (falController as any).klingO1FirstLastSubmit,
 );
 // Kling o1 Reference to Video (single or multiple images)
 router.post(
@@ -322,9 +330,9 @@ router.post(
   requireAuth as any,
   validateFalKlingO1ReferenceSubmit as any,
   makeCreditCost("fal", "kling_o1_first_last_submit", (req) =>
-    computeFalKlingO1SubmitCost(req)
+    computeFalKlingO1SubmitCost(req),
   ) as any,
-  (falController as any).klingO1ReferenceSubmit
+  (falController as any).klingO1ReferenceSubmit,
 );
 // Kling 2.6 Pro Text-to-Video
 router.post(
@@ -332,9 +340,9 @@ router.post(
   requireAuth as any,
   validateFalKling26ProT2v as any,
   makeCreditCost("fal", "kling_26_pro_t2v_submit", (req) =>
-    computeFalKling26ProT2vSubmitCost(req)
+    computeFalKling26ProT2vSubmitCost(req),
   ) as any,
-  (falController as any).kling26ProT2vSubmit
+  (falController as any).kling26ProT2vSubmit,
 );
 // Kling 2.6 Pro Image-to-Video
 router.post(
@@ -342,9 +350,9 @@ router.post(
   requireAuth as any,
   validateFalKling26ProI2v as any,
   makeCreditCost("fal", "kling_26_pro_i2v_submit", (req) =>
-    computeFalKling26ProI2vSubmitCost(req)
+    computeFalKling26ProI2vSubmitCost(req),
   ) as any,
-  (falController as any).kling26ProI2vSubmit
+  (falController as any).kling26ProI2vSubmit,
 );
 // Kling 3 Standard Text-to-Video
 router.post(
@@ -352,9 +360,9 @@ router.post(
   requireAuth as any,
   validateFalKlingV3T2v as any,
   makeCreditCost("fal", "kling_v3_standard_t2v_submit", (req) =>
-    computeFalKlingV3StandardT2vSubmitCost(req)
+    computeFalKlingV3StandardT2vSubmitCost(req),
   ) as any,
-  (falController as any).klingV3StandardT2vSubmit
+  (falController as any).klingV3StandardT2vSubmit,
 );
 // Kling 3 Standard Image-to-Video
 router.post(
@@ -362,9 +370,9 @@ router.post(
   requireAuth as any,
   validateFalKlingV3I2v as any,
   makeCreditCost("fal", "kling_v3_standard_i2v_submit", (req) =>
-    computeFalKlingV3StandardI2vSubmitCost(req)
+    computeFalKlingV3StandardI2vSubmitCost(req),
   ) as any,
-  (falController as any).klingV3StandardI2vSubmit
+  (falController as any).klingV3StandardI2vSubmit,
 );
 // Kling 3 Pro Text-to-Video
 router.post(
@@ -372,9 +380,9 @@ router.post(
   requireAuth as any,
   validateFalKlingV3T2v as any,
   makeCreditCost("fal", "kling_v3_pro_t2v_submit", (req) =>
-    computeFalKlingV3ProT2vSubmitCost(req)
+    computeFalKlingV3ProT2vSubmitCost(req),
   ) as any,
-  (falController as any).klingV3ProT2vSubmit
+  (falController as any).klingV3ProT2vSubmit,
 );
 // Kling 3 Pro Image-to-Video
 router.post(
@@ -382,21 +390,21 @@ router.post(
   requireAuth as any,
   validateFalKlingV3I2v as any,
   makeCreditCost("fal", "kling_v3_pro_i2v_submit", (req) =>
-    computeFalKlingV3ProI2vSubmitCost(req)
+    computeFalKlingV3ProI2vSubmitCost(req),
   ) as any,
-  (falController as any).klingV3ProI2vSubmit
+  (falController as any).klingV3ProI2vSubmit,
 );
 router.get(
   "/queue/status",
   requireAuth as any,
   validateFalQueueStatus as any,
-  falController.queueStatus as any
+  falController.queueStatus as any,
 );
 router.get(
   "/queue/result",
   requireAuth as any,
   validateFalQueueStatus as any,
-  falController.queueResult as any
+  falController.queueResult as any,
 );
 
 // NanoBanana queue submit
@@ -407,8 +415,10 @@ router.post(
   "/qwen/multiple-angles",
   requireAuth as any,
   validateFalQwenMultipleAngles as any,
-  makeCreditCost("fal", "qwen_multiple_angles", (req) => computeFalQwenMultipleAnglesCost(req)) as any,
-  (falController as any).qwenMultipleAngles
+  makeCreditCost("fal", "qwen_multiple_angles", (req) =>
+    computeFalQwenMultipleAnglesCost(req),
+  ) as any,
+  (falController as any).qwenMultipleAngles,
 );
 
 export default router;
@@ -419,54 +429,54 @@ router.post(
   requireAuth as any,
   validateFalVeo31TextToVideo as any,
   makeCreditCost("fal", "veo31_t2v_submit", (req) =>
-    computeFalVeo31TtvSubmitCost(req, false)
+    computeFalVeo31TtvSubmitCost(req, false),
   ) as any,
-  (falController as any).veo31TtvSubmit
+  (falController as any).veo31TtvSubmit,
 );
 router.post(
   "/veo3_1/lite/text-to-video/submit",
   requireAuth as any,
   validateFalVeo31LiteTextToVideoSubmit as any,
   makeCreditCost("fal", "veo31_lite_t2v_submit", (req) =>
-    computeFalVeo31LiteTtvSubmitCost(req)
+    computeFalVeo31LiteTtvSubmitCost(req),
   ) as any,
-  (falController as any).veo31LiteTtvSubmit
+  (falController as any).veo31LiteTtvSubmit,
 );
 router.post(
   "/veo3_1/text-to-video/fast/submit",
   requireAuth as any,
   validateFalVeo31TextToVideoFast as any,
   makeCreditCost("fal", "veo31_t2v_fast_submit", (req) =>
-    computeFalVeo31TtvSubmitCost(req, true)
+    computeFalVeo31TtvSubmitCost(req, true),
   ) as any,
-  (falController as any).veo31TtvFastSubmit
+  (falController as any).veo31TtvFastSubmit,
 );
 router.post(
   "/veo3_1/image-to-video/submit",
   requireAuth as any,
   validateFalVeoImageToVideoSubmit as any,
   makeCreditCost("fal", "veo31_i2v_submit", (req) =>
-    computeFalVeo31I2vSubmitCost(req, false)
+    computeFalVeo31I2vSubmitCost(req, false),
   ) as any,
-  (falController as any).veo31I2vSubmit
+  (falController as any).veo31I2vSubmit,
 );
 router.post(
   "/veo3_1/lite/image-to-video/submit",
   requireAuth as any,
   validateFalVeo31LiteImageToVideoSubmit as any,
   makeCreditCost("fal", "veo31_lite_i2v_submit", (req) =>
-    computeFalVeo31LiteI2vSubmitCost(req)
+    computeFalVeo31LiteI2vSubmitCost(req),
   ) as any,
-  (falController as any).veo31LiteI2vSubmit
+  (falController as any).veo31LiteI2vSubmit,
 );
 router.post(
   "/veo3_1/image-to-video/fast/submit",
   requireAuth as any,
   validateFalVeoImageToVideoFastSubmit as any,
   makeCreditCost("fal", "veo31_i2v_fast_submit", (req) =>
-    computeFalVeo31I2vSubmitCost(req, true)
+    computeFalVeo31I2vSubmitCost(req, true),
   ) as any,
-  (falController as any).veo31I2vFastSubmit
+  (falController as any).veo31I2vFastSubmit,
 );
 
 // Veo 3.1 First/Last Frame to Video (Fast)
@@ -475,9 +485,9 @@ router.post(
   requireAuth as any,
   validateFalVeo31FirstLastFast as any,
   makeCreditCost("fal", "veo31_first_last_fast_submit", (req) =>
-    computeFalVeo31I2vSubmitCost(req, true)
+    computeFalVeo31I2vSubmitCost(req, true),
   ) as any,
-  (falController as any).veo31FirstLastFastSubmit
+  (falController as any).veo31FirstLastFastSubmit,
 );
 
 // Veo 3.1 First/Last Frame to Video (Standard)
@@ -486,9 +496,9 @@ router.post(
   requireAuth as any,
   validateFalVeo31FirstLast as any,
   makeCreditCost("fal", "veo31_first_last_submit", (req) =>
-    computeFalVeo31I2vSubmitCost(req, false)
+    computeFalVeo31I2vSubmitCost(req, false),
   ) as any,
-  (falController as any).veo31FirstLastSubmit
+  (falController as any).veo31FirstLastSubmit,
 );
 
 // Veo 3.1 Reference-to-Video (Standard)
@@ -497,9 +507,9 @@ router.post(
   requireAuth as any,
   validateFalVeo31ReferenceToVideo as any,
   makeCreditCost("fal", "veo31_r2v_submit", (req) =>
-    computeFalVeo31I2vSubmitCost(req, false)
+    computeFalVeo31I2vSubmitCost(req, false),
   ) as any,
-  (falController as any).veo31ReferenceToVideoSubmit
+  (falController as any).veo31ReferenceToVideoSubmit,
 );
 
 // Sora 2 Image-to-Video (Standard)
@@ -508,9 +518,9 @@ router.post(
   requireAuth as any,
   validateFalSora2I2v as any,
   makeCreditCost("fal", "sora2_i2v_submit", (req) =>
-    computeFalSora2I2vSubmitCost(req)
+    computeFalSora2I2vSubmitCost(req),
   ) as any,
-  (falController as any).sora2I2vSubmit
+  (falController as any).sora2I2vSubmit,
 );
 
 // Sora 2 Image-to-Video (Pro)
@@ -519,9 +529,9 @@ router.post(
   requireAuth as any,
   validateFalSora2ProI2v as any,
   makeCreditCost("fal", "sora2_pro_i2v_submit", (req) =>
-    computeFalSora2ProI2vSubmitCost(req)
+    computeFalSora2ProI2vSubmitCost(req),
   ) as any,
-  (falController as any).sora2ProI2vSubmit
+  (falController as any).sora2ProI2vSubmit,
 );
 
 // Sora 2 Text-to-Video (Standard)
@@ -530,9 +540,9 @@ router.post(
   requireAuth as any,
   validateFalSora2T2v as any,
   makeCreditCost("fal", "sora2_t2v_submit", (req) =>
-    computeFalSora2T2vSubmitCost(req)
+    computeFalSora2T2vSubmitCost(req),
   ) as any,
-  (falController as any).sora2T2vSubmit
+  (falController as any).sora2T2vSubmit,
 );
 
 // Sora 2 Text-to-Video (Pro)
@@ -541,9 +551,9 @@ router.post(
   requireAuth as any,
   validateFalSora2ProT2v as any,
   makeCreditCost("fal", "sora2_pro_t2v_submit", (req) =>
-    computeFalSora2ProT2vSubmitCost(req)
+    computeFalSora2ProT2vSubmitCost(req),
   ) as any,
-  (falController as any).sora2ProT2vSubmit
+  (falController as any).sora2ProT2vSubmit,
 );
 
 // Sora 2 Video-to-Video Remix
@@ -552,9 +562,9 @@ router.post(
   requireAuth as any,
   validateFalSora2Remix as any,
   makeCreditCost("fal", "sora2_v2v_remix_submit", (req) =>
-    computeFalSora2RemixSubmitCost(req)
+    computeFalSora2RemixSubmitCost(req),
   ) as any,
-  (falController as any).sora2RemixV2vSubmit
+  (falController as any).sora2RemixV2vSubmit,
 );
 
 // Sora 2 Video-to-Video Remix (history-only convenience)
@@ -563,9 +573,9 @@ router.post(
   requireAuth as any,
   validateFalSora2RemixByHistory as any,
   makeCreditCost("fal", "sora2_v2v_remix_submit", (req) =>
-    computeFalSora2RemixSubmitCost(req)
+    computeFalSora2RemixSubmitCost(req),
   ) as any,
-  (falController as any).sora2RemixV2vSubmit
+  (falController as any).sora2RemixV2vSubmit,
 );
 
 // LTX V2 Image-to-Video (Pro)
@@ -574,9 +584,9 @@ router.post(
   requireAuth as any,
   validateFalLtx2ProI2v as any,
   makeCreditCost("fal", "ltx2_pro_i2v_submit", (req) =>
-    computeFalLtxV2ProI2vSubmitCost(req)
+    computeFalLtxV2ProI2vSubmitCost(req),
   ) as any,
-  (falController as any).ltx2ProI2vSubmit
+  (falController as any).ltx2ProI2vSubmit,
 );
 
 // LTX V2 Image-to-Video (Fast)
@@ -585,9 +595,9 @@ router.post(
   requireAuth as any,
   validateFalLtx2FastI2v as any,
   makeCreditCost("fal", "ltx2_fast_i2v_submit", (req) =>
-    computeFalLtxV2FastI2vSubmitCost(req)
+    computeFalLtxV2FastI2vSubmitCost(req),
   ) as any,
-  (falController as any).ltx2FastI2vSubmit
+  (falController as any).ltx2FastI2vSubmit,
 );
 
 // LTX V2 Text-to-Video (Pro)
@@ -596,9 +606,9 @@ router.post(
   requireAuth as any,
   validateFalLtx2ProT2v as any,
   makeCreditCost("fal", "ltx2_pro_t2v_submit", (req) =>
-    computeFalLtxV2ProT2vSubmitCost(req)
+    computeFalLtxV2ProT2vSubmitCost(req),
   ) as any,
-  (falController as any).ltx2ProT2vSubmit
+  (falController as any).ltx2ProT2vSubmit,
 );
 
 // LTX V2 Text-to-Video (Fast)
@@ -607,7 +617,7 @@ router.post(
   requireAuth as any,
   validateFalLtx2FastT2v as any,
   makeCreditCost("fal", "ltx2_fast_t2v_submit", (req) =>
-    computeFalLtxV2FastT2vSubmitCost(req)
+    computeFalLtxV2FastT2vSubmitCost(req),
   ) as any,
-  (falController as any).ltx2FastT2vSubmit
+  (falController as any).ltx2FastT2vSubmit,
 );
