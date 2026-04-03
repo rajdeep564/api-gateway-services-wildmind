@@ -871,6 +871,12 @@ export function validateReplicateGenerate(
           );
       }
     }
+
+    // Schema exposes a single output file for Nano Banana 2.
+    // Normalize any legacy multi-image request fields to one output.
+    req.body.num_images = 1;
+    req.body.n = 1;
+    req.body.number_of_images = 1;
   }
 
   // Qwen Image 2 (qwen/qwen-image-2) validations
