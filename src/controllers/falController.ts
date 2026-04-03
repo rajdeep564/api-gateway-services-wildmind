@@ -451,6 +451,28 @@ export const falController = {
       next(err);
     }
   },
+  async veo31LiteFirstLastSubmit(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.veo31LiteFirstLastSubmit(
+        uid,
+        req.body || {},
+      );
+      res.json(
+        formatApiResponse("success", "Submitted", {
+          ...result,
+          expectedDebit: ctx.creditCost,
+        }),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
   async veo31FirstLastFastSubmit(
     req: Request,
     res: Response,

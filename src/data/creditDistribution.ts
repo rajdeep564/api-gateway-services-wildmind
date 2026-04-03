@@ -2703,6 +2703,36 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 3.074626866,
     },
   },
+  {
+    srNo: 117.2,
+    modelName: "Veo 3.1 Lite FFLF2V 8s 720p",
+    priceToPay: 0.4,
+    overCharge: 0.01,
+    userCost: 0.41,
+    creditsPerGeneration: 820,
+    plans: {
+      planA: 15.07317073,
+      planB: 30.14634146,
+      planC: 75.36585366,
+      planD: 241.1707317,
+      free: 5.024390244,
+    },
+  },
+  {
+    srNo: 117.3,
+    modelName: "Veo 3.1 Lite FFLF2V 8s 1080p",
+    priceToPay: 0.64,
+    overCharge: 0.01,
+    userCost: 0.65,
+    creditsPerGeneration: 1300,
+    plans: {
+      planA: 9.507692308,
+      planB: 19.01538462,
+      planC: 47.53846154,
+      planD: 152.1230769,
+      free: 3.169230769,
+    },
+  },
 
   {
     srNo: 114,
