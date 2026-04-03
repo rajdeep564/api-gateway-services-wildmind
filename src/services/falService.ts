@@ -7476,7 +7476,12 @@ async function klingV3Submit(
     providerTaskId: request_id,
     generate_audio: body.generate_audio !== false,
     duration,
-    aspect_ratio: body.aspect_ratio ?? "16:9",
+    aspect_ratio:
+      mode === "text-to-video"
+        ? body.aspect_ratio ?? "16:9"
+        : typeof body.aspect_ratio === "string"
+          ? body.aspect_ratio
+          : null,
   } as any);
 
   return { requestId: request_id, historyId, model, status: "submitted" };
