@@ -430,7 +430,7 @@ router.post("/", requireAuth, async (req, res) => {
               )
             : selectedModelId === "deepseek-ai/deepseek-v3.1"
               ? (modelInput as DeepSeekChatModeInput | undefined)
-            : undefined;
+              : undefined;
     const persistedMessages = await assistantThreadsRepository.listMessages(
       uid,
       activeThread.id,
