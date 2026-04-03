@@ -36,12 +36,22 @@ export interface ClaudeChatModeInput {
   max_image_resolution?: number;
 }
 
+export interface GPT52ChatModeInput {
+  image_input?: string[];
+  verbosity?: "low" | "medium" | "high";
+  reasoning_effort?: "none" | "low" | "medium" | "high" | "xhigh";
+  max_completion_tokens?: number | null;
+  system_prompt?: string | null;
+}
+
 const APPROX_CHARS_PER_TOKEN = 4;
 const GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 65535;
 const GEMINI_MAX_IMAGES = 10;
 const GEMINI_MAX_VIDEOS = 10;
 const CLAUDE_DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const CLAUDE_MAX_IMAGES = 2;
+const GPT52_DEFAULT_MAX_COMPLETION_TOKENS = 8192;
+const GPT52_MAX_IMAGES = 4;
 
 let cachedReplicate: Replicate | null = null;
 
@@ -84,6 +94,7 @@ export function getAssistantChatValidationPricingParams(
   message: string,
   history: AssistantConversationMessage[],
   geminiInput?: GeminiChatModeInput,
+  gpt52Input?: GPT52ChatModeInput,
 ): AssistantChatPricingParams | undefined {
   switch (modelId) {
     case "google/gemini-3.1-pro":
@@ -101,6 +112,15 @@ export function getAssistantChatValidationPricingParams(
         ),
         outputTokens: CLAUDE_DEFAULT_MAX_OUTPUT_TOKENS,
       };
+    case "openai/gpt-5.2":
+      return {
+        inputTokens: estimateTextTokens(
+          buildPromptWithHistory(message, history),
+        ),
+        outputTokens:
+          gpt52Input?.max_completion_tokens ??
+          GPT52_DEFAULT_MAX_COMPLETION_TOKENS,
+      };
     default:
       return undefined;
   }
@@ -112,6 +132,7 @@ export function getAssistantChatFinalPricingParams(
   history: AssistantConversationMessage[],
   reply: string,
   geminiInput?: GeminiChatModeInput,
+  gpt52Input?: GPT52ChatModeInput,
 ): AssistantChatPricingParams | undefined {
   switch (modelId) {
     case "google/gemini-3.1-pro":
@@ -131,6 +152,17 @@ export function getAssistantChatFinalPricingParams(
         ),
         outputTokens: Math.min(
           CLAUDE_DEFAULT_MAX_OUTPUT_TOKENS,
+          estimateTextTokens(reply),
+        ),
+      };
+    case "openai/gpt-5.2":
+      return {
+        inputTokens: estimateTextTokens(
+          buildPromptWithHistory(message, history),
+        ),
+        outputTokens: Math.min(
+          gpt52Input?.max_completion_tokens ??
+            GPT52_DEFAULT_MAX_COMPLETION_TOKENS,
           estimateTextTokens(reply),
         ),
       };
@@ -242,6 +274,38 @@ function buildClaudeInput(
   return input;
 }
 
+function buildGPT52Input(
+  message: string,
+  history: AssistantConversationMessage[],
+  gpt52Input?: GPT52ChatModeInput,
+  systemPrompt?: string,
+): Record<string, unknown> {
+  const resolvedSystemPrompt = gpt52Input?.system_prompt ?? systemPrompt;
+
+  const messages: Array<{ role: string; content: string }> = [];
+  if (typeof resolvedSystemPrompt === "string" && resolvedSystemPrompt.trim()) {
+    messages.push({ role: "system", content: resolvedSystemPrompt.trim() });
+  }
+  for (const h of history) {
+    messages.push({ role: h.role, content: h.content });
+  }
+  messages.push({ role: "user", content: message });
+
+  const input: Record<string, unknown> = {
+    messages,
+    verbosity: gpt52Input?.verbosity ?? "medium",
+    reasoning_effort: gpt52Input?.reasoning_effort ?? "low",
+    image_input: sanitizeUriList(gpt52Input?.image_input, GPT52_MAX_IMAGES),
+  };
+
+  const maxTokens = gpt52Input?.max_completion_tokens;
+  if (typeof maxTokens === "number" && maxTokens > 0) {
+    input.max_completion_tokens = maxTokens;
+  }
+
+  return input;
+}
+
 export async function generateAssistantChatModeResponse(params: {
   modelId: ChatModeModelId;
   message: string;
@@ -249,9 +313,17 @@ export async function generateAssistantChatModeResponse(params: {
   systemPrompt?: string;
   geminiInput?: GeminiChatModeInput;
   claudeInput?: ClaudeChatModeInput;
+  gpt52Input?: GPT52ChatModeInput;
 }): Promise<string> {
-  const { modelId, message, history, systemPrompt, geminiInput, claudeInput } =
-    params;
+  const {
+    modelId,
+    message,
+    history,
+    systemPrompt,
+    geminiInput,
+    claudeInput,
+    gpt52Input,
+  } = params;
   const replicate = getReplicateClient();
   const promptWithHistory = buildPromptWithHistory(message, history);
 
@@ -265,22 +337,7 @@ export async function generateAssistantChatModeResponse(params: {
       input = buildClaudeInput(promptWithHistory, claudeInput, systemPrompt);
       break;
     case "openai/gpt-5.2":
-      input = {
-        messages: [
-          ...history.map((h) => ({ role: h.role, content: h.content })),
-          { role: "user", content: message },
-        ],
-        reasoning_effort: "low",
-        verbosity: "low",
-        max_completion_tokens: 300,
-      };
-      if (systemPrompt) {
-        input.messages = [
-          { role: "system", content: systemPrompt },
-          ...history.map((h) => ({ role: h.role, content: h.content })),
-          { role: "user", content: message },
-        ];
-      }
+      input = buildGPT52Input(message, history, gpt52Input, systemPrompt);
       break;
     case "deepseek-ai/deepseek-v3.1":
       input = {

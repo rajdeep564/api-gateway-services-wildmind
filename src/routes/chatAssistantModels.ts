@@ -8,6 +8,7 @@ import { requireAuth } from "../middlewares/authMiddleware";
 import {
   AssistantConversationMessage,
   ClaudeChatModeInput,
+  GPT52ChatModeInput,
   ChatModeModelId,
   generateAssistantChatModeResponse,
   GeminiChatModeInput,
@@ -31,6 +32,8 @@ const GEMINI_MAX_AUDIO = 1;
 const GEMINI_MAX_IMAGE_BYTES = 7 * 1024 * 1024;
 const CLAUDE_MAX_IMAGES = 2;
 const CLAUDE_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const GPT52_MAX_IMAGES = 4;
+const GPT52_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 async function resolveChatModeCost(
   modelId: ChatModeModelId,
@@ -229,6 +232,59 @@ function validateClaudeAttachments(
   return null;
 }
 
+function mergeGPT52InputWithAttachments(
+  modelInput: GPT52ChatModeInput | undefined,
+  attachments: AssistantAttachment[],
+): GPT52ChatModeInput | undefined {
+  const imageUrls = attachments
+    .filter((item) => item.type === "image")
+    .map((item) => item.url)
+    .slice(0, GPT52_MAX_IMAGES);
+
+  if (!modelInput && imageUrls.length === 0) {
+    return undefined;
+  }
+
+  return {
+    ...modelInput,
+    image_input: modelInput?.image_input?.length
+      ? modelInput.image_input.slice(0, GPT52_MAX_IMAGES)
+      : imageUrls,
+  };
+}
+
+function validateGPT52Attachments(
+  attachments: AssistantAttachment[],
+): string | null {
+  const imageCount = attachments.filter((item) => item.type === "image").length;
+  const videoCount = attachments.filter((item) => item.type === "video").length;
+  const audioCount = attachments.filter((item) => item.type === "audio").length;
+
+  if (imageCount > GPT52_MAX_IMAGES) {
+    return `GPT-5.2 supports up to ${GPT52_MAX_IMAGES} images per message`;
+  }
+
+  if (videoCount > 0) {
+    return "GPT-5.2 does not support video attachments";
+  }
+
+  if (audioCount > 0) {
+    return "GPT-5.2 does not support audio attachments";
+  }
+
+  const oversizedImage = attachments.find(
+    (item) =>
+      item.type === "image" &&
+      typeof item.sizeBytes === "number" &&
+      item.sizeBytes > GPT52_MAX_IMAGE_BYTES,
+  );
+  if (oversizedImage) {
+    return "GPT-5.2 image attachments must be 5MB or smaller";
+  }
+
+  return null;
+}
+
 router.post("/", requireAuth, async (req, res) => {
   try {
     const uid = (req as any).uid;
@@ -243,7 +299,10 @@ router.post("/", requireAuth, async (req, res) => {
       message: string;
       history?: Array<{ role: "user" | "assistant"; content: string }>;
       modelId?: string;
-      modelInput?: GeminiChatModeInput | ClaudeChatModeInput;
+      modelInput?:
+        | GeminiChatModeInput
+        | ClaudeChatModeInput
+        | GPT52ChatModeInput;
       threadId?: string;
       attachments?: AssistantAttachment[];
     };
@@ -322,6 +381,16 @@ router.post("/", requireAuth, async (req, res) => {
           .json(formatApiResponse("error", attachmentValidationError, null));
       }
     }
+    if (selectedModelId === "openai/gpt-5.2") {
+      const attachmentValidationError = validateGPT52Attachments(
+        normalizedAttachments,
+      );
+      if (attachmentValidationError) {
+        return res
+          .status(400)
+          .json(formatApiResponse("error", attachmentValidationError, null));
+      }
+    }
     const effectiveModelInput =
       selectedModelId === "google/gemini-3.1-pro"
         ? mergeGeminiInputWithAttachments(
@@ -333,7 +402,12 @@ router.post("/", requireAuth, async (req, res) => {
               modelInput as ClaudeChatModeInput | undefined,
               normalizedAttachments,
             )
-          : undefined;
+          : selectedModelId === "openai/gpt-5.2"
+            ? mergeGPT52InputWithAttachments(
+                modelInput as GPT52ChatModeInput | undefined,
+                normalizedAttachments,
+              )
+            : undefined;
     const persistedMessages = await assistantThreadsRepository.listMessages(
       uid,
       activeThread.id,
@@ -354,7 +428,10 @@ router.post("/", requireAuth, async (req, res) => {
       sanitized,
       conversationHistory,
       selectedModelId === "google/gemini-3.1-pro"
-        ? effectiveModelInput
+        ? (effectiveModelInput as GeminiChatModeInput | undefined)
+        : undefined,
+      selectedModelId === "openai/gpt-5.2"
+        ? (effectiveModelInput as GPT52ChatModeInput | undefined)
         : undefined,
     );
     const validationCost = await resolveChatModeCost(
@@ -409,7 +486,10 @@ router.post("/", requireAuth, async (req, res) => {
         selectedModelId === "anthropic/claude-opus-4.6" && effectiveModelInput
           ? ((effectiveModelInput as ClaudeChatModeInput).system_prompt ??
             undefined)
-          : undefined,
+          : selectedModelId === "openai/gpt-5.2" && effectiveModelInput
+            ? ((effectiveModelInput as GPT52ChatModeInput).system_prompt ??
+              undefined)
+            : undefined,
       geminiInput:
         selectedModelId === "google/gemini-3.1-pro"
           ? (effectiveModelInput as GeminiChatModeInput)
@@ -418,6 +498,10 @@ router.post("/", requireAuth, async (req, res) => {
         selectedModelId === "anthropic/claude-opus-4.6"
           ? (effectiveModelInput as ClaudeChatModeInput)
           : undefined,
+      gpt52Input:
+        selectedModelId === "openai/gpt-5.2"
+          ? (effectiveModelInput as GPT52ChatModeInput)
+          : undefined,
     });
     const finalPricingParams = getAssistantChatFinalPricingParams(
       selectedModelId,
@@ -425,7 +509,10 @@ router.post("/", requireAuth, async (req, res) => {
       conversationHistory,
       reply,
       selectedModelId === "google/gemini-3.1-pro"
-        ? effectiveModelInput
+        ? (effectiveModelInput as GeminiChatModeInput | undefined)
+        : undefined,
+      selectedModelId === "openai/gpt-5.2"
+        ? (effectiveModelInput as GPT52ChatModeInput | undefined)
         : undefined,
     );
     const finalCost = await resolveChatModeCost(
