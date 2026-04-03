@@ -8,6 +8,7 @@ import { requireAuth } from "../middlewares/authMiddleware";
 import {
   AssistantConversationMessage,
   ClaudeChatModeInput,
+  DeepSeekChatModeInput,
   GPT52ChatModeInput,
   ChatModeModelId,
   generateAssistantChatModeResponse,
@@ -285,6 +286,15 @@ function validateGPT52Attachments(
   return null;
 }
 
+function validateDeepSeekAttachments(
+  attachments: AssistantAttachment[],
+): string | null {
+  if (attachments.length > 0) {
+    return "DeepSeek V3.1 is text-only and does not support attachments";
+  }
+  return null;
+}
+
 router.post("/", requireAuth, async (req, res) => {
   try {
     const uid = (req as any).uid;
@@ -302,7 +312,8 @@ router.post("/", requireAuth, async (req, res) => {
       modelInput?:
         | GeminiChatModeInput
         | ClaudeChatModeInput
-        | GPT52ChatModeInput;
+        | GPT52ChatModeInput
+        | DeepSeekChatModeInput;
       threadId?: string;
       attachments?: AssistantAttachment[];
     };
@@ -391,6 +402,16 @@ router.post("/", requireAuth, async (req, res) => {
           .json(formatApiResponse("error", attachmentValidationError, null));
       }
     }
+    if (selectedModelId === "deepseek-ai/deepseek-v3.1") {
+      const attachmentValidationError = validateDeepSeekAttachments(
+        normalizedAttachments,
+      );
+      if (attachmentValidationError) {
+        return res
+          .status(400)
+          .json(formatApiResponse("error", attachmentValidationError, null));
+      }
+    }
     const effectiveModelInput =
       selectedModelId === "google/gemini-3.1-pro"
         ? mergeGeminiInputWithAttachments(
@@ -407,6 +428,8 @@ router.post("/", requireAuth, async (req, res) => {
                 modelInput as GPT52ChatModeInput | undefined,
                 normalizedAttachments,
               )
+            : selectedModelId === "deepseek-ai/deepseek-v3.1"
+              ? (modelInput as DeepSeekChatModeInput | undefined)
             : undefined;
     const persistedMessages = await assistantThreadsRepository.listMessages(
       uid,
@@ -432,6 +455,9 @@ router.post("/", requireAuth, async (req, res) => {
         : undefined,
       selectedModelId === "openai/gpt-5.2"
         ? (effectiveModelInput as GPT52ChatModeInput | undefined)
+        : undefined,
+      selectedModelId === "deepseek-ai/deepseek-v3.1"
+        ? (effectiveModelInput as DeepSeekChatModeInput | undefined)
         : undefined,
     );
     const validationCost = await resolveChatModeCost(
@@ -502,6 +528,10 @@ router.post("/", requireAuth, async (req, res) => {
         selectedModelId === "openai/gpt-5.2"
           ? (effectiveModelInput as GPT52ChatModeInput)
           : undefined,
+      deepseekInput:
+        selectedModelId === "deepseek-ai/deepseek-v3.1"
+          ? (effectiveModelInput as DeepSeekChatModeInput)
+          : undefined,
     });
     const finalPricingParams = getAssistantChatFinalPricingParams(
       selectedModelId,
@@ -513,6 +543,9 @@ router.post("/", requireAuth, async (req, res) => {
         : undefined,
       selectedModelId === "openai/gpt-5.2"
         ? (effectiveModelInput as GPT52ChatModeInput | undefined)
+        : undefined,
+      selectedModelId === "deepseek-ai/deepseek-v3.1"
+        ? (effectiveModelInput as DeepSeekChatModeInput | undefined)
         : undefined,
     );
     const finalCost = await resolveChatModeCost(

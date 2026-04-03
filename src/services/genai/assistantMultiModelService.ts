@@ -44,6 +44,16 @@ export interface GPT52ChatModeInput {
   system_prompt?: string | null;
 }
 
+export interface DeepSeekChatModeInput {
+  top_p?: number;
+  prompt?: string;
+  thinking?: "medium" | "None";
+  max_tokens?: number;
+  temperature?: number;
+  presence_penalty?: number;
+  frequency_penalty?: number;
+}
+
 const APPROX_CHARS_PER_TOKEN = 4;
 const GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 65535;
 const GEMINI_MAX_IMAGES = 10;
@@ -52,6 +62,7 @@ const CLAUDE_DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const CLAUDE_MAX_IMAGES = 2;
 const GPT52_DEFAULT_MAX_COMPLETION_TOKENS = 8192;
 const GPT52_MAX_IMAGES = 4;
+const DEEPSEEK_DEFAULT_MAX_OUTPUT_TOKENS = 1024;
 
 let cachedReplicate: Replicate | null = null;
 
@@ -95,6 +106,7 @@ export function getAssistantChatValidationPricingParams(
   history: AssistantConversationMessage[],
   geminiInput?: GeminiChatModeInput,
   gpt52Input?: GPT52ChatModeInput,
+  deepseekInput?: DeepSeekChatModeInput,
 ): AssistantChatPricingParams | undefined {
   switch (modelId) {
     case "google/gemini-3.1-pro":
@@ -121,6 +133,14 @@ export function getAssistantChatValidationPricingParams(
           gpt52Input?.max_completion_tokens ??
           GPT52_DEFAULT_MAX_COMPLETION_TOKENS,
       };
+    case "deepseek-ai/deepseek-v3.1":
+      return {
+        inputTokens: estimateTextTokens(
+          buildPromptWithHistory(message, history),
+        ),
+        outputTokens:
+          deepseekInput?.max_tokens ?? DEEPSEEK_DEFAULT_MAX_OUTPUT_TOKENS,
+      };
     default:
       return undefined;
   }
@@ -133,6 +153,7 @@ export function getAssistantChatFinalPricingParams(
   reply: string,
   geminiInput?: GeminiChatModeInput,
   gpt52Input?: GPT52ChatModeInput,
+  deepseekInput?: DeepSeekChatModeInput,
 ): AssistantChatPricingParams | undefined {
   switch (modelId) {
     case "google/gemini-3.1-pro":
@@ -163,6 +184,16 @@ export function getAssistantChatFinalPricingParams(
         outputTokens: Math.min(
           gpt52Input?.max_completion_tokens ??
             GPT52_DEFAULT_MAX_COMPLETION_TOKENS,
+          estimateTextTokens(reply),
+        ),
+      };
+    case "deepseek-ai/deepseek-v3.1":
+      return {
+        inputTokens: estimateTextTokens(
+          buildPromptWithHistory(message, history),
+        ),
+        outputTokens: Math.min(
+          deepseekInput?.max_tokens ?? DEEPSEEK_DEFAULT_MAX_OUTPUT_TOKENS,
           estimateTextTokens(reply),
         ),
       };
@@ -306,6 +337,28 @@ function buildGPT52Input(
   return input;
 }
 
+function buildDeepSeekInput(
+  prompt: string,
+  deepseekInput?: DeepSeekChatModeInput,
+): Record<string, unknown> {
+  return {
+    prompt,
+    thinking: deepseekInput?.thinking ?? "None",
+    max_tokens: Math.round(
+      clampNumber(
+        deepseekInput?.max_tokens,
+        1,
+        16384,
+        DEEPSEEK_DEFAULT_MAX_OUTPUT_TOKENS,
+      ),
+    ),
+    temperature: clampNumber(deepseekInput?.temperature, 0, 2, 0.1),
+    top_p: clampNumber(deepseekInput?.top_p, 0, 1, 1),
+    presence_penalty: clampNumber(deepseekInput?.presence_penalty, -2, 2, 0),
+    frequency_penalty: clampNumber(deepseekInput?.frequency_penalty, -2, 2, 0),
+  };
+}
+
 export async function generateAssistantChatModeResponse(params: {
   modelId: ChatModeModelId;
   message: string;
@@ -314,6 +367,7 @@ export async function generateAssistantChatModeResponse(params: {
   geminiInput?: GeminiChatModeInput;
   claudeInput?: ClaudeChatModeInput;
   gpt52Input?: GPT52ChatModeInput;
+  deepseekInput?: DeepSeekChatModeInput;
 }): Promise<string> {
   const {
     modelId,
@@ -323,6 +377,7 @@ export async function generateAssistantChatModeResponse(params: {
     geminiInput,
     claudeInput,
     gpt52Input,
+    deepseekInput,
   } = params;
   const replicate = getReplicateClient();
   const promptWithHistory = buildPromptWithHistory(message, history);
@@ -340,15 +395,7 @@ export async function generateAssistantChatModeResponse(params: {
       input = buildGPT52Input(message, history, gpt52Input, systemPrompt);
       break;
     case "deepseek-ai/deepseek-v3.1":
-      input = {
-        prompt: promptWithHistory,
-        thinking: "None",
-        max_tokens: 1024,
-        temperature: 0.2,
-        top_p: 1,
-        presence_penalty: 0,
-        frequency_penalty: 0,
-      };
+      input = buildDeepSeekInput(promptWithHistory, deepseekInput);
       break;
     default:
       throw new Error(`Unsupported modelId: ${modelId}`);
