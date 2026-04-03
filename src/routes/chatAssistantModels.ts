@@ -9,6 +9,7 @@ import {
   AssistantConversationMessage,
   ClaudeChatModeInput,
   DeepSeekChatModeInput,
+  Gemini25FlashChatModeInput,
   GPT52ChatModeInput,
   ChatModeModelId,
   generateAssistantChatModeResponse,
@@ -31,6 +32,9 @@ const GEMINI_MAX_IMAGES = 10;
 const GEMINI_MAX_VIDEOS = 10;
 const GEMINI_MAX_AUDIO = 1;
 const GEMINI_MAX_IMAGE_BYTES = 7 * 1024 * 1024;
+const GEMINI25_FLASH_MAX_IMAGES = 10;
+const GEMINI25_FLASH_MAX_VIDEOS = 10;
+const GEMINI25_FLASH_MAX_IMAGE_BYTES = 7 * 1024 * 1024;
 const CLAUDE_MAX_IMAGES = 2;
 const CLAUDE_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const GPT52_MAX_IMAGES = 4;
@@ -169,6 +173,34 @@ function mergeClaudeInputWithAttachments(
   };
 }
 
+function mergeGemini25FlashInputWithAttachments(
+  modelInput: Gemini25FlashChatModeInput | undefined,
+  attachments: AssistantAttachment[],
+): Gemini25FlashChatModeInput | undefined {
+  const imageUrls = attachments
+    .filter((item) => item.type === "image")
+    .map((item) => item.url)
+    .slice(0, GEMINI25_FLASH_MAX_IMAGES);
+  const videoUrls = attachments
+    .filter((item) => item.type === "video")
+    .map((item) => item.url)
+    .slice(0, GEMINI25_FLASH_MAX_VIDEOS);
+
+  if (!modelInput && imageUrls.length === 0 && videoUrls.length === 0) {
+    return undefined;
+  }
+
+  return {
+    ...modelInput,
+    images: modelInput?.images?.length
+      ? modelInput.images.slice(0, GEMINI25_FLASH_MAX_IMAGES)
+      : imageUrls,
+    videos: modelInput?.videos?.length
+      ? modelInput.videos.slice(0, GEMINI25_FLASH_MAX_VIDEOS)
+      : videoUrls,
+  };
+}
+
 function validateGeminiAttachments(
   attachments: AssistantAttachment[],
 ): string | null {
@@ -228,6 +260,38 @@ function validateClaudeAttachments(
   );
   if (oversizedImage) {
     return "Claude image attachments must be 5MB or smaller";
+  }
+
+  return null;
+}
+
+function validateGemini25FlashAttachments(
+  attachments: AssistantAttachment[],
+): string | null {
+  const imageCount = attachments.filter((item) => item.type === "image").length;
+  const videoCount = attachments.filter((item) => item.type === "video").length;
+  const audioCount = attachments.filter((item) => item.type === "audio").length;
+
+  if (imageCount > GEMINI25_FLASH_MAX_IMAGES) {
+    return `Gemini 2.5 Flash supports up to ${GEMINI25_FLASH_MAX_IMAGES} images per message`;
+  }
+
+  if (videoCount > GEMINI25_FLASH_MAX_VIDEOS) {
+    return `Gemini 2.5 Flash supports up to ${GEMINI25_FLASH_MAX_VIDEOS} videos per message`;
+  }
+
+  if (audioCount > 0) {
+    return "Gemini 2.5 Flash does not support audio attachments";
+  }
+
+  const oversizedImage = attachments.find(
+    (item) =>
+      item.type === "image" &&
+      typeof item.sizeBytes === "number" &&
+      item.sizeBytes > GEMINI25_FLASH_MAX_IMAGE_BYTES,
+  );
+  if (oversizedImage) {
+    return "Gemini 2.5 Flash image attachments must be 7MB or smaller";
   }
 
   return null;
@@ -311,6 +375,7 @@ router.post("/", requireAuth, async (req, res) => {
       modelId?: string;
       modelInput?:
         | GeminiChatModeInput
+        | Gemini25FlashChatModeInput
         | ClaudeChatModeInput
         | GPT52ChatModeInput
         | DeepSeekChatModeInput;
@@ -392,6 +457,16 @@ router.post("/", requireAuth, async (req, res) => {
           .json(formatApiResponse("error", attachmentValidationError, null));
       }
     }
+    if (selectedModelId === "google/gemini-2.5-flash") {
+      const attachmentValidationError = validateGemini25FlashAttachments(
+        normalizedAttachments,
+      );
+      if (attachmentValidationError) {
+        return res
+          .status(400)
+          .json(formatApiResponse("error", attachmentValidationError, null));
+      }
+    }
     if (selectedModelId === "openai/gpt-5.2") {
       const attachmentValidationError = validateGPT52Attachments(
         normalizedAttachments,
@@ -423,6 +498,11 @@ router.post("/", requireAuth, async (req, res) => {
               modelInput as ClaudeChatModeInput | undefined,
               normalizedAttachments,
             )
+          : selectedModelId === "google/gemini-2.5-flash"
+            ? mergeGemini25FlashInputWithAttachments(
+                modelInput as Gemini25FlashChatModeInput | undefined,
+                normalizedAttachments,
+              )
           : selectedModelId === "openai/gpt-5.2"
             ? mergeGPT52InputWithAttachments(
                 modelInput as GPT52ChatModeInput | undefined,
@@ -452,6 +532,9 @@ router.post("/", requireAuth, async (req, res) => {
       conversationHistory,
       selectedModelId === "google/gemini-3.1-pro"
         ? (effectiveModelInput as GeminiChatModeInput | undefined)
+        : undefined,
+      selectedModelId === "google/gemini-2.5-flash"
+        ? (effectiveModelInput as Gemini25FlashChatModeInput | undefined)
         : undefined,
       selectedModelId === "openai/gpt-5.2"
         ? (effectiveModelInput as GPT52ChatModeInput | undefined)
@@ -520,6 +603,10 @@ router.post("/", requireAuth, async (req, res) => {
         selectedModelId === "google/gemini-3.1-pro"
           ? (effectiveModelInput as GeminiChatModeInput)
           : undefined,
+      gemini25FlashInput:
+        selectedModelId === "google/gemini-2.5-flash"
+          ? (effectiveModelInput as Gemini25FlashChatModeInput)
+          : undefined,
       claudeInput:
         selectedModelId === "anthropic/claude-opus-4.6"
           ? (effectiveModelInput as ClaudeChatModeInput)
@@ -540,6 +627,9 @@ router.post("/", requireAuth, async (req, res) => {
       reply,
       selectedModelId === "google/gemini-3.1-pro"
         ? (effectiveModelInput as GeminiChatModeInput | undefined)
+        : undefined,
+      selectedModelId === "google/gemini-2.5-flash"
+        ? (effectiveModelInput as Gemini25FlashChatModeInput | undefined)
         : undefined,
       selectedModelId === "openai/gpt-5.2"
         ? (effectiveModelInput as GPT52ChatModeInput | undefined)

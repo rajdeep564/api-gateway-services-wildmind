@@ -3,6 +3,7 @@ import { env } from "../../config/env";
 
 export type ChatModeModelId =
   | "google/gemini-3.1-pro"
+  | "google/gemini-2.5-flash"
   | "anthropic/claude-opus-4.6"
   | "openai/gpt-5.2"
   | "deepseek-ai/deepseek-v3.1";
@@ -36,6 +37,17 @@ export interface ClaudeChatModeInput {
   max_image_resolution?: number;
 }
 
+export interface Gemini25FlashChatModeInput {
+  images?: string[];
+  videos?: string[];
+  temperature?: number;
+  top_p?: number;
+  max_output_tokens?: number;
+  thinking_budget?: number | null;
+  dynamic_thinking?: boolean;
+  system_instruction?: string | null;
+}
+
 export interface GPT52ChatModeInput {
   image_input?: string[];
   verbosity?: "low" | "medium" | "high";
@@ -58,6 +70,9 @@ const APPROX_CHARS_PER_TOKEN = 4;
 const GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 65535;
 const GEMINI_MAX_IMAGES = 10;
 const GEMINI_MAX_VIDEOS = 10;
+const GEMINI25_FLASH_DEFAULT_MAX_OUTPUT_TOKENS = 65535;
+const GEMINI25_FLASH_MAX_IMAGES = 10;
+const GEMINI25_FLASH_MAX_VIDEOS = 10;
 const CLAUDE_DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const CLAUDE_MAX_IMAGES = 2;
 const GPT52_DEFAULT_MAX_COMPLETION_TOKENS = 8192;
@@ -105,6 +120,7 @@ export function getAssistantChatValidationPricingParams(
   message: string,
   history: AssistantConversationMessage[],
   geminiInput?: GeminiChatModeInput,
+  gemini25FlashInput?: Gemini25FlashChatModeInput,
   gpt52Input?: GPT52ChatModeInput,
   deepseekInput?: DeepSeekChatModeInput,
 ): AssistantChatPricingParams | undefined {
@@ -123,6 +139,15 @@ export function getAssistantChatValidationPricingParams(
           buildPromptWithHistory(message, history),
         ),
         outputTokens: CLAUDE_DEFAULT_MAX_OUTPUT_TOKENS,
+      };
+    case "google/gemini-2.5-flash":
+      return {
+        inputTokens: estimateTextTokens(
+          buildPromptWithHistory(message, history),
+        ),
+        outputTokens:
+          gemini25FlashInput?.max_output_tokens ??
+          GEMINI25_FLASH_DEFAULT_MAX_OUTPUT_TOKENS,
       };
     case "openai/gpt-5.2":
       return {
@@ -152,6 +177,7 @@ export function getAssistantChatFinalPricingParams(
   history: AssistantConversationMessage[],
   reply: string,
   geminiInput?: GeminiChatModeInput,
+  gemini25FlashInput?: Gemini25FlashChatModeInput,
   gpt52Input?: GPT52ChatModeInput,
   deepseekInput?: DeepSeekChatModeInput,
 ): AssistantChatPricingParams | undefined {
@@ -173,6 +199,17 @@ export function getAssistantChatFinalPricingParams(
         ),
         outputTokens: Math.min(
           CLAUDE_DEFAULT_MAX_OUTPUT_TOKENS,
+          estimateTextTokens(reply),
+        ),
+      };
+    case "google/gemini-2.5-flash":
+      return {
+        inputTokens: estimateTextTokens(
+          buildPromptWithHistory(message, history),
+        ),
+        outputTokens: Math.min(
+          gemini25FlashInput?.max_output_tokens ??
+            GEMINI25_FLASH_DEFAULT_MAX_OUTPUT_TOKENS,
           estimateTextTokens(reply),
         ),
       };
@@ -305,6 +342,44 @@ function buildClaudeInput(
   return input;
 }
 
+function buildGemini25FlashInput(
+  prompt: string,
+  gemini25FlashInput?: Gemini25FlashChatModeInput,
+  systemPrompt?: string,
+): Record<string, unknown> {
+  const input: Record<string, unknown> = {
+    prompt,
+    images: sanitizeUriList(gemini25FlashInput?.images, GEMINI25_FLASH_MAX_IMAGES),
+    videos: sanitizeUriList(gemini25FlashInput?.videos, GEMINI25_FLASH_MAX_VIDEOS),
+    temperature: clampNumber(gemini25FlashInput?.temperature, 0, 2, 1),
+    top_p: clampNumber(gemini25FlashInput?.top_p, 0, 1, 0.95),
+    max_output_tokens: Math.round(
+      clampNumber(
+        gemini25FlashInput?.max_output_tokens,
+        1,
+        65535,
+        GEMINI25_FLASH_DEFAULT_MAX_OUTPUT_TOKENS,
+      ),
+    ),
+    dynamic_thinking: Boolean(gemini25FlashInput?.dynamic_thinking ?? false),
+  };
+
+  const thinkingBudget = gemini25FlashInput?.thinking_budget;
+  if (typeof thinkingBudget === "number" && Number.isFinite(thinkingBudget)) {
+    input.thinking_budget = Math.round(
+      clampNumber(thinkingBudget, 0, 24576, 0),
+    );
+  }
+
+  const systemInstruction =
+    gemini25FlashInput?.system_instruction ?? systemPrompt;
+  if (typeof systemInstruction === "string" && systemInstruction.trim()) {
+    input.system_instruction = systemInstruction.trim();
+  }
+
+  return input;
+}
+
 function buildGPT52Input(
   message: string,
   history: AssistantConversationMessage[],
@@ -365,6 +440,7 @@ export async function generateAssistantChatModeResponse(params: {
   history: AssistantConversationMessage[];
   systemPrompt?: string;
   geminiInput?: GeminiChatModeInput;
+  gemini25FlashInput?: Gemini25FlashChatModeInput;
   claudeInput?: ClaudeChatModeInput;
   gpt52Input?: GPT52ChatModeInput;
   deepseekInput?: DeepSeekChatModeInput;
@@ -375,6 +451,7 @@ export async function generateAssistantChatModeResponse(params: {
     history,
     systemPrompt,
     geminiInput,
+    gemini25FlashInput,
     claudeInput,
     gpt52Input,
     deepseekInput,
@@ -387,6 +464,13 @@ export async function generateAssistantChatModeResponse(params: {
   switch (modelId) {
     case "google/gemini-3.1-pro":
       input = buildGeminiInput(promptWithHistory, geminiInput, systemPrompt);
+      break;
+    case "google/gemini-2.5-flash":
+      input = buildGemini25FlashInput(
+        promptWithHistory,
+        gemini25FlashInput,
+        systemPrompt,
+      );
       break;
     case "anthropic/claude-opus-4.6":
       input = buildClaudeInput(promptWithHistory, claudeInput, systemPrompt);

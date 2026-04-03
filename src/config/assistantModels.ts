@@ -7,6 +7,10 @@ export const CHAT_MODEL_CONFIGS: Record<ChatModeModelId, { label: string; fallba
     label: 'Gemini 3.1 Pro',
     fallbackCreditCost: 1,
   },
+  'google/gemini-2.5-flash': {
+    label: 'Gemini 2.5 Flash',
+    fallbackCreditCost: 1,
+  },
   'anthropic/claude-opus-4.6': {
     label: 'Claude Opus 4.6',
     fallbackCreditCost: 1,
