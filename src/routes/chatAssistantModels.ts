@@ -503,14 +503,14 @@ router.post("/", requireAuth, async (req, res) => {
                 modelInput as Gemini25FlashChatModeInput | undefined,
                 normalizedAttachments,
               )
-          : selectedModelId === "openai/gpt-5.2"
-            ? mergeGPT52InputWithAttachments(
-                modelInput as GPT52ChatModeInput | undefined,
-                normalizedAttachments,
-              )
-            : selectedModelId === "deepseek-ai/deepseek-v3.1"
-              ? (modelInput as DeepSeekChatModeInput | undefined)
-              : undefined;
+            : selectedModelId === "openai/gpt-5.2"
+              ? mergeGPT52InputWithAttachments(
+                  modelInput as GPT52ChatModeInput | undefined,
+                  normalizedAttachments,
+                )
+              : selectedModelId === "deepseek-ai/deepseek-v3.1"
+                ? (modelInput as DeepSeekChatModeInput | undefined)
+                : undefined;
     const persistedMessages = await assistantThreadsRepository.listMessages(
       uid,
       activeThread.id,

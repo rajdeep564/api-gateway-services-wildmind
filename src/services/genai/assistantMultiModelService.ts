@@ -349,8 +349,14 @@ function buildGemini25FlashInput(
 ): Record<string, unknown> {
   const input: Record<string, unknown> = {
     prompt,
-    images: sanitizeUriList(gemini25FlashInput?.images, GEMINI25_FLASH_MAX_IMAGES),
-    videos: sanitizeUriList(gemini25FlashInput?.videos, GEMINI25_FLASH_MAX_VIDEOS),
+    images: sanitizeUriList(
+      gemini25FlashInput?.images,
+      GEMINI25_FLASH_MAX_IMAGES,
+    ),
+    videos: sanitizeUriList(
+      gemini25FlashInput?.videos,
+      GEMINI25_FLASH_MAX_VIDEOS,
+    ),
     temperature: clampNumber(gemini25FlashInput?.temperature, 0, 2, 1),
     top_p: clampNumber(gemini25FlashInput?.top_p, 0, 1, 0.95),
     max_output_tokens: Math.round(
