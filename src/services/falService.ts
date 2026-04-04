@@ -2237,7 +2237,7 @@ async function generate(
             if ((payload as any).num_images != null) {
               const nImg = Number((payload as any).num_images);
               if (Number.isFinite(nImg))
-                input.num_images = Math.max(1, Math.min(10, Math.round(nImg)));
+                input.num_images = Math.max(1, Math.min(15, Math.round(nImg)));
             }
             if ((payload as any).max_images != null) {
               const maxImg = Number((payload as any).max_images);
@@ -2303,14 +2303,14 @@ async function generate(
                     500,
                   );
                 }
-                // Schema: if >10 images are sent, only the last 10 will be used
-                const lastTen = refs.slice(-10);
-                input.image_urls = lastTen;
+                // Seedream 4.5 supports up to 14 input references.
+                const lastFourteen = refs.slice(-14);
+                input.image_urls = lastFourteen;
                 console.log(
                   "[falService] ✅ Seedream 4.5: Using Zata URLs for image-to-image:",
                   {
-                    urlCount: lastTen.length,
-                    urls: lastTen.map(
+                    urlCount: lastFourteen.length,
+                    urls: lastFourteen.map(
                       (url: string) => url.substring(0, 80) + "...",
                     ),
                   },

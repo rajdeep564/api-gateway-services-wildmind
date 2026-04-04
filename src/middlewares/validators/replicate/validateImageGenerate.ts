@@ -102,8 +102,8 @@ export function validateReplicateGenerate(
     if (image_input != null) {
       if (!Array.isArray(image_input))
         return next(new ApiError("image_input must be array of urls", 400));
-      if (image_input.length > 10)
-        return next(new ApiError("image_input supports up to 10 images", 400));
+      if (image_input.length > 14)
+        return next(new ApiError("image_input supports up to 14 images", 400));
       for (const u of image_input) {
         if (typeof u !== "string")
           return next(
