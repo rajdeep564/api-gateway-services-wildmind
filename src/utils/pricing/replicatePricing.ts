@@ -129,27 +129,25 @@ export async function computeReplicateUpscaleCost(
     const totalPixels = outW * outH;
 
     const baseCents = ((): number => {
-      // Match credit sheet tiers (MP = million pixels)
-      if (totalPixels <= 4_000_000) return 5;
-      if (totalPixels <= 8_000_000) return 10;
-      if (totalPixels <= 16_000_000) return 20;
-      if (totalPixels <= 25_000_000) return 40;
-      if (totalPixels <= 50_000_000) return 80;
-      if (totalPixels <= 100_000_000) return 160;
-      return 320;
+      if (totalPixels <= 4_000_000) return 2;
+      if (totalPixels <= 8_000_000) return 4;
+      if (totalPixels <= 16_000_000) return 8;
+      if (totalPixels <= 25_000_000) return 16;
+      if (totalPixels <= 50_000_000) return 32;
+      if (totalPixels <= 100_000_000) return 64;
+      return 128;
     })();
 
-    const overchargeCents = 1;
+    const overchargeCents = 0;
     const userCostCents = baseCents + overchargeCents;
     const cost = ((): number => {
-      // Sheet mapping: MP tier => credits per generation
-      if (totalPixels <= 4_000_000) return 120;
-      if (totalPixels <= 8_000_000) return 220;
-      if (totalPixels <= 16_000_000) return 420;
-      if (totalPixels <= 25_000_000) return 820;
-      if (totalPixels <= 50_000_000) return 1620;
-      if (totalPixels <= 100_000_000) return 3220;
-      return 6420;
+      if (totalPixels <= 4_000_000) return 40;
+      if (totalPixels <= 8_000_000) return 80;
+      if (totalPixels <= 16_000_000) return 160;
+      if (totalPixels <= 25_000_000) return 320;
+      if (totalPixels <= 50_000_000) return 640;
+      if (totalPixels <= 100_000_000) return 1280;
+      return 2560;
     })();
 
     meta = {
@@ -183,7 +181,7 @@ export async function computeReplicateUpscaleCost(
       probed: meta.probed === true,
     });
 
-    return { cost, pricingVersion: "replicate-upscale-v2", meta };
+    return { cost, pricingVersion: "replicate-upscale-v3", meta };
   } else if (normalized.includes("philz1337x/clarity-upscaler"))
     display = "replicate/philz1337x/clarity-upscaler";
   else if (normalized.includes("fermatresearch/magic-image-refiner"))
