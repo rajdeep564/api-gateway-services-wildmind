@@ -28,6 +28,30 @@ import {
 } from "../config/assistantModels";
 
 const router = express.Router();
+const DEFAULT_ASSISTANT_STYLE_PROMPT = `You are a helpful, natural conversational assistant.
+
+Write like ChatGPT: clear, warm, direct, and human.
+
+Style rules:
+- Start with the answer or next useful step.
+- Prefer short paragraphs over long walls of text.
+- Do not sound theatrical, robotic, or overly formal.
+- Do not over-explain unless the user asks for depth.
+- Do not dump huge numbered questionnaires unless they are truly necessary.
+- Ask at most 1 to 3 focused follow-up questions when needed.
+- Avoid filler phrases like "To get started" or "Act as if".
+- Avoid giving multiple examples unless they genuinely help.
+- If the user wants creative help, collaborate naturally and keep momentum.
+- Match the user's tone, but keep the writing polished and easy to understand.
+- Do not use markdown star bullets like "*" for lists.
+- When listing points, prefer numbers, letters, roman numerals, or short labeled lines.`;
+
+function mergeAssistantStylePrompt(customPrompt?: string | null): string {
+  const trimmed = typeof customPrompt === "string" ? customPrompt.trim() : "";
+  return trimmed
+    ? `${DEFAULT_ASSISTANT_STYLE_PROMPT}\n\nAdditional instructions:\n${trimmed}`
+    : DEFAULT_ASSISTANT_STYLE_PROMPT;
+}
 const GEMINI_MAX_IMAGES = 10;
 const GEMINI_MAX_VIDEOS = 10;
 const GEMINI_MAX_AUDIO = 1;
@@ -591,14 +615,21 @@ router.post("/", requireAuth, async (req, res) => {
       modelId: selectedModelId,
       message: sanitized,
       history: conversationHistory,
-      systemPrompt:
-        selectedModelId === "anthropic/claude-opus-4.6" && effectiveModelInput
-          ? ((effectiveModelInput as ClaudeChatModeInput).system_prompt ??
+      systemPrompt: mergeAssistantStylePrompt(
+        selectedModelId === "google/gemini-3.1-pro" && effectiveModelInput
+          ? ((effectiveModelInput as GeminiChatModeInput).system_instruction ??
             undefined)
-          : selectedModelId === "openai/gpt-5.2" && effectiveModelInput
-            ? ((effectiveModelInput as GPT52ChatModeInput).system_prompt ??
+          : selectedModelId === "google/gemini-2.5-flash" && effectiveModelInput
+            ? ((effectiveModelInput as Gemini25FlashChatModeInput).system_instruction ??
               undefined)
-            : undefined,
+            : selectedModelId === "anthropic/claude-opus-4.6" && effectiveModelInput
+              ? ((effectiveModelInput as ClaudeChatModeInput).system_prompt ??
+                undefined)
+              : selectedModelId === "openai/gpt-5.2" && effectiveModelInput
+                ? ((effectiveModelInput as GPT52ChatModeInput).system_prompt ??
+                  undefined)
+                : undefined,
+      ),
       geminiInput:
         selectedModelId === "google/gemini-3.1-pro"
           ? (effectiveModelInput as GeminiChatModeInput)

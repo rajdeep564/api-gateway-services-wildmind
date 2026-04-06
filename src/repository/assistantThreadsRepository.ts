@@ -1,4 +1,5 @@
 import { admin, adminDb } from '../config/firebaseAdmin';
+import { generateGpt5NanoResponse } from '../services/genai/gpt5NanoService';
 
 export type AssistantThreadMode = 'agent' | 'chat';
 export type AssistantThreadRole = 'user' | 'assistant';
@@ -63,6 +64,82 @@ function sanitizePreview(text: string): string {
 function deriveTitleFromMessage(message: string): string {
   const preview = sanitizePreview(message);
   return preview.slice(0, 60) || 'New chat';
+}
+
+function sanitizeTitleCandidate(title: string): string {
+  return String(title || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60);
+}
+
+function isWeakThreadTitle(title?: string | null): boolean {
+  const normalized = sanitizeTitleCandidate(title || '').toLowerCase();
+  if (!normalized) return true;
+  if (normalized.length <= 4) return true;
+  if (/^(hi+|hlo+|hello+|hey+|yo+|sup+|test+|new chat|\?+)$/.test(normalized)) {
+    return true;
+  }
+  if (/^(what('?s| is)\s+(this|that)|help|hello whatsapp\??)$/.test(normalized)) {
+    return true;
+  }
+  return false;
+}
+
+function buildHeuristicThreadTitle(messages: AssistantThreadMessage[]): string {
+  const informativeUserMessage =
+    messages
+      .filter((message) => message.role === 'user')
+      .map((message) => sanitizePreview(message.content))
+      .find((message) => message.length >= 12 && !isWeakThreadTitle(message)) ||
+    messages
+      .map((message) => sanitizePreview(message.content))
+      .find((message) => message.length >= 12);
+
+  return sanitizeTitleCandidate(informativeUserMessage || 'New chat') || 'New chat';
+}
+
+function buildTitlePrompt(messages: AssistantThreadMessage[]): string {
+  const transcript = messages
+    .slice(-8)
+    .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${sanitizePreview(message.content)}`)
+    .join('\n');
+
+  return [
+    'Create a short title for this conversation.',
+    'Rules:',
+    '- Use 2 to 6 words.',
+    '- Reflect the overall topic of the conversation, not just the first message.',
+    '- Do not use quotes, punctuation at the end, or filler words like hi/hello/help.',
+    '- Return only the title.',
+    '',
+    'Conversation:',
+    transcript,
+  ].join('\n');
+}
+
+async function generateConversationTitle(messages: AssistantThreadMessage[]): Promise<string> {
+  const fallbackTitle = buildHeuristicThreadTitle(messages);
+
+  try {
+    const generated = await generateGpt5NanoResponse(buildTitlePrompt(messages), {
+      systemPrompt:
+        'You write concise conversation titles. Focus on the main topic across the full chat. Never mention that it is a chat or conversation.',
+      verbosity: 'low',
+      reasoningEffort: 'minimal',
+      maxCompletionTokens: 24,
+    });
+
+    const title = sanitizeTitleCandidate(generated);
+    return title || fallbackTitle;
+  } catch (error: any) {
+    console.warn('[AssistantThreadsRepository] Title generation fallback used', {
+      error: error?.message,
+    });
+    return fallbackTitle;
+  }
 }
 
 function normalizeAttachments(value: any): AssistantAttachment[] {
@@ -201,6 +278,17 @@ export async function listMessages(uid: string, threadId: string, limit: number 
   return snap.docs.map((doc) => normalizeMessage(doc.id, doc.data()));
 }
 
+async function listRecentMessages(uid: string, threadId: string, limit: number = 16): Promise<AssistantThreadMessage[]> {
+  const snap = await messageCollection(uid, threadId)
+    .orderBy('createdAt', 'desc')
+    .limit(Math.min(Math.max(limit, 1), 50))
+    .get();
+
+  return snap.docs
+    .map((doc) => normalizeMessage(doc.id, doc.data()))
+    .reverse();
+}
+
 export async function appendMessages(uid: string, threadId: string, params: {
   threadMode: AssistantThreadMode;
   modelId: string;
@@ -234,6 +322,21 @@ export async function appendMessages(uid: string, threadId: string, params: {
   const userFacingMessages = normalizedMessages.filter((message) => message.role === 'user');
   const firstUserMessage = userFacingMessages[0]?.content || normalizedMessages[0]?.content || '';
   const thread = await getThread(uid, threadId);
+  const existingMessages = thread ? await listRecentMessages(uid, threadId, 16) : [];
+  const titleContextMessages = [
+    ...existingMessages,
+    ...normalizedMessages.map((message, index) =>
+      normalizeMessage(`pending-${index}`, {
+        ...message,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    ),
+  ];
+  const nextTitle =
+    !thread?.messageCount || isWeakThreadTitle(thread.title)
+      ? await generateConversationTitle(titleContextMessages)
+      : thread.title;
 
   batch.set(
     threadRef(uid, threadId),
@@ -241,7 +344,7 @@ export async function appendMessages(uid: string, threadId: string, params: {
       uid,
       mode: params.threadMode,
       modelId: params.modelId,
-      title: thread?.messageCount ? thread.title : deriveTitleFromMessage(firstUserMessage),
+      title: nextTitle || (!thread?.messageCount ? deriveTitleFromMessage(firstUserMessage) : thread?.title || 'New chat'),
       lastMessagePreview: sanitizePreview(normalizedMessages[normalizedMessages.length - 1]?.content || ''),
       messageCount: Number(thread?.messageCount || 0) + normalizedMessages.length,
       attachmentCount:
