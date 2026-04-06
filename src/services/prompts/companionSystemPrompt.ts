@@ -22,28 +22,28 @@ WildMind AI is a professional-grade creative platform offering:
 ## IMAGE GENERATION MODELS
 
 ### Premium Models (with crown icon):
-1. **z-image-turbo** - FREE model (0 credits)
+1. **z-image-turbo** - 4 credits
    - Ultra-fast image generation
    - 1K resolution
    - Type: I2I (Image-to-Image)
    - Perfect for testing and quick generations
 
-2. **Google Nano Banana** (gemini-25-flash-image) - 98 credits
+2. **Google Nano Banana** (gemini-25-flash-image) - 32 credits
    - T2I and I2I capable
    - Fast, high-quality results
    - Created by Google
 
-3. **Google Nano Banana Pro** (google/nano-banana-pro) - 320 credits
+3. **Google Nano Banana Pro** (google/nano-banana-pro) - 120 credits
    - Enhanced version with better quality
-   - Supports 1080p, 2K, and 4K (620 credits)
+   - Supports 1K, 2K, and 4K (240 credits at 4K)
    - T2I and I2I
 
-4. **FLUX Kontext Pro** - 100 credits
+4. **FLUX Kontext Pro** - 64 credits
    - Black Forest Labs model
    - T2I and I2I
    - Excellent for contextual image generation
 
-5. **FLUX Kontext Max** - 180 credits
+5. **FLUX Kontext Max** - 32 credits
    - Premium FLUX model
    - Highest quality results
    - T2I and I2I
@@ -53,28 +53,32 @@ WildMind AI is a professional-grade creative platform offering:
    - Latest FLUX technology
    - T2I only
 
-7. **Imagen 4 Ultra** - 140 credits
+7. **Imagen 4 Ultra** - 48 credits
    - Google's premium model
    - Exceptional quality
    - T2I
 
-8. **Imagen 4** - 100 credits
+8. **Imagen 4** - 32 credits
    - Google AI model
    - Fast and reliable
 
-9. **Imagen 4 Fast** - 60 credits
+9. **Imagen 4 Fast** - 16 credits
    - Quickest Imagen variant
    - Great for rapid iterations
 
 ### Other Image Models:
-- **Flux 2 Pro**: 80 credits (1080p), 160 credits (2K)
+- **Flux 2 Pro**: 24 credits (T2I 1080p), 56 credits (T2I 2K), 36 credits (I2I 1080p), 68 credits (I2I 2K)
 - **Seedream v4 4k**: 80 credits - High-resolution capable
-- **Seedream 4.5**: Latest Seedream version
+- **Seedream 4.5**: 32 credits
 - **FLUX.1 Pro**: Professional-grade results
 - **Runway Gen4 Image**: 120 credits (720p), 180 credits (1080p)
 - **Runway Gen4 Image Turbo**: 60 credits - Fast generation
-- **MiniMax Image-01**: 17 credits - Budget-friendly option
+- **MiniMax Image-01**: 3 credits - Budget-friendly option
 - **Ideogram v3**: 80 credits (turbo), 200 credits (quality)
+- **Qwen Image 2**: 28 credits
+- **Qwen Image 2 Pro**: 60 credits
+- **Recraft v4**: 32 credits
+- **GPT Image 1.5**: 11 credits (low), 40 credits (medium), 109 credits (high/auto)
 
 ---
 
@@ -239,7 +243,7 @@ WildMind AI is a professional-grade creative platform offering:
 
 ### How Credits Work (general):
 - Credits are consumed per generation based on model, resolution, and duration
-- Some models are free (e.g., z-image-turbo during launch); others consume credits as listed above for models/tools
+- Models consume credits based on the current pricing list above.
 - Real-time balance tracking; unused credits may expire per offer rules
 - If a user asks for pricing/plan amounts beyond the launch offer, direct them to the pricing page or support instead of giving numbers
 
@@ -306,7 +310,7 @@ WildMind AI is a professional-grade creative platform offering:
 **"Insufficient Credits"**:
 - Check current balance
 - Reduce image count or resolution
-- Use lower-cost models (z-image-turbo is free!)
+- Use lower-cost models like z-image-turbo, MiniMax Image-01, or Seedream 5 Lite.
 - Upgrade plan if needed
 
 **"Generation Failed"**:
@@ -330,7 +334,7 @@ WildMind AI is a professional-grade creative platform offering:
 ### Model Selection Tips:
 - **Fast Results**: Turbo models, Imagen Fast, z-image-turbo
 - **Best Quality**: FLUX Kontext Max, Imagen Ultra, Kling Master
-- **Budget**: z-image-turbo (free), MiniMax Image-01, Seedream
+- **Budget**: z-image-turbo, MiniMax Image-01, Seedream
 - **Video with Audio**: Veo 3.1 (audio on option)
 - **Image-to-Video**: Runway, Kling, Seedance, Hailuo
 

@@ -7,7 +7,7 @@ import { uploadDataUriToZata } from "../storage/zataUpload";
 
 export const FAL_PRICING_VERSION = "fal-v1";
 
-// Credits conversion: $1 ~= 2000 credits (since $0.05 => 100 credits)
+// Credits conversion helper for legacy cost estimation paths.
 const CREDITS_PER_USD = 2000;
 
 function findCredits(modelName: string): number | null {
@@ -38,8 +38,7 @@ export async function computeFalImageCost(req: Request): Promise<{
     m.includes("seedreamv45") ||
     m.includes("seedream-v4")
   ) {
-    // Matches creditDistribution row:
-    //   modelName: "Bytedance Seedream-4.5", creditsPerGeneration: 100
+    // Matches the creditDistribution row for "Bytedance Seedream-4.5".
     display = "Bytedance Seedream-4.5";
   } else if (
     m.includes("flux-2-pro") ||
@@ -49,10 +48,10 @@ export async function computeFalImageCost(req: Request): Promise<{
     // Flux 2 Pro: Use I2I pricing when images are uploaded, T2I pricing otherwise
     // Resolution determines 1K (1080p) vs 2K
     if (hasUploadedImages) {
-      // I2I pricing: 110 credits for 1K, 190 credits for 2K
+      // I2I pricing uses the dedicated FLUX.2 image-edit rows.
       display = res === "2K" ? "FLUX.2 [pro] I2I 2K" : "FLUX.2 [pro] I2I 1080p";
     } else {
-      // T2I pricing: 80 credits for 1K, 160 credits for 2K
+      // T2I pricing uses the dedicated FLUX.2 text-to-image rows.
       display = res === "2K" ? "FLUX.2 [pro] 2K" : "FLUX.2 [pro] 1080p";
     }
   } else if (m.includes("imagen-4")) {
@@ -74,7 +73,7 @@ export async function computeFalImageCost(req: Request): Promise<{
     if (is4K) {
       display = "Nano banana Pro 4K";
     } else {
-      display = "Nano banana Pro 2K"; // Default to 2K (320 credits) or 1K (320 credits)
+      display = "Nano banana Pro 2K"; // Default shared tier for 1K/2K
     }
   } else {
     // Map Gemini image to our Google rows (choose I2I when uploadedImages provided)
