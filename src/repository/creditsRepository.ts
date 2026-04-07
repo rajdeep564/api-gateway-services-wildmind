@@ -17,6 +17,8 @@ export interface LedgerEntry {
 
 const CREDIT_SERVICE_URL = env.creditServiceUrl;
 
+type CreditServiceHeaders = Record<string, string> | undefined;
+
 // Simple in-memory cache for pricing
 const costCache = new Map<string, { cost: number; expiry: number }>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -399,9 +401,14 @@ export async function validateGeneration(
   }
 }
 
-export async function listInvoices(uid: string): Promise<any[]> {
+export async function listInvoices(
+  uid: string,
+  headers?: CreditServiceHeaders,
+): Promise<any[]> {
   try {
-    const res = await axios.get(`${CREDIT_SERVICE_URL}/billing/invoices/${uid}`);
+    const res = await axios.get(`${CREDIT_SERVICE_URL}/billing/invoices/${uid}`, {
+      headers,
+    });
     if (res.data.success && Array.isArray(res.data.data)) {
       return res.data.data;
     }
@@ -420,9 +427,14 @@ export async function listInvoices(uid: string): Promise<any[]> {
   }
 }
 
-export async function listPayments(uid: string): Promise<any[]> {
+export async function listPayments(
+  uid: string,
+  headers?: CreditServiceHeaders,
+): Promise<any[]> {
   try {
-    const res = await axios.get(`${CREDIT_SERVICE_URL}/billing/payments/${uid}`);
+    const res = await axios.get(`${CREDIT_SERVICE_URL}/billing/payments/${uid}`, {
+      headers,
+    });
     if (res.data.success && Array.isArray(res.data.data)) {
       return res.data.data;
     }

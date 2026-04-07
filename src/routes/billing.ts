@@ -7,8 +7,21 @@ const router = Router();
 
 // Invoices
 router.get('/invoices', requireAuth, billingController.getUserInvoices);
+router.get('/invoices/:invoiceId', requireAuth, billingController.getInvoiceDetail);
 
 // Payment History
 router.get('/payments', requireAuth, billingController.getPaymentHistory);
+
+router.get(
+  '/invoices/:invoiceId/pdf',
+  requireAuth,
+  billingController.downloadInvoicePdf,
+);
+
+router.post(
+  '/validate-gstin',
+  requireAuth,
+  billingController.validateGSTIN,
+);
 
 export default router;

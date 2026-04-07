@@ -5,6 +5,17 @@ import "../types/http";
 const CREDIT_SERVICE_URL =
   process.env.CREDIT_SERVICE_URL || "http://credit-service:3000";
 
+function creditServiceAuthHeaders(
+  req: Request,
+): Record<string, string> | undefined {
+  if (req.verifiedAuthToken) {
+    return { Authorization: `Bearer ${req.verifiedAuthToken}` };
+  }
+  const auth = req.headers.authorization;
+  if (!auth) return undefined;
+  return { Authorization: auth };
+}
+
 /**
  * Proxy requests to credit-service subscriptions endpoints
  */
@@ -24,8 +35,9 @@ export const createSubscription = async (req: Request, res: Response) => {
       {
         userId,
         planCode,
-        ...billingDetails,
+        billingDetails: billingDetails ?? {},
       },
+      { headers: creditServiceAuthHeaders(req) },
     );
 
     res.json(response.data);
@@ -57,6 +69,7 @@ export const getCurrentSubscription = async (req: Request, res: Response) => {
 
     const response = await axios.get(
       `${CREDIT_SERVICE_URL}/subscriptions/me/${userId}`,
+      { headers: creditServiceAuthHeaders(req) },
     );
 
     res.json(response.data);
@@ -76,7 +89,12 @@ export const getCurrentSubscription = async (req: Request, res: Response) => {
           "Get subscription upstream unavailable:",
           error.response?.data || error.message,
         );
-        return res.json({ success: true, data: null });
+        return res.status(503).json({
+          success: false,
+          status: "UNKNOWN",
+          data: null,
+          message: "Subscription status is temporarily unavailable",
+        });
       }
 
       console.error(
@@ -88,7 +106,12 @@ export const getCurrentSubscription = async (req: Request, res: Response) => {
         .json(error.response?.data || { error: "Failed to get subscription" });
     } else {
       console.error("Get subscription error:", error);
-      res.status(500).json({ error: "Failed to get subscription" });
+      res.status(500).json({
+        success: false,
+        status: "UNKNOWN",
+        data: null,
+        message: "Failed to get subscription",
+      });
     }
   }
 };
@@ -109,6 +132,7 @@ export const cancelSubscription = async (req: Request, res: Response) => {
         userId,
         immediate,
       },
+      { headers: creditServiceAuthHeaders(req) },
     );
 
     res.json(response.data);
@@ -147,6 +171,7 @@ export const changePlan = async (req: Request, res: Response) => {
         newPlanCode,
         immediate,
       },
+      { headers: creditServiceAuthHeaders(req) },
     );
 
     res.json(response.data);
@@ -184,6 +209,7 @@ export const verifyPayment = async (req: Request, res: Response) => {
         razorpaySubscriptionId,
         razorpaySignature,
       },
+      { headers: creditServiceAuthHeaders(req) },
     );
 
     res.json(response.data);
@@ -207,8 +233,15 @@ export const verifyPayment = async (req: Request, res: Response) => {
  */
 export const checkExpiry = async (req: Request, res: Response) => {
   try {
+    const adminSecret = process.env.CREDIT_SERVICE_ADMIN_SECRET;
     const response = await axios.post(
       `${CREDIT_SERVICE_URL}/subscriptions/check-expiry`,
+      {},
+      {
+        headers: adminSecret
+          ? { Authorization: `Bearer ${adminSecret}` }
+          : creditServiceAuthHeaders(req),
+      },
     );
 
     res.json(response.data);
