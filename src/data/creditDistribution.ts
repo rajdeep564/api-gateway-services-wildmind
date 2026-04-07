@@ -23,7 +23,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.04,
     overCharge: 0.01,
     userCost: 0.05,
-    creditsPerGeneration: 100,
+    creditsPerGeneration: 32,
     plans: {
       planA: 123.6,
       planB: 247.2,
@@ -38,7 +38,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.08,
     overCharge: 0.01,
     userCost: 0.09,
-    creditsPerGeneration: 180,
+    creditsPerGeneration: 64,
     plans: {
       planA: 68.66666667,
       planB: 137.3333333,
@@ -115,7 +115,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.06,
     overCharge: 0.01,
     userCost: 0.07,
-    creditsPerGeneration: 140,
+    creditsPerGeneration: 48,
     plans: {
       planA: 88.28571429,
       planB: 176.5714286,
@@ -130,7 +130,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.04,
     overCharge: 0.01,
     userCost: 0.05,
-    creditsPerGeneration: 100,
+    creditsPerGeneration: 32,
     plans: {
       planA: 123.6,
       planB: 247.2,
@@ -145,7 +145,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.02,
     overCharge: 0.01,
     userCost: 0.03,
-    creditsPerGeneration: 60,
+    creditsPerGeneration: 16,
     plans: {
       planA: 206,
       planB: 412,
@@ -387,7 +387,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.0035,
     overCharge: 0.005,
     userCost: 0.0085,
-    creditsPerGeneration: 17,
+    creditsPerGeneration: 3,
     plans: {
       planA: 727.0588235,
       planB: 1454.117647,
@@ -402,7 +402,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.035,
     overCharge: 0.01,
     userCost: 0.045,
-    creditsPerGeneration: 90,
+    creditsPerGeneration: 28,
     plans: {
       planA: 137.3333333,
       planB: 274.6666667,
@@ -417,7 +417,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.075,
     overCharge: 0.01,
     userCost: 0.085,
-    creditsPerGeneration: 170,
+    creditsPerGeneration: 60,
     plans: {
       planA: 72.70588235,
       planB: 145.4117647,
@@ -432,7 +432,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.039,
     overCharge: 0.01,
     userCost: 0.049,
-    creditsPerGeneration: 98,
+    creditsPerGeneration: 32,
     plans: {
       planA: 126.122449,
       planB: 252.244898,
@@ -447,7 +447,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.039,
     overCharge: 0.01,
     userCost: 0.049,
-    creditsPerGeneration: 98,
+    creditsPerGeneration: 32,
     plans: {
       planA: 126.122449,
       planB: 252.244898,
@@ -462,7 +462,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.067,
     overCharge: 0.01,
     userCost: 0.077,
-    creditsPerGeneration: 154,
+    creditsPerGeneration: 54,
     plans: {
       planA: 80.25974026,
       planB: 160.5194805,
@@ -477,7 +477,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.101,
     overCharge: 0.01,
     userCost: 0.111,
-    creditsPerGeneration: 222,
+    creditsPerGeneration: 81,
     plans: {
       planA: 55.67567568,
       planB: 111.3513514,
@@ -492,7 +492,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.151,
     overCharge: 0.01,
     userCost: 0.161,
-    creditsPerGeneration: 322,
+    creditsPerGeneration: 121,
     plans: {
       planA: 38.38509317,
       planB: 76.77018634,
@@ -1004,7 +1004,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.04,
     overCharge: 0.01,
     userCost: 0.05,
-    creditsPerGeneration: 100,
+    creditsPerGeneration: 32,
     plans: {
       planA: 123.6,
       planB: 247.2,
@@ -1020,7 +1020,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.08,
     overCharge: 0.01,
     userCost: 0.09,
-    creditsPerGeneration: 180,
+    creditsPerGeneration: 64,
     plans: {
       planA: 68.66666667,
       planB: 137.3333333,
@@ -1036,7 +1036,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.16,
     overCharge: 0.01,
     userCost: 0.17,
-    creditsPerGeneration: 340,
+    creditsPerGeneration: 128,
     plans: {
       planA: 36.35294118,
       planB: 72.70588235,
@@ -1051,7 +1051,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.32,
     overCharge: 0.01,
     userCost: 0.33,
-    creditsPerGeneration: 660,
+    creditsPerGeneration: 256,
     plans: {
       planA: 18.72727273,
       planB: 37.45454545,
@@ -1066,7 +1066,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 1.36,
     overCharge: 0.01,
     userCost: 1.37,
-    creditsPerGeneration: 2740,
+    creditsPerGeneration: 1087,
     plans: {
       planA: 4.510948905,
       planB: 9.02189781,
@@ -1112,7 +1112,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.04,
     overCharge: 0.01,
     userCost: 0.05,
-    creditsPerGeneration: 100,
+    creditsPerGeneration: 32,
     plans: {
       planA: 123.6,
       planB: 247.2,
@@ -1157,7 +1157,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.00049,
     overCharge: 0.01501,
     userCost: 0.0155,
-    creditsPerGeneration: 31,
+    creditsPerGeneration: 1,
     plans: {
       planA: 398.7096774,
       planB: 797.4193548,
@@ -1219,7 +1219,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.1,
     overCharge: 0.01,
     userCost: 0.11,
-    creditsPerGeneration: 220,
+    creditsPerGeneration: 40,
     plans: {
       planA: 56.18181818,
       planB: 112.3636364,
@@ -1234,7 +1234,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.2,
     overCharge: 0.01,
     userCost: 0.21,
-    creditsPerGeneration: 420,
+    creditsPerGeneration: 80,
     plans: {
       planA: 29.42857143,
       planB: 58.85714286,
@@ -1249,7 +1249,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.4,
     overCharge: 0.01,
     userCost: 0.41,
-    creditsPerGeneration: 820,
+    creditsPerGeneration: 160,
     plans: {
       planA: 15.07317073,
       planB: 30.14634146,
@@ -1264,7 +1264,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.8,
     overCharge: 0.01,
     userCost: 0.81,
-    creditsPerGeneration: 1620,
+    creditsPerGeneration: 320,
     plans: {
       planA: 7.62962963,
       planB: 15.25925926,
@@ -1279,7 +1279,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 1.6,
     overCharge: 0.01,
     userCost: 1.61,
-    creditsPerGeneration: 3220,
+    creditsPerGeneration: 640,
     plans: {
       planA: 3.838509317,
       planB: 7.677018634,
@@ -1294,7 +1294,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 3.2,
     overCharge: 0.01,
     userCost: 3.21,
-    creditsPerGeneration: 6420,
+    creditsPerGeneration: 1280,
     plans: {
       planA: 1.925233645,
       planB: 3.85046729,
@@ -1310,7 +1310,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.034, // approximate based on 90 credits
     overCharge: 0.011,
     userCost: 0.045,
-    creditsPerGeneration: 90,
+    creditsPerGeneration: 28,
     plans: {
       planA: 137.33333333333334,
       planB: 274.6666666666667,
@@ -2703,6 +2703,36 @@ export const creditDistributionData: ModelCreditInfo[] = [
       free: 3.074626866,
     },
   },
+  {
+    srNo: 117.2,
+    modelName: "Veo 3.1 Lite FFLF2V 8s 720p",
+    priceToPay: 0.4,
+    overCharge: 0.01,
+    userCost: 0.41,
+    creditsPerGeneration: 820,
+    plans: {
+      planA: 15.07317073,
+      planB: 30.14634146,
+      planC: 75.36585366,
+      planD: 241.1707317,
+      free: 5.024390244,
+    },
+  },
+  {
+    srNo: 117.3,
+    modelName: "Veo 3.1 Lite FFLF2V 8s 1080p",
+    priceToPay: 0.64,
+    overCharge: 0.01,
+    userCost: 0.65,
+    creditsPerGeneration: 1300,
+    plans: {
+      planA: 9.507692308,
+      planB: 19.01538462,
+      planC: 47.53846154,
+      planD: 152.1230769,
+      free: 3.169230769,
+    },
+  },
 
   {
     srNo: 114,
@@ -3372,7 +3402,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.03,
     overCharge: 0.01,
     userCost: 0.04,
-    creditsPerGeneration: 80,
+    creditsPerGeneration: 24,
     plans: {
       planA: 154.5,
       planB: 309,
@@ -3387,7 +3417,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.045,
     overCharge: 0.01,
     userCost: 0.055,
-    creditsPerGeneration: 110,
+    creditsPerGeneration: 36,
     plans: {
       planA: 112.3636364,
       planB: 224.7272727,
@@ -3402,7 +3432,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.07,
     overCharge: 0.01,
     userCost: 0.08,
-    creditsPerGeneration: 160,
+    creditsPerGeneration: 56,
     plans: {
       planA: 77.25,
       planB: 154.5,
@@ -3417,7 +3447,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.085,
     overCharge: 0.01,
     userCost: 0.095,
-    creditsPerGeneration: 190,
+    creditsPerGeneration: 68,
     plans: {
       planA: 65.05263158,
       planB: 130.1052632,
@@ -3447,7 +3477,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.15,
     overCharge: 0.01,
     userCost: 0.16,
-    creditsPerGeneration: 320,
+    creditsPerGeneration: 120,
     plans: {
       planA: 38.625,
       planB: 77.25,
@@ -3462,7 +3492,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.15,
     overCharge: 0.01,
     userCost: 0.16,
-    creditsPerGeneration: 320,
+    creditsPerGeneration: 120,
     plans: {
       planA: 38.625,
       planB: 77.25,
@@ -3477,7 +3507,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.3,
     overCharge: 0.01,
     userCost: 0.31,
-    creditsPerGeneration: 620,
+    creditsPerGeneration: 240,
     plans: {
       planA: 19.93548387,
       planB: 39.87096774,
@@ -3492,7 +3522,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.003,
     overCharge: 0.01,
     userCost: 0.013,
-    creditsPerGeneration: 26,
+    creditsPerGeneration: 4,
     plans: {
       planA: 475.3846154,
       planB: 950.7692308,
@@ -3507,7 +3537,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.003,
     overCharge: 0.01,
     userCost: 0.013,
-    creditsPerGeneration: 26,
+    creditsPerGeneration: 8,
     plans: {
       planA: 190.1538462,
       planB: 380.3076923,
@@ -3522,7 +3552,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.005,
     overCharge: 0.01,
     userCost: 0.015,
-    creditsPerGeneration: 30,
+    creditsPerGeneration: 4,
     plans: {
       planA: 412,
       planB: 824,
@@ -3777,7 +3807,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.00064,
     overCharge: 0.00436,
     userCost: 0.005,
-    creditsPerGeneration: 10,
+    creditsPerGeneration: 1,
     plans: {
       planA: 1236,
       planB: 2472,
@@ -3793,7 +3823,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.00032,
     overCharge: 0.00468,
     userCost: 0.005,
-    creditsPerGeneration: 10,
+    creditsPerGeneration: 1,
     plans: {
       planA: 1236,
       planB: 2472,
@@ -3809,13 +3839,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.003,
     overCharge: 0.01,
     userCost: 0.013,
-    creditsPerGeneration: 25,
+    creditsPerGeneration: 1,
     plans: {
-      planA: 475.3846154,
-      planB: 950.7692308,
-      planC: 2376.923077,
-      planD: 7606.153846,
-      free: 76.92307692,
+      planA: 3090,
+      planB: 6180,
+      planC: 15450,
+      planD: 49440,
+      free: 500,
     },
   },
   {
@@ -3840,7 +3870,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.04,
     overCharge: 0.01,
     userCost: 0.05,
-    creditsPerGeneration: 100,
+    creditsPerGeneration: 32,
     plans: {
       planA: 123.6,
       planB: 247.2,
@@ -4026,7 +4056,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.136,
     overCharge: 0.01,
     userCost: 0.146,
-    creditsPerGeneration: 292,
+    creditsPerGeneration: 109,
     plans: {
       planA: 42.32876712,
       planB: 84.65753425,
@@ -4041,7 +4071,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.013,
     overCharge: 0.01,
     userCost: 0.23,
-    creditsPerGeneration: 46,
+    creditsPerGeneration: 11,
     plans: {
       planA: 268.6956522,
       planB: 537.3913043,
@@ -4056,7 +4086,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.05,
     overCharge: 0.01,
     userCost: 0.06,
-    creditsPerGeneration: 120,
+    creditsPerGeneration: 40,
     plans: {
       planA: 103,
       planB: 206,
@@ -4071,7 +4101,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.136,
     overCharge: 0.01,
     userCost: 0.146,
-    creditsPerGeneration: 292,
+    creditsPerGeneration: 109,
     plans: {
       planA: 42.32876712,
       planB: 84.65753425,
@@ -4482,13 +4512,13 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.03,
     overCharge: 0.01,
     userCost: 0.04,
-    creditsPerGeneration: 80,
+    creditsPerGeneration: 24,
     plans: {
-      planA: 154.5,
-      planB: 309,
-      planC: 772.5,
-      planD: 2472,
-      free: 25,
+      planA: 515,
+      planB: 1030,
+      planC: 2575,
+      planD: 8240,
+      free: 83.33333333,
     },
   },
 

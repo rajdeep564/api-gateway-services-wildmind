@@ -2329,7 +2329,7 @@ async function generate(
             if ((payload as any).num_images != null) {
               const nImg = Number((payload as any).num_images);
               if (Number.isFinite(nImg))
-                input.num_images = Math.max(1, Math.min(10, Math.round(nImg)));
+                input.num_images = Math.max(1, Math.min(15, Math.round(nImg)));
             }
             if ((payload as any).max_images != null) {
               const maxImg = Number((payload as any).max_images);
@@ -2395,14 +2395,14 @@ async function generate(
                     500,
                   );
                 }
-                // Schema: if >10 images are sent, only the last 10 will be used
-                const lastTen = refs.slice(-10);
-                input.image_urls = lastTen;
+                // Seedream 4.5 supports up to 14 input references.
+                const lastFourteen = refs.slice(-14);
+                input.image_urls = lastFourteen;
                 console.log(
                   "[falService] ✅ Seedream 4.5: Using Zata URLs for image-to-image:",
                   {
-                    urlCount: lastTen.length,
-                    urls: lastTen.map(
+                    urlCount: lastFourteen.length,
+                    urls: lastFourteen.map(
                       (url: string) => url.substring(0, 80) + "...",
                     ),
                   },
@@ -7537,7 +7537,12 @@ async function klingV3Submit(
     providerTaskId: request_id,
     generate_audio: body.generate_audio !== false,
     duration,
-    aspect_ratio: body.aspect_ratio ?? "16:9",
+    aspect_ratio:
+      mode === "text-to-video"
+        ? body.aspect_ratio ?? "16:9"
+        : typeof body.aspect_ratio === "string"
+          ? body.aspect_ratio
+          : null,
   } as any);
 
   return { requestId: request_id, historyId, model, status: "submitted" };
@@ -7821,6 +7826,120 @@ export const falQueueService = {
       resolution,
       aspect_ratio: aspectRatio,
     } as any);
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  },
+  async veo31LiteFirstLastSubmit(
+    uid: string,
+    body: any,
+  ): Promise<SubmitReturn> {
+    const falKey = env.falKey as string;
+    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+
+    let firstUrl =
+      body.first_frame_url || body.start_image_url || body.image_url;
+    let lastUrl = body.last_frame_url || body.last_frame_image_url;
+
+    const singleFrameUrl = firstUrl || lastUrl;
+    if (!singleFrameUrl) {
+      throw new ApiError(
+        "At least one frame image is required (first_frame_url or last_frame_url)",
+        400,
+      );
+    }
+
+    // If only one frame is provided, route through Lite I2V.
+    if (!firstUrl || !lastUrl) {
+      return this.veo31LiteI2vSubmit(uid, {
+        ...body,
+        image_url: singleFrameUrl,
+      });
+    }
+
+    const model = "fal-ai/veo3.1/lite/first-last-frame-to-video";
+    const resolution = body.resolution || "720p";
+    if (resolution === "1080p") {
+      const requestedDuration =
+        typeof body.duration === "number"
+          ? `${body.duration}s`
+          : body.duration || "8s";
+      if (requestedDuration !== "8s") {
+        throw new ApiError(
+          "Veo 3.1 Lite 1080p output requires 8s duration",
+          400,
+        );
+      }
+    }
+
+    const aspectRatio = normalizeVeo31AspectRatio(body?.aspect_ratio);
+    const duration = "8s";
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt: body.prompt,
+      model,
+      isPublic: body.isPublic,
+      duration,
+      resolution,
+      aspect_ratio: aspectRatio,
+      generate_audio: true,
+    } as any);
+
+    const creator = await authRepository.getUserById(uid);
+    const username = creator?.username || uid;
+    const keyPrefix = `users/${username}/input/${historyId}`;
+
+    try {
+      if (typeof firstUrl === "string" && /^data:/i.test(firstUrl)) {
+        const stored = await uploadDataUriToZata({
+          dataUri: firstUrl,
+          keyPrefix,
+          fileName: "input-1",
+        });
+        firstUrl = stored.publicUrl;
+      }
+      if (typeof lastUrl === "string" && /^data:/i.test(lastUrl)) {
+        const stored = await uploadDataUriToZata({
+          dataUri: lastUrl,
+          keyPrefix,
+          fileName: "input-2",
+        });
+        lastUrl = stored.publicUrl;
+      }
+    } catch (e: any) {
+      console.error(
+        "[falService.veo31LiteFirstLastSubmit] Failed to upload images to Zata:",
+        e,
+      );
+      throw new ApiError(
+        "Failed to upload images: " + (e?.message || String(e)),
+        500,
+      );
+    }
+
+    await persistInputImagesFromUrls(uid, historyId, [firstUrl, lastUrl]);
+
+    const { request_id } = await fal.queue.submit(model, {
+      input: {
+        prompt: body.prompt,
+        aspect_ratio: aspectRatio,
+        resolution,
+        negative_prompt: body.negative_prompt,
+        seed: body.seed,
+        auto_fix: body.auto_fix ?? true,
+        first_frame_url: firstUrl,
+        last_frame_url: lastUrl,
+      },
+    } as any);
+
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      generate_audio: true,
+      duration,
+      resolution,
+      aspect_ratio: aspectRatio,
+    } as any);
+
     return { requestId: request_id, historyId, model, status: "submitted" };
   },
   async veo31ReferenceToVideoSubmit(

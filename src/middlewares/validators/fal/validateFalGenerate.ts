@@ -109,8 +109,8 @@ export const validateFalGenerate = [
     ),
   body("safety_tolerance").optional().isIn(["1", "2", "3", "4", "5"]),
   body("enable_safety_checker").optional().isBoolean(),
-  body("n").optional().isInt({ min: 1, max: 10 }),
-  body("num_images").optional().isInt({ min: 1, max: 10 }),
+  body("n").optional().isInt({ min: 1, max: 15 }),
+  body("num_images").optional().isInt({ min: 1, max: 15 }),
   body("uploadedImages").optional().isArray(),
   body("output_format").optional().isIn(["jpeg", "png", "webp"]),
   body("resolution").optional().isIn(["1K", "2K", "4K"]),
@@ -418,6 +418,50 @@ export const validateFalVeo31LiteImageToVideo = [
     const errors = validationResult(req);
     if (!errors.isEmpty())
       return next(new ApiError("Validation failed", 400, errors.array()));
+
+    const duration = String(req.body?.duration || "8s").toLowerCase();
+    const resolution = String(req.body?.resolution || "720p").toLowerCase();
+    if (resolution === "1080p" && duration !== "8s") {
+      return next(
+        new ApiError("Veo 3.1 Lite 1080p output requires 8s duration", 400),
+      );
+    }
+    next();
+  },
+];
+
+export const validateFalVeo31LiteFirstLast = [
+  body("prompt").isString().notEmpty(),
+  body("first_frame_url").optional().isString(),
+  body("last_frame_url").optional().isString(),
+  body("start_image_url").optional().isString(),
+  body("last_frame_image_url").optional().isString(),
+  body("image_url").optional().isString(),
+  body("aspect_ratio").optional().isIn(["auto", "16:9", "9:16"]),
+  body("negative_prompt").optional().isString(),
+  body("seed").optional().isInt(),
+  body("auto_fix").optional().isBoolean(),
+  body("resolution").optional().isIn(["720p", "1080p"]),
+  body("duration").optional().isIn(["4s", "6s", "8s"]),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty())
+      return next(new ApiError("Validation failed", 400, errors.array()));
+
+    const firstFrame =
+      req.body?.first_frame_url ||
+      req.body?.start_image_url ||
+      req.body?.image_url;
+    const lastFrame =
+      req.body?.last_frame_url || req.body?.last_frame_image_url;
+    if (!firstFrame && !lastFrame) {
+      return next(
+        new ApiError(
+          "At least one frame image is required (first_frame_url or last_frame_url)",
+          400,
+        ),
+      );
+    }
 
     const duration = String(req.body?.duration || "8s").toLowerCase();
     const resolution = String(req.body?.resolution || "720p").toLowerCase();
@@ -890,6 +934,8 @@ export const validateFalVeo31LiteTextToVideoSubmit =
 export const validateFalVeoImageToVideoSubmit = validateFalVeoImageToVideo;
 export const validateFalVeo31LiteImageToVideoSubmit =
   validateFalVeo31LiteImageToVideo;
+export const validateFalVeo31LiteFirstLastSubmit =
+  validateFalVeo31LiteFirstLast;
 // Allow 4s/6s/8s for fast I2V and coerce numeric durations to the expected string format
 export const validateFalVeoImageToVideoFastSubmit = [
   ...validateFalVeoImageToVideoFast,

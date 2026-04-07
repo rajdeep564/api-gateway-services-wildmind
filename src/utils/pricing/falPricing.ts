@@ -7,7 +7,7 @@ import { uploadDataUriToZata } from "../storage/zataUpload";
 
 export const FAL_PRICING_VERSION = "fal-v1";
 
-// Credits conversion: $1 ~= 2000 credits (since $0.05 => 100 credits)
+// Credits conversion helper for legacy cost estimation paths.
 const CREDITS_PER_USD = 2000;
 
 function findCredits(modelName: string): number | null {
@@ -17,9 +17,7 @@ function findCredits(modelName: string): number | null {
   return row?.creditsPerGeneration ?? null;
 }
 
-export async function computeFalImageCost(
-  req: Request,
-): Promise<{
+export async function computeFalImageCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -40,8 +38,7 @@ export async function computeFalImageCost(
     m.includes("seedreamv45") ||
     m.includes("seedream-v4")
   ) {
-    // Matches creditDistribution row:
-    //   modelName: "Bytedance Seedream-4.5", creditsPerGeneration: 100
+    // Matches the creditDistribution row for "Bytedance Seedream-4.5".
     display = "Bytedance Seedream-4.5";
   } else if (
     m.includes("flux-2-pro") ||
@@ -51,10 +48,10 @@ export async function computeFalImageCost(
     // Flux 2 Pro: Use I2I pricing when images are uploaded, T2I pricing otherwise
     // Resolution determines 1K (1080p) vs 2K
     if (hasUploadedImages) {
-      // I2I pricing: 110 credits for 1K, 190 credits for 2K
+      // I2I pricing uses the dedicated FLUX.2 image-edit rows.
       display = res === "2K" ? "FLUX.2 [pro] I2I 2K" : "FLUX.2 [pro] I2I 1080p";
     } else {
-      // T2I pricing: 80 credits for 1K, 160 credits for 2K
+      // T2I pricing uses the dedicated FLUX.2 text-to-image rows.
       display = res === "2K" ? "FLUX.2 [pro] 2K" : "FLUX.2 [pro] 1080p";
     }
   } else if (m.includes("imagen-4")) {
@@ -76,7 +73,7 @@ export async function computeFalImageCost(
     if (is4K) {
       display = "Nano banana Pro 4K";
     } else {
-      display = "Nano banana Pro 2K"; // Default to 2K (320 credits) or 1K (320 credits)
+      display = "Nano banana Pro 2K"; // Default shared tier for 1K/2K
     }
   } else {
     // Map Gemini image to our Google rows (choose I2I when uploadedImages provided)
@@ -95,9 +92,7 @@ export async function computeFalImageCost(
   };
 }
 
-export async function computeFalOutpaintCost(
-  req: Request,
-): Promise<{
+export async function computeFalOutpaintCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -254,6 +249,11 @@ function resolveVeo31LiteDisplay(
   return `Veo 3.1 Lite ${kind === "t2v" ? "T2V" : "I2V"} 8s 720p`;
 }
 
+function resolveVeo31LiteFirstLastDisplay(resolution?: string): string {
+  const res = String(resolution || "720p").toLowerCase();
+  return `Veo 3.1 Lite FFLF2V 8s ${res === "1080p" ? "1080p" : "720p"}`;
+}
+
 export async function computeFalVeoTtvSubmitCost(
   req: Request,
   isFast: boolean,
@@ -345,9 +345,7 @@ export async function computeFalVeo31I2vSubmitCost(
   };
 }
 
-export async function computeFalVeo31LiteTtvSubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalVeo31LiteTtvSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -368,9 +366,7 @@ export async function computeFalVeo31LiteTtvSubmitCost(
   };
 }
 
-export async function computeFalVeo31LiteI2vSubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalVeo31LiteI2vSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -391,10 +387,33 @@ export async function computeFalVeo31LiteI2vSubmitCost(
   };
 }
 
-// Sora 2 pricing
-export async function computeFalSora2I2vSubmitCost(
+export async function computeFalVeo31LiteFirstLastSubmitCost(
   req: Request,
 ): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  const { resolution } = req.body || {};
+  const display = resolveVeo31LiteFirstLastDisplay(resolution);
+  const base = findCredits(display);
+  if (base == null)
+    throw new Error("Unsupported FAL Veo 3.1 Lite FFLF2V pricing");
+  return {
+    cost: Math.ceil(base),
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: display,
+      duration: "8s",
+      resolution: String(resolution || "720p").toLowerCase(),
+      mode: "fflf2v",
+      generate_audio: true,
+    },
+  };
+}
+
+// Sora 2 pricing
+export async function computeFalSora2I2vSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -413,9 +432,7 @@ export async function computeFalSora2I2vSubmitCost(
   };
 }
 
-export async function computeFalSora2ProI2vSubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalSora2ProI2vSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -435,9 +452,7 @@ export async function computeFalSora2ProI2vSubmitCost(
 }
 
 // Sora 2 T2V pricing (same credits as I2V)
-export async function computeFalSora2T2vSubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalSora2T2vSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -456,9 +471,7 @@ export async function computeFalSora2T2vSubmitCost(
   };
 }
 
-export async function computeFalSora2ProT2vSubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalSora2ProT2vSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -500,9 +513,7 @@ function computeLtxCredits(
   };
 }
 
-export async function computeFalLtxV2ProI2vSubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalLtxV2ProI2vSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -510,9 +521,7 @@ export async function computeFalLtxV2ProI2vSubmitCost(
   return computeLtxCredits(req, "Pro");
 }
 
-export async function computeFalLtxV2FastI2vSubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalLtxV2FastI2vSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -521,9 +530,7 @@ export async function computeFalLtxV2FastI2vSubmitCost(
 }
 
 // Kling o1 First/Last Frame to Video pricing
-export async function computeFalKlingO1SubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalKlingO1SubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -634,9 +641,7 @@ export async function computeFalKlingV3StandardI2vSubmitCost(
   );
 }
 
-export async function computeFalKlingV3ProT2vSubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalKlingV3ProT2vSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -644,9 +649,7 @@ export async function computeFalKlingV3ProT2vSubmitCost(
   return buildKlingV3PricingRecord("pro", req.body?.duration, req.body || {});
 }
 
-export async function computeFalKlingV3ProI2vSubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalKlingV3ProI2vSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -654,9 +657,7 @@ export async function computeFalKlingV3ProI2vSubmitCost(
   return buildKlingV3PricingRecord("pro", req.body?.duration, req.body || {});
 }
 
-export async function computeFalKling26ProT2vSubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalKling26ProT2vSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -679,9 +680,7 @@ export async function computeFalKling26ProT2vSubmitCost(
   };
 }
 
-export async function computeFalKling26ProI2vSubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalKling26ProI2vSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -705,18 +704,14 @@ export async function computeFalKling26ProI2vSubmitCost(
 }
 
 // LTX V2 pricing (Text-to-Video) mirrors I2V
-export async function computeFalLtxV2ProT2vSubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalLtxV2ProT2vSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
 }> {
   return computeLtxCredits(req, "Pro");
 }
-export async function computeFalLtxV2FastT2vSubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalLtxV2FastT2vSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -725,9 +720,7 @@ export async function computeFalLtxV2FastT2vSubmitCost(
 }
 
 // Sora 2 Video-to-Video Remix pricing: infer from source video history
-export async function computeFalSora2RemixSubmitCost(
-  req: Request,
-): Promise<{
+export async function computeFalSora2RemixSubmitCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -801,6 +794,8 @@ export function computeFalVeoCostFromModel(
     display = resolveVeo31LiteDisplay("t2v", meta?.duration, meta?.resolution);
   else if (normalized === "fal-ai/veo3.1/lite/image-to-video")
     display = resolveVeo31LiteDisplay("i2v", meta?.duration, meta?.resolution);
+  else if (normalized === "fal-ai/veo3.1/lite/first-last-frame-to-video")
+    display = resolveVeo31LiteFirstLastDisplay(meta?.resolution);
   else if (normalized === "fal-ai/veo3.1/fast") display = "Veo 3.1 Fast T2V 8s";
   else if (normalized === "fal-ai/veo3.1/image-to-video") {
     // Handle duration and audio flag for Veo 3.1 I2V (image-to-video)
@@ -995,9 +990,7 @@ export function computeFalVeoCostFromModel(
 }
 
 // Image utilities pricing
-export async function computeFalImage2SvgCost(
-  _req: Request,
-): Promise<{
+export async function computeFalImage2SvgCost(_req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -1012,9 +1005,7 @@ export async function computeFalImage2SvgCost(
   };
 }
 
-export async function computeFalRecraftVectorizeCost(
-  _req: Request,
-): Promise<{
+export async function computeFalRecraftVectorizeCost(_req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -1030,9 +1021,7 @@ export async function computeFalRecraftVectorizeCost(
   };
 }
 
-export async function computeFalQwenMultipleAnglesCost(
-  req: Request,
-): Promise<{
+export async function computeFalQwenMultipleAnglesCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -1050,9 +1039,7 @@ export async function computeFalQwenMultipleAnglesCost(
   };
 }
 
-export async function computeFalBriaGenfillCost(
-  req: Request,
-): Promise<{
+export async function computeFalBriaGenfillCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -1075,9 +1062,7 @@ export async function computeFalBriaGenfillCost(
 
 // SeedVR2 Video Upscaler dynamic pricing
 // Rule: $0.001 per megapixel of upscaled video data (width x height x frames)
-export async function computeFalSeedVrUpscaleCost(
-  req: Request,
-): Promise<{
+export async function computeFalSeedVrUpscaleCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -1238,9 +1223,7 @@ export async function computeFalSeedVrUpscaleCost(
 }
 
 // BiRefNet v2 Background Removal pricing: similar to SeedVR (per output megapixel)
-export async function computeFalBirefnetVideoCost(
-  req: Request,
-): Promise<{
+export async function computeFalBirefnetVideoCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -1383,11 +1366,9 @@ export async function computeFalBirefnetVideoCost(
   };
 }
 
-// Topaz Image Upscaler dynamic pricing
-// Rule: 70 credits per output megapixel (width x height / 1e6)
-export async function computeFalTopazUpscaleImageCost(
-  req: Request,
-): Promise<{
+// Topaz Image Upscaler tier pricing
+// Rule: <=24MP => 64, <=48MP => 128, <=96MP => 256, <=512MP (and above) => 1087
+export async function computeFalTopazUpscaleImageCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -1422,8 +1403,16 @@ export async function computeFalTopazUpscaleImageCost(
   const outW = Math.max(1, Math.round(inW * factor));
   const outH = Math.max(1, Math.round(inH * factor));
   const megapixels = (outW * outH) / 1_000_000;
-  const creditsPerMp = 70;
-  const credits = Math.max(1, Math.ceil(megapixels * creditsPerMp));
+  const tier =
+    megapixels <= 24
+      ? "24MP"
+      : megapixels <= 48
+        ? "48MP"
+        : megapixels <= 96
+          ? "96MP"
+          : "512MP";
+  const credits =
+    tier === "24MP" ? 64 : tier === "48MP" ? 128 : tier === "96MP" ? 256 : 1087;
   return {
     cost: credits,
     pricingVersion: FAL_PRICING_VERSION,
@@ -1431,7 +1420,7 @@ export async function computeFalTopazUpscaleImageCost(
       model: "fal-ai/topaz/upscale/image",
       input: { width: inW, height: inH },
       output: { width: outW, height: outH },
-      pricing: { megapixels, creditsPerMp, credits },
+      pricing: { megapixels, tier, credits },
       upscale_factor: factor,
       topaz_model: body.model,
     },
@@ -1439,11 +1428,9 @@ export async function computeFalTopazUpscaleImageCost(
 }
 
 // SeedVR Image Upscaler (factor-only pricing)
-// Rule: 4 credits per output megapixel (width x height / 1e6), rounded up.
+// Rule: 1 credit per output megapixel (width x height / 1e6), rounded up.
 // NOTE: target_resolution-based upscaling is explicitly forbidden for this integration.
-export async function computeFalSeedVrUpscaleImageCost(
-  req: Request,
-): Promise<{
+export async function computeFalSeedVrUpscaleImageCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -1495,7 +1482,7 @@ export async function computeFalSeedVrUpscaleImageCost(
   const outH = Math.max(1, Math.round(inH * factor));
 
   const megapixels = (outW * outH) / 1_000_000;
-  const creditsPerMp = 4;
+  const creditsPerMp = 1;
   const credits = Math.max(1, Math.ceil(megapixels * creditsPerMp));
 
   return {
@@ -1515,9 +1502,7 @@ export async function computeFalSeedVrUpscaleImageCost(
 }
 
 // ElevenLabs TTS pricing based on character count
-export async function computeFalElevenTtsCost(
-  req: Request,
-): Promise<{
+export async function computeFalElevenTtsCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -1560,9 +1545,7 @@ export async function computeFalElevenTtsCost(
 }
 
 // ElevenLabs Dialogue pricing based on total character count across all inputs
-export async function computeFalElevenDialogueCost(
-  req: Request,
-): Promise<{
+export async function computeFalElevenDialogueCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -1660,9 +1643,7 @@ export async function computeFalChatterboxMultilingualCost(
 // Average word length is ~5 characters, so ~12.5 characters per second
 // Based on actual testing, Maya TTS generates audio at approximately 15 characters per second
 // We use 15 characters per second for more accurate estimation
-export async function computeFalMayaTtsCost(
-  req: Request,
-): Promise<{
+export async function computeFalMayaTtsCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;
@@ -1692,9 +1673,7 @@ export async function computeFalMayaTtsCost(
 }
 
 // ElevenLabs SFX pricing based on duration_seconds (6 credits per second)
-export async function computeFalElevenSfxCost(
-  req: Request,
-): Promise<{
+export async function computeFalElevenSfxCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
   meta: Record<string, any>;

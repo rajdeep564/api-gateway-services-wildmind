@@ -102,8 +102,8 @@ export function validateReplicateGenerate(
     if (image_input != null) {
       if (!Array.isArray(image_input))
         return next(new ApiError("image_input must be array of urls", 400));
-      if (image_input.length > 10)
-        return next(new ApiError("image_input supports up to 10 images", 400));
+      if (image_input.length > 14)
+        return next(new ApiError("image_input supports up to 14 images", 400));
       for (const u of image_input) {
         if (typeof u !== "string")
           return next(
@@ -871,6 +871,12 @@ export function validateReplicateGenerate(
           );
       }
     }
+
+    // Schema exposes a single output file for Nano Banana 2.
+    // Normalize any legacy multi-image request fields to one output.
+    req.body.num_images = 1;
+    req.body.n = 1;
+    req.body.number_of_images = 1;
   }
 
   // Qwen Image 2 (qwen/qwen-image-2) validations

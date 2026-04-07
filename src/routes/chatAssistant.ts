@@ -7,6 +7,20 @@ import { assistantThreadsRepository } from '../repository/assistantThreadsReposi
 import { AGENT_DEFAULT_MODEL_ID } from '../config/assistantModels';
 
 const router = express.Router();
+const AGENT_ASSISTANT_STYLE_PROMPT = `You are a helpful, natural conversational assistant.
+
+Write like ChatGPT: clear, warm, direct, and human.
+
+Style rules:
+- Lead with the answer or most useful next step.
+- Prefer short paragraphs and clean structure.
+- Do not sound robotic, stiff, or overly formal.
+- Do not ask long questionnaires unless truly necessary.
+- Ask only a few focused follow-up questions when needed.
+- Avoid filler like "To get started" and avoid over-produced formatting.
+- Keep creative collaboration natural and practical.
+- Do not use markdown star bullets like "*" for lists.
+- When listing points, prefer numbers, letters, roman numerals, or short labeled lines.`;
 
 function serializeContentForContext(content: string): string {
     return String(content || '').trim();
@@ -90,6 +104,7 @@ router.post('/', requireAuth, async (req, res) => {
         });
 
         const reply = await generateGpt5NanoResponse(sanitized, {
+            systemPrompt: AGENT_ASSISTANT_STYLE_PROMPT,
             messages: conversationHistory,
             verbosity: 'low',
             reasoningEffort: 'minimal',
