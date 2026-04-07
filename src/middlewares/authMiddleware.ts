@@ -188,6 +188,7 @@ async function verifyTokenAndAttach(req: Request, res: Response, next: NextFunct
             }
             (req as any).uid = cached.uid;
             (req as any).authMethod = "cached";
+            req.verifiedAuthToken = token;
             return next();
           }
         } else {
@@ -587,6 +588,7 @@ async function verifyTokenAndAttach(req: Request, res: Response, next: NextFunct
     // Set user ID and auth method on request object
     (req as any).uid = decoded.uid;
     (req as any).authMethod = isSessionCookie ? "session" : "idToken";
+    req.verifiedAuthToken = token;
 
     // OPTIMIZATION: Mid-life session refresh (refresh when JWT is > 7 days old)
     // Only check for session cookies, not ID tokens
