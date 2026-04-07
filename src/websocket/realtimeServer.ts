@@ -119,6 +119,7 @@ function getSessionId(reqUrl: string | undefined): string | null {
 }
 
 export function startRealtimeServer(server: HttpServer) {
+  const WS_OPEN = 1; // ws readyState OPEN
   const wss = new WebSocketServer({ server, path: '/realtime' });
   const rooms = new Map<string, Set<WebSocket>>(); // projectId -> clients
 
@@ -131,7 +132,7 @@ export function startRealtimeServer(server: HttpServer) {
       const sid = (ws as any).canvasSessionId;
       if (targetSessionId != null && sid !== targetSessionId) continue;
       if (exceptSessionId != null && sid === exceptSessionId) continue;
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws.readyState === WS_OPEN) {
         try {
           ws.send(data);
         } catch (_e) { /* ignore */ }
@@ -147,7 +148,7 @@ export function startRealtimeServer(server: HttpServer) {
     let sent = 0;
     for (const ws of room) {
       if (ws === except) continue;
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws.readyState === WS_OPEN) {
         try { ws.send(data); sent++; } catch (e) { /* no-op */ }
       }
     }
