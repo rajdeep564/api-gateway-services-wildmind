@@ -9,6 +9,9 @@ export const ALLOWED_FAL_MODELS = [
   "gemini-25-flash-image",
   "seedream-v4",
   "seedream-4.5",
+  "seedance-2.0",
+  "bytedance/seedance-2.0/text-to-video",
+  "bytedance/seedance-2.0/image-to-video",
   // Imagen 4 image generation variants (frontend model keys)
   "imagen-4-ultra",
   "imagen-4",
@@ -1308,6 +1311,169 @@ export const validateFalSora2ProT2v = [
       );
       return next(new ApiError("Validation failed", 400, errors.array()));
     }
+    next();
+  },
+];
+
+// Seedance 2.0 Text-to-Video (FAL)
+export const validateFalSeedance2T2v = [
+  body("prompt").isString().notEmpty().withMessage("prompt is required"),
+  body("resolution")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["480p", "720p"])
+    .withMessage("resolution must be 480p or 720p"),
+  body("duration")
+    .optional({ nullable: true, checkFalsy: false })
+    .custom((value) => {
+      if (value == null || value === "") return true;
+      if (String(value).toLowerCase() === "auto") return true;
+      const normalized =
+        typeof value === "number"
+          ? value
+          : parseInt(String(value).replace(/s$/i, ""), 10);
+      return Number.isFinite(normalized) && normalized >= 4 && normalized <= 15;
+    })
+    .withMessage("duration must be auto or between 4 and 15 seconds"),
+  body("aspect_ratio")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"])
+    .withMessage(
+      "aspect_ratio must be auto, 21:9, 16:9, 4:3, 1:1, 3:4, or 9:16",
+    ),
+  body("generate_audio")
+    .optional({ nullable: true, checkFalsy: false })
+    .isBoolean()
+    .withMessage("generate_audio must be a boolean"),
+  body("seed")
+    .optional({ nullable: true, checkFalsy: false })
+    .isInt()
+    .withMessage("seed must be an integer"),
+  body("end_user_id")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString()
+    .withMessage("end_user_id must be a string"),
+  body("originalPrompt")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString(),
+  body("isPublic")
+    .optional({ nullable: true, checkFalsy: false })
+    .isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      console.error(
+        "[validateFalSeedance2T2v] Validation errors:",
+        errors.array(),
+      );
+      return next(new ApiError("Validation failed", 400, errors.array()));
+    }
+
+    const durationRaw = req.body?.duration;
+    if (durationRaw == null || durationRaw === "") {
+      req.body.duration = "auto";
+    } else if (String(durationRaw).toLowerCase() === "auto") {
+      req.body.duration = "auto";
+    } else {
+      const normalized =
+        typeof durationRaw === "number"
+          ? durationRaw
+          : parseInt(String(durationRaw).replace(/s$/i, ""), 10);
+      req.body.duration = String(
+        Math.min(15, Math.max(4, Number.isFinite(normalized) ? normalized : 8)),
+      );
+    }
+
+    req.body.resolution = req.body?.resolution || "720p";
+    req.body.aspect_ratio = req.body?.aspect_ratio || "auto";
+    if (typeof req.body?.generate_audio !== "boolean") {
+      req.body.generate_audio = true;
+    }
+
+    next();
+  },
+];
+
+export const validateFalSeedance2I2v = [
+  body("prompt").isString().notEmpty().withMessage("prompt is required"),
+  body("image_url")
+    .isString()
+    .notEmpty()
+    .withMessage("image_url is required"),
+  body("end_image_url")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString()
+    .withMessage("end_image_url must be a string"),
+  body("resolution")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["480p", "720p"])
+    .withMessage("resolution must be 480p or 720p"),
+  body("duration")
+    .optional({ nullable: true, checkFalsy: false })
+    .custom((value) => {
+      if (value == null || value === "") return true;
+      if (String(value).toLowerCase() === "auto") return true;
+      const normalized =
+        typeof value === "number"
+          ? value
+          : parseInt(String(value).replace(/s$/i, ""), 10);
+      return Number.isFinite(normalized) && normalized >= 4 && normalized <= 15;
+    })
+    .withMessage("duration must be auto or between 4 and 15 seconds"),
+  body("aspect_ratio")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"])
+    .withMessage(
+      "aspect_ratio must be auto, 21:9, 16:9, 4:3, 1:1, 3:4, or 9:16",
+    ),
+  body("generate_audio")
+    .optional({ nullable: true, checkFalsy: false })
+    .isBoolean()
+    .withMessage("generate_audio must be a boolean"),
+  body("seed")
+    .optional({ nullable: true, checkFalsy: false })
+    .isInt()
+    .withMessage("seed must be an integer"),
+  body("end_user_id")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString()
+    .withMessage("end_user_id must be a string"),
+  body("originalPrompt")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString(),
+  body("isPublic")
+    .optional({ nullable: true, checkFalsy: false })
+    .isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      console.error(
+        "[validateFalSeedance2I2v] Validation errors:",
+        errors.array(),
+      );
+      return next(new ApiError("Validation failed", 400, errors.array()));
+    }
+
+    const durationRaw = req.body?.duration;
+    if (durationRaw == null || durationRaw === "") {
+      req.body.duration = "auto";
+    } else if (String(durationRaw).toLowerCase() === "auto") {
+      req.body.duration = "auto";
+    } else {
+      const normalized =
+        typeof durationRaw === "number"
+          ? durationRaw
+          : parseInt(String(durationRaw).replace(/s$/i, ""), 10);
+      req.body.duration = String(
+        Math.min(15, Math.max(4, Number.isFinite(normalized) ? normalized : 8)),
+      );
+    }
+
+    req.body.resolution = req.body?.resolution || "720p";
+    req.body.aspect_ratio = req.body?.aspect_ratio || "auto";
+    if (typeof req.body?.generate_audio !== "boolean") {
+      req.body.generate_audio = true;
+    }
+
     next();
   },
 ];
