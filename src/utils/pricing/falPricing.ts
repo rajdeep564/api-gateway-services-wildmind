@@ -9,12 +9,138 @@ export const FAL_PRICING_VERSION = "fal-v1";
 
 // Credits conversion helper for legacy cost estimation paths.
 const CREDITS_PER_USD = 2000;
+const SEEDANCE_2_USD_PER_1K_TOKENS = 0.014;
+const SEEDANCE_2_CREDITS_PER_USD = 4000 / 5.003;
 
 function findCredits(modelName: string): number | null {
   const row = creditDistributionData.find(
     (m) => m.modelName.toLowerCase() === modelName.toLowerCase(),
   );
   return row?.creditsPerGeneration ?? null;
+}
+
+function parseSeedance2DurationSeconds(
+  duration: unknown,
+  fallbackSeconds = 8,
+): number {
+  if (duration == null || duration === "") return fallbackSeconds;
+  if (typeof duration === "number" && Number.isFinite(duration)) {
+    return Math.min(15, Math.max(4, duration));
+  }
+  const text = String(duration).trim().toLowerCase();
+  if (text === "auto") return fallbackSeconds;
+  const parsed = parseFloat(text.replace(/s$/i, ""));
+  if (!Number.isFinite(parsed)) return fallbackSeconds;
+  return Math.min(15, Math.max(4, parsed));
+}
+
+function getSeedance2EstimatedDimensions(
+  resolution: unknown,
+  aspectRatio: unknown,
+): { width: number; height: number; resolution: "480p" | "720p"; aspectRatio: string } {
+  const resolutionText =
+    String(resolution || "720p").toLowerCase() === "480p" ? "480p" : "720p";
+  const aspectRatioText = String(aspectRatio || "auto").toLowerCase();
+  const normalizedAspect =
+    aspectRatioText === "21:9" ||
+    aspectRatioText === "16:9" ||
+    aspectRatioText === "4:3" ||
+    aspectRatioText === "1:1" ||
+    aspectRatioText === "3:4" ||
+    aspectRatioText === "9:16"
+      ? aspectRatioText
+      : "auto";
+
+  const dims720: Record<string, { width: number; height: number }> = {
+    auto: { width: 1280, height: 720 },
+    "21:9": { width: 1680, height: 720 },
+    "16:9": { width: 1280, height: 720 },
+    "4:3": { width: 960, height: 720 },
+    "1:1": { width: 720, height: 720 },
+    "3:4": { width: 720, height: 960 },
+    "9:16": { width: 720, height: 1280 },
+  };
+
+  const dims480: Record<string, { width: number; height: number }> = {
+    auto: { width: 854, height: 480 },
+    "21:9": { width: 1120, height: 480 },
+    "16:9": { width: 854, height: 480 },
+    "4:3": { width: 640, height: 480 },
+    "1:1": { width: 480, height: 480 },
+    "3:4": { width: 480, height: 640 },
+    "9:16": { width: 480, height: 854 },
+  };
+
+  const source = resolutionText === "480p" ? dims480 : dims720;
+  const dims = source[normalizedAspect] || source.auto;
+  return {
+    ...dims,
+    resolution: resolutionText,
+    aspectRatio: normalizedAspect,
+  };
+}
+
+type Seedance2Variant = "T2V" | "I2V";
+
+export function computeFalSeedance2CostFromMeta(
+  meta?: any,
+  variant: Seedance2Variant = "T2V",
+): {
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+} {
+  const requestedResolution = meta?.resolution;
+  const requestedAspectRatio = meta?.aspect_ratio;
+  const estimated = getSeedance2EstimatedDimensions(
+    requestedResolution,
+    requestedAspectRatio,
+  );
+
+  // Seedance 2.0 should debit from the requested output settings so the
+  // submit estimate and final debit always stay aligned.
+  const width = estimated.width;
+  const height = estimated.height;
+  const durationSec = parseSeedance2DurationSeconds(meta?.duration);
+
+  const tokens = (width * height * durationSec * 24) / 1024;
+  const usdCost = (tokens / 1000) * SEEDANCE_2_USD_PER_1K_TOKENS;
+  const credits = Math.max(
+    1,
+    Math.ceil(usdCost * SEEDANCE_2_CREDITS_PER_USD),
+  );
+
+  return {
+    cost: credits,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: `Bytedance Seedance 2.0 ${variant}`,
+      resolution: estimated.resolution,
+      aspect_ratio: estimated.aspectRatio,
+      width,
+      height,
+      durationSec,
+      tokens,
+      usdCost,
+      formula: "((w*h*d*24)/(1024*1000))*0.014*(4000/5.003)",
+    },
+  };
+}
+
+export async function computeFalSeedance2T2vSubmitCost(req: Request): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  return computeFalSeedance2CostFromMeta(req.body || {}, "T2V");
+}
+
+export async function computeFalSeedance2I2vSubmitCost(req: Request): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  return computeFalSeedance2CostFromMeta(req.body || {}, "I2V");
 }
 
 export async function computeFalImageCost(req: Request): Promise<{
@@ -947,6 +1073,16 @@ export function computeFalVeoCostFromModel(
         : "1080p";
     display = `LTX V2 Fast T2V/I2V ${dur}s ${res}`;
   } else if (
+    normalized === "bytedance/seedance-2.0/text-to-video" ||
+    normalized === "fal-ai/bytedance/seedance-2.0/text-to-video"
+  ) {
+    return computeFalSeedance2CostFromMeta(meta, "T2V");
+  } else if (
+    normalized === "bytedance/seedance-2.0/image-to-video" ||
+    normalized === "fal-ai/bytedance/seedance-2.0/image-to-video"
+  ) {
+    return computeFalSeedance2CostFromMeta(meta, "I2V");
+  } else if (
     normalized === "fal-ai/kling-video/o1/standard/image-to-video" ||
     normalized === "fal-ai/kling-video/o1/image-to-video" ||
     // reference-to-video and first-last endpoints should use the same Kling o1 SKUs
@@ -981,7 +1117,7 @@ export function computeFalVeoCostFromModel(
     return buildKlingV3PricingRecord("pro", meta?.duration ?? "5", meta || {});
   }
   const base = display ? findCredits(display) : null;
-  if (base == null) throw new Error("Unsupported FAL Veo model");
+  if (base == null) throw new Error("Unsupported FAL queue pricing model");
   return {
     cost: Math.ceil(base),
     pricingVersion: FAL_PRICING_VERSION,

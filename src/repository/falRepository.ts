@@ -3,7 +3,20 @@ import { adminDb, admin } from "../config/firebaseAdmin";
 
 async function createGenerationRecord(
 
-  req: { prompt: string; model: string; n?: number; isPublic?: boolean },
+  req: {
+    prompt: string;
+    model: string;
+    n?: number;
+    isPublic?: boolean;
+    resolution?: string;
+    duration?: string | number;
+    aspect_ratio?: string;
+    image_url?: string;
+    end_image_url?: string;
+    generate_audio?: boolean;
+    seed?: number;
+    end_user_id?: string;
+  },
   createdBy?: { uid: string; username?: string; email?: string }
 ): Promise<string> {
   const colRef = adminDb.collection("generations");
@@ -15,6 +28,13 @@ async function createGenerationRecord(
     images: [],
     videos: [],
     isPublic: req.isPublic ?? false,
+    resolution: req.resolution ?? null,
+    duration: req.duration ?? null,
+    aspect_ratio: req.aspect_ratio ?? null,
+    generate_audio:
+      typeof req.generate_audio === "boolean" ? req.generate_audio : null,
+    seed: typeof req.seed === "number" ? req.seed : null,
+    end_user_id: req.end_user_id ?? null,
     createdBy: createdBy
       ? {
           uid: createdBy.uid,

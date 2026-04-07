@@ -6575,13 +6575,18 @@ type SubmitReturn = {
 
 async function queueCreateHistory(
   uid: string,
-  data: { prompt: string; model: string; isPublic?: boolean },
+  data: {
+    prompt: string;
+    model: string;
+    isPublic?: boolean;
+    generationType?: string;
+  },
 ) {
   const creator = await authRepository.getUserById(uid);
   const { historyId } = await generationHistoryRepository.create(uid, {
     prompt: data.prompt,
     model: data.model,
-    generationType: "text-to-video",
+    generationType: data.generationType || "text-to-video",
     visibility: data.isPublic ? "public" : "private",
     isPublic: data.isPublic ?? false,
     createdBy: creator
@@ -7231,7 +7236,7 @@ async function queueResult(
       const freshHistory = await generationHistoryRepository
         .get(uid, located.id)
         .catch(() => null);
-      const metaSrc = freshHistory || (located as any)?.item;
+      const metaSrc: any = freshHistory || (located as any)?.item;
       const { cost, pricingVersion, meta } = computeFalVeoCostFromModel(
         resolvedModel,
         metaSrc as any,
@@ -7576,6 +7581,54 @@ async function klingV3ProI2vSubmit(
   return klingV3Submit(uid, body, "pro", "image-to-video");
 }
 
+function normalizeSeedance2Resolution(resolution: unknown): "480p" | "720p" {
+  return String(resolution || "720p").toLowerCase() === "480p"
+    ? "480p"
+    : "720p";
+}
+
+function normalizeSeedance2AspectRatio(aspectRatio: unknown): string {
+  const value = String(aspectRatio || "auto");
+  return ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"].includes(value)
+    ? value
+    : "auto";
+}
+
+function normalizeSeedance2Duration(duration: unknown): string {
+  if (duration == null || duration === "") return "auto";
+  if (String(duration).toLowerCase() === "auto") return "auto";
+  const parsed =
+    typeof duration === "number"
+      ? duration
+      : parseInt(String(duration).replace(/s$/i, ""), 10);
+  if (!Number.isFinite(parsed)) return "auto";
+  return String(Math.min(15, Math.max(4, parsed)));
+}
+
+async function normalizeSeedance2ImageInput(
+  uid: string,
+  historyId: string,
+  source: unknown,
+  fileName: string,
+): Promise<string> {
+  if (typeof source !== "string" || !source.trim()) {
+    throw new ApiError(`${fileName} is required`, 400);
+  }
+
+  if (!/^data:/i.test(source)) {
+    return source;
+  }
+
+  const creator = await authRepository.getUserById(uid);
+  const username = creator?.username || uid;
+  const stored = await uploadDataUriToZata({
+    dataUri: source,
+    keyPrefix: `users/${username}/input/${historyId}`,
+    fileName,
+  });
+  return stored.publicUrl;
+}
+
 export const falQueueService = {
   veoTtvSubmit,
   veoI2vSubmit,
@@ -7587,6 +7640,142 @@ export const falQueueService = {
   klingV3StandardI2vSubmit,
   klingV3ProT2vSubmit,
   klingV3ProI2vSubmit,
+  async seedance2T2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string;
+    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+
+    const model = "bytedance/seedance-2.0/text-to-video";
+    const resolution = normalizeSeedance2Resolution(body?.resolution);
+    const aspectRatio = normalizeSeedance2AspectRatio(body?.aspect_ratio);
+    const duration = normalizeSeedance2Duration(body?.duration);
+    const generateAudio =
+      typeof body?.generate_audio === "boolean" ? body.generate_audio : true;
+    const seed =
+      body?.seed != null && Number.isFinite(Number(body.seed))
+        ? Number(body.seed)
+        : undefined;
+    const endUserId =
+      typeof body?.end_user_id === "string" && body.end_user_id.trim().length > 0
+        ? body.end_user_id.trim()
+        : uid;
+
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt: body.prompt,
+      model,
+      isPublic: body.isPublic,
+      resolution,
+      duration,
+      aspect_ratio: aspectRatio,
+      generate_audio: generateAudio,
+      seed,
+      end_user_id: endUserId,
+    } as any);
+
+    const input: any = {
+      prompt: body.prompt,
+      resolution,
+      duration,
+      aspect_ratio: aspectRatio,
+      generate_audio: generateAudio,
+      end_user_id: endUserId,
+    };
+    if (typeof seed === "number") {
+      input.seed = seed;
+    }
+
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      resolution,
+      duration,
+      aspect_ratio: aspectRatio,
+      generate_audio: generateAudio,
+      ...(typeof seed === "number" ? { seed } : {}),
+      end_user_id: endUserId,
+    } as any);
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  },
+  async seedance2I2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string;
+    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+    if (!body?.image_url) throw new ApiError("image_url is required", 400);
+
+    const model = "bytedance/seedance-2.0/image-to-video";
+    const resolution = normalizeSeedance2Resolution(body?.resolution);
+    const aspectRatio = normalizeSeedance2AspectRatio(body?.aspect_ratio);
+    const duration = normalizeSeedance2Duration(body?.duration);
+    const generateAudio =
+      typeof body?.generate_audio === "boolean" ? body.generate_audio : true;
+    const seed =
+      body?.seed != null && Number.isFinite(Number(body.seed))
+        ? Number(body.seed)
+        : undefined;
+    const endUserId =
+      typeof body?.end_user_id === "string" && body.end_user_id.trim().length > 0
+        ? body.end_user_id.trim()
+        : uid;
+
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt: body.prompt,
+      model,
+      isPublic: body.isPublic,
+      generationType: "image-to-video",
+    });
+
+    const imageUrl = await normalizeSeedance2ImageInput(
+      uid,
+      historyId,
+      body.image_url,
+      "input-1",
+    );
+    const endImageUrl =
+      typeof body?.end_image_url === "string" && body.end_image_url.trim()
+        ? await normalizeSeedance2ImageInput(
+            uid,
+            historyId,
+            body.end_image_url,
+            "input-2",
+          )
+        : undefined;
+
+    await persistInputImagesFromUrls(uid, historyId, [imageUrl, endImageUrl]);
+
+    const input: any = {
+      prompt: body.prompt,
+      image_url: imageUrl,
+      resolution,
+      duration,
+      aspect_ratio: aspectRatio,
+      generate_audio: generateAudio,
+      end_user_id: endUserId,
+    };
+    if (endImageUrl) {
+      input.end_image_url = endImageUrl;
+    }
+    if (typeof seed === "number") {
+      input.seed = seed;
+    }
+
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      resolution,
+      duration,
+      aspect_ratio: aspectRatio,
+      generate_audio: generateAudio,
+      ...(typeof seed === "number" ? { seed } : {}),
+      end_user_id: endUserId,
+      image_url: imageUrl,
+      ...(endImageUrl ? { end_image_url: endImageUrl } : {}),
+    } as any);
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  },
   // Veo 3.1 variants
   async veo31TtvSubmit(
     uid: string,

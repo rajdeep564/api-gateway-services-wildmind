@@ -19,6 +19,8 @@ import {
   computeFalSora2T2vSubmitCost,
   computeFalSora2ProT2vSubmitCost,
   computeFalSora2RemixSubmitCost,
+  computeFalSeedance2T2vSubmitCost,
+  computeFalSeedance2I2vSubmitCost,
   computeFalLtxV2ProT2vSubmitCost,
   computeFalLtxV2FastT2vSubmitCost,
   computeFalImage2SvgCost,
@@ -69,6 +71,8 @@ import {
   validateFalLtx2FastI2v,
   validateFalSora2T2v,
   validateFalSora2ProT2v,
+  validateFalSeedance2T2v,
+  validateFalSeedance2I2v,
   validateFalSora2Remix,
   validateFalSora2RemixByHistory,
   validateFalLtx2ProT2v,
@@ -546,6 +550,28 @@ router.post(
 );
 
 // Sora 2 Text-to-Video (Standard)
+router.post(
+  "/seedance-2.0/text-to-video/submit",
+  requireAuth as any,
+  validateFalSeedance2T2v as any,
+  makeCreditCost("fal", "seedance2_t2v_submit", (req) =>
+    computeFalSeedance2T2vSubmitCost(req),
+  ) as any,
+  validateStorage("video") as any,
+  (falController as any).seedance2T2vSubmit,
+);
+
+router.post(
+  "/seedance-2.0/image-to-video/submit",
+  requireAuth as any,
+  validateFalSeedance2I2v as any,
+  makeCreditCost("fal", "seedance2_i2v_submit", (req) =>
+    computeFalSeedance2I2vSubmitCost(req),
+  ) as any,
+  validateStorage("video") as any,
+  (falController as any).seedance2I2vSubmit,
+);
+
 router.post(
   "/sora2/text-to-video/submit",
   requireAuth as any,
