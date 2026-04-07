@@ -7,8 +7,7 @@ import { ApiError } from '../../utils/errorHandler';
 import { CanvasProject, CanvasSnapshot } from '../../types/canvas';
 import { admin } from '../../config/firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
-import { getSessionState, requestSessionTakeover, resolveSessionTakeover } from '../../services/canvas/projectSessionStore';
-import { notifyProjectOpenedElsewhere, notifySessionTakeoverAccepted, notifySessionTakeoverRejected, notifySessionTakeoverRequested } from '../../services/canvas/canvasSessionNotifier';
+import { canSessionEdit, collabStatus, heartbeatCollabSession, joinCollabSession, leaveCollabSession } from '../../services/canvas/collabEditorStore';
 
 /** Comma-separated project IDs in PUBLIC_CANVAS_SNAPSHOT_PROJECT_IDS (homepage showcase, etc.). */
 function isPublicSnapshotReadAllowed(projectId: string, project: CanvasProject | null): boolean {
@@ -172,6 +171,15 @@ export async function setCurrentSnapshot(req: Request, res: Response) {
       : project.collaborators.find(c => c.uid === userId)?.role;
     if (userRole !== 'owner' && userRole !== 'editor') {
       throw new ApiError('Only owners and editors can update snapshot', 403);
+    }
+    const rawSessionId = req.get('x-canvas-session-id');
+    const sessionId = typeof rawSessionId === 'string' ? rawSessionId.trim() : '';
+    if (!sessionId) {
+      throw new ApiError('Session id is required', 400);
+    }
+    const joined = joinCollabSession(projectId, sessionId, userId, 'editor');
+    if (!joined.canEdit || !canSessionEdit(projectId, sessionId)) {
+      throw new ApiError(`Maximum ${joined.maxEditors} editors can edit simultaneously`, 403);
     }
 
     // Expect body: { elements: Record<string, any>, metadata?: Record<string, any> }
@@ -340,16 +348,10 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
     //   snapshot.elements[el.id] = el;
     // }
 
-    // 5. Session takeover — only for authenticated collaborators (skip for public embed traffic).
-    const canvasSessionId = req.get('x-canvas-session-id') || undefined;
-    if (isCollaborator && canvasSessionId && canvasSessionId.trim()) {
-      const normalizedSessionId = canvasSessionId.trim();
-      const takeover = requestSessionTakeover(projectId, normalizedSessionId);
-      if (takeover.status === 'granted') {
-        notifyProjectOpenedElsewhere(projectId, normalizedSessionId);
-      } else if (takeover.currentSessionId) {
-        notifySessionTakeoverRequested(projectId, takeover.currentSessionId, normalizedSessionId);
-      }
+    // Touch collaboration presence on snapshot read for authenticated collaborators.
+    const canvasSessionId = req.get('x-canvas-session-id');
+    if (isCollaborator && typeof canvasSessionId === 'string' && canvasSessionId.trim()) {
+      heartbeatCollabSession(projectId, canvasSessionId.trim());
     }
 
     return res.json(formatApiResponse('success', 'Current snapshot retrieved', { snapshot }));
@@ -360,19 +362,19 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
   }
 }
 
-/** GET /projects/:id/session-status — Polling fallback for "project opened elsewhere". Returns sessionIsCurrent. */
-export async function getSessionStatus(req: Request, res: Response) {
+/** POST /projects/:id/collab/join */
+export async function joinCollab(req: Request, res: Response) {
   try {
     const userId = (req as any).uid;
     if (!userId) {
       throw new ApiError('Unauthorized', 401);
     }
     const { id: projectId } = req.params;
-    const rawSessionId = req.get('x-canvas-session-id') || req.query.sessionId;
-    const canvasSessionId: string | null =
-      typeof rawSessionId === 'string' ? rawSessionId
-        : Array.isArray(rawSessionId) && typeof rawSessionId[0] === 'string' ? rawSessionId[0]
-          : null;
+    const rawSessionId = req.get('x-canvas-session-id');
+    const sessionId = typeof rawSessionId === 'string' ? rawSessionId.trim() : '';
+    if (!sessionId) {
+      throw new ApiError('Session id is required', 400);
+    }
 
     const project = await projectRepository.getProject(projectId);
     if (!project) {
@@ -384,34 +386,37 @@ export async function getSessionStatus(req: Request, res: Response) {
     if (!hasAccess) {
       throw new ApiError('Access denied', 403);
     }
+    const userRole = project.ownerUid === userId ? 'owner' : project.collaborators.find(c => c.uid === userId)?.role;
+    const requestedMode = userRole === 'owner' || userRole === 'editor' ? 'editor' : 'viewer';
+    const joined = joinCollabSession(projectId, sessionId, userId, requestedMode);
+    const status = collabStatus(projectId);
 
-    const sessionState = getSessionState(projectId, canvasSessionId || null);
-    return res.json(formatApiResponse('success', 'Session status', sessionState));
+    return res.json(formatApiResponse('success', 'Collaboration joined', {
+      ...joined,
+      activeEditors: status.activeEditors,
+      maxEditors: status.maxEditors,
+    }));
   } catch (error: any) {
     res.status(error.statusCode || 500).json(
-      formatApiResponse('error', error.message || 'Failed to get session status', null)
+      formatApiResponse('error', error.message || 'Failed to join collaboration', null)
     );
   }
 }
 
-export async function respondToSessionTakeover(req: Request, res: Response) {
+/** POST /projects/:id/collab/heartbeat */
+export async function heartbeatCollab(req: Request, res: Response) {
   try {
     const userId = (req as any).uid;
     if (!userId) {
       throw new ApiError('Unauthorized', 401);
     }
     const { id: projectId } = req.params;
-    const { action } = req.body as { action?: 'accept' | 'reject' };
     const rawSessionId = req.get('x-canvas-session-id');
     const sessionId = typeof rawSessionId === 'string' ? rawSessionId.trim() : '';
 
     if (!sessionId) {
       throw new ApiError('Session id is required', 400);
     }
-    if (action !== 'accept' && action !== 'reject') {
-      throw new ApiError('Invalid action', 400);
-    }
-
     const project = await projectRepository.getProject(projectId);
     if (!project) {
       throw new ApiError('Project not found', 404);
@@ -422,24 +427,55 @@ export async function respondToSessionTakeover(req: Request, res: Response) {
     if (!hasAccess) {
       throw new ApiError('Access denied', 403);
     }
-
-    const result = resolveSessionTakeover(projectId, sessionId, action);
-    if (result.requesterSessionId) {
-      if (action === 'accept') {
-        notifySessionTakeoverAccepted(projectId, result.requesterSessionId, sessionId);
-      } else {
-        notifySessionTakeoverRejected(projectId, result.requesterSessionId);
-      }
-    }
-
-    return res.json(formatApiResponse('success', 'Session takeover handled', {
-      action,
-      requesterSessionId: result.requesterSessionId,
-      currentSessionId: result.currentSessionId,
+    const hb = heartbeatCollabSession(projectId, sessionId);
+    const status = collabStatus(projectId);
+    return res.json(formatApiResponse('success', 'Collaboration heartbeat', {
+      ...hb,
+      activeEditors: status.activeEditors,
+      maxEditors: status.maxEditors,
     }));
   } catch (error: any) {
     res.status(error.statusCode || 500).json(
-      formatApiResponse('error', error.message || 'Failed to respond to session takeover', null)
+      formatApiResponse('error', error.message || 'Failed to heartbeat collaboration', null)
+    );
+  }
+}
+
+/** DELETE /projects/:id/collab/leave */
+export async function leaveCollab(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+    const { id: projectId } = req.params;
+    const rawSessionId = req.get('x-canvas-session-id');
+    const sessionId = typeof rawSessionId === 'string' ? rawSessionId.trim() : '';
+    if (!sessionId) {
+      throw new ApiError('Session id is required', 400);
+    }
+    leaveCollabSession(projectId, sessionId);
+    const status = collabStatus(projectId);
+    return res.json(formatApiResponse('success', 'Collaboration left', status));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to leave collaboration', null)
+    );
+  }
+}
+
+/** GET /projects/:id/collab/status */
+export async function collabStatusController(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+    const { id: projectId } = req.params;
+    return res.json(formatApiResponse('success', 'Collaboration status', collabStatus(projectId)));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to get collaboration status', null)
     );
   }
 }

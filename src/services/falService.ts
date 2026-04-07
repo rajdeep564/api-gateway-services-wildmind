@@ -94,6 +94,98 @@ function tryConvertProxyResourceToZataUrl(
   }
 }
 
+/**
+ * Parallel MultiView calls all send the same source URL; concurrent re-uploads to Zata
+ * often race and return 500. Share one in-flight resolution per exact URL string.
+ */
+const qwenMultiAngleUrlResolveInflight = new Map<string, Promise<string>>();
+
+async function resolveQwenMultiAngleSourceImageUrl(
+  imgUrl: string,
+  username: string,
+): Promise<string> {
+  if (!imgUrl || typeof imgUrl !== "string") {
+    throw new ApiError("Invalid image URL", 400);
+  }
+
+  let inflight = qwenMultiAngleUrlResolveInflight.get(imgUrl);
+  if (!inflight) {
+    const cacheKey = imgUrl;
+    const keyPrefix = `users/${username}/input/qwen-multiangle-cache`;
+    inflight = (async () => {
+      if (imgUrl.startsWith("blob:")) {
+        throw new ApiError(
+          "Image is still a local blob URL; wait for upload to finish or reconnect from a saved image.",
+          400,
+        );
+      }
+
+      if (/^data:/i.test(imgUrl)) {
+        const uploaded = await uploadDataUriToZata({
+          dataUri: imgUrl,
+          keyPrefix,
+          fileName: `qwen-angle-data-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        });
+        return uploaded.publicUrl;
+      }
+
+      const proxyAsZata = tryConvertProxyResourceToZataUrl(imgUrl);
+      if (proxyAsZata) {
+        return proxyAsZata.publicUrl;
+      }
+
+      const isLocalhost =
+        imgUrl.includes("localhost") ||
+        imgUrl.includes("127.0.0.1") ||
+        imgUrl.includes("/api/proxy/");
+      const isZataUrl = imgUrl.includes("idr01.zata.ai");
+
+      if (isLocalhost || isZataUrl) {
+        try {
+          const reuploaded = await uploadFromUrlToZata({
+            sourceUrl: imgUrl,
+            keyPrefix,
+            fileName: `qwen-angle-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          });
+          return reuploaded.publicUrl;
+        } catch (err: any) {
+          console.error(
+            "[resolveQwenMultiAngleSourceImageUrl] Re-upload failed:",
+            err?.message || err,
+          );
+          return imgUrl;
+        }
+      }
+
+      return imgUrl;
+    })();
+
+    qwenMultiAngleUrlResolveInflight.set(cacheKey, inflight);
+    inflight.catch(() => {
+      qwenMultiAngleUrlResolveInflight.delete(cacheKey);
+    });
+    void inflight.finally(() => {
+      setTimeout(() => {
+        qwenMultiAngleUrlResolveInflight.delete(cacheKey);
+      }, 180_000);
+    });
+  }
+
+  return inflight;
+}
+
+function toFiniteNumber(v: unknown): number | undefined {
+  if (v === undefined || v === null || v === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function normalizeFalQwenHorizontalAngle(v: unknown): number | undefined {
+  const n = toFiniteNumber(v);
+  if (n === undefined) return undefined;
+  return ((n % 360) + 360) % 360;
+}
+
 function normalizeVeo31AspectRatio(input: any): "auto" | "16:9" | "9:16" {
   const ar = typeof input === "string" ? input : undefined;
   if (!ar) return "auto";
@@ -6230,47 +6322,16 @@ export const falService = {
     });
 
     try {
-      // Resolve image URLs - ensure they're publicly accessible
       const username = creator?.username || uid;
       const resolvedImageUrls: string[] = [];
 
       for (const imgUrl of body.image_urls) {
         if (!imgUrl || typeof imgUrl !== "string") continue;
-
-        // Check if it's a proxy/Zata URL that needs conversion
-        const proxyAsZata = tryConvertProxyResourceToZataUrl(imgUrl);
-        if (proxyAsZata) {
-          resolvedImageUrls.push(proxyAsZata.publicUrl);
-          continue;
-        }
-
-        // Check if it's localhost or proxy URL that needs re-uploading
-        const isLocalhost =
-          imgUrl.includes("localhost") ||
-          imgUrl.includes("127.0.0.1") ||
-          imgUrl.includes("/api/proxy/");
-        const isZataUrl = imgUrl.includes("idr01.zata.ai");
-
-        if (isLocalhost || isZataUrl) {
-          try {
-            const reuploaded = await uploadFromUrlToZata({
-              sourceUrl: imgUrl,
-              keyPrefix: `users/${username}/input/${historyId}`,
-              fileName: `qwen-angle-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            });
-            resolvedImageUrls.push(reuploaded.publicUrl);
-          } catch (err: any) {
-            console.error(
-              "[falService.qwenMultipleAngles] Failed to re-upload image:",
-              err?.message || err,
-            );
-            // Try using original URL - FAL might be able to access it
-            resolvedImageUrls.push(imgUrl);
-          }
-        } else {
-          // Public URL - use as-is
-          resolvedImageUrls.push(imgUrl);
-        }
+        const resolved = await resolveQwenMultiAngleSourceImageUrl(
+          imgUrl,
+          username,
+        );
+        resolvedImageUrls.push(resolved);
       }
 
       if (resolvedImageUrls.length === 0) {
@@ -6281,44 +6342,43 @@ export const falService = {
         image_urls: resolvedImageUrls,
       };
 
-      // Add optional parameters
-      if (typeof body?.horizontal_angle === "number") {
-        input.horizontal_angle = Number(body.horizontal_angle);
+      const hNorm = normalizeFalQwenHorizontalAngle(body?.horizontal_angle);
+      if (hNorm !== undefined) {
+        input.horizontal_angle = hNorm;
       }
-      if (typeof body?.vertical_angle === "number") {
-        input.vertical_angle = Number(body.vertical_angle);
+      const vNorm = toFiniteNumber(body?.vertical_angle);
+      if (vNorm !== undefined) {
+        input.vertical_angle = Math.min(90, Math.max(-30, vNorm));
       }
-      if (typeof body?.zoom === "number") {
-        input.zoom = Number(body.zoom);
-      } else {
-        input.zoom = 5; // Default zoom
-      }
+      const zoomNorm = toFiniteNumber(body?.zoom);
+      input.zoom =
+        zoomNorm !== undefined
+          ? Math.min(10, Math.max(0, zoomNorm))
+          : 5;
       if (
         typeof body?.additional_prompt === "string" &&
         body.additional_prompt.trim()
       ) {
         input.additional_prompt = String(body.additional_prompt).trim();
       }
-      if (typeof body?.lora_scale === "number") {
-        input.lora_scale = Number(body.lora_scale);
-      } else {
-        input.lora_scale = 1; // Default lora_scale
-      }
+      const loraNorm = toFiniteNumber(body?.lora_scale);
+      input.lora_scale =
+        loraNorm !== undefined
+          ? Math.min(4, Math.max(0, loraNorm))
+          : 1;
       if (body?.image_size) {
         input.image_size = body.image_size;
       }
-      if (typeof body?.guidance_scale === "number") {
-        input.guidance_scale = Number(body.guidance_scale);
-      } else {
-        input.guidance_scale = 4.5; // Default guidance_scale
-      }
-      if (typeof body?.num_inference_steps === "number") {
-        input.num_inference_steps = Math.round(
-          Number(body.num_inference_steps),
-        );
-      } else {
-        input.num_inference_steps = 28; // Default num_inference_steps
-      }
+      const gs = toFiniteNumber(body?.guidance_scale);
+      input.guidance_scale =
+        gs !== undefined
+          ? Math.min(20, Math.max(1, gs))
+          : 4.5;
+      const stepsRaw = toFiniteNumber(body?.num_inference_steps);
+      input.num_inference_steps =
+        stepsRaw !== undefined
+          ? Math.min(50, Math.max(1, Math.round(stepsRaw)))
+          : 28;
       if (body?.acceleration) {
         input.acceleration = body.acceleration;
       } else {
@@ -6330,8 +6390,9 @@ export const falService = {
       ) {
         input.negative_prompt = String(body.negative_prompt).trim();
       }
-      if (typeof body?.seed === "number") {
-        input.seed = Math.round(Number(body.seed));
+      const seedNorm = toFiniteNumber(body?.seed);
+      if (seedNorm !== undefined) {
+        input.seed = Math.round(seedNorm);
       }
       if (body?.sync_mode === true) {
         input.sync_mode = true;
@@ -6346,11 +6407,11 @@ export const falService = {
       } else {
         input.output_format = "png"; // Default output_format
       }
-      if (typeof body?.num_images === "number") {
-        input.num_images = Math.round(Number(body.num_images));
-      } else {
-        input.num_images = 1; // Default num_images
-      }
+      const numImgNorm = toFiniteNumber(body?.num_images);
+      input.num_images =
+        numImgNorm !== undefined
+          ? Math.min(4, Math.max(1, Math.round(numImgNorm)))
+          : 1;
 
       console.log("[falService.qwenMultipleAngles] Calling FAL API:", {
         model,

@@ -67,8 +67,10 @@ router.get('/projects/:id/snapshot', snapshotController.getSnapshot);
 router.post('/projects/:id/snapshot', snapshotController.createSnapshot);
 // Overwrite snapshot (current state) APIs
 router.put('/projects/:id/snapshot/current', snapshotController.setCurrentSnapshot);
-router.get('/projects/:id/session-status', snapshotController.getSessionStatus);
-router.post('/projects/:id/session-takeover/respond', snapshotController.respondToSessionTakeover);
+router.post('/projects/:id/collab/join', snapshotController.joinCollab);
+router.post('/projects/:id/collab/heartbeat', snapshotController.heartbeatCollab);
+router.delete('/projects/:id/collab/leave', snapshotController.leaveCollab);
+router.get('/projects/:id/collab/status', snapshotController.collabStatusController);
 
 import { makeCreditCost } from '../middlewares/creditCostFactory';
 import {

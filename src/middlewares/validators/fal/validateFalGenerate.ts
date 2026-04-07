@@ -681,8 +681,8 @@ export const validateFalQwenMultipleAngles = [
     .withMessage("additional_prompt must be a string"),
   body("lora_scale")
     .optional()
-    .isFloat({ min: 0, max: 2 })
-    .withMessage("lora_scale must be between 0 and 2"),
+    .isFloat({ min: 0, max: 4 })
+    .withMessage("lora_scale must be between 0 and 4 (FAL schema max)"),
   body("image_size")
     .optional()
     .custom((value) => {

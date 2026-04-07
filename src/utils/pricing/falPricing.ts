@@ -1502,8 +1502,8 @@ export async function computeFalBirefnetVideoCost(req: Request): Promise<{
   };
 }
 
-// Topaz Image Upscaler dynamic pricing
-// Rule: 70 credits per output megapixel (width x height / 1e6)
+// Topaz Image Upscaler tier pricing
+// Rule: <=24MP => 64, <=48MP => 128, <=96MP => 256, <=512MP (and above) => 1087
 export async function computeFalTopazUpscaleImageCost(req: Request): Promise<{
   cost: number;
   pricingVersion: string;
@@ -1539,8 +1539,16 @@ export async function computeFalTopazUpscaleImageCost(req: Request): Promise<{
   const outW = Math.max(1, Math.round(inW * factor));
   const outH = Math.max(1, Math.round(inH * factor));
   const megapixels = (outW * outH) / 1_000_000;
-  const creditsPerMp = 70;
-  const credits = Math.max(1, Math.ceil(megapixels * creditsPerMp));
+  const tier =
+    megapixels <= 24
+      ? "24MP"
+      : megapixels <= 48
+        ? "48MP"
+        : megapixels <= 96
+          ? "96MP"
+          : "512MP";
+  const credits =
+    tier === "24MP" ? 64 : tier === "48MP" ? 128 : tier === "96MP" ? 256 : 1087;
   return {
     cost: credits,
     pricingVersion: FAL_PRICING_VERSION,
@@ -1548,7 +1556,7 @@ export async function computeFalTopazUpscaleImageCost(req: Request): Promise<{
       model: "fal-ai/topaz/upscale/image",
       input: { width: inW, height: inH },
       output: { width: outW, height: outH },
-      pricing: { megapixels, creditsPerMp, credits },
+      pricing: { megapixels, tier, credits },
       upscale_factor: factor,
       topaz_model: body.model,
     },
@@ -1556,7 +1564,7 @@ export async function computeFalTopazUpscaleImageCost(req: Request): Promise<{
 }
 
 // SeedVR Image Upscaler (factor-only pricing)
-// Rule: 4 credits per output megapixel (width x height / 1e6), rounded up.
+// Rule: 1 credit per output megapixel (width x height / 1e6), rounded up.
 // NOTE: target_resolution-based upscaling is explicitly forbidden for this integration.
 export async function computeFalSeedVrUpscaleImageCost(req: Request): Promise<{
   cost: number;
@@ -1610,7 +1618,7 @@ export async function computeFalSeedVrUpscaleImageCost(req: Request): Promise<{
   const outH = Math.max(1, Math.round(inH * factor));
 
   const megapixels = (outW * outH) / 1_000_000;
-  const creditsPerMp = 4;
+  const creditsPerMp = 1;
   const credits = Math.max(1, Math.ceil(megapixels * creditsPerMp));
 
   return {

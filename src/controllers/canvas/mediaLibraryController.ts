@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { generationHistoryService } from '../../services/generationHistoryService';
 import { formatApiResponse } from '../../utils/formatApiResponse';
-import { ImageMedia, VideoMedia } from '../../types/generate';
-import { uploadBufferToZata, uploadDataUriToZata, uploadFromUrlToZata } from '../../utils/storage/zataUpload';
+import { AudioMedia, ImageMedia, VideoMedia } from '../../types/generate';
+import { uploadBufferToZata, uploadDataUriToZata } from '../../utils/storage/zataUpload';
 import { ApiError } from '../../utils/errorHandler';
 import { authRepository } from '../../repository/auth/authRepository';
 import { generationHistoryRepository } from '../../repository/generationHistoryRepository';
@@ -31,12 +31,29 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
     const imageGenerationTypes = new Set([
       'text-to-image', 'logo', 'logo-generation', 'sticker-generation',
       'product-generation', 'mockup-generation', 'ad-generation', 'text-to-character',
+      // Canvas and edit flows persist these; they were missing and hid most library images.
+      'image-to-image', 'image-outpaint',
     ]);
     const videoGenerationTypes = new Set([
       'text-to-video', 'image-to-video', 'video-to-video',
     ]);
+    const musicGenerationTypes = new Set([
+      'text-to-music', 'sfx', 'text-to-speech', 'text-to-dialogue',
+    ]);
 
-    // Extract images, videos, and uploaded from the single result
+    /** History rows that represent a user's file/upload action — not I2I/I2V reference inputs on other jobs. */
+    const isDedicatedUserUploadHistoryRow = (item: any): boolean => {
+      const model = String(item?.model ?? '').trim().toLowerCase();
+      if (model === 'canvas-upload' || model === 'upload-file') return true;
+      const prompt = String(item?.prompt ?? '').trim();
+      return (
+        prompt === 'Uploaded from canvas' ||
+        prompt === 'Uploaded from device' ||
+        prompt === 'Uploaded from WildMind AI'
+      );
+    };
+
+    // Extract images, videos, music, and uploaded from the single result
     const images: Array<{
       id: string;
       url: string;
@@ -73,17 +90,39 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
       mediaId?: string;
     }> = [];
 
-    allResult.items.forEach((item) => {
-      const genType = (item as any).generationType || (item as any).generation_type || '';
+    const music: Array<{
+      id: string;
+      url: string;
+      type: 'music';
+      thumbnail?: string;
+      prompt?: string;
+      model?: string;
+      createdAt?: string;
+      storagePath?: string;
+      mediaId?: string;
+    }> = [];
 
-      // Images from image-type generations
-      if (imageGenerationTypes.has(genType) && item.images && Array.isArray(item.images)) {
-        item.images.forEach((img: ImageMedia) => {
+    allResult.items.forEach((item) => {
+      const genRaw = String(
+        (item as any).generationType || (item as any).generation_type || '',
+      ).trim();
+      const genKey = genRaw.toLowerCase().replace(/_/g, '-');
+
+      // Images from image-type generations (typed), or other rows with image outputs
+      // (excludes pure video / music generation types).
+      const imageOutputs = item.images && Array.isArray(item.images) ? item.images : [];
+      const shouldTakeImages =
+        imageOutputs.length > 0 &&
+        (imageGenerationTypes.has(genKey) ||
+          (!videoGenerationTypes.has(genKey) && !musicGenerationTypes.has(genKey)));
+
+      if (shouldTakeImages) {
+        imageOutputs.forEach((img: ImageMedia) => {
           images.push({
             id: `${item.id}-${img.id || Date.now()}`,
             url: img.url || img.originalUrl || '',
             type: 'image',
-            thumbnail: img.url,
+            thumbnail: img.thumbnailUrl || img.avifUrl || img.url,
             prompt: item.prompt,
             model: item.model,
             createdAt: item.createdAt?.toString() || new Date().toISOString(),
@@ -93,14 +132,20 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
         });
       }
 
-      // Videos from video-type generations
-      if (videoGenerationTypes.has(genType) && item.videos && Array.isArray(item.videos)) {
-        item.videos.forEach((video: VideoMedia) => {
+      // Videos from video-type generations, or video-only rows (unknown / legacy generationType).
+      const videoOutputs = item.videos && Array.isArray(item.videos) ? item.videos : [];
+      const shouldTakeVideos =
+        videoOutputs.length > 0 &&
+        (videoGenerationTypes.has(genKey) ||
+          (imageOutputs.length === 0 && !musicGenerationTypes.has(genKey)));
+
+      if (shouldTakeVideos) {
+        videoOutputs.forEach((video: VideoMedia) => {
           videos.push({
             id: `${item.id}-${video.id || Date.now()}`,
-            url: video.url || '',
+            url: video.url || video.originalUrl || '',
             type: 'video',
-            thumbnail: video.thumbUrl || video.thumbnailUrl || video.url,
+            thumbnail: video.thumbUrl || video.thumbnailUrl || video.posterUrl || video.url,
             prompt: item.prompt,
             model: item.model,
             createdAt: item.createdAt?.toString() || new Date().toISOString(),
@@ -110,10 +155,29 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
         });
       }
 
-      // Uploaded media (inputImages, inputVideos) from any entry
-      // Extract inputImages (uploaded images)
+      // Music / audio outputs on history rows
+      const audioOutputs = item.audios && Array.isArray(item.audios) ? item.audios : [];
+      if (audioOutputs.length > 0) {
+        audioOutputs.forEach((audio: AudioMedia) => {
+          const url = audio.url || audio.originalUrl || '';
+          if (!url) return;
+          music.push({
+            id: `${item.id}-${audio.id || Date.now()}`,
+            url,
+            type: 'music',
+            thumbnail: undefined,
+            prompt: item.prompt,
+            model: item.model,
+            createdAt: item.createdAt?.toString() || new Date().toISOString(),
+            storagePath: audio.storagePath,
+            mediaId: audio.id,
+          });
+        });
+      }
+
+      // Uploaded tab: only rows created by explicit upload APIs (not every generation.inputImages)
       const inputImages = (item as any).inputImages;
-      if (inputImages && Array.isArray(inputImages)) {
+      if (isDedicatedUserUploadHistoryRow(item) && inputImages && Array.isArray(inputImages)) {
         inputImages.forEach((img: any) => {
           // Use firebaseUrl if available (for wild project compatibility), otherwise use url
           const mediaUrl = img.firebaseUrl || img.url || img.originalUrl || '';
@@ -131,9 +195,8 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
         });
       }
 
-      // Extract inputVideos (uploaded videos)
       const inputVideos = (item as any).inputVideos;
-      if (inputVideos && Array.isArray(inputVideos)) {
+      if (isDedicatedUserUploadHistoryRow(item) && inputVideos && Array.isArray(inputVideos)) {
         inputVideos.forEach((video: any) => {
           // Use firebaseUrl if available (for wild project compatibility), otherwise use url
           const mediaUrl = video.firebaseUrl || video.url || video.originalUrl || '';
@@ -171,6 +234,12 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
       return dateB - dateA;
     });
 
+    music.sort((a, b) => {
+      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateB - dateA;
+    });
+
     // Pagination logic; optional category = only return that category (saves bandwidth when user only views one tab)
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
@@ -182,22 +251,24 @@ export async function getMediaLibrary(req: Request, res: Response, next: NextFun
     const paginatedImages = images.slice(startIndex, endIndex);
     const paginatedVideos = videos.slice(startIndex, endIndex);
     const paginatedUploaded = uploaded.slice(startIndex, endIndex);
-    const musicList: any[] = []; // TODO: Add music support later
+    const paginatedMusic = music.slice(startIndex, endIndex);
 
     const includeAll = !category || category === 'all';
     const payload = {
       images: includeAll || category === 'images' ? paginatedImages : [],
       videos: includeAll || category === 'videos' ? paginatedVideos : [],
-      music: includeAll || category === 'music' ? musicList : [],
+      music: includeAll || category === 'music' ? paginatedMusic : [],
       uploaded: includeAll || category === 'uploaded' ? paginatedUploaded : [],
       pagination: {
         page,
         limit,
         totalImages: images.length,
         totalVideos: videos.length,
+        totalMusic: music.length,
         totalUploaded: uploaded.length,
         hasMoreImages: endIndex < images.length,
         hasMoreVideos: endIndex < videos.length,
+        hasMoreMusic: endIndex < music.length,
         hasMoreUploaded: endIndex < uploaded.length,
       }
     };
@@ -251,37 +322,31 @@ export async function saveUploadedMedia(req: Request, res: Response, next: NextF
     });
 
     // Upload the file to Zata
-    const isDataUri = /^data:/.test(url);
+    const isDataUri = /^data:/i.test(String(url || ''));
+    if (!isDataUri) {
+      return res.status(400).json(
+        formatApiResponse(
+          'error',
+          'This endpoint only accepts data: URIs from local files. Use POST /canvas/media-library/upload-file with multipart form for device uploads.',
+          null,
+        ),
+      );
+    }
+
     const keyPrefix = `users/${username}/input/${historyId}`;
     const fileName = `upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-    let stored: { key: string; publicUrl: string; storagePath?: string; originalUrl?: string };
-
-    if (isDataUri) {
-      const result = await uploadDataUriToZata({
-        dataUri: url,
-        keyPrefix,
-        fileName,
-      });
-      stored = {
-        key: result.key,
-        publicUrl: result.publicUrl,
-        storagePath: result.key,
-        originalUrl: url,
-      };
-    } else {
-      const result = await uploadFromUrlToZata({
-        sourceUrl: url,
-        keyPrefix,
-        fileName,
-      });
-      stored = {
-        key: result.key,
-        publicUrl: result.publicUrl,
-        storagePath: result.key,
-        originalUrl: result.originalUrl,
-      };
-    }
+    const dataUriResult = await uploadDataUriToZata({
+      dataUri: String(url),
+      keyPrefix,
+      fileName,
+    });
+    const stored: { key: string; publicUrl: string; storagePath?: string; originalUrl?: string } = {
+      key: dataUriResult.key,
+      publicUrl: dataUriResult.publicUrl,
+      storagePath: dataUriResult.key,
+      originalUrl: String(url),
+    };
 
     // Save to inputImages or inputVideos
     // Match the structure expected by wild project (includes firebaseUrl for compatibility)
