@@ -34,6 +34,7 @@ import subscriptionsRoutes from "./subscriptions";
 import webhooksRoutes from "./webhooks";
 import workflowsRoutes from "./workflows";
 import billingRoutes from "./billing";
+import plansRoutes from "./plans";
 import { contentModerationMiddleware } from "../middlewares/contentModeration";
 import { moderationGuard } from "../middlewares/moderationGuard";
 
@@ -68,6 +69,7 @@ router.use(
     "/wildmindimage",
     "/chat",
     "/subscriptions",
+    "/plans",
     "/webhooks",
     "/workflows",
     "/billing",
@@ -116,6 +118,7 @@ router.use("/chat/assistant/models", chatAssistantModelsRoutes);
 router.use("/chat/assistant/threads", chatAssistantThreadsRoutes);
 router.use("/chat/assistant/attachments", chatAssistantUploadsRoutes);
 router.use("/subscriptions", subscriptionsRoutes);
+router.use("/plans", plansRoutes);
 router.use("/webhooks", webhooksRoutes);
 router.use("/workflows", workflowsRoutes);
 router.use("/billing", billingRoutes);
