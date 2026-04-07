@@ -558,6 +558,24 @@ export function startRealtimeServer(server: HttpServer) {
         }, ws);
         return;
       }
+
+      if (kind === 'collab.joined') {
+        broadcast(projectId, {
+          kind: 'collab.joined',
+          authorId: typeof msg.authorId === 'string' ? msg.authorId : 'unknown',
+          username: typeof msg.username === 'string' ? msg.username : undefined,
+          label: typeof msg.label === 'string' ? msg.label : undefined,
+        }, ws);
+        return;
+      }
+
+      if (kind === 'collab.left') {
+        broadcast(projectId, {
+          kind: 'collab.left',
+          authorId: typeof msg.authorId === 'string' ? msg.authorId : 'unknown',
+        }, ws);
+        return;
+      }
     });
 
     ws.on('close', () => {
