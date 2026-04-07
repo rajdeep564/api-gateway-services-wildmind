@@ -543,8 +543,19 @@ export function startRealtimeServer(server: HttpServer) {
           kind: 'cursor',
           x: msg.x,
           y: msg.y,
-          authorId: 'unknown'
+          authorId: typeof msg.authorId === 'string' ? msg.authorId : 'unknown',
+          label: typeof msg.label === 'string' ? msg.label : undefined,
+          color: typeof msg.color === 'string' ? msg.color : undefined,
         }, ws); // Exclude sender
+        return;
+      }
+
+      if (kind === 'snapshot.sync' && msg.snapshot && typeof msg.snapshot === 'object') {
+        broadcast(projectId, {
+          kind: 'snapshot.sync',
+          snapshot: msg.snapshot,
+          authorId: typeof msg.authorId === 'string' ? msg.authorId : undefined,
+        }, ws);
         return;
       }
     });
