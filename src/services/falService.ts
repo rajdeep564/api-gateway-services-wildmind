@@ -38,6 +38,7 @@ import {
   validateGenerationRequest,
   estimateFileSize,
 } from "../utils/validationHelpers";
+import { probeVideoMeta } from "../utils/media/probe";
 
 const buildGenerationImageFileName = (
   historyId?: string,
@@ -7896,7 +7897,9 @@ async function markSeedance2SubmitFailed(
     | "falQueueService.seedance2T2vSubmit"
     | "falQueueService.seedance2FastT2vSubmit"
     | "falQueueService.seedance2I2vSubmit"
-    | "falQueueService.seedance2FastI2vSubmit",
+    | "falQueueService.seedance2FastI2vSubmit"
+    | "falQueueService.seedance2ReferenceT2vSubmit"
+    | "falQueueService.seedance2FastReferenceT2vSubmit",
   model: string,
 ): Promise<never> {
   const failureError =
@@ -7926,6 +7929,63 @@ async function markSeedance2SubmitFailed(
   }
 
   throw failureError;
+}
+
+async function normalizeSeedance2MediaInputs(
+  uid: string,
+  historyId: string,
+  values: unknown,
+  kind: "image" | "video" | "audio",
+): Promise<string[]> {
+  const items = Array.isArray(values)
+    ? values.filter(
+        (value): value is string =>
+          typeof value === "string" && value.trim().length > 0,
+      )
+    : [];
+  if (items.length === 0) return [];
+
+  const creator = await authRepository.getUserById(uid);
+  const username = creator?.username || uid;
+  const keyPrefix = `users/${username}/input/${historyId}`;
+  const normalized: string[] = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const source = items[i];
+    if (/^data:/i.test(source)) {
+      const stored = await uploadDataUriToZata({
+        dataUri: source,
+        keyPrefix,
+        fileName: `${kind}-${i + 1}`,
+      });
+      normalized.push(stored.publicUrl);
+    } else {
+      normalized.push(source);
+    }
+  }
+
+  return normalized;
+}
+
+async function getSeedance2InputVideoDurationSec(videoUrls: string[]): Promise<number> {
+  let totalDuration = 0;
+
+  for (const videoUrl of videoUrls) {
+    try {
+      const meta = await probeVideoMeta(videoUrl);
+      totalDuration += Math.max(
+        0,
+        Number(meta?.durationSec || 0) || 0,
+      );
+    } catch (err) {
+      console.warn("[Seedance2] Failed to probe reference video metadata", {
+        videoUrl,
+        err,
+      });
+    }
+  }
+
+  return totalDuration;
 }
 
 async function submitSeedance2T2vVariant(
@@ -8092,6 +8152,133 @@ async function submitSeedance2I2vVariant(
   }
 }
 
+async function submitSeedance2ReferenceVariant(
+  uid: string,
+  body: any,
+  model:
+    | "bytedance/seedance-2.0/reference-to-video"
+    | "bytedance/seedance-2.0/fast/reference-to-video",
+  context:
+    | "falQueueService.seedance2ReferenceT2vSubmit"
+    | "falQueueService.seedance2FastReferenceT2vSubmit",
+): Promise<SubmitReturn> {
+  const falKey = env.falKey as string;
+  if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+  fal.config({ credentials: falKey });
+  if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+
+  const rawImageUrls = Array.isArray(body?.image_urls) ? body.image_urls : [];
+  const rawVideoUrls = Array.isArray(body?.video_urls) ? body.video_urls : [];
+  const rawAudioUrls = Array.isArray(body?.audio_urls) ? body.audio_urls : [];
+
+  if (rawImageUrls.length === 0 && rawVideoUrls.length === 0) {
+    throw new ApiError(
+      "At least one reference image or video is required",
+      400,
+    );
+  }
+
+  const resolution = normalizeSeedance2Resolution(body?.resolution);
+  const aspectRatio = normalizeSeedance2AspectRatio(body?.aspect_ratio);
+  const duration = normalizeSeedance2Duration(body?.duration);
+  const generateAudio =
+    typeof body?.generate_audio === "boolean" ? body.generate_audio : true;
+  const seed =
+    body?.seed != null && Number.isFinite(Number(body.seed))
+      ? Number(body.seed)
+      : undefined;
+  const endUserId =
+    typeof body?.end_user_id === "string" && body.end_user_id.trim().length > 0
+      ? body.end_user_id.trim()
+      : uid;
+
+  const { historyId } = await queueCreateHistory(uid, {
+    prompt: body.prompt,
+    model,
+    isPublic: body.isPublic,
+    generationType: "text-to-video",
+  });
+
+  try {
+    const imageUrls = await normalizeSeedance2MediaInputs(
+      uid,
+      historyId,
+      rawImageUrls,
+      "image",
+    );
+    const videoUrls = await normalizeSeedance2MediaInputs(
+      uid,
+      historyId,
+      rawVideoUrls,
+      "video",
+    );
+    const audioUrls = await normalizeSeedance2MediaInputs(
+      uid,
+      historyId,
+      rawAudioUrls,
+      "audio",
+    );
+
+    if (imageUrls.length === 0 && videoUrls.length === 0) {
+      throw new ApiError(
+        "At least one reference image or video is required",
+        400,
+      );
+    }
+
+    if (audioUrls.length > 0 && imageUrls.length === 0 && videoUrls.length === 0) {
+      throw new ApiError(
+        "Audio references require at least one image or video reference",
+        400,
+      );
+    }
+
+    await persistInputImagesFromUrls(uid, historyId, imageUrls);
+    const inputVideoDurationSec = await getSeedance2InputVideoDurationSec(videoUrls);
+
+    const input: any = {
+      prompt: body.prompt,
+      image_urls: imageUrls,
+      resolution,
+      duration,
+      aspect_ratio: aspectRatio,
+      generate_audio: generateAudio,
+      end_user_id: endUserId,
+    };
+
+    if (videoUrls.length > 0) {
+      input.video_urls = videoUrls;
+    }
+    if (audioUrls.length > 0) {
+      input.audio_urls = audioUrls;
+    }
+    if (typeof seed === "number") {
+      input.seed = seed;
+    }
+
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      resolution,
+      duration,
+      aspect_ratio: aspectRatio,
+      generate_audio: generateAudio,
+      ...(typeof seed === "number" ? { seed } : {}),
+      end_user_id: endUserId,
+      image_urls: imageUrls,
+      video_urls: videoUrls,
+      audio_urls: audioUrls,
+      input_video_duration_sec: inputVideoDurationSec,
+      video_input_count: videoUrls.length,
+    } as any);
+
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  } catch (err: any) {
+    return await markSeedance2SubmitFailed(uid, historyId, err, context, model);
+  }
+}
+
 export const falQueueService = {
   veoTtvSubmit,
   veoI2vSubmit,
@@ -8133,6 +8320,28 @@ export const falQueueService = {
       body,
       "bytedance/seedance-2.0/fast/image-to-video",
       "falQueueService.seedance2FastI2vSubmit",
+    );
+  },
+  async seedance2ReferenceT2vSubmit(
+    uid: string,
+    body: any,
+  ): Promise<SubmitReturn> {
+    return submitSeedance2ReferenceVariant(
+      uid,
+      body,
+      "bytedance/seedance-2.0/reference-to-video",
+      "falQueueService.seedance2ReferenceT2vSubmit",
+    );
+  },
+  async seedance2FastReferenceT2vSubmit(
+    uid: string,
+    body: any,
+  ): Promise<SubmitReturn> {
+    return submitSeedance2ReferenceVariant(
+      uid,
+      body,
+      "bytedance/seedance-2.0/fast/reference-to-video",
+      "falQueueService.seedance2FastReferenceT2vSubmit",
     );
   },
   // Veo 3.1 variants
