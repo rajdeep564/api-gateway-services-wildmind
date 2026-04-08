@@ -12,6 +12,8 @@ export const ALLOWED_FAL_MODELS = [
   "seedance-2.0",
   "bytedance/seedance-2.0/text-to-video",
   "bytedance/seedance-2.0/image-to-video",
+  "bytedance/seedance-2.0/fast/text-to-video",
+  "bytedance/seedance-2.0/fast/image-to-video",
   // Imagen 4 image generation variants (frontend model keys)
   "imagen-4-ultra",
   "imagen-4",
@@ -187,6 +189,7 @@ export const validateFalMayaTts = [
   body("top_p")
     .optional()
     .isFloat({ min: 0, max: 1 })
+
     .withMessage("top_p must be between 0 and 1"),
   body("max_tokens")
     .optional()
@@ -1477,6 +1480,9 @@ export const validateFalSeedance2I2v = [
     next();
   },
 ];
+
+export const validateFalSeedance2FastI2v = [...validateFalSeedance2I2v];
+export const validateFalSeedance2FastT2v = [...validateFalSeedance2T2v];
 
 // Sora 2 Video-to-Video Remix
 export const validateFalSora2Remix = [
