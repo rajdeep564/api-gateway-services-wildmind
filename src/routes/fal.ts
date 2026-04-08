@@ -20,7 +20,9 @@ import {
   computeFalSora2ProT2vSubmitCost,
   computeFalSora2RemixSubmitCost,
   computeFalSeedance2T2vSubmitCost,
+  computeFalSeedance2FastT2vSubmitCost,
   computeFalSeedance2I2vSubmitCost,
+  computeFalSeedance2FastI2vSubmitCost,
   computeFalLtxV2ProT2vSubmitCost,
   computeFalLtxV2FastT2vSubmitCost,
   computeFalImage2SvgCost,
@@ -72,7 +74,9 @@ import {
   validateFalSora2T2v,
   validateFalSora2ProT2v,
   validateFalSeedance2T2v,
+  validateFalSeedance2FastT2v,
   validateFalSeedance2I2v,
+  validateFalSeedance2FastI2v,
   validateFalSora2Remix,
   validateFalSora2RemixByHistory,
   validateFalLtx2ProT2v,
@@ -562,6 +566,17 @@ router.post(
 );
 
 router.post(
+  "/seedance-2.0/fast/text-to-video/submit",
+  requireAuth as any,
+  validateFalSeedance2FastT2v as any,
+  makeCreditCost("fal", "seedance2_fast_t2v_submit", (req) =>
+    computeFalSeedance2FastT2vSubmitCost(req),
+  ) as any,
+  validateStorage("video") as any,
+  (falController as any).seedance2FastT2vSubmit,
+);
+
+router.post(
   "/seedance-2.0/image-to-video/submit",
   requireAuth as any,
   validateFalSeedance2I2v as any,
@@ -570,6 +585,17 @@ router.post(
   ) as any,
   validateStorage("video") as any,
   (falController as any).seedance2I2vSubmit,
+);
+
+router.post(
+  "/seedance-2.0/fast/image-to-video/submit",
+  requireAuth as any,
+  validateFalSeedance2FastI2v as any,
+  makeCreditCost("fal", "seedance2_fast_i2v_submit", (req) =>
+    computeFalSeedance2FastI2vSubmitCost(req),
+  ) as any,
+  validateStorage("video") as any,
+  (falController as any).seedance2FastI2vSubmit,
 );
 
 router.post(

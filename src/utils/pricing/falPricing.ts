@@ -10,6 +10,7 @@ export const FAL_PRICING_VERSION = "fal-v1";
 // Credits conversion helper for legacy cost estimation paths.
 const CREDITS_PER_USD = 2000;
 const SEEDANCE_2_USD_PER_1K_TOKENS = 0.014;
+const SEEDANCE_2_FAST_USD_PER_1K_TOKENS = 0.0112;
 const SEEDANCE_2_CREDITS_PER_USD = 4000 / 5.003;
 
 function findCredits(modelName: string): number | null {
@@ -37,7 +38,12 @@ function parseSeedance2DurationSeconds(
 function getSeedance2EstimatedDimensions(
   resolution: unknown,
   aspectRatio: unknown,
-): { width: number; height: number; resolution: "480p" | "720p"; aspectRatio: string } {
+): {
+  width: number;
+  height: number;
+  resolution: "480p" | "720p";
+  aspectRatio: string;
+} {
   const resolutionText =
     String(resolution || "720p").toLowerCase() === "480p" ? "480p" : "720p";
   const aspectRatioText = String(aspectRatio || "auto").toLowerCase();
@@ -80,7 +86,7 @@ function getSeedance2EstimatedDimensions(
   };
 }
 
-type Seedance2Variant = "T2V" | "I2V";
+type Seedance2Variant = "T2V" | "I2V" | "Fast T2V" | "Fast I2V";
 
 export function computeFalSeedance2CostFromMeta(
   meta?: any,
@@ -104,11 +110,12 @@ export function computeFalSeedance2CostFromMeta(
   const durationSec = parseSeedance2DurationSeconds(meta?.duration);
 
   const tokens = (width * height * durationSec * 24) / 1024;
-  const usdCost = (tokens / 1000) * SEEDANCE_2_USD_PER_1K_TOKENS;
-  const credits = Math.max(
-    1,
-    Math.ceil(usdCost * SEEDANCE_2_CREDITS_PER_USD),
-  );
+  const usdPer1kTokens =
+    variant === "Fast I2V" || variant === "Fast T2V"
+      ? SEEDANCE_2_FAST_USD_PER_1K_TOKENS
+      : SEEDANCE_2_USD_PER_1K_TOKENS;
+  const usdCost = (tokens / 1000) * usdPer1kTokens;
+  const credits = Math.max(1, Math.ceil(usdCost * SEEDANCE_2_CREDITS_PER_USD));
 
   return {
     cost: credits,
@@ -122,7 +129,8 @@ export function computeFalSeedance2CostFromMeta(
       durationSec,
       tokens,
       usdCost,
-      formula: "((w*h*d*24)/(1024*1000))*0.014*(4000/5.003)",
+      usdPer1kTokens,
+      formula: `((w*h*d*24)/(1024*1000))*${usdPer1kTokens}*(4000/5.003)`,
     },
   };
 }
@@ -141,6 +149,26 @@ export async function computeFalSeedance2I2vSubmitCost(req: Request): Promise<{
   meta: Record<string, any>;
 }> {
   return computeFalSeedance2CostFromMeta(req.body || {}, "I2V");
+}
+
+export async function computeFalSeedance2FastI2vSubmitCost(
+  req: Request,
+): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  return computeFalSeedance2CostFromMeta(req.body || {}, "Fast I2V");
+}
+
+export async function computeFalSeedance2FastT2vSubmitCost(
+  req: Request,
+): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  return computeFalSeedance2CostFromMeta(req.body || {}, "Fast T2V");
 }
 
 export async function computeFalImageCost(req: Request): Promise<{
@@ -1078,10 +1106,20 @@ export function computeFalVeoCostFromModel(
   ) {
     return computeFalSeedance2CostFromMeta(meta, "T2V");
   } else if (
+    normalized === "bytedance/seedance-2.0/fast/text-to-video" ||
+    normalized === "fal-ai/bytedance/seedance-2.0/fast/text-to-video"
+  ) {
+    return computeFalSeedance2CostFromMeta(meta, "Fast T2V");
+  } else if (
     normalized === "bytedance/seedance-2.0/image-to-video" ||
     normalized === "fal-ai/bytedance/seedance-2.0/image-to-video"
   ) {
     return computeFalSeedance2CostFromMeta(meta, "I2V");
+  } else if (
+    normalized === "bytedance/seedance-2.0/fast/image-to-video" ||
+    normalized === "fal-ai/bytedance/seedance-2.0/fast/image-to-video"
+  ) {
+    return computeFalSeedance2CostFromMeta(meta, "Fast I2V");
   } else if (
     normalized === "fal-ai/kling-video/o1/standard/image-to-video" ||
     normalized === "fal-ai/kling-video/o1/image-to-video" ||
