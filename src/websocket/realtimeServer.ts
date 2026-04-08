@@ -119,6 +119,7 @@ function getSessionId(reqUrl: string | undefined): string | null {
 }
 
 export function startRealtimeServer(server: HttpServer) {
+  const WS_OPEN = 1; // ws readyState OPEN
   const wss = new WebSocketServer({ server, path: '/realtime' });
   const rooms = new Map<string, Set<WebSocket>>(); // projectId -> clients
 
@@ -131,7 +132,7 @@ export function startRealtimeServer(server: HttpServer) {
       const sid = (ws as any).canvasSessionId;
       if (targetSessionId != null && sid !== targetSessionId) continue;
       if (exceptSessionId != null && sid === exceptSessionId) continue;
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws.readyState === WS_OPEN) {
         try {
           ws.send(data);
         } catch (_e) { /* ignore */ }
@@ -147,7 +148,7 @@ export function startRealtimeServer(server: HttpServer) {
     let sent = 0;
     for (const ws of room) {
       if (ws === except) continue;
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws.readyState === WS_OPEN) {
         try { ws.send(data); sent++; } catch (e) { /* no-op */ }
       }
     }
@@ -543,8 +544,37 @@ export function startRealtimeServer(server: HttpServer) {
           kind: 'cursor',
           x: msg.x,
           y: msg.y,
-          authorId: 'unknown'
+          authorId: typeof msg.authorId === 'string' ? msg.authorId : 'unknown',
+          label: typeof msg.label === 'string' ? msg.label : undefined,
+          color: typeof msg.color === 'string' ? msg.color : undefined,
         }, ws); // Exclude sender
+        return;
+      }
+
+      if (kind === 'snapshot.sync' && msg.snapshot && typeof msg.snapshot === 'object') {
+        broadcast(projectId, {
+          kind: 'snapshot.sync',
+          snapshot: msg.snapshot,
+          authorId: typeof msg.authorId === 'string' ? msg.authorId : undefined,
+        }, ws);
+        return;
+      }
+
+      if (kind === 'collab.joined') {
+        broadcast(projectId, {
+          kind: 'collab.joined',
+          authorId: typeof msg.authorId === 'string' ? msg.authorId : 'unknown',
+          username: typeof msg.username === 'string' ? msg.username : undefined,
+          label: typeof msg.label === 'string' ? msg.label : undefined,
+        }, ws);
+        return;
+      }
+
+      if (kind === 'collab.left') {
+        broadcast(projectId, {
+          kind: 'collab.left',
+          authorId: typeof msg.authorId === 'string' ? msg.authorId : 'unknown',
+        }, ws);
         return;
       }
     });

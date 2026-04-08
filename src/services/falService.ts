@@ -6352,9 +6352,7 @@ export const falService = {
       }
       const zoomNorm = toFiniteNumber(body?.zoom);
       input.zoom =
-        zoomNorm !== undefined
-          ? Math.min(10, Math.max(0, zoomNorm))
-          : 5;
+        zoomNorm !== undefined ? Math.min(10, Math.max(0, zoomNorm)) : 5;
       if (
         typeof body?.additional_prompt === "string" &&
         body.additional_prompt.trim()
@@ -6363,17 +6361,13 @@ export const falService = {
       }
       const loraNorm = toFiniteNumber(body?.lora_scale);
       input.lora_scale =
-        loraNorm !== undefined
-          ? Math.min(4, Math.max(0, loraNorm))
-          : 1;
+        loraNorm !== undefined ? Math.min(4, Math.max(0, loraNorm)) : 1;
       if (body?.image_size) {
         input.image_size = body.image_size;
       }
       const gs = toFiniteNumber(body?.guidance_scale);
       input.guidance_scale =
-        gs !== undefined
-          ? Math.min(20, Math.max(1, gs))
-          : 4.5;
+        gs !== undefined ? Math.min(20, Math.max(1, gs)) : 4.5;
       const stepsRaw = toFiniteNumber(body?.num_inference_steps);
       input.num_inference_steps =
         stepsRaw !== undefined
@@ -7809,7 +7803,7 @@ async function klingV3Submit(
     duration,
     aspect_ratio:
       mode === "text-to-video"
-        ? body.aspect_ratio ?? "16:9"
+        ? (body.aspect_ratio ?? "16:9")
         : typeof body.aspect_ratio === "string"
           ? body.aspect_ratio
           : null,
@@ -7894,6 +7888,210 @@ async function normalizeSeedance2ImageInput(
   return stored.publicUrl;
 }
 
+async function markSeedance2SubmitFailed(
+  uid: string,
+  historyId: string,
+  err: any,
+  context:
+    | "falQueueService.seedance2T2vSubmit"
+    | "falQueueService.seedance2FastT2vSubmit"
+    | "falQueueService.seedance2I2vSubmit"
+    | "falQueueService.seedance2FastI2vSubmit",
+  model: string,
+): Promise<never> {
+  const failureError =
+    err instanceof ApiError
+      ? err
+      : buildFalApiError(err, {
+          fallbackMessage: "Seedance 2.0 submit failed",
+          context,
+          toastTitle: "Submit failed",
+          defaultStatus:
+            err?.response?.status || err?.statusCode || err?.status || 422,
+          extraData: { operation: "queue.submit", model },
+        });
+
+  try {
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: failureError.message,
+    } as any);
+  } catch (historyErr) {
+    console.error("[Seedance2] Failed to mark history failed", {
+      uid,
+      historyId,
+      context,
+      historyErr,
+    });
+  }
+
+  throw failureError;
+}
+
+async function submitSeedance2T2vVariant(
+  uid: string,
+  body: any,
+  model:
+    | "bytedance/seedance-2.0/text-to-video"
+    | "bytedance/seedance-2.0/fast/text-to-video",
+  context:
+    | "falQueueService.seedance2T2vSubmit"
+    | "falQueueService.seedance2FastT2vSubmit",
+): Promise<SubmitReturn> {
+  const falKey = env.falKey as string;
+  if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+  fal.config({ credentials: falKey });
+  if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+
+  const resolution = normalizeSeedance2Resolution(body?.resolution);
+  const aspectRatio = normalizeSeedance2AspectRatio(body?.aspect_ratio);
+  const duration = normalizeSeedance2Duration(body?.duration);
+  const generateAudio =
+    typeof body?.generate_audio === "boolean" ? body.generate_audio : true;
+  const seed =
+    body?.seed != null && Number.isFinite(Number(body.seed))
+      ? Number(body.seed)
+      : undefined;
+  const endUserId =
+    typeof body?.end_user_id === "string" && body.end_user_id.trim().length > 0
+      ? body.end_user_id.trim()
+      : uid;
+
+  const { historyId } = await queueCreateHistory(uid, {
+    prompt: body.prompt,
+    model,
+    isPublic: body.isPublic,
+    resolution,
+    duration,
+    aspect_ratio: aspectRatio,
+    generate_audio: generateAudio,
+    seed,
+    end_user_id: endUserId,
+  } as any);
+
+  try {
+    const input: any = {
+      prompt: body.prompt,
+      resolution,
+      duration,
+      aspect_ratio: aspectRatio,
+      generate_audio: generateAudio,
+      end_user_id: endUserId,
+    };
+    if (typeof seed === "number") {
+      input.seed = seed;
+    }
+
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      resolution,
+      duration,
+      aspect_ratio: aspectRatio,
+      generate_audio: generateAudio,
+      ...(typeof seed === "number" ? { seed } : {}),
+      end_user_id: endUserId,
+    } as any);
+
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  } catch (err: any) {
+    return await markSeedance2SubmitFailed(uid, historyId, err, context, model);
+  }
+}
+
+async function submitSeedance2I2vVariant(
+  uid: string,
+  body: any,
+  model:
+    | "bytedance/seedance-2.0/image-to-video"
+    | "bytedance/seedance-2.0/fast/image-to-video",
+  context:
+    | "falQueueService.seedance2I2vSubmit"
+    | "falQueueService.seedance2FastI2vSubmit",
+): Promise<SubmitReturn> {
+  const falKey = env.falKey as string;
+  if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+  fal.config({ credentials: falKey });
+  if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+  if (!body?.image_url) throw new ApiError("image_url is required", 400);
+
+  const resolution = normalizeSeedance2Resolution(body?.resolution);
+  const aspectRatio = normalizeSeedance2AspectRatio(body?.aspect_ratio);
+  const duration = normalizeSeedance2Duration(body?.duration);
+  const generateAudio =
+    typeof body?.generate_audio === "boolean" ? body.generate_audio : true;
+  const seed =
+    body?.seed != null && Number.isFinite(Number(body.seed))
+      ? Number(body.seed)
+      : undefined;
+  const endUserId =
+    typeof body?.end_user_id === "string" && body.end_user_id.trim().length > 0
+      ? body.end_user_id.trim()
+      : uid;
+
+  const { historyId } = await queueCreateHistory(uid, {
+    prompt: body.prompt,
+    model,
+    isPublic: body.isPublic,
+    generationType: "image-to-video",
+  });
+
+  try {
+    const imageUrl = await normalizeSeedance2ImageInput(
+      uid,
+      historyId,
+      body.image_url,
+      "input-1",
+    );
+    const endImageUrl =
+      typeof body?.end_image_url === "string" && body.end_image_url.trim()
+        ? await normalizeSeedance2ImageInput(
+            uid,
+            historyId,
+            body.end_image_url,
+            "input-2",
+          )
+        : undefined;
+
+    await persistInputImagesFromUrls(uid, historyId, [imageUrl, endImageUrl]);
+
+    const input: any = {
+      prompt: body.prompt,
+      image_url: imageUrl,
+      resolution,
+      duration,
+      aspect_ratio: aspectRatio,
+      generate_audio: generateAudio,
+      end_user_id: endUserId,
+    };
+    if (endImageUrl) {
+      input.end_image_url = endImageUrl;
+    }
+    if (typeof seed === "number") {
+      input.seed = seed;
+    }
+
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      resolution,
+      duration,
+      aspect_ratio: aspectRatio,
+      generate_audio: generateAudio,
+      ...(typeof seed === "number" ? { seed } : {}),
+      end_user_id: endUserId,
+      image_url: imageUrl,
+      ...(endImageUrl ? { end_image_url: endImageUrl } : {}),
+    } as any);
+
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  } catch (err: any) {
+    return await markSeedance2SubmitFailed(uid, historyId, err, context, model);
+  }
+}
+
 export const falQueueService = {
   veoTtvSubmit,
   veoI2vSubmit,
@@ -7906,198 +8104,36 @@ export const falQueueService = {
   klingV3ProT2vSubmit,
   klingV3ProI2vSubmit,
   async seedance2T2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
-    const falKey = env.falKey as string;
-    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
-    fal.config({ credentials: falKey });
-    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
-
-    const model = "bytedance/seedance-2.0/text-to-video";
-    const resolution = normalizeSeedance2Resolution(body?.resolution);
-    const aspectRatio = normalizeSeedance2AspectRatio(body?.aspect_ratio);
-    const duration = normalizeSeedance2Duration(body?.duration);
-    const generateAudio =
-      typeof body?.generate_audio === "boolean" ? body.generate_audio : true;
-    const seed =
-      body?.seed != null && Number.isFinite(Number(body.seed))
-        ? Number(body.seed)
-        : undefined;
-    const endUserId =
-      typeof body?.end_user_id === "string" && body.end_user_id.trim().length > 0
-        ? body.end_user_id.trim()
-        : uid;
-
-    const { historyId } = await queueCreateHistory(uid, {
-      prompt: body.prompt,
-      model,
-      isPublic: body.isPublic,
-      resolution,
-      duration,
-      aspect_ratio: aspectRatio,
-      generate_audio: generateAudio,
-      seed,
-      end_user_id: endUserId,
-    } as any);
-
-    try {
-      const input: any = {
-        prompt: body.prompt,
-        resolution,
-        duration,
-        aspect_ratio: aspectRatio,
-        generate_audio: generateAudio,
-        end_user_id: endUserId,
-      };
-      if (typeof seed === "number") {
-        input.seed = seed;
-      }
-
-      const { request_id } = await fal.queue.submit(model, { input } as any);
-      await generationHistoryRepository.update(uid, historyId, {
-        provider: "fal",
-        providerTaskId: request_id,
-        resolution,
-        duration,
-        aspect_ratio: aspectRatio,
-        generate_audio: generateAudio,
-        ...(typeof seed === "number" ? { seed } : {}),
-        end_user_id: endUserId,
-      } as any);
-      return { requestId: request_id, historyId, model, status: "submitted" };
-    } catch (err: any) {
-      const failureMessage =
-        err instanceof ApiError
-          ? err.message
-          : buildFalApiError(err, {
-              fallbackMessage: "Seedance 2.0 submit failed",
-              context: "falQueueService.seedance2T2vSubmit",
-              toastTitle: "Submit failed",
-              defaultStatus:
-                err?.response?.status || err?.statusCode || err?.status || 422,
-              extraData: { operation: "queue.submit", model },
-            }).message;
-
-      try {
-        await generationHistoryRepository.update(uid, historyId, {
-          status: "failed",
-          error: failureMessage,
-        } as any);
-      } catch (historyErr) {
-        console.error("[seedance2T2vSubmit] Failed to mark history failed", {
-          uid,
-          historyId,
-          historyErr,
-        });
-      }
-
-      throw err;
-    }
+    return submitSeedance2T2vVariant(
+      uid,
+      body,
+      "bytedance/seedance-2.0/text-to-video",
+      "falQueueService.seedance2T2vSubmit",
+    );
+  },
+  async seedance2FastT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    return submitSeedance2T2vVariant(
+      uid,
+      body,
+      "bytedance/seedance-2.0/fast/text-to-video",
+      "falQueueService.seedance2FastT2vSubmit",
+    );
   },
   async seedance2I2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
-    const falKey = env.falKey as string;
-    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
-    fal.config({ credentials: falKey });
-    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
-    if (!body?.image_url) throw new ApiError("image_url is required", 400);
-
-    const model = "bytedance/seedance-2.0/image-to-video";
-    const resolution = normalizeSeedance2Resolution(body?.resolution);
-    const aspectRatio = normalizeSeedance2AspectRatio(body?.aspect_ratio);
-    const duration = normalizeSeedance2Duration(body?.duration);
-    const generateAudio =
-      typeof body?.generate_audio === "boolean" ? body.generate_audio : true;
-    const seed =
-      body?.seed != null && Number.isFinite(Number(body.seed))
-        ? Number(body.seed)
-        : undefined;
-    const endUserId =
-      typeof body?.end_user_id === "string" && body.end_user_id.trim().length > 0
-        ? body.end_user_id.trim()
-        : uid;
-
-    const { historyId } = await queueCreateHistory(uid, {
-      prompt: body.prompt,
-      model,
-      isPublic: body.isPublic,
-      generationType: "image-to-video",
-    });
-
-    try {
-      const imageUrl = await normalizeSeedance2ImageInput(
-        uid,
-        historyId,
-        body.image_url,
-        "input-1",
-      );
-      const endImageUrl =
-        typeof body?.end_image_url === "string" && body.end_image_url.trim()
-          ? await normalizeSeedance2ImageInput(
-              uid,
-              historyId,
-              body.end_image_url,
-              "input-2",
-            )
-          : undefined;
-
-      await persistInputImagesFromUrls(uid, historyId, [imageUrl, endImageUrl]);
-
-      const input: any = {
-        prompt: body.prompt,
-        image_url: imageUrl,
-        resolution,
-        duration,
-        aspect_ratio: aspectRatio,
-        generate_audio: generateAudio,
-        end_user_id: endUserId,
-      };
-      if (endImageUrl) {
-        input.end_image_url = endImageUrl;
-      }
-      if (typeof seed === "number") {
-        input.seed = seed;
-      }
-
-      const { request_id } = await fal.queue.submit(model, { input } as any);
-      await generationHistoryRepository.update(uid, historyId, {
-        provider: "fal",
-        providerTaskId: request_id,
-        resolution,
-        duration,
-        aspect_ratio: aspectRatio,
-        generate_audio: generateAudio,
-        ...(typeof seed === "number" ? { seed } : {}),
-        end_user_id: endUserId,
-        image_url: imageUrl,
-        ...(endImageUrl ? { end_image_url: endImageUrl } : {}),
-      } as any);
-      return { requestId: request_id, historyId, model, status: "submitted" };
-    } catch (err: any) {
-      const failureMessage =
-        err instanceof ApiError
-          ? err.message
-          : buildFalApiError(err, {
-              fallbackMessage: "Seedance 2.0 submit failed",
-              context: "falQueueService.seedance2I2vSubmit",
-              toastTitle: "Submit failed",
-              defaultStatus:
-                err?.response?.status || err?.statusCode || err?.status || 422,
-              extraData: { operation: "queue.submit", model },
-            }).message;
-
-      try {
-        await generationHistoryRepository.update(uid, historyId, {
-          status: "failed",
-          error: failureMessage,
-        } as any);
-      } catch (historyErr) {
-        console.error("[seedance2I2vSubmit] Failed to mark history failed", {
-          uid,
-          historyId,
-          historyErr,
-        });
-      }
-
-      throw err;
-    }
+    return submitSeedance2I2vVariant(
+      uid,
+      body,
+      "bytedance/seedance-2.0/image-to-video",
+      "falQueueService.seedance2I2vSubmit",
+    );
+  },
+  async seedance2FastI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    return submitSeedance2I2vVariant(
+      uid,
+      body,
+      "bytedance/seedance-2.0/fast/image-to-video",
+      "falQueueService.seedance2FastI2vSubmit",
+    );
   },
   // Veo 3.1 variants
   async veo31TtvSubmit(
