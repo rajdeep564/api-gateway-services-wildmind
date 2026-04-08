@@ -6945,6 +6945,103 @@ async function queueStatus(
     );
   }
 
+  const normalizeQueueStatusValue = (value: unknown): string =>
+    String(value || "")
+      .trim()
+      .toLowerCase();
+
+  const extractQueueFailureMessage = (
+    payload: any,
+    fallback: string = "FAL queue generation failed",
+  ): string => {
+    const candidates = [
+      payload?.error?.message,
+      payload?.error,
+      payload?.message,
+      payload?.status_message,
+      payload?.data?.error?.message,
+      payload?.data?.error,
+      payload?.data?.message,
+      payload?.data?.status_message,
+      payload?.detail?.[0]?.msg,
+      payload?.response?.message,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+
+    return fallback;
+  };
+
+  const markQueueHistoryFailed = async (
+    message: string,
+    located?: { id: string; item: any } | null,
+  ) => {
+    try {
+      const target =
+        located ||
+        (await generationHistoryRepository.findByProviderTaskId(
+          uid,
+          "fal",
+          requestId,
+        ));
+      if (!target?.id) return;
+
+      const currentStatus = normalizeQueueStatusValue(target.item?.status);
+      if (currentStatus === "completed" || currentStatus === "failed") return;
+
+      await generationHistoryRepository.update(uid, target.id, {
+        status: "failed",
+        error: message,
+      } as any);
+    } catch (historyErr) {
+      console.error("[queueStatus] Failed to mark history as failed", {
+        uid,
+        requestId,
+        historyErr,
+      });
+    }
+  };
+
+  const isTerminalQueueError = (errorLike: any): boolean => {
+    const status = Number(
+      errorLike?.status ||
+        errorLike?.statusCode ||
+        errorLike?.response?.status ||
+        0,
+    );
+    const code = String(
+      errorLike?.data?.code || errorLike?.response?.data?.code || "",
+    ).toLowerCase();
+
+    if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+      return true;
+    }
+
+    return [
+      "downstream_service_error",
+      "downstream_service_unavailable",
+      "generation_timeout",
+      "content_policy_violation",
+      "forbidden",
+      "permission_denied",
+      "unauthorized",
+      "geo_restricted",
+      "image_load_error",
+      "file_download_error",
+      "unsupported_image_format",
+      "unsupported_video_format",
+      "video_duration_too_long",
+      "video_duration_too_short",
+      "feature_not_supported",
+      "one_of",
+      "invalid_archive",
+    ].includes(code);
+  };
+
   let status: any;
   try {
     status = await fal.queue.status(resolvedModel, {
@@ -6959,6 +7056,9 @@ async function queueStatus(
       defaultStatus: falErr?.response?.status || falErr?.statusCode || 422,
       extraData: { operation: "queue.status" },
     });
+    if (isTerminalQueueError(falError)) {
+      await markQueueHistoryFailed(falError.message);
+    }
     console.error(
       "[queueStatus] FAL queue.status error:",
       JSON.stringify(falError.data, null, 2),
@@ -6966,9 +7066,31 @@ async function queueStatus(
     throw falError;
   }
 
+  const statusValue = normalizeQueueStatusValue((status as any)?.status);
+  if (
+    statusValue === "failed" ||
+    statusValue === "error" ||
+    statusValue === "cancelled" ||
+    statusValue === "canceled"
+  ) {
+    const failureMessage = extractQueueFailureMessage(status);
+    await markQueueHistoryFailed(failureMessage);
+    return {
+      ...(status || {}),
+      requestId,
+      model: resolvedModel,
+      status: "failed",
+      error: failureMessage,
+    } as any;
+  }
+
   // STRICT CREDIT DEDUCTION: If status is COMPLETED, we must finalize (debit) immediately
   // before returning the result to the client. This prevents "free" generations via polling.
-  if ((status as any)?.status === "COMPLETED") {
+  if (
+    statusValue === "completed" ||
+    statusValue === "success" ||
+    statusValue === "succeeded"
+  ) {
     // If output is present, it's done. Trigger finalization.
     try {
       console.log(
@@ -7104,6 +7226,103 @@ async function queueResult(
     );
   }
 
+  const normalizeQueueStatusValue = (value: unknown): string =>
+    String(value || "")
+      .trim()
+      .toLowerCase();
+
+  const extractQueueFailureMessage = (
+    payload: any,
+    fallback: string = "FAL queue generation failed",
+  ): string => {
+    const candidates = [
+      payload?.error?.message,
+      payload?.error,
+      payload?.message,
+      payload?.status_message,
+      payload?.data?.error?.message,
+      payload?.data?.error,
+      payload?.data?.message,
+      payload?.data?.status_message,
+      payload?.detail?.[0]?.msg,
+      payload?.response?.message,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+
+    return fallback;
+  };
+
+  const isTerminalQueueError = (errorLike: any): boolean => {
+    const status = Number(
+      errorLike?.status ||
+        errorLike?.statusCode ||
+        errorLike?.response?.status ||
+        0,
+    );
+    const code = String(
+      errorLike?.data?.code || errorLike?.response?.data?.code || "",
+    ).toLowerCase();
+
+    if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+      return true;
+    }
+
+    return [
+      "downstream_service_error",
+      "downstream_service_unavailable",
+      "generation_timeout",
+      "content_policy_violation",
+      "forbidden",
+      "permission_denied",
+      "unauthorized",
+      "geo_restricted",
+      "image_load_error",
+      "file_download_error",
+      "unsupported_image_format",
+      "unsupported_video_format",
+      "video_duration_too_long",
+      "video_duration_too_short",
+      "feature_not_supported",
+      "one_of",
+      "invalid_archive",
+    ].includes(code);
+  };
+
+  const markQueueHistoryFailed = async (
+    message: string,
+    located?: { id: string; item: any } | null,
+  ) => {
+    try {
+      const target =
+        located ||
+        (await generationHistoryRepository.findByProviderTaskId(
+          uid,
+          "fal",
+          requestId,
+        ));
+      if (!target?.id) return;
+
+      const currentStatus = normalizeQueueStatusValue(target.item?.status);
+      if (currentStatus === "completed" || currentStatus === "failed") return;
+
+      await generationHistoryRepository.update(uid, target.id, {
+        status: "failed",
+        error: message,
+      } as any);
+    } catch (historyErr) {
+      console.error("[queueResult] Failed to mark history as failed", {
+        uid,
+        requestId,
+        historyErr,
+      });
+    }
+  };
+
   let result: any;
   try {
     result = await fal.queue.result(resolvedModel, { requestId } as any);
@@ -7115,6 +7334,9 @@ async function queueResult(
       defaultStatus: falErr?.response?.status || falErr?.statusCode || 422,
       extraData: { operation: "queue.result" },
     });
+    if (isTerminalQueueError(falError)) {
+      await markQueueHistoryFailed(falError.message);
+    }
     console.error(
       "[queueResult] FAL queue.result error:",
       JSON.stringify(falError.data, null, 2),
@@ -7126,6 +7348,27 @@ async function queueResult(
     "fal",
     requestId,
   );
+  const resultStatusValue = normalizeQueueStatusValue(
+    (result as any)?.status || (result as any)?.data?.status,
+  );
+  if (
+    resultStatusValue === "failed" ||
+    resultStatusValue === "error" ||
+    resultStatusValue === "cancelled" ||
+    resultStatusValue === "canceled"
+  ) {
+    const failureMessage = extractQueueFailureMessage(result);
+    await markQueueHistoryFailed(failureMessage, located);
+    return {
+      ...(result || {}),
+      historyId: located?.id,
+      requestId,
+      model: resolvedModel,
+      status: "failed",
+      error: failureMessage,
+    } as any;
+  }
+
   let extractedVideo = extractFalVideoUrl(result);
 
   const responseUrl = (result as any)?.response_url;
@@ -7337,6 +7580,28 @@ async function queueResult(
       status: "completed",
     } as any;
   }
+
+  if (
+    located &&
+    (resultStatusValue === "completed" ||
+      resultStatusValue === "success" ||
+      resultStatusValue === "succeeded")
+  ) {
+    const failureMessage = extractQueueFailureMessage(
+      result,
+      "FAL queue completed without returning any output media",
+    );
+    await markQueueHistoryFailed(failureMessage, located);
+    return {
+      ...(result || {}),
+      historyId: located.id,
+      requestId,
+      model: resolvedModel,
+      status: "failed",
+      error: failureMessage,
+    } as any;
+  }
+
   return result;
 }
 
@@ -7673,30 +7938,59 @@ export const falQueueService = {
       end_user_id: endUserId,
     } as any);
 
-    const input: any = {
-      prompt: body.prompt,
-      resolution,
-      duration,
-      aspect_ratio: aspectRatio,
-      generate_audio: generateAudio,
-      end_user_id: endUserId,
-    };
-    if (typeof seed === "number") {
-      input.seed = seed;
-    }
+    try {
+      const input: any = {
+        prompt: body.prompt,
+        resolution,
+        duration,
+        aspect_ratio: aspectRatio,
+        generate_audio: generateAudio,
+        end_user_id: endUserId,
+      };
+      if (typeof seed === "number") {
+        input.seed = seed;
+      }
 
-    const { request_id } = await fal.queue.submit(model, { input } as any);
-    await generationHistoryRepository.update(uid, historyId, {
-      provider: "fal",
-      providerTaskId: request_id,
-      resolution,
-      duration,
-      aspect_ratio: aspectRatio,
-      generate_audio: generateAudio,
-      ...(typeof seed === "number" ? { seed } : {}),
-      end_user_id: endUserId,
-    } as any);
-    return { requestId: request_id, historyId, model, status: "submitted" };
+      const { request_id } = await fal.queue.submit(model, { input } as any);
+      await generationHistoryRepository.update(uid, historyId, {
+        provider: "fal",
+        providerTaskId: request_id,
+        resolution,
+        duration,
+        aspect_ratio: aspectRatio,
+        generate_audio: generateAudio,
+        ...(typeof seed === "number" ? { seed } : {}),
+        end_user_id: endUserId,
+      } as any);
+      return { requestId: request_id, historyId, model, status: "submitted" };
+    } catch (err: any) {
+      const failureMessage =
+        err instanceof ApiError
+          ? err.message
+          : buildFalApiError(err, {
+              fallbackMessage: "Seedance 2.0 submit failed",
+              context: "falQueueService.seedance2T2vSubmit",
+              toastTitle: "Submit failed",
+              defaultStatus:
+                err?.response?.status || err?.statusCode || err?.status || 422,
+              extraData: { operation: "queue.submit", model },
+            }).message;
+
+      try {
+        await generationHistoryRepository.update(uid, historyId, {
+          status: "failed",
+          error: failureMessage,
+        } as any);
+      } catch (historyErr) {
+        console.error("[seedance2T2vSubmit] Failed to mark history failed", {
+          uid,
+          historyId,
+          historyErr,
+        });
+      }
+
+      throw err;
+    }
   },
   async seedance2I2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
     const falKey = env.falKey as string;
@@ -7727,54 +8021,83 @@ export const falQueueService = {
       generationType: "image-to-video",
     });
 
-    const imageUrl = await normalizeSeedance2ImageInput(
-      uid,
-      historyId,
-      body.image_url,
-      "input-1",
-    );
-    const endImageUrl =
-      typeof body?.end_image_url === "string" && body.end_image_url.trim()
-        ? await normalizeSeedance2ImageInput(
-            uid,
-            historyId,
-            body.end_image_url,
-            "input-2",
-          )
-        : undefined;
+    try {
+      const imageUrl = await normalizeSeedance2ImageInput(
+        uid,
+        historyId,
+        body.image_url,
+        "input-1",
+      );
+      const endImageUrl =
+        typeof body?.end_image_url === "string" && body.end_image_url.trim()
+          ? await normalizeSeedance2ImageInput(
+              uid,
+              historyId,
+              body.end_image_url,
+              "input-2",
+            )
+          : undefined;
 
-    await persistInputImagesFromUrls(uid, historyId, [imageUrl, endImageUrl]);
+      await persistInputImagesFromUrls(uid, historyId, [imageUrl, endImageUrl]);
 
-    const input: any = {
-      prompt: body.prompt,
-      image_url: imageUrl,
-      resolution,
-      duration,
-      aspect_ratio: aspectRatio,
-      generate_audio: generateAudio,
-      end_user_id: endUserId,
-    };
-    if (endImageUrl) {
-      input.end_image_url = endImageUrl;
+      const input: any = {
+        prompt: body.prompt,
+        image_url: imageUrl,
+        resolution,
+        duration,
+        aspect_ratio: aspectRatio,
+        generate_audio: generateAudio,
+        end_user_id: endUserId,
+      };
+      if (endImageUrl) {
+        input.end_image_url = endImageUrl;
+      }
+      if (typeof seed === "number") {
+        input.seed = seed;
+      }
+
+      const { request_id } = await fal.queue.submit(model, { input } as any);
+      await generationHistoryRepository.update(uid, historyId, {
+        provider: "fal",
+        providerTaskId: request_id,
+        resolution,
+        duration,
+        aspect_ratio: aspectRatio,
+        generate_audio: generateAudio,
+        ...(typeof seed === "number" ? { seed } : {}),
+        end_user_id: endUserId,
+        image_url: imageUrl,
+        ...(endImageUrl ? { end_image_url: endImageUrl } : {}),
+      } as any);
+      return { requestId: request_id, historyId, model, status: "submitted" };
+    } catch (err: any) {
+      const failureMessage =
+        err instanceof ApiError
+          ? err.message
+          : buildFalApiError(err, {
+              fallbackMessage: "Seedance 2.0 submit failed",
+              context: "falQueueService.seedance2I2vSubmit",
+              toastTitle: "Submit failed",
+              defaultStatus:
+                err?.response?.status || err?.statusCode || err?.status || 422,
+              extraData: { operation: "queue.submit", model },
+            }).message;
+
+      try {
+        await generationHistoryRepository.update(uid, historyId, {
+          status: "failed",
+          error: failureMessage,
+        } as any);
+      } catch (historyErr) {
+        console.error("[seedance2I2vSubmit] Failed to mark history failed", {
+          uid,
+          historyId,
+          historyErr,
+        });
+      }
+
+      throw err;
     }
-    if (typeof seed === "number") {
-      input.seed = seed;
-    }
-
-    const { request_id } = await fal.queue.submit(model, { input } as any);
-    await generationHistoryRepository.update(uid, historyId, {
-      provider: "fal",
-      providerTaskId: request_id,
-      resolution,
-      duration,
-      aspect_ratio: aspectRatio,
-      generate_audio: generateAudio,
-      ...(typeof seed === "number" ? { seed } : {}),
-      end_user_id: endUserId,
-      image_url: imageUrl,
-      ...(endImageUrl ? { end_image_url: endImageUrl } : {}),
-    } as any);
-    return { requestId: request_id, historyId, model, status: "submitted" };
   },
   // Veo 3.1 variants
   async veo31TtvSubmit(
