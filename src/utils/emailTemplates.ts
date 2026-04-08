@@ -481,3 +481,117 @@ Need help? ${supportEmail}
 ${companyName} — 511, Satyamev Eminence, Ahmedabad
 © ${new Date().getFullYear()} ${companyName}. All rights reserved.`.trim();
 }
+
+// ---------------------------------------------------------------------------
+// Canvas Collaboration Invitation Email
+// ---------------------------------------------------------------------------
+
+export interface CanvasInvitationEmailData {
+  projectName: string;
+  inviterName?: string;
+  recipientName?: string;
+  role: "editor" | "viewer" | "owner";
+  inviteUrl: string;
+  companyName?: string;
+  supportEmail?: string;
+}
+
+export function generateCanvasInvitationEmailHTML(
+  data: CanvasInvitationEmailData,
+): string {
+  const {
+    projectName,
+    inviterName,
+    recipientName,
+    role,
+    inviteUrl,
+    companyName = "Wild Mind AI",
+  } = data;
+
+  const displayRecipient = recipientName || "there";
+  const displayInviter = inviterName || "A teammate";
+  const roleLabel = role === "editor" ? "Editor" : role === "viewer" ? "Viewer" : "Owner";
+
+  const body = `
+        <tr>
+          <td align="center" style="padding:36px 40px 10px;">
+            <h1 style="margin:0 0 10px;font-size:26px;font-weight:700;color:#e8e8f0;font-family:${FONT_STACK};line-height:1.3;">
+              You are invited to collaborate
+            </h1>
+            <p style="margin:0;font-size:15px;color:#8888aa;font-family:${FONT_STACK};line-height:1.6;">
+              Hi ${displayRecipient}, ${displayInviter} invited you to join a canvas project in ${companyName}.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:24px 40px 20px;text-align:center;">
+            <div style="display:inline-block;background-color:#16162a;border:1px solid #2a2a50;border-radius:12px;padding:18px 28px;text-align:left;">
+              <p style="margin:0 0 8px;font-size:14px;color:#cfd6ff;font-family:${FONT_STACK};line-height:1.7;">
+                Project: <strong style="color:#ffffff;">${projectName}</strong>
+              </p>
+              <p style="margin:0;font-size:14px;color:#cfd6ff;font-family:${FONT_STACK};line-height:1.7;">
+                Access: <strong style="color:#ffffff;">${roleLabel}</strong>
+              </p>
+            </div>
+          </td>
+        </tr>
+
+        <tr>
+          <td align="center" style="padding:0 40px 28px;">
+            <a href="${inviteUrl}"
+               style="display:inline-block;background-color:#3b4fd4;color:#ffffff;text-decoration:none;
+                      padding:15px 40px;border-radius:8px;font-size:15px;font-weight:600;
+                      font-family:${FONT_STACK};letter-spacing:0.3px;">
+              Open Project
+            </a>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:0 40px 28px;text-align:center;">
+            <p style="margin:0;font-size:13px;color:#6666aa;font-family:${FONT_STACK};line-height:1.7;word-break:break-all;">
+              If the button does not work, use this link:<br/>
+              <a href="${inviteUrl}" style="color:#7b8cde;text-decoration:none;">${inviteUrl}</a>
+            </p>
+          </td>
+        </tr>`;
+
+  return wrapEmail(body, `${displayInviter} invited you to collaborate on ${projectName}`, {
+    previewText: `${displayInviter} invited you to join ${projectName} as ${roleLabel}.`,
+  });
+}
+
+export function generateCanvasInvitationEmailText(
+  data: CanvasInvitationEmailData,
+): string {
+  const {
+    projectName,
+    inviterName,
+    recipientName,
+    role,
+    inviteUrl,
+    companyName = "Wild Mind AI",
+    supportEmail = "support@wildmindai.com",
+  } = data;
+
+  const displayRecipient = recipientName || "there";
+  const displayInviter = inviterName || "A teammate";
+  const roleLabel = role === "editor" ? "Editor" : role === "viewer" ? "Viewer" : "Owner";
+
+  return `Hi ${displayRecipient},
+
+${displayInviter} invited you to collaborate on a canvas project in ${companyName}.
+
+Project: ${projectName}
+Access: ${roleLabel}
+
+Open project:
+${inviteUrl}
+
+If you did not expect this invitation, you can ignore this email.
+
+Need help? ${supportEmail}
+
+© ${new Date().getFullYear()} ${companyName}. All rights reserved.`.trim();
+}
