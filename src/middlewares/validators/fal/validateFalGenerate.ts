@@ -30,6 +30,8 @@ export const ALLOWED_FAL_MODELS = [
   "elevenlabs-dialogue",
   "elevenlabs-text-to-dialogue",
   "elevenlabs-text-to-dialogue-eleven-v3",
+  // Google Nano Banana 2
+  "google/nano-banana-2",
   // ElevenLabs TTS variants // all will call same model but this is text to speech
   "elevenlabs-tts",
   "elevenlabs-tts-eleven-v3",
@@ -123,6 +125,9 @@ export const validateFalGenerate = [
   body("resolution").optional().isIn(["1K", "2K", "4K"]),
   body("seed").optional().isInt(),
   body("negative_prompt").optional().isString(),
+  body("thinking_level").optional().isIn(["minimal", "high"]),
+  body("limit_generations").optional().isBoolean(),
+  body("enable_web_search").optional().isBoolean(),
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty())

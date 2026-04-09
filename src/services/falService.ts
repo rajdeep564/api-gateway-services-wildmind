@@ -691,6 +691,20 @@ async function generate(
     modelEndpoint = hasImages
       ? "fal-ai/nano-banana-pro/edit"
       : "fal-ai/nano-banana-pro";
+  } else if (
+    modelLower.includes("google/nano-banana-2") ||
+    modelLower.includes("nano-banana-2")
+  ) {
+    // Google Nano Banana 2:
+    // Text-to-image (no images) -> fal-ai/nano-banana-2
+    // Image-to-image (with images) -> fal-ai/nano-banana-2/edit
+    const hasImages =
+      (Array.isArray(uploadedImages) && uploadedImages.length > 0) ||
+      (Array.isArray((payload as any).image_urls) &&
+        (payload as any).image_urls.length > 0);
+    modelEndpoint = hasImages
+      ? "fal-ai/nano-banana-2/edit"
+      : "fal-ai/nano-banana-2";
   } else if (isFlux2Pro) {
     // Flux 2 Pro: use /edit endpoint when images are uploaded, otherwise use text-to-image endpoint
     const hasImages =
@@ -2134,6 +2148,126 @@ async function generate(
           error: falError.message,
         } as any);
       } catch {}
+      throw falError;
+    }
+  }
+  
+  // >>> GOOGLE NANO BANANA 2 HANDLER <<<
+  if (
+    modelLower.includes("google/nano-banana-2") ||
+    modelLower.includes("nano-banana-2")
+  ) {
+    console.log(
+      `[falService] 🚀 Handling Nano Banana 2 request: ${modelEndpoint}`,
+    );
+
+    const inputBody: any = {
+      prompt: finalPrompt || prompt,
+      num_images: imagesRequestedClamped,
+      aspect_ratio: (payload as any).aspect_ratio || resolvedAspect || "auto",
+      output_format: (payload as any).output_format || output_format || "png",
+      resolution: (payload as any).resolution || "1K",
+      sync_mode: (payload as any).sync_mode || false,
+      limit_generations: (payload as any).limit_generations ?? true,
+      enable_web_search: (payload as any).enable_web_search ?? false,
+    };
+
+    if ((payload as any).seed != null)
+      inputBody.seed = Number((payload as any).seed);
+    if ((payload as any).safety_tolerance != null)
+      inputBody.safety_tolerance = String((payload as any).safety_tolerance);
+    if ((payload as any).thinking_level)
+      inputBody.thinking_level = (payload as any).thinking_level;
+
+    // I2I mode for Nano Banana 2
+    const isI2IMode = modelEndpoint.includes("/edit");
+    if (isI2IMode) {
+      const payloadImageUrls = Array.isArray((payload as any).image_urls)
+        ? (payload as any).image_urls
+        : [];
+      const refs = pickPublicImageUrls(
+        publicImageUrls,
+        payloadImageUrls,
+        uploadedImages,
+      );
+      if (refs.length > 0) inputBody.image_urls = refs;
+    }
+
+    try {
+      console.log("[falService] Submitting Nano Banana 2 request to FAL:", {
+        modelEndpoint,
+        input: inputBody,
+      });
+      const result = await fal.subscribe(modelEndpoint as any, {
+        input: inputBody,
+        logs: true,
+      });
+
+      if (!result.data || !result.data.images) {
+        throw new ApiError("No images returned from Nano Banana 2", 502);
+      }
+
+      const images = result.data.images;
+      const requestId = result.requestId;
+      const username = creator?.username || uid;
+
+      const storedImages = await Promise.all(
+        images.map(async (img: any, idx: number) => {
+          try {
+            const stored = await uploadFromUrlToZata({
+              sourceUrl: img.url,
+              keyPrefix: `users/${username}/image/${historyId}`,
+              fileName: `nano-banana-2-${idx + 1}`,
+            });
+            return {
+              id: `${requestId}-${idx}`,
+              url: stored.publicUrl,
+              storagePath: stored.key,
+              originalUrl: img.url,
+              content_type: img.content_type,
+            };
+          } catch (e) {
+            return {
+              id: `${requestId}-${idx}`,
+              url: img.url,
+              originalUrl: img.url,
+              content_type: img.content_type,
+            };
+          }
+        }),
+      );
+
+      const validImages = storedImages.filter(Boolean);
+      await generationHistoryRepository.update(uid, historyId, {
+        status: "completed",
+        images: validImages,
+      } as any);
+      await falRepository.updateGenerationRecord(legacyId, {
+        status: "completed",
+        images: validImages,
+      } as any);
+      await syncToMirror(uid, historyId);
+      markGenerationCompleted(uid, historyId, {
+        status: "completed",
+        images: validImages,
+        isPublic: (payload as any).isPublic === true,
+      }).catch(console.error);
+
+      return {
+        images: validImages,
+        historyId,
+        model: modelEndpoint,
+        status: "completed",
+      } as any;
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: "Failed to generate image with Nano Banana 2",
+        context: "falService.generate.nanoBanana2",
+      });
+      await generationHistoryRepository.update(uid, historyId, {
+        status: "failed",
+        error: falError.message,
+      } as any);
       throw falError;
     }
   }
