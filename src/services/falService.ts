@@ -8014,15 +8014,32 @@ async function normalizeSeedance2ImageInput(
     throw new ApiError(`${fileName} is required`, 400);
   }
 
-  if (!/^data:/i.test(source)) {
-    return source;
-  }
-
   const creator = await authRepository.getUserById(uid);
   const username = creator?.username || uid;
-  const stored = await uploadDataUriToZata({
-    dataUri: source,
-    keyPrefix: `users/${username}/input/${historyId}`,
+  const keyPrefix = `users/${username}/input/${historyId}`;
+
+  // Handle data URIs
+  if (/^data:/i.test(source)) {
+    const stored = await uploadDataUriToZata({
+      dataUri: source,
+      keyPrefix,
+      fileName,
+    });
+    return stored.publicUrl;
+  }
+
+  // Handle blob URLs (should be handled by frontend, but safety net here)
+  if (source.startsWith("blob:")) {
+    throw new ApiError(
+      "Blob URLs are not supported by the backend. Please upload from the device in the frontend first.",
+      400,
+    );
+  }
+
+  // Handle proxy URLs and external URLs by mirroring to Zata
+  const stored = await uploadFromUrlToZata({
+    sourceUrl: source,
+    keyPrefix,
     fileName,
   });
   return stored.publicUrl;
@@ -8091,15 +8108,41 @@ async function normalizeSeedance2MediaInputs(
 
   for (let i = 0; i < items.length; i++) {
     const source = items[i];
-    if (/^data:/i.test(source)) {
-      const stored = await uploadDataUriToZata({
-        dataUri: source,
-        keyPrefix,
-        fileName: `${kind}-${i + 1}`,
+    try {
+      if (/^data:/i.test(source)) {
+        const stored = await uploadDataUriToZata({
+          dataUri: source,
+          keyPrefix,
+          fileName: `${kind}-${i + 1}`,
+        });
+        normalized.push(stored.publicUrl);
+      } else if (source.startsWith("blob:")) {
+        // Log skip or throw error
+        console.warn(`[falService] Skipping blob URL in ${kind} inputs:`, source);
+        continue;
+      } else {
+        // Upload from URL to Zata (handles proxy and external URLs)
+        const stored = await uploadFromUrlToZata({
+          sourceUrl: source,
+          keyPrefix,
+          fileName: `${kind}-${i + 1}`,
+        });
+        normalized.push(stored.publicUrl);
+        console.log(`[falService] Mirroring ${kind} to Zata:`, {
+          original: source,
+          zata: stored.publicUrl,
+        });
+      }
+    } catch (err: any) {
+      console.error(`[falService] Failed to normalize ${kind} input:`, {
+        source,
+        error: err?.message,
       });
-      normalized.push(stored.publicUrl);
-    } else {
-      normalized.push(source);
+      // Fallback to original for non-blobs if upload fails, 
+      // though FAL might reject it if it's a proxy URL.
+      if (!source.startsWith("blob:")) {
+        normalized.push(source);
+      }
     }
   }
 
