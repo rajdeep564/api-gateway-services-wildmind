@@ -68,6 +68,8 @@ export const validateFalGenerate = [
       "ad-generation",
       "live-chat",
       "text-to-character",
+      "image-to-image",
+      "image-edit",
     ])
     .withMessage("invalid generationType"),
   body("model").isString().isIn(ALLOWED_FAL_MODELS),
@@ -146,6 +148,8 @@ export const validateFalGenerate = [
       "ad-generation",
       "live-chat",
       "text-to-character",
+      "image-to-image",
+      "image-edit",
     ]);
 
     // If generationType is not provided, keep backward compatibility and require prompt.

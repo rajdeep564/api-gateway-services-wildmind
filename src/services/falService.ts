@@ -379,10 +379,15 @@ async function generate(
     modelLower.includes("google/nano-banana-pro") ||
     modelLower.includes("nano-banana-pro") ||
     modelLower.includes("nano banana pro");
+  const isNanoBanana2 =
+    modelLower.includes("google/nano-banana-2") ||
+    modelLower.includes("nano-banana-2") ||
+    modelLower.includes("nano banana 2");
 
-  // For nano-banana-pro, also check image_urls from payload
+  // For nano-banana-pro and nano-banana-2, also check image_urls from payload
   const payloadImageUrls =
-    isNanoBananaPro && Array.isArray((payload as any).image_urls)
+    (isNanoBananaPro || isNanoBanana2) &&
+    Array.isArray((payload as any).image_urls)
       ? (payload as any).image_urls
       : [];
 
@@ -571,8 +576,8 @@ async function generate(
       }
     }
 
-    // For nano-banana-pro, also persist image_urls from payload if provided
-    if (isNanoBananaPro && payloadImageUrls.length > 0) {
+    // For nano-banana-pro and nano-banana-2, also persist image_urls from payload if provided
+    if ((isNanoBananaPro || isNanoBanana2) && payloadImageUrls.length > 0) {
       for (const src of payloadImageUrls) {
         if (!src || typeof src !== "string") continue;
 
