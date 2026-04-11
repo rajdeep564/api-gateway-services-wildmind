@@ -12,6 +12,10 @@ export const ALLOWED_FAL_MODELS = [
   "seedance-2.0",
   "bytedance/seedance-2.0/text-to-video",
   "bytedance/seedance-2.0/image-to-video",
+  "bytedance/seedance-2.0/reference-to-video",
+  "bytedance/seedance-2.0/fast/text-to-video",
+  "bytedance/seedance-2.0/fast/image-to-video",
+  "bytedance/seedance-2.0/fast/reference-to-video",
   // Imagen 4 image generation variants (frontend model keys)
   "imagen-4-ultra",
   "imagen-4",
@@ -26,6 +30,8 @@ export const ALLOWED_FAL_MODELS = [
   "elevenlabs-dialogue",
   "elevenlabs-text-to-dialogue",
   "elevenlabs-text-to-dialogue-eleven-v3",
+  // Google Nano Banana 2
+  "google/nano-banana-2",
   // ElevenLabs TTS variants // all will call same model but this is text to speech
   "elevenlabs-tts",
   "elevenlabs-tts-eleven-v3",
@@ -62,6 +68,8 @@ export const validateFalGenerate = [
       "ad-generation",
       "live-chat",
       "text-to-character",
+      "image-to-image",
+      "image-edit",
     ])
     .withMessage("invalid generationType"),
   body("model").isString().isIn(ALLOWED_FAL_MODELS),
@@ -119,6 +127,9 @@ export const validateFalGenerate = [
   body("resolution").optional().isIn(["1K", "2K", "4K"]),
   body("seed").optional().isInt(),
   body("negative_prompt").optional().isString(),
+  body("thinking_level").optional().isIn(["minimal", "high"]),
+  body("limit_generations").optional().isBoolean(),
+  body("enable_web_search").optional().isBoolean(),
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty())
@@ -137,6 +148,8 @@ export const validateFalGenerate = [
       "ad-generation",
       "live-chat",
       "text-to-character",
+      "image-to-image",
+      "image-edit",
     ]);
 
     // If generationType is not provided, keep backward compatibility and require prompt.
@@ -187,6 +200,7 @@ export const validateFalMayaTts = [
   body("top_p")
     .optional()
     .isFloat({ min: 0, max: 1 })
+
     .withMessage("top_p must be between 0 and 1"),
   body("max_tokens")
     .optional()
@@ -1476,6 +1490,165 @@ export const validateFalSeedance2I2v = [
 
     next();
   },
+];
+
+export const validateFalSeedance2FastI2v = [...validateFalSeedance2I2v];
+export const validateFalSeedance2FastT2v = [...validateFalSeedance2T2v];
+export const validateFalSeedance2FastReferenceT2v = [
+  body("prompt").isString().notEmpty().withMessage("prompt is required"),
+  body("image_urls")
+    .optional({ nullable: true, checkFalsy: false })
+    .isArray({ max: 9 })
+    .withMessage("image_urls must be an array with at most 9 items"),
+  body("image_urls.*")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString()
+    .notEmpty()
+    .withMessage("each image_urls entry must be a non-empty string"),
+  body("video_urls")
+    .optional({ nullable: true, checkFalsy: false })
+    .isArray({ max: 3 })
+    .withMessage("video_urls must be an array with at most 3 items"),
+  body("video_urls.*")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString()
+    .notEmpty()
+    .withMessage("each video_urls entry must be a non-empty string"),
+  body("audio_urls")
+    .optional({ nullable: true, checkFalsy: false })
+    .isArray({ max: 3 })
+    .withMessage("audio_urls must be an array with at most 3 items"),
+  body("audio_urls.*")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString()
+    .notEmpty()
+    .withMessage("each audio_urls entry must be a non-empty string"),
+  body("resolution")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["480p", "720p"])
+    .withMessage("resolution must be 480p or 720p"),
+  body("duration")
+    .optional({ nullable: true, checkFalsy: false })
+    .custom((value) => {
+      if (value == null || value === "") return true;
+      if (String(value).toLowerCase() === "auto") return true;
+      const normalized =
+        typeof value === "number"
+          ? value
+          : parseInt(String(value).replace(/s$/i, ""), 10);
+      return Number.isFinite(normalized) && normalized >= 4 && normalized <= 15;
+    })
+    .withMessage("duration must be auto or between 4 and 15 seconds"),
+  body("aspect_ratio")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"])
+    .withMessage(
+      "aspect_ratio must be auto, 21:9, 16:9, 4:3, 1:1, 3:4, or 9:16",
+    ),
+  body("generate_audio")
+    .optional({ nullable: true, checkFalsy: false })
+    .isBoolean()
+    .withMessage("generate_audio must be a boolean"),
+  body("seed")
+    .optional({ nullable: true, checkFalsy: false })
+    .isInt()
+    .withMessage("seed must be an integer"),
+  body("end_user_id")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString()
+    .withMessage("end_user_id must be a string"),
+  body("originalPrompt")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString(),
+  body("isPublic")
+    .optional({ nullable: true, checkFalsy: false })
+    .isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      console.error(
+        "[validateFalSeedance2FastReferenceT2v] Validation errors:",
+        errors.array(),
+      );
+      return next(new ApiError("Validation failed", 400, errors.array()));
+    }
+
+    const imageUrls = Array.isArray(req.body?.image_urls)
+      ? req.body.image_urls.filter(
+          (value: unknown): value is string =>
+            typeof value === "string" && value.trim().length > 0,
+        )
+      : [];
+    const videoUrls = Array.isArray(req.body?.video_urls)
+      ? req.body.video_urls.filter(
+          (value: unknown): value is string =>
+            typeof value === "string" && value.trim().length > 0,
+        )
+      : [];
+    const audioUrls = Array.isArray(req.body?.audio_urls)
+      ? req.body.audio_urls.filter(
+          (value: unknown): value is string =>
+            typeof value === "string" && value.trim().length > 0,
+        )
+      : [];
+
+    if (imageUrls.length === 0 && videoUrls.length === 0) {
+      return next(
+        new ApiError(
+          "At least one reference image or video is required for reference-to-video",
+          400,
+        ),
+      );
+    }
+
+    if (audioUrls.length > 0 && imageUrls.length === 0 && videoUrls.length === 0) {
+      return next(
+        new ApiError(
+          "audio_urls requires at least one reference image or video",
+          400,
+        ),
+      );
+    }
+
+    const totalFiles = imageUrls.length + videoUrls.length + audioUrls.length;
+    if (totalFiles > 12) {
+      return next(
+        new ApiError(
+          "Total files across image_urls, video_urls, and audio_urls must not exceed 12",
+          400,
+        ),
+      );
+    }
+
+    const durationRaw = req.body?.duration;
+    if (durationRaw == null || durationRaw === "") {
+      req.body.duration = "auto";
+    } else if (String(durationRaw).toLowerCase() === "auto") {
+      req.body.duration = "auto";
+    } else {
+      const normalized =
+        typeof durationRaw === "number"
+          ? durationRaw
+          : parseInt(String(durationRaw).replace(/s$/i, ""), 10);
+      req.body.duration = String(
+        Math.min(15, Math.max(4, Number.isFinite(normalized) ? normalized : 8)),
+      );
+    }
+
+    req.body.image_urls = imageUrls;
+    req.body.video_urls = videoUrls;
+    req.body.audio_urls = audioUrls;
+    req.body.resolution = req.body?.resolution || "720p";
+    req.body.aspect_ratio = req.body?.aspect_ratio || "auto";
+    if (typeof req.body?.generate_audio !== "boolean") {
+      req.body.generate_audio = true;
+    }
+
+    next();
+  },
+];
+export const validateFalSeedance2ReferenceT2v = [
+  ...validateFalSeedance2FastReferenceT2v,
 ];
 
 // Sora 2 Video-to-Video Remix

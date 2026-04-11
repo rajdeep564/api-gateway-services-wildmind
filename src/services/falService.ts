@@ -38,6 +38,7 @@ import {
   validateGenerationRequest,
   estimateFileSize,
 } from "../utils/validationHelpers";
+import { probeVideoMeta } from "../utils/media/probe";
 
 const buildGenerationImageFileName = (
   historyId?: string,
@@ -378,10 +379,15 @@ async function generate(
     modelLower.includes("google/nano-banana-pro") ||
     modelLower.includes("nano-banana-pro") ||
     modelLower.includes("nano banana pro");
+  const isNanoBanana2 =
+    modelLower.includes("google/nano-banana-2") ||
+    modelLower.includes("nano-banana-2") ||
+    modelLower.includes("nano banana 2");
 
-  // For nano-banana-pro, also check image_urls from payload
+  // For nano-banana-pro and nano-banana-2, also check image_urls from payload
   const payloadImageUrls =
-    isNanoBananaPro && Array.isArray((payload as any).image_urls)
+    (isNanoBananaPro || isNanoBanana2) &&
+    Array.isArray((payload as any).image_urls)
       ? (payload as any).image_urls
       : [];
 
@@ -570,8 +576,8 @@ async function generate(
       }
     }
 
-    // For nano-banana-pro, also persist image_urls from payload if provided
-    if (isNanoBananaPro && payloadImageUrls.length > 0) {
+    // For nano-banana-pro and nano-banana-2, also persist image_urls from payload if provided
+    if ((isNanoBananaPro || isNanoBanana2) && payloadImageUrls.length > 0) {
       for (const src of payloadImageUrls) {
         if (!src || typeof src !== "string") continue;
 
@@ -690,6 +696,20 @@ async function generate(
     modelEndpoint = hasImages
       ? "fal-ai/nano-banana-pro/edit"
       : "fal-ai/nano-banana-pro";
+  } else if (
+    modelLower.includes("google/nano-banana-2") ||
+    modelLower.includes("nano-banana-2")
+  ) {
+    // Google Nano Banana 2:
+    // Text-to-image (no images) -> fal-ai/nano-banana-2
+    // Image-to-image (with images) -> fal-ai/nano-banana-2/edit
+    const hasImages =
+      (Array.isArray(uploadedImages) && uploadedImages.length > 0) ||
+      (Array.isArray((payload as any).image_urls) &&
+        (payload as any).image_urls.length > 0);
+    modelEndpoint = hasImages
+      ? "fal-ai/nano-banana-2/edit"
+      : "fal-ai/nano-banana-2";
   } else if (isFlux2Pro) {
     // Flux 2 Pro: use /edit endpoint when images are uploaded, otherwise use text-to-image endpoint
     const hasImages =
@@ -2133,6 +2153,126 @@ async function generate(
           error: falError.message,
         } as any);
       } catch {}
+      throw falError;
+    }
+  }
+  
+  // >>> GOOGLE NANO BANANA 2 HANDLER <<<
+  if (
+    modelLower.includes("google/nano-banana-2") ||
+    modelLower.includes("nano-banana-2")
+  ) {
+    console.log(
+      `[falService] 🚀 Handling Nano Banana 2 request: ${modelEndpoint}`,
+    );
+
+    const inputBody: any = {
+      prompt: finalPrompt || prompt,
+      num_images: imagesRequestedClamped,
+      aspect_ratio: (payload as any).aspect_ratio || resolvedAspect || "auto",
+      output_format: (payload as any).output_format || output_format || "png",
+      resolution: (payload as any).resolution || "1K",
+      sync_mode: (payload as any).sync_mode || false,
+      limit_generations: (payload as any).limit_generations ?? true,
+      enable_web_search: (payload as any).enable_web_search ?? false,
+    };
+
+    if ((payload as any).seed != null)
+      inputBody.seed = Number((payload as any).seed);
+    if ((payload as any).safety_tolerance != null)
+      inputBody.safety_tolerance = String((payload as any).safety_tolerance);
+    if ((payload as any).thinking_level)
+      inputBody.thinking_level = (payload as any).thinking_level;
+
+    // I2I mode for Nano Banana 2
+    const isI2IMode = modelEndpoint.includes("/edit");
+    if (isI2IMode) {
+      const payloadImageUrls = Array.isArray((payload as any).image_urls)
+        ? (payload as any).image_urls
+        : [];
+      const refs = pickPublicImageUrls(
+        publicImageUrls,
+        payloadImageUrls,
+        uploadedImages,
+      );
+      if (refs.length > 0) inputBody.image_urls = refs;
+    }
+
+    try {
+      console.log("[falService] Submitting Nano Banana 2 request to FAL:", {
+        modelEndpoint,
+        input: inputBody,
+      });
+      const result = await fal.subscribe(modelEndpoint as any, {
+        input: inputBody,
+        logs: true,
+      });
+
+      if (!result.data || !result.data.images) {
+        throw new ApiError("No images returned from Nano Banana 2", 502);
+      }
+
+      const images = result.data.images;
+      const requestId = result.requestId;
+      const username = creator?.username || uid;
+
+      const storedImages = await Promise.all(
+        images.map(async (img: any, idx: number) => {
+          try {
+            const stored = await uploadFromUrlToZata({
+              sourceUrl: img.url,
+              keyPrefix: `users/${username}/image/${historyId}`,
+              fileName: `nano-banana-2-${idx + 1}`,
+            });
+            return {
+              id: `${requestId}-${idx}`,
+              url: stored.publicUrl,
+              storagePath: stored.key,
+              originalUrl: img.url,
+              content_type: img.content_type,
+            };
+          } catch (e) {
+            return {
+              id: `${requestId}-${idx}`,
+              url: img.url,
+              originalUrl: img.url,
+              content_type: img.content_type,
+            };
+          }
+        }),
+      );
+
+      const validImages = storedImages.filter(Boolean);
+      await generationHistoryRepository.update(uid, historyId, {
+        status: "completed",
+        images: validImages,
+      } as any);
+      await falRepository.updateGenerationRecord(legacyId, {
+        status: "completed",
+        images: validImages,
+      } as any);
+      await syncToMirror(uid, historyId);
+      markGenerationCompleted(uid, historyId, {
+        status: "completed",
+        images: validImages,
+        isPublic: (payload as any).isPublic === true,
+      }).catch(console.error);
+
+      return {
+        images: validImages,
+        historyId,
+        model: modelEndpoint,
+        status: "completed",
+      } as any;
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: "Failed to generate image with Nano Banana 2",
+        context: "falService.generate.nanoBanana2",
+      });
+      await generationHistoryRepository.update(uid, historyId, {
+        status: "failed",
+        error: falError.message,
+      } as any);
       throw falError;
     }
   }
@@ -6352,9 +6492,7 @@ export const falService = {
       }
       const zoomNorm = toFiniteNumber(body?.zoom);
       input.zoom =
-        zoomNorm !== undefined
-          ? Math.min(10, Math.max(0, zoomNorm))
-          : 5;
+        zoomNorm !== undefined ? Math.min(10, Math.max(0, zoomNorm)) : 5;
       if (
         typeof body?.additional_prompt === "string" &&
         body.additional_prompt.trim()
@@ -6363,17 +6501,13 @@ export const falService = {
       }
       const loraNorm = toFiniteNumber(body?.lora_scale);
       input.lora_scale =
-        loraNorm !== undefined
-          ? Math.min(4, Math.max(0, loraNorm))
-          : 1;
+        loraNorm !== undefined ? Math.min(4, Math.max(0, loraNorm)) : 1;
       if (body?.image_size) {
         input.image_size = body.image_size;
       }
       const gs = toFiniteNumber(body?.guidance_scale);
       input.guidance_scale =
-        gs !== undefined
-          ? Math.min(20, Math.max(1, gs))
-          : 4.5;
+        gs !== undefined ? Math.min(20, Math.max(1, gs)) : 4.5;
       const stepsRaw = toFiniteNumber(body?.num_inference_steps);
       input.num_inference_steps =
         stepsRaw !== undefined
@@ -6945,6 +7079,103 @@ async function queueStatus(
     );
   }
 
+  const normalizeQueueStatusValue = (value: unknown): string =>
+    String(value || "")
+      .trim()
+      .toLowerCase();
+
+  const extractQueueFailureMessage = (
+    payload: any,
+    fallback: string = "FAL queue generation failed",
+  ): string => {
+    const candidates = [
+      payload?.error?.message,
+      payload?.error,
+      payload?.message,
+      payload?.status_message,
+      payload?.data?.error?.message,
+      payload?.data?.error,
+      payload?.data?.message,
+      payload?.data?.status_message,
+      payload?.detail?.[0]?.msg,
+      payload?.response?.message,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+
+    return fallback;
+  };
+
+  const markQueueHistoryFailed = async (
+    message: string,
+    located?: { id: string; item: any } | null,
+  ) => {
+    try {
+      const target =
+        located ||
+        (await generationHistoryRepository.findByProviderTaskId(
+          uid,
+          "fal",
+          requestId,
+        ));
+      if (!target?.id) return;
+
+      const currentStatus = normalizeQueueStatusValue(target.item?.status);
+      if (currentStatus === "completed" || currentStatus === "failed") return;
+
+      await generationHistoryRepository.update(uid, target.id, {
+        status: "failed",
+        error: message,
+      } as any);
+    } catch (historyErr) {
+      console.error("[queueStatus] Failed to mark history as failed", {
+        uid,
+        requestId,
+        historyErr,
+      });
+    }
+  };
+
+  const isTerminalQueueError = (errorLike: any): boolean => {
+    const status = Number(
+      errorLike?.status ||
+        errorLike?.statusCode ||
+        errorLike?.response?.status ||
+        0,
+    );
+    const code = String(
+      errorLike?.data?.code || errorLike?.response?.data?.code || "",
+    ).toLowerCase();
+
+    if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+      return true;
+    }
+
+    return [
+      "downstream_service_error",
+      "downstream_service_unavailable",
+      "generation_timeout",
+      "content_policy_violation",
+      "forbidden",
+      "permission_denied",
+      "unauthorized",
+      "geo_restricted",
+      "image_load_error",
+      "file_download_error",
+      "unsupported_image_format",
+      "unsupported_video_format",
+      "video_duration_too_long",
+      "video_duration_too_short",
+      "feature_not_supported",
+      "one_of",
+      "invalid_archive",
+    ].includes(code);
+  };
+
   let status: any;
   try {
     status = await fal.queue.status(resolvedModel, {
@@ -6959,6 +7190,9 @@ async function queueStatus(
       defaultStatus: falErr?.response?.status || falErr?.statusCode || 422,
       extraData: { operation: "queue.status" },
     });
+    if (isTerminalQueueError(falError)) {
+      await markQueueHistoryFailed(falError.message);
+    }
     console.error(
       "[queueStatus] FAL queue.status error:",
       JSON.stringify(falError.data, null, 2),
@@ -6966,9 +7200,31 @@ async function queueStatus(
     throw falError;
   }
 
+  const statusValue = normalizeQueueStatusValue((status as any)?.status);
+  if (
+    statusValue === "failed" ||
+    statusValue === "error" ||
+    statusValue === "cancelled" ||
+    statusValue === "canceled"
+  ) {
+    const failureMessage = extractQueueFailureMessage(status);
+    await markQueueHistoryFailed(failureMessage);
+    return {
+      ...(status || {}),
+      requestId,
+      model: resolvedModel,
+      status: "failed",
+      error: failureMessage,
+    } as any;
+  }
+
   // STRICT CREDIT DEDUCTION: If status is COMPLETED, we must finalize (debit) immediately
   // before returning the result to the client. This prevents "free" generations via polling.
-  if ((status as any)?.status === "COMPLETED") {
+  if (
+    statusValue === "completed" ||
+    statusValue === "success" ||
+    statusValue === "succeeded"
+  ) {
     // If output is present, it's done. Trigger finalization.
     try {
       console.log(
@@ -7104,6 +7360,103 @@ async function queueResult(
     );
   }
 
+  const normalizeQueueStatusValue = (value: unknown): string =>
+    String(value || "")
+      .trim()
+      .toLowerCase();
+
+  const extractQueueFailureMessage = (
+    payload: any,
+    fallback: string = "FAL queue generation failed",
+  ): string => {
+    const candidates = [
+      payload?.error?.message,
+      payload?.error,
+      payload?.message,
+      payload?.status_message,
+      payload?.data?.error?.message,
+      payload?.data?.error,
+      payload?.data?.message,
+      payload?.data?.status_message,
+      payload?.detail?.[0]?.msg,
+      payload?.response?.message,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+
+    return fallback;
+  };
+
+  const isTerminalQueueError = (errorLike: any): boolean => {
+    const status = Number(
+      errorLike?.status ||
+        errorLike?.statusCode ||
+        errorLike?.response?.status ||
+        0,
+    );
+    const code = String(
+      errorLike?.data?.code || errorLike?.response?.data?.code || "",
+    ).toLowerCase();
+
+    if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+      return true;
+    }
+
+    return [
+      "downstream_service_error",
+      "downstream_service_unavailable",
+      "generation_timeout",
+      "content_policy_violation",
+      "forbidden",
+      "permission_denied",
+      "unauthorized",
+      "geo_restricted",
+      "image_load_error",
+      "file_download_error",
+      "unsupported_image_format",
+      "unsupported_video_format",
+      "video_duration_too_long",
+      "video_duration_too_short",
+      "feature_not_supported",
+      "one_of",
+      "invalid_archive",
+    ].includes(code);
+  };
+
+  const markQueueHistoryFailed = async (
+    message: string,
+    located?: { id: string; item: any } | null,
+  ) => {
+    try {
+      const target =
+        located ||
+        (await generationHistoryRepository.findByProviderTaskId(
+          uid,
+          "fal",
+          requestId,
+        ));
+      if (!target?.id) return;
+
+      const currentStatus = normalizeQueueStatusValue(target.item?.status);
+      if (currentStatus === "completed" || currentStatus === "failed") return;
+
+      await generationHistoryRepository.update(uid, target.id, {
+        status: "failed",
+        error: message,
+      } as any);
+    } catch (historyErr) {
+      console.error("[queueResult] Failed to mark history as failed", {
+        uid,
+        requestId,
+        historyErr,
+      });
+    }
+  };
+
   let result: any;
   try {
     result = await fal.queue.result(resolvedModel, { requestId } as any);
@@ -7115,6 +7468,9 @@ async function queueResult(
       defaultStatus: falErr?.response?.status || falErr?.statusCode || 422,
       extraData: { operation: "queue.result" },
     });
+    if (isTerminalQueueError(falError)) {
+      await markQueueHistoryFailed(falError.message);
+    }
     console.error(
       "[queueResult] FAL queue.result error:",
       JSON.stringify(falError.data, null, 2),
@@ -7126,6 +7482,27 @@ async function queueResult(
     "fal",
     requestId,
   );
+  const resultStatusValue = normalizeQueueStatusValue(
+    (result as any)?.status || (result as any)?.data?.status,
+  );
+  if (
+    resultStatusValue === "failed" ||
+    resultStatusValue === "error" ||
+    resultStatusValue === "cancelled" ||
+    resultStatusValue === "canceled"
+  ) {
+    const failureMessage = extractQueueFailureMessage(result);
+    await markQueueHistoryFailed(failureMessage, located);
+    return {
+      ...(result || {}),
+      historyId: located?.id,
+      requestId,
+      model: resolvedModel,
+      status: "failed",
+      error: failureMessage,
+    } as any;
+  }
+
   let extractedVideo = extractFalVideoUrl(result);
 
   const responseUrl = (result as any)?.response_url;
@@ -7337,6 +7714,28 @@ async function queueResult(
       status: "completed",
     } as any;
   }
+
+  if (
+    located &&
+    (resultStatusValue === "completed" ||
+      resultStatusValue === "success" ||
+      resultStatusValue === "succeeded")
+  ) {
+    const failureMessage = extractQueueFailureMessage(
+      result,
+      "FAL queue completed without returning any output media",
+    );
+    await markQueueHistoryFailed(failureMessage, located);
+    return {
+      ...(result || {}),
+      historyId: located.id,
+      requestId,
+      model: resolvedModel,
+      status: "failed",
+      error: failureMessage,
+    } as any;
+  }
+
   return result;
 }
 
@@ -7544,7 +7943,7 @@ async function klingV3Submit(
     duration,
     aspect_ratio:
       mode === "text-to-video"
-        ? body.aspect_ratio ?? "16:9"
+        ? (body.aspect_ratio ?? "16:9")
         : typeof body.aspect_ratio === "string"
           ? body.aspect_ratio
           : null,
@@ -7615,64 +8014,204 @@ async function normalizeSeedance2ImageInput(
     throw new ApiError(`${fileName} is required`, 400);
   }
 
-  if (!/^data:/i.test(source)) {
-    return source;
-  }
-
   const creator = await authRepository.getUserById(uid);
   const username = creator?.username || uid;
-  const stored = await uploadDataUriToZata({
-    dataUri: source,
-    keyPrefix: `users/${username}/input/${historyId}`,
+  const keyPrefix = `users/${username}/input/${historyId}`;
+
+  // Handle data URIs
+  if (/^data:/i.test(source)) {
+    const stored = await uploadDataUriToZata({
+      dataUri: source,
+      keyPrefix,
+      fileName,
+    });
+    return stored.publicUrl;
+  }
+
+  // Handle blob URLs (should be handled by frontend, but safety net here)
+  if (source.startsWith("blob:")) {
+    throw new ApiError(
+      "Blob URLs are not supported by the backend. Please upload from the device in the frontend first.",
+      400,
+    );
+  }
+
+  // Handle proxy URLs and external URLs by mirroring to Zata
+  const stored = await uploadFromUrlToZata({
+    sourceUrl: source,
+    keyPrefix,
     fileName,
   });
   return stored.publicUrl;
 }
 
-export const falQueueService = {
-  veoTtvSubmit,
-  veoI2vSubmit,
-  klingO1FirstLastSubmit,
-  klingO1ReferenceSubmit,
-  kling26ProT2vSubmit,
-  kling26ProI2vSubmit,
-  klingV3StandardT2vSubmit,
-  klingV3StandardI2vSubmit,
-  klingV3ProT2vSubmit,
-  klingV3ProI2vSubmit,
-  async seedance2T2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
-    const falKey = env.falKey as string;
-    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
-    fal.config({ credentials: falKey });
-    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+async function markSeedance2SubmitFailed(
+  uid: string,
+  historyId: string,
+  err: any,
+  context:
+    | "falQueueService.seedance2T2vSubmit"
+    | "falQueueService.seedance2FastT2vSubmit"
+    | "falQueueService.seedance2I2vSubmit"
+    | "falQueueService.seedance2FastI2vSubmit"
+    | "falQueueService.seedance2ReferenceT2vSubmit"
+    | "falQueueService.seedance2FastReferenceT2vSubmit",
+  model: string,
+): Promise<never> {
+  const failureError =
+    err instanceof ApiError
+      ? err
+      : buildFalApiError(err, {
+          fallbackMessage: "Seedance 2.0 submit failed",
+          context,
+          toastTitle: "Submit failed",
+          defaultStatus:
+            err?.response?.status || err?.statusCode || err?.status || 422,
+          extraData: { operation: "queue.submit", model },
+        });
 
-    const model = "bytedance/seedance-2.0/text-to-video";
-    const resolution = normalizeSeedance2Resolution(body?.resolution);
-    const aspectRatio = normalizeSeedance2AspectRatio(body?.aspect_ratio);
-    const duration = normalizeSeedance2Duration(body?.duration);
-    const generateAudio =
-      typeof body?.generate_audio === "boolean" ? body.generate_audio : true;
-    const seed =
-      body?.seed != null && Number.isFinite(Number(body.seed))
-        ? Number(body.seed)
-        : undefined;
-    const endUserId =
-      typeof body?.end_user_id === "string" && body.end_user_id.trim().length > 0
-        ? body.end_user_id.trim()
-        : uid;
-
-    const { historyId } = await queueCreateHistory(uid, {
-      prompt: body.prompt,
-      model,
-      isPublic: body.isPublic,
-      resolution,
-      duration,
-      aspect_ratio: aspectRatio,
-      generate_audio: generateAudio,
-      seed,
-      end_user_id: endUserId,
+  try {
+    await generationHistoryRepository.update(uid, historyId, {
+      status: "failed",
+      error: failureError.message,
     } as any);
+  } catch (historyErr) {
+    console.error("[Seedance2] Failed to mark history failed", {
+      uid,
+      historyId,
+      context,
+      historyErr,
+    });
+  }
 
+  throw failureError;
+}
+
+async function normalizeSeedance2MediaInputs(
+  uid: string,
+  historyId: string,
+  values: unknown,
+  kind: "image" | "video" | "audio",
+): Promise<string[]> {
+  const items = Array.isArray(values)
+    ? values.filter(
+        (value): value is string =>
+          typeof value === "string" && value.trim().length > 0,
+      )
+    : [];
+  if (items.length === 0) return [];
+
+  const creator = await authRepository.getUserById(uid);
+  const username = creator?.username || uid;
+  const keyPrefix = `users/${username}/input/${historyId}`;
+  const normalized: string[] = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const source = items[i];
+    try {
+      if (/^data:/i.test(source)) {
+        const stored = await uploadDataUriToZata({
+          dataUri: source,
+          keyPrefix,
+          fileName: `${kind}-${i + 1}`,
+        });
+        normalized.push(stored.publicUrl);
+      } else if (source.startsWith("blob:")) {
+        // Log skip or throw error
+        console.warn(`[falService] Skipping blob URL in ${kind} inputs:`, source);
+        continue;
+      } else {
+        // Upload from URL to Zata (handles proxy and external URLs)
+        const stored = await uploadFromUrlToZata({
+          sourceUrl: source,
+          keyPrefix,
+          fileName: `${kind}-${i + 1}`,
+        });
+        normalized.push(stored.publicUrl);
+        console.log(`[falService] Mirroring ${kind} to Zata:`, {
+          original: source,
+          zata: stored.publicUrl,
+        });
+      }
+    } catch (err: any) {
+      console.error(`[falService] Failed to normalize ${kind} input:`, {
+        source,
+        error: err?.message,
+      });
+      // Fallback to original for non-blobs if upload fails, 
+      // though FAL might reject it if it's a proxy URL.
+      if (!source.startsWith("blob:")) {
+        normalized.push(source);
+      }
+    }
+  }
+
+  return normalized;
+}
+
+async function getSeedance2InputVideoDurationSec(videoUrls: string[]): Promise<number> {
+  let totalDuration = 0;
+
+  for (const videoUrl of videoUrls) {
+    try {
+      const meta = await probeVideoMeta(videoUrl);
+      totalDuration += Math.max(
+        0,
+        Number(meta?.durationSec || 0) || 0,
+      );
+    } catch (err) {
+      console.warn("[Seedance2] Failed to probe reference video metadata", {
+        videoUrl,
+        err,
+      });
+    }
+  }
+
+  return totalDuration;
+}
+
+async function submitSeedance2T2vVariant(
+  uid: string,
+  body: any,
+  model:
+    | "bytedance/seedance-2.0/text-to-video"
+    | "bytedance/seedance-2.0/fast/text-to-video",
+  context:
+    | "falQueueService.seedance2T2vSubmit"
+    | "falQueueService.seedance2FastT2vSubmit",
+): Promise<SubmitReturn> {
+  const falKey = env.falKey as string;
+  if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+  fal.config({ credentials: falKey });
+  if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+
+  const resolution = normalizeSeedance2Resolution(body?.resolution);
+  const aspectRatio = normalizeSeedance2AspectRatio(body?.aspect_ratio);
+  const duration = normalizeSeedance2Duration(body?.duration);
+  const generateAudio =
+    typeof body?.generate_audio === "boolean" ? body.generate_audio : true;
+  const seed =
+    body?.seed != null && Number.isFinite(Number(body.seed))
+      ? Number(body.seed)
+      : undefined;
+  const endUserId =
+    typeof body?.end_user_id === "string" && body.end_user_id.trim().length > 0
+      ? body.end_user_id.trim()
+      : uid;
+
+  const { historyId } = await queueCreateHistory(uid, {
+    prompt: body.prompt,
+    model,
+    isPublic: body.isPublic,
+    resolution,
+    duration,
+    aspect_ratio: aspectRatio,
+    generate_audio: generateAudio,
+    seed,
+    end_user_id: endUserId,
+  } as any);
+
+  try {
     const input: any = {
       prompt: body.prompt,
       resolution,
@@ -7696,37 +8235,51 @@ export const falQueueService = {
       ...(typeof seed === "number" ? { seed } : {}),
       end_user_id: endUserId,
     } as any);
+
     return { requestId: request_id, historyId, model, status: "submitted" };
-  },
-  async seedance2I2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
-    const falKey = env.falKey as string;
-    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
-    fal.config({ credentials: falKey });
-    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
-    if (!body?.image_url) throw new ApiError("image_url is required", 400);
+  } catch (err: any) {
+    return await markSeedance2SubmitFailed(uid, historyId, err, context, model);
+  }
+}
 
-    const model = "bytedance/seedance-2.0/image-to-video";
-    const resolution = normalizeSeedance2Resolution(body?.resolution);
-    const aspectRatio = normalizeSeedance2AspectRatio(body?.aspect_ratio);
-    const duration = normalizeSeedance2Duration(body?.duration);
-    const generateAudio =
-      typeof body?.generate_audio === "boolean" ? body.generate_audio : true;
-    const seed =
-      body?.seed != null && Number.isFinite(Number(body.seed))
-        ? Number(body.seed)
-        : undefined;
-    const endUserId =
-      typeof body?.end_user_id === "string" && body.end_user_id.trim().length > 0
-        ? body.end_user_id.trim()
-        : uid;
+async function submitSeedance2I2vVariant(
+  uid: string,
+  body: any,
+  model:
+    | "bytedance/seedance-2.0/image-to-video"
+    | "bytedance/seedance-2.0/fast/image-to-video",
+  context:
+    | "falQueueService.seedance2I2vSubmit"
+    | "falQueueService.seedance2FastI2vSubmit",
+): Promise<SubmitReturn> {
+  const falKey = env.falKey as string;
+  if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+  fal.config({ credentials: falKey });
+  if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+  if (!body?.image_url) throw new ApiError("image_url is required", 400);
 
-    const { historyId } = await queueCreateHistory(uid, {
-      prompt: body.prompt,
-      model,
-      isPublic: body.isPublic,
-      generationType: "image-to-video",
-    });
+  const resolution = normalizeSeedance2Resolution(body?.resolution);
+  const aspectRatio = normalizeSeedance2AspectRatio(body?.aspect_ratio);
+  const duration = normalizeSeedance2Duration(body?.duration);
+  const generateAudio =
+    typeof body?.generate_audio === "boolean" ? body.generate_audio : true;
+  const seed =
+    body?.seed != null && Number.isFinite(Number(body.seed))
+      ? Number(body.seed)
+      : undefined;
+  const endUserId =
+    typeof body?.end_user_id === "string" && body.end_user_id.trim().length > 0
+      ? body.end_user_id.trim()
+      : uid;
 
+  const { historyId } = await queueCreateHistory(uid, {
+    prompt: body.prompt,
+    model,
+    isPublic: body.isPublic,
+    generationType: "image-to-video",
+  });
+
+  try {
     const imageUrl = await normalizeSeedance2ImageInput(
       uid,
       historyId,
@@ -7774,7 +8327,204 @@ export const falQueueService = {
       image_url: imageUrl,
       ...(endImageUrl ? { end_image_url: endImageUrl } : {}),
     } as any);
+
     return { requestId: request_id, historyId, model, status: "submitted" };
+  } catch (err: any) {
+    return await markSeedance2SubmitFailed(uid, historyId, err, context, model);
+  }
+}
+
+async function submitSeedance2ReferenceVariant(
+  uid: string,
+  body: any,
+  model:
+    | "bytedance/seedance-2.0/reference-to-video"
+    | "bytedance/seedance-2.0/fast/reference-to-video",
+  context:
+    | "falQueueService.seedance2ReferenceT2vSubmit"
+    | "falQueueService.seedance2FastReferenceT2vSubmit",
+): Promise<SubmitReturn> {
+  const falKey = env.falKey as string;
+  if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+  fal.config({ credentials: falKey });
+  if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+
+  const rawImageUrls = Array.isArray(body?.image_urls) ? body.image_urls : [];
+  const rawVideoUrls = Array.isArray(body?.video_urls) ? body.video_urls : [];
+  const rawAudioUrls = Array.isArray(body?.audio_urls) ? body.audio_urls : [];
+
+  if (rawImageUrls.length === 0 && rawVideoUrls.length === 0) {
+    throw new ApiError(
+      "At least one reference image or video is required",
+      400,
+    );
+  }
+
+  const resolution = normalizeSeedance2Resolution(body?.resolution);
+  const aspectRatio = normalizeSeedance2AspectRatio(body?.aspect_ratio);
+  const duration = normalizeSeedance2Duration(body?.duration);
+  const generateAudio =
+    typeof body?.generate_audio === "boolean" ? body.generate_audio : true;
+  const seed =
+    body?.seed != null && Number.isFinite(Number(body.seed))
+      ? Number(body.seed)
+      : undefined;
+  const endUserId =
+    typeof body?.end_user_id === "string" && body.end_user_id.trim().length > 0
+      ? body.end_user_id.trim()
+      : uid;
+
+  const { historyId } = await queueCreateHistory(uid, {
+    prompt: body.prompt,
+    model,
+    isPublic: body.isPublic,
+    generationType: "text-to-video",
+  });
+
+  try {
+    const imageUrls = await normalizeSeedance2MediaInputs(
+      uid,
+      historyId,
+      rawImageUrls,
+      "image",
+    );
+    const videoUrls = await normalizeSeedance2MediaInputs(
+      uid,
+      historyId,
+      rawVideoUrls,
+      "video",
+    );
+    const audioUrls = await normalizeSeedance2MediaInputs(
+      uid,
+      historyId,
+      rawAudioUrls,
+      "audio",
+    );
+
+    if (imageUrls.length === 0 && videoUrls.length === 0) {
+      throw new ApiError(
+        "At least one reference image or video is required",
+        400,
+      );
+    }
+
+    if (audioUrls.length > 0 && imageUrls.length === 0 && videoUrls.length === 0) {
+      throw new ApiError(
+        "Audio references require at least one image or video reference",
+        400,
+      );
+    }
+
+    await persistInputImagesFromUrls(uid, historyId, imageUrls);
+    const inputVideoDurationSec = await getSeedance2InputVideoDurationSec(videoUrls);
+
+    const input: any = {
+      prompt: body.prompt,
+      image_urls: imageUrls,
+      resolution,
+      duration,
+      aspect_ratio: aspectRatio,
+      generate_audio: generateAudio,
+      end_user_id: endUserId,
+    };
+
+    if (videoUrls.length > 0) {
+      input.video_urls = videoUrls;
+    }
+    if (audioUrls.length > 0) {
+      input.audio_urls = audioUrls;
+    }
+    if (typeof seed === "number") {
+      input.seed = seed;
+    }
+
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      resolution,
+      duration,
+      aspect_ratio: aspectRatio,
+      generate_audio: generateAudio,
+      ...(typeof seed === "number" ? { seed } : {}),
+      end_user_id: endUserId,
+      image_urls: imageUrls,
+      video_urls: videoUrls,
+      audio_urls: audioUrls,
+      input_video_duration_sec: inputVideoDurationSec,
+      video_input_count: videoUrls.length,
+    } as any);
+
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  } catch (err: any) {
+    return await markSeedance2SubmitFailed(uid, historyId, err, context, model);
+  }
+}
+
+export const falQueueService = {
+  veoTtvSubmit,
+  veoI2vSubmit,
+  klingO1FirstLastSubmit,
+  klingO1ReferenceSubmit,
+  kling26ProT2vSubmit,
+  kling26ProI2vSubmit,
+  klingV3StandardT2vSubmit,
+  klingV3StandardI2vSubmit,
+  klingV3ProT2vSubmit,
+  klingV3ProI2vSubmit,
+  async seedance2T2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    return submitSeedance2T2vVariant(
+      uid,
+      body,
+      "bytedance/seedance-2.0/text-to-video",
+      "falQueueService.seedance2T2vSubmit",
+    );
+  },
+  async seedance2FastT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    return submitSeedance2T2vVariant(
+      uid,
+      body,
+      "bytedance/seedance-2.0/fast/text-to-video",
+      "falQueueService.seedance2FastT2vSubmit",
+    );
+  },
+  async seedance2I2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    return submitSeedance2I2vVariant(
+      uid,
+      body,
+      "bytedance/seedance-2.0/image-to-video",
+      "falQueueService.seedance2I2vSubmit",
+    );
+  },
+  async seedance2FastI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    return submitSeedance2I2vVariant(
+      uid,
+      body,
+      "bytedance/seedance-2.0/fast/image-to-video",
+      "falQueueService.seedance2FastI2vSubmit",
+    );
+  },
+  async seedance2ReferenceT2vSubmit(
+    uid: string,
+    body: any,
+  ): Promise<SubmitReturn> {
+    return submitSeedance2ReferenceVariant(
+      uid,
+      body,
+      "bytedance/seedance-2.0/reference-to-video",
+      "falQueueService.seedance2ReferenceT2vSubmit",
+    );
+  },
+  async seedance2FastReferenceT2vSubmit(
+    uid: string,
+    body: any,
+  ): Promise<SubmitReturn> {
+    return submitSeedance2ReferenceVariant(
+      uid,
+      body,
+      "bytedance/seedance-2.0/fast/reference-to-video",
+      "falQueueService.seedance2FastReferenceT2vSubmit",
+    );
   },
   // Veo 3.1 variants
   async veo31TtvSubmit(

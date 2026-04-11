@@ -10,7 +10,11 @@ export const FAL_PRICING_VERSION = "fal-v1";
 // Credits conversion helper for legacy cost estimation paths.
 const CREDITS_PER_USD = 2000;
 const SEEDANCE_2_USD_PER_1K_TOKENS = 0.014;
+const SEEDANCE_2_FAST_USD_PER_1K_TOKENS = 0.0112;
 const SEEDANCE_2_CREDITS_PER_USD = 4000 / 5.003;
+const SEEDANCE_2_REFERENCE_USD_PER_SECOND_720P = 0.3024;
+const SEEDANCE_2_FAST_REFERENCE_USD_PER_SECOND_720P = 0.2419;
+const SEEDANCE_2_FAST_REFERENCE_VIDEO_INPUT_MULTIPLIER = 0.6;
 
 function findCredits(modelName: string): number | null {
   const row = creditDistributionData.find(
@@ -37,7 +41,12 @@ function parseSeedance2DurationSeconds(
 function getSeedance2EstimatedDimensions(
   resolution: unknown,
   aspectRatio: unknown,
-): { width: number; height: number; resolution: "480p" | "720p"; aspectRatio: string } {
+): {
+  width: number;
+  height: number;
+  resolution: "480p" | "720p";
+  aspectRatio: string;
+} {
   const resolutionText =
     String(resolution || "720p").toLowerCase() === "480p" ? "480p" : "720p";
   const aspectRatioText = String(aspectRatio || "auto").toLowerCase();
@@ -80,7 +89,13 @@ function getSeedance2EstimatedDimensions(
   };
 }
 
-type Seedance2Variant = "T2V" | "I2V";
+type Seedance2Variant =
+  | "T2V"
+  | "I2V"
+  | "Reference T2V"
+  | "Fast T2V"
+  | "Fast I2V"
+  | "Fast Reference T2V";
 
 export function computeFalSeedance2CostFromMeta(
   meta?: any,
@@ -102,13 +117,53 @@ export function computeFalSeedance2CostFromMeta(
   const width = estimated.width;
   const height = estimated.height;
   const durationSec = parseSeedance2DurationSeconds(meta?.duration);
+  const hasVideoInputs =
+    variant === "Reference T2V" || variant === "Fast Reference T2V"
+      ? Number(meta?.video_input_count || meta?.videoUrlsCount || 0) > 0 ||
+        Number(meta?.input_video_duration_sec || meta?.inputVideoDurationSec || 0) > 0
+      : false;
+  const inputVideoDurationSec =
+    variant === "Reference T2V" || variant === "Fast Reference T2V"
+      ? Math.max(
+          0,
+          Number(
+            meta?.input_video_duration_sec ?? meta?.inputVideoDurationSec ?? 0,
+          ) || 0,
+        )
+      : 0;
 
-  const tokens = (width * height * durationSec * 24) / 1024;
-  const usdCost = (tokens / 1000) * SEEDANCE_2_USD_PER_1K_TOKENS;
-  const credits = Math.max(
-    1,
-    Math.ceil(usdCost * SEEDANCE_2_CREDITS_PER_USD),
-  );
+  const tokens =
+    variant === "Reference T2V" || variant === "Fast Reference T2V"
+      ? (width * height * (inputVideoDurationSec + durationSec) * 24) / 1024
+      : (width * height * durationSec * 24) / 1024;
+  const usdPer1kTokens =
+    variant === "Fast I2V" ||
+    variant === "Fast T2V" ||
+    variant === "Fast Reference T2V"
+      ? SEEDANCE_2_FAST_USD_PER_1K_TOKENS
+      : SEEDANCE_2_USD_PER_1K_TOKENS;
+  const tokenUsdCost = (tokens / 1000) * usdPer1kTokens;
+  const basePixels720p = 1280 * 720;
+  const outputPixelRatio = (width * height) / basePixels720p;
+  const baseVideoUsdCost =
+    variant === "Reference T2V" || variant === "Fast Reference T2V"
+      ? durationSec *
+        (variant === "Fast Reference T2V"
+          ? SEEDANCE_2_FAST_REFERENCE_USD_PER_SECOND_720P
+          : SEEDANCE_2_REFERENCE_USD_PER_SECOND_720P) *
+        outputPixelRatio
+      : 0;
+  const usdCostBeforeVideoDiscount =
+    variant === "Reference T2V" || variant === "Fast Reference T2V"
+      ? baseVideoUsdCost + tokenUsdCost
+      : tokenUsdCost;
+  const usdCost =
+    (variant === "Reference T2V" || variant === "Fast Reference T2V") &&
+    hasVideoInputs
+      ? usdCostBeforeVideoDiscount *
+        SEEDANCE_2_FAST_REFERENCE_VIDEO_INPUT_MULTIPLIER
+      : usdCostBeforeVideoDiscount;
+  const credits = Math.max(1, Math.ceil(usdCost * SEEDANCE_2_CREDITS_PER_USD));
 
   return {
     cost: credits,
@@ -120,9 +175,25 @@ export function computeFalSeedance2CostFromMeta(
       width,
       height,
       durationSec,
+      inputVideoDurationSec,
+      hasVideoInputs,
       tokens,
       usdCost,
-      formula: "((w*h*d*24)/(1024*1000))*0.014*(4000/5.003)",
+      tokenUsdCost,
+      usdPer1kTokens,
+      ...(variant === "Reference T2V" || variant === "Fast Reference T2V"
+        ? {
+            baseVideoUsdCost,
+            outputPixelRatio,
+            videoInputMultiplier: hasVideoInputs
+              ? SEEDANCE_2_FAST_REFERENCE_VIDEO_INPUT_MULTIPLIER
+              : 1,
+            formula:
+              "((base_video_usd + token_usd) * video_input_multiplier) * (4000/5.003)",
+          }
+        : {
+            formula: `((w*h*d*24)/(1024*1000))*${usdPer1kTokens}*(4000/5.003)`,
+          }),
     },
   };
 }
@@ -141,6 +212,116 @@ export async function computeFalSeedance2I2vSubmitCost(req: Request): Promise<{
   meta: Record<string, any>;
 }> {
   return computeFalSeedance2CostFromMeta(req.body || {}, "I2V");
+}
+
+export async function computeFalSeedance2FastI2vSubmitCost(
+  req: Request,
+): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  return computeFalSeedance2CostFromMeta(req.body || {}, "Fast I2V");
+}
+
+export async function computeFalSeedance2FastT2vSubmitCost(
+  req: Request,
+): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  return computeFalSeedance2CostFromMeta(req.body || {}, "Fast T2V");
+}
+
+async function computeFalSeedance2ReferenceSubmitCostWithVariant(
+  req: Request,
+  variant: "Reference T2V" | "Fast Reference T2V",
+  keyPrefixName: "seedance2-reference" | "seedance2-fast-reference",
+): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  const body: any = req.body || {};
+  const rawVideoUrls = Array.isArray(body.video_urls) ? body.video_urls : [];
+  const videoUrls: string[] = [];
+  const uid = (req as any)?.uid || "anon";
+
+  for (let i = 0; i < rawVideoUrls.length; i++) {
+    const src = rawVideoUrls[i];
+    if (typeof src !== "string" || !src.trim()) continue;
+    if (/^data:/i.test(src)) {
+      try {
+        const stored = await uploadDataUriToZata({
+          dataUri: src,
+          keyPrefix: `users/${uid}/pricing/${keyPrefixName}/${Date.now()}`,
+          fileName: `video-${i + 1}`,
+        });
+        videoUrls.push(stored.publicUrl);
+      } catch (err) {
+        console.warn(
+          "[computeFalSeedance2ReferenceSubmitCostWithVariant] Failed to upload data URI video for pricing",
+          err,
+        );
+      }
+    } else {
+      videoUrls.push(src);
+    }
+  }
+
+  let inputVideoDurationSec = 0;
+  for (const url of videoUrls) {
+    try {
+      const meta = await probeVideoMeta(url);
+      inputVideoDurationSec += Math.max(
+        0,
+        Number(meta?.durationSec || 0) || 0,
+      );
+    } catch (err) {
+      console.warn(
+        "[computeFalSeedance2ReferenceSubmitCostWithVariant] Failed to probe video metadata",
+        err,
+      );
+    }
+  }
+
+  return computeFalSeedance2CostFromMeta(
+    {
+      ...body,
+      input_video_duration_sec: inputVideoDurationSec,
+      video_input_count: videoUrls.length,
+    },
+    variant,
+  );
+}
+
+export async function computeFalSeedance2ReferenceSubmitCost(
+  req: Request,
+): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  return computeFalSeedance2ReferenceSubmitCostWithVariant(
+    req,
+    "Reference T2V",
+    "seedance2-reference",
+  );
+}
+
+export async function computeFalSeedance2FastReferenceSubmitCost(
+  req: Request,
+): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  return computeFalSeedance2ReferenceSubmitCostWithVariant(
+    req,
+    "Fast Reference T2V",
+    "seedance2-fast-reference",
+  );
 }
 
 export async function computeFalImageCost(req: Request): Promise<{
@@ -1078,10 +1259,30 @@ export function computeFalVeoCostFromModel(
   ) {
     return computeFalSeedance2CostFromMeta(meta, "T2V");
   } else if (
+    normalized === "bytedance/seedance-2.0/fast/text-to-video" ||
+    normalized === "fal-ai/bytedance/seedance-2.0/fast/text-to-video"
+  ) {
+    return computeFalSeedance2CostFromMeta(meta, "Fast T2V");
+  } else if (
     normalized === "bytedance/seedance-2.0/image-to-video" ||
     normalized === "fal-ai/bytedance/seedance-2.0/image-to-video"
   ) {
     return computeFalSeedance2CostFromMeta(meta, "I2V");
+  } else if (
+    normalized === "bytedance/seedance-2.0/fast/image-to-video" ||
+    normalized === "fal-ai/bytedance/seedance-2.0/fast/image-to-video"
+  ) {
+    return computeFalSeedance2CostFromMeta(meta, "Fast I2V");
+  } else if (
+    normalized === "bytedance/seedance-2.0/reference-to-video" ||
+    normalized === "fal-ai/bytedance/seedance-2.0/reference-to-video"
+  ) {
+    return computeFalSeedance2CostFromMeta(meta, "Reference T2V");
+  } else if (
+    normalized === "bytedance/seedance-2.0/fast/reference-to-video" ||
+    normalized === "fal-ai/bytedance/seedance-2.0/fast/reference-to-video"
+  ) {
+    return computeFalSeedance2CostFromMeta(meta, "Fast Reference T2V");
   } else if (
     normalized === "fal-ai/kling-video/o1/standard/image-to-video" ||
     normalized === "fal-ai/kling-video/o1/image-to-video" ||

@@ -601,11 +601,99 @@ export const falController = {
       next(err);
     }
   },
+  async seedance2FastT2vSubmit(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.seedance2FastT2vSubmit(
+        uid,
+        req.body || {},
+      );
+      res.json(
+        formatApiResponse("success", "Submitted", {
+          ...result,
+          expectedDebit: ctx.creditCost,
+        }),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
   async seedance2I2vSubmit(req: Request, res: Response, next: NextFunction) {
     try {
       const uid = req.uid;
       const ctx = (req as any).context || {};
       const result = await falQueueService.seedance2I2vSubmit(
+        uid,
+        req.body || {},
+      );
+      res.json(
+        formatApiResponse("success", "Submitted", {
+          ...result,
+          expectedDebit: ctx.creditCost,
+        }),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
+  async seedance2FastI2vSubmit(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.seedance2FastI2vSubmit(
+        uid,
+        req.body || {},
+      );
+      res.json(
+        formatApiResponse("success", "Submitted", {
+          ...result,
+          expectedDebit: ctx.creditCost,
+        }),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
+  async seedance2ReferenceT2vSubmit(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await (falQueueService as any).seedance2ReferenceT2vSubmit(
+        uid,
+        req.body || {},
+      );
+      res.json(
+        formatApiResponse("success", "Submitted", {
+          ...result,
+          expectedDebit: ctx.creditCost,
+        }),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
+  async seedance2FastReferenceT2vSubmit(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.seedance2FastReferenceT2vSubmit(
         uid,
         req.body || {},
       );

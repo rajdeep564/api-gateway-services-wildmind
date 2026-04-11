@@ -1,6 +1,9 @@
 import { projectRepository } from '../../repository/canvas/projectRepository';
 import { CanvasInvitation, CanvasProject } from '../../types/canvas';
 import { ApiError } from '../../utils/errorHandler';
+import { sendEmail } from '../../utils/mailer';
+import { generateCanvasInvitationEmailHTML, generateCanvasInvitationEmailText } from '../../utils/emailTemplates';
+import { env } from '../../config/env';
 
 export async function createProject(
   ownerUid: string,
@@ -116,7 +119,7 @@ export async function inviteCollaboratorToProject(
     return existingInvitation;
   }
 
-  return projectRepository.createInvitation({
+  const invitation = await projectRepository.createInvitation({
     projectId,
     projectName: project.name,
     ownerUid,
@@ -128,6 +131,46 @@ export async function inviteCollaboratorToProject(
     recipientUsername: input.recipientUsername,
     role: input.role,
   });
+
+  if (input.recipientEmail) {
+    try {
+      const canvasBaseUrl =
+        (env.nodeEnv === 'production'
+          ? (env.productionStudioDomain || env.productionWwwDomain || env.productionDomain)
+          : (env.devCanvasUrl || env.devFrontendUrl || env.productionStudioDomain)
+        ) || 'http://localhost:3001';
+      const inviteUrl = `${String(canvasBaseUrl).replace(/\/$/, '')}/?projectId=${encodeURIComponent(projectId)}`;
+      const inviterName = input.senderUsername || input.senderEmail || 'A teammate';
+      const recipientName = input.recipientUsername || input.recipientEmail.split('@')[0];
+
+      await sendEmail(
+        input.recipientEmail,
+        `${inviterName} invited you to collaborate on "${project.name}"`,
+        generateCanvasInvitationEmailText({
+          projectName: project.name,
+          inviterName,
+          recipientName,
+          role: input.role,
+          inviteUrl,
+        }),
+        generateCanvasInvitationEmailHTML({
+          projectName: project.name,
+          inviterName,
+          recipientName,
+          role: input.role,
+          inviteUrl,
+        }),
+      );
+    } catch (error) {
+      console.error('[Canvas Invitation Email] Failed to send invite email', {
+        projectId,
+        recipientEmail: input.recipientEmail,
+        error,
+      });
+    }
+  }
+
+  return invitation;
 }
 
 export async function listInvitationsForUser(userId: string): Promise<CanvasInvitation[]> {

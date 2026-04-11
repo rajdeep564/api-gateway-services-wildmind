@@ -2,7 +2,6 @@ import { FalGenerateRequest, FalGeneratedImage } from "../types/fal";
 import { adminDb, admin } from "../config/firebaseAdmin";
 
 async function createGenerationRecord(
-
   req: {
     prompt: string;
     model: string;
@@ -13,11 +12,14 @@ async function createGenerationRecord(
     aspect_ratio?: string;
     image_url?: string;
     end_image_url?: string;
+    image_urls?: string[];
+    video_urls?: string[];
+    audio_urls?: string[];
     generate_audio?: boolean;
     seed?: number;
     end_user_id?: string;
   },
-  createdBy?: { uid: string; username?: string; email?: string }
+  createdBy?: { uid: string; username?: string; email?: string },
 ): Promise<string> {
   const colRef = adminDb.collection("generations");
   const docRef = await colRef.add({
@@ -31,6 +33,11 @@ async function createGenerationRecord(
     resolution: req.resolution ?? null,
     duration: req.duration ?? null,
     aspect_ratio: req.aspect_ratio ?? null,
+    image_url: req.image_url ?? null,
+    end_image_url: req.end_image_url ?? null,
+    image_urls: req.image_urls ?? null,
+    video_urls: req.video_urls ?? null,
+    audio_urls: req.audio_urls ?? null,
     generate_audio:
       typeof req.generate_audio === "boolean" ? req.generate_audio : null,
     seed: typeof req.seed === "number" ? req.seed : null,
