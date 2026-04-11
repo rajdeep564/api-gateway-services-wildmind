@@ -5,6 +5,9 @@ import { billingController } from '../controllers/billingController';
 
 const router = Router();
 
+// Billing summary (plan/credits/storage/subscription)
+router.get('/summary', requireAuth, billingController.getBillingSummary);
+
 // Invoices
 router.get('/invoices', requireAuth, billingController.getUserInvoices);
 router.get('/invoices/:invoiceId', requireAuth, billingController.getInvoiceDetail);

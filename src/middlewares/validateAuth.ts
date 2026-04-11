@@ -122,6 +122,11 @@ export const validateUsername = [
 export const validateUpdateMe = [
   body('username').optional().isLength({ min: 3, max: 30 }).matches(/^[a-z0-9_.-]+$/).withMessage('Username must be 3-30 chars: a-z0-9_.-'),
   body('photoURL').optional().isURL().withMessage('PhotoURL must be a valid URL'),
+  body('preferredCurrency')
+    .optional()
+    .isLength({ min: 3, max: 3 })
+    .matches(/^[A-Z]{3}$/)
+    .withMessage('preferredCurrency must be a 3-letter ISO 4217 code (e.g. USD, EUR)'),
   (req: Request, _res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {

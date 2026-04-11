@@ -20,6 +20,38 @@ function creditServiceAuthHeaders(
 }
 
 export const billingController = {
+  getBillingSummary: async (req: Request, res: Response) => {
+    try {
+      const uid = (req as any).uid as string;
+      const headers = creditServiceAuthHeaders(req);
+
+      const info = await creditsRepository.readUserInfo(uid);
+      const subscriptionRes = await axios
+        .get(`${CREDIT_SERVICE_URL}/subscriptions/me/${uid}`, { headers })
+        .catch(() => null);
+
+      return res.json(
+        formatApiResponse('success', 'Billing summary fetched', {
+          planCode: info?.planCode || 'FREE',
+          creditBalance: Number(info?.creditBalance || 0),
+          storageUsedBytes: info?.storageUsedBytes?.toString() || '0',
+          storageQuotaBytes: info?.storageQuotaBytes?.toString() || '0',
+          subscription: subscriptionRes?.data?.data ?? null,
+          billingSource: info ? 'credit-service' : 'firestore',
+          billingSyncedAt: new Date().toISOString(),
+        }),
+      );
+    } catch (error: any) {
+      logger.error(
+        { uid: (req as any).uid, err: error?.message },
+        'getBillingSummary failed',
+      );
+      return res
+        .status(500)
+        .json(formatApiResponse('error', 'Failed to fetch billing summary', null));
+    }
+  },
+
   getUserInvoices: async (req: Request, res: Response) => {
     try {
       const uid = (req as any).uid;
