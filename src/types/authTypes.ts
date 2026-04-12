@@ -38,6 +38,8 @@ export interface AppUser {
     language?: string;
     timezone?: string;
   };
+  /** ISO 4217 display currency for UI (billing remains INR). */
+  preferredCurrency?: string;
   metadata?: {
     lastPasswordChange?: string;
     accountStatus: "active" | "suspended" | "pending" | "banned";

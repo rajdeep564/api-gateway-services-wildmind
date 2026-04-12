@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from "express";
 import { authService } from "../../services/auth/authService";
 import { creditsService } from "../../services/creditsService";
 import { authRepository } from "../../repository/auth/authRepository";
+import { creditsRepository } from "../../repository/creditsRepository";
+import { resolveSuggestedCurrencyFromCountryCode } from "../../services/countryCurrencyService";
 import { formatApiResponse } from "../../utils/formatApiResponse";
 import { ApiError } from "../../utils/errorHandler";
 import { extractDeviceInfo } from "../../utils/deviceInfo";
@@ -298,6 +300,30 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
       }
     }
 
+    // Merge billing/source-of-truth fields from credit-service.
+    // Firestore user object is profile/auth; credit-service is billing/credits/storage authority.
+    try {
+      const info = await creditsRepository.readUserInfo(uid);
+      if (info) {
+        (user as any).planCode = info.planCode;
+        (user as any).creditBalance = info.creditBalance;
+        if (info.storageQuotaBytes != null) {
+          (user as any).storageQuotaBytes = info.storageQuotaBytes;
+        }
+        if (info.storageUsedBytes != null) {
+          (user as any).storageUsedBytes = info.storageUsedBytes;
+        }
+        (user as any).billingSource = "credit-service";
+        (user as any).billingSyncedAt = new Date().toISOString();
+      } else {
+        (user as any).billingSource = "firestore";
+        (user as any).billingSyncedAt = new Date().toISOString();
+      }
+    } catch (_e) {
+      (user as any).billingSource = "firestore";
+      (user as any).billingSyncedAt = new Date().toISOString();
+    }
+
     // Derive public-generation policy flags from planCode (computed, not persisted)
     // Only PLAN_C and PLAN_D can toggle public/private
     // FREE, PLAN_A, PLAN_B must have all generations public
@@ -307,6 +333,31 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
       (user as any).canTogglePublicGenerations = canToggle;
       (user as any).forcePublicGenerations = !canToggle;
     } catch { }
+
+    // Display currency (Firestore preference + geo suggestion). Billing stays INR.
+    try {
+      const cf = (req.headers["cf-ipcountry"] as string) || "";
+      const geo = (req.headers["x-geo-country"] as string) || "";
+      const country = (cf || geo || "").trim().toUpperCase() || undefined;
+      const detectedCountryCode =
+        country && country.length === 2 ? country : null;
+      const suggestedCurrency = await resolveSuggestedCurrencyFromCountryCode(
+        detectedCountryCode,
+      );
+      const preferred = String((user as any)?.preferredCurrency || "")
+        .trim()
+        .toUpperCase();
+      const preferredCurrency =
+        /^[A-Z]{3}$/.test(preferred) ? preferred : undefined;
+      (user as any).detectedCountryCode = detectedCountryCode;
+      (user as any).suggestedCurrency = suggestedCurrency;
+      (user as any).displayCurrency =
+        preferredCurrency || suggestedCurrency || "INR";
+    } catch {
+      (user as any).displayCurrency =
+        String((user as any)?.preferredCurrency || "").trim().toUpperCase() ||
+        "INR";
+    }
 
     res.json(
       formatApiResponse("success", "User retrieved successfully", { user }),
@@ -329,8 +380,16 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
 async function updateUser(req: Request, res: Response, next: NextFunction) {
   try {
     const uid = req.uid as string;
-    const updates = req.body;
-    const user = await authService.updateUser(uid, updates);
+    const body = req.body || {};
+    const updates: Record<string, unknown> = {};
+    if (body.username !== undefined) updates.username = body.username;
+    if (body.photoURL !== undefined) updates.photoURL = body.photoURL;
+    if (body.preferredCurrency !== undefined) {
+      updates.preferredCurrency = String(body.preferredCurrency)
+        .trim()
+        .toUpperCase();
+    }
+    const user = await authService.updateUser(uid, updates as any);
 
     res.json(
       formatApiResponse("success", "User updated successfully", { user }),
