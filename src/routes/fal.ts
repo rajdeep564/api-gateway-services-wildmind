@@ -47,6 +47,8 @@ import {
   computeFalKlingV3ProT2vSubmitCost,
   computeFalKlingV3ProI2vSubmitCost,
   computeFalQwenMultipleAnglesCost,
+  computeFalPixverseV6T2vSubmitCost,
+  computeFalPixverseV6I2vSubmitCost,
 } from "../utils/pricing/falPricing";
 import {
   validateFalGenerate,
@@ -102,6 +104,8 @@ import {
   validateFalKlingV3I2v,
   validateFalNanoBananaPro,
   validateFalQwenMultipleAngles,
+  validateFalPixverseV6T2v,
+  validateFalPixverseV6I2v,
 } from "../middlewares/validators/fal/validateFalGenerate";
 import { validateStorage } from "../middlewares/validators/validateStorageMiddleware";
 
@@ -632,6 +636,28 @@ router.post(
     computeFalSora2T2vSubmitCost(req),
   ) as any,
   (falController as any).sora2T2vSubmit,
+);
+
+router.post(
+  "/pixverse/v6/text-to-video/submit",
+  requireAuth as any,
+  validateFalPixverseV6T2v as any,
+  makeCreditCost("fal", "pixverse_v6_t2v_submit", (req) =>
+    computeFalPixverseV6T2vSubmitCost(req),
+  ) as any,
+  validateStorage("video") as any,
+  (falController as any).pixverseV6T2vSubmit,
+);
+
+router.post(
+  "/pixverse/v6/image-to-video/submit",
+  requireAuth as any,
+  validateFalPixverseV6I2v as any,
+  makeCreditCost("fal", "pixverse_v6_i2v_submit", (req) =>
+    computeFalPixverseV6I2vSubmitCost(req),
+  ) as any,
+  validateStorage("video") as any,
+  (falController as any).pixverseV6I2vSubmit,
 );
 
 // Sora 2 Text-to-Video (Pro)

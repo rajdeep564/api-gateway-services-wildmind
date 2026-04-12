@@ -367,6 +367,15 @@ export async function computeFalImageCost(req: Request): Promise<{
     else if (m.includes("fast")) display = "Imagen 4 Fast";
     else display = "Imagen 4";
   } else if (
+    m.includes("google/nano-banana-2") ||
+    (m.includes("nano-banana-2") && !m.includes("nano-banana-pro"))
+  ) {
+    const nano2Res = String(res || "1K").toUpperCase();
+    if (nano2Res === "4K") display = "Google nano banana 2 4K";
+    else if (nano2Res === "2K") display = "Google nano banana 2 2K";
+    else if (nano2Res === "0.5K") display = "Google nano banana 2 0.5K";
+    else display = "Google nano banana 2 1K";
+  } else if (
     m.includes("google/nano-banana-pro") ||
     m.includes("nano-banana-pro")
   ) {
@@ -795,6 +804,63 @@ export async function computeFalSora2ProT2vSubmitCost(req: Request): Promise<{
     pricingVersion: FAL_PRICING_VERSION,
     meta: { model: display, duration: `${dur}s`, resolution: res },
   };
+}
+
+/** PixVerse V6 T2V (FAL): product credit table, 5–15s (min 5s enforced). */
+export function computePixverseV6T2vCredits(
+  durationIn: unknown,
+  resolutionIn: unknown,
+  withAudio: boolean,
+): number {
+  const raw =
+    typeof durationIn === "number"
+      ? durationIn
+      : parseInt(String(durationIn ?? 5).replace(/s$/i, ""), 10);
+  const d = Math.min(15, Math.max(5, Number.isFinite(raw) ? raw : 5));
+  const steps = d - 5;
+  const res = String(resolutionIn || "720p").toLowerCase();
+  if (res.includes("360"))
+    return withAudio ? 140 + steps * 28 : 100 + steps * 20;
+  if (res.includes("540"))
+    return withAudio ? 180 + steps * 36 : 140 + steps * 28;
+  if (res.includes("1080"))
+    return withAudio ? 460 + steps * 92 : 360 + steps * 72;
+  return withAudio ? 240 + steps * 48 : 180 + steps * 36;
+}
+
+export async function computeFalPixverseV6T2vSubmitCost(req: Request): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  const body = (req as any).body || {};
+  const withAudio =
+    body.generate_audio_switch === true ||
+    body.generate_audio_switch === "true";
+  const cost = computePixverseV6T2vCredits(
+    body.duration,
+    body.resolution,
+    withAudio,
+  );
+  return {
+    cost: Math.ceil(cost),
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: "PixVerse V6 T2V",
+      duration: body.duration,
+      resolution: body.resolution,
+      generate_audio_switch: withAudio,
+    },
+  };
+}
+
+/** Same credit ladder as V6 T2V; 1–4s bill at the 5s tier (computePixverseV6T2vCredits clamps to ≥5). */
+export async function computeFalPixverseV6I2vSubmitCost(req: Request): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  return computeFalPixverseV6T2vSubmitCost(req);
 }
 
 // LTX V2 pricing (Image-to-Video)
@@ -1316,6 +1382,31 @@ export function computeFalVeoCostFromModel(
     normalized === "fal-ai/kling-video/v3/pro/image-to-video"
   ) {
     return buildKlingV3PricingRecord("pro", meta?.duration ?? "5", meta || {});
+  } else if (
+    normalized === "fal-ai/pixverse/v6/text-to-video" ||
+    normalized === "fal-ai/pixverse/v6/image-to-video"
+  ) {
+    const withAudio =
+      meta?.generate_audio_switch === true ||
+      meta?.generate_audio_switch === "true";
+    const cost = computePixverseV6T2vCredits(
+      meta?.duration,
+      meta?.resolution,
+      withAudio,
+    );
+    return {
+      cost: Math.ceil(cost),
+      pricingVersion: FAL_PRICING_VERSION,
+      meta: {
+        model:
+          normalized === "fal-ai/pixverse/v6/image-to-video"
+            ? "PixVerse V6 I2V"
+            : "PixVerse V6 T2V",
+        duration: meta?.duration,
+        resolution: meta?.resolution,
+        generate_audio_switch: withAudio,
+      },
+    };
   }
   const base = display ? findCredits(display) : null;
   if (base == null) throw new Error("Unsupported FAL queue pricing model");

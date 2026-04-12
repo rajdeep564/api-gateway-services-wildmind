@@ -583,6 +583,42 @@ export const falController = {
       next(err);
     }
   },
+  async pixverseV6T2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.pixverseV6T2vSubmit(
+        uid,
+        req.body || {},
+      );
+      res.json(
+        formatApiResponse("success", "Submitted", {
+          ...result,
+          expectedDebit: ctx.creditCost,
+        }),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
+  async pixverseV6I2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.pixverseV6I2vSubmit(
+        uid,
+        req.body || {},
+      );
+      res.json(
+        formatApiResponse("success", "Submitted", {
+          ...result,
+          expectedDebit: ctx.creditCost,
+        }),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
   async seedance2T2vSubmit(req: Request, res: Response, next: NextFunction) {
     try {
       const uid = req.uid;
