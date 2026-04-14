@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAuth } from '../middlewares/authMiddleware';
+import { requireAuth, optionalAuth } from '../middlewares/authMiddleware';
 import { validateCanvasGenerate } from '../middlewares/validators/canvas/validateCanvasGenerate';
 import * as projectsController from '../controllers/canvas/projectsController';
 // Ops API removed: local-only undo/redo with realtime updates
@@ -32,7 +32,14 @@ const upload = multer({
     },
 });
 
-// All routes require authentication
+// Logged-out homepage / marketing embed loads showcase snapshot without auth.
+router.get(
+  '/projects/:id/snapshot/current',
+  optionalAuth,
+  snapshotController.getCurrentSnapshot,
+);
+
+// All other routes require authentication
 router.use(requireAuth);
 
 // Projects
@@ -42,6 +49,13 @@ router.get('/projects/:id', projectsController.getProject);
 router.patch('/projects/:id', projectsController.updateProject);
 router.delete('/projects/:id', projectsController.deleteProject);
 router.post('/projects/:id/collaborators', projectsController.addCollaborator);
+router.post('/projects/:id/invitations', projectsController.inviteCollaborator);
+router.get('/invitations', projectsController.listInvitations);
+router.get('/invitations/sent', projectsController.listSentInvitations);
+router.post('/invitations/:invitationId/accept', projectsController.acceptInvitation);
+router.post('/invitations/:invitationId/dismiss', projectsController.dismissInvitation);
+router.post('/invitations/:invitationId/cancel', projectsController.cancelSentInvitation);
+router.patch('/invitations/:invitationId/role', projectsController.updateSentInvitationRole);
 
 // Operations
 // Removed ops routes to reduce server-side op churn
@@ -52,8 +66,9 @@ router.post('/projects/:id/collaborators', projectsController.addCollaborator);
 router.get('/projects/:id/snapshot', snapshotController.getSnapshot);
 router.post('/projects/:id/snapshot', snapshotController.createSnapshot);
 // Overwrite snapshot (current state) APIs
-router.get('/projects/:id/snapshot/current', snapshotController.getCurrentSnapshot);
 router.put('/projects/:id/snapshot/current', snapshotController.setCurrentSnapshot);
+router.get('/projects/:id/session-status', snapshotController.getSessionStatus);
+router.post('/projects/:id/session-takeover/respond', snapshotController.respondToSessionTakeover);
 
 import { makeCreditCost } from '../middlewares/creditCostFactory';
 import {
@@ -89,6 +104,8 @@ router.post('/create-stitched-reference', requireAuth, generateController.create
 
 // Query (Canvas prompt enhancement)
 router.post('/query', queryController.queryCanvas);
+// Plan execution log (frontend sends what was built/executed for backend logs)
+router.post('/plan-log', queryController.logPlanExecution);
 // @ts-ignore
 router.post('/generate-scenes', makeCreditCost('canvas', 'generate-scenes', computeCanvasScriptCost), queryController.generateScenes);
 

@@ -1,4 +1,16 @@
-export type ProviderId = 'google' | 'password' | 'github' | 'apple' | 'username' | 'unknown';
+export type ProviderId =
+  | "google"
+  | "password"
+  | "github"
+  | "apple"
+  | "username"
+  | "unknown";
+
+export interface PasswordHistoryEntry {
+  hash: string;
+  salt: string;
+  createdAt: string;
+}
 
 export interface AppUser {
   uid: string;
@@ -9,6 +21,8 @@ export interface AppUser {
   provider: ProviderId;
   emailVerified: boolean;
   isActive: boolean;
+  isSuspended?: boolean;
+  isBanned?: boolean;
   createdAt: string; // ISO string
   lastLoginAt: string; // ISO string
   loginCount: number;
@@ -20,17 +34,16 @@ export interface AppUser {
     device?: string;
   };
   preferences?: {
-    theme?: 'light' | 'dark';
+    theme?: "light" | "dark";
     language?: string;
     timezone?: string;
   };
   metadata?: {
     lastPasswordChange?: string;
-    accountStatus: 'active' | 'suspended' | 'pending';
+    accountStatus: "active" | "suspended" | "pending" | "banned";
     roles?: string[];
   };
   isUsernameTemporary?: boolean; // For Google users who haven't set username yet
   updatedAt?: string; // ISO string
+  passwordHistory?: PasswordHistoryEntry[];
 }
-
-

@@ -4,9 +4,23 @@ import { opRepository } from '../../repository/canvas/opRepository';
 import { listAllElements } from '../../repository/canvas/elementRepository';
 import { formatApiResponse } from '../../utils/formatApiResponse';
 import { ApiError } from '../../utils/errorHandler';
-import { CanvasSnapshot } from '../../types/canvas';
+import { CanvasProject, CanvasSnapshot } from '../../types/canvas';
 import { admin } from '../../config/firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
+import { getSessionState, requestSessionTakeover, resolveSessionTakeover } from '../../services/canvas/projectSessionStore';
+import { notifyProjectOpenedElsewhere, notifySessionTakeoverAccepted, notifySessionTakeoverRejected, notifySessionTakeoverRequested } from '../../services/canvas/canvasSessionNotifier';
+
+/** Comma-separated project IDs in PUBLIC_CANVAS_SNAPSHOT_PROJECT_IDS (homepage showcase, etc.). */
+function isPublicSnapshotReadAllowed(projectId: string, project: CanvasProject | null): boolean {
+  if (!project) return false;
+  if (project.settings?.publicSnapshotRead === true) return true;
+  const raw = process.env.PUBLIC_CANVAS_SNAPSHOT_PROJECT_IDS || '';
+  const ids = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return ids.includes(projectId);
+}
 
 export async function getSnapshot(req: Request, res: Response) {
   try {
@@ -278,22 +292,24 @@ export async function setCurrentSnapshot(req: Request, res: Response) {
 // Get the current snapshot (overwrite model). Returns null if not set yet.
 export async function getCurrentSnapshot(req: Request, res: Response) {
   try {
-    const userId = (req as any).uid;
-    if (!userId) {
-      throw new ApiError('Unauthorized', 401);
-    }
+    const userId = (req as any).uid as string | undefined;
     const { id: projectId } = req.params;
 
-    // Verify access (owner, collaborator viewer/editor)
     const project = await projectRepository.getProject(projectId);
     if (!project) {
       throw new ApiError('Project not found', 404);
     }
 
-    const hasAccess =
-      project.ownerUid === userId ||
-      project.collaborators.some(c => c.uid === userId);
-    if (!hasAccess) {
+    const publicRead = isPublicSnapshotReadAllowed(projectId, project);
+    const isCollaborator =
+      !!userId &&
+      (project.ownerUid === userId ||
+        project.collaborators.some((c) => c.uid === userId));
+
+    if (!publicRead && !isCollaborator) {
+      if (!userId) {
+        throw new ApiError('Unauthorized', 401);
+      }
       throw new ApiError('Access denied', 403);
     }
 
@@ -324,7 +340,19 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
     //   snapshot.elements[el.id] = el;
     // }
 
-    res.json(formatApiResponse('success', 'Current snapshot retrieved', { snapshot }));
+    // 5. Session takeover — only for authenticated collaborators (skip for public embed traffic).
+    const canvasSessionId = req.get('x-canvas-session-id') || undefined;
+    if (isCollaborator && canvasSessionId && canvasSessionId.trim()) {
+      const normalizedSessionId = canvasSessionId.trim();
+      const takeover = requestSessionTakeover(projectId, normalizedSessionId);
+      if (takeover.status === 'granted') {
+        notifyProjectOpenedElsewhere(projectId, normalizedSessionId);
+      } else if (takeover.currentSessionId) {
+        notifySessionTakeoverRequested(projectId, takeover.currentSessionId, normalizedSessionId);
+      }
+    }
+
+    return res.json(formatApiResponse('success', 'Current snapshot retrieved', { snapshot }));
   } catch (error: any) {
     res.status(error.statusCode || 500).json(
       formatApiResponse('error', error.message || 'Failed to get snapshot', null)
@@ -332,3 +360,86 @@ export async function getCurrentSnapshot(req: Request, res: Response) {
   }
 }
 
+/** GET /projects/:id/session-status — Polling fallback for "project opened elsewhere". Returns sessionIsCurrent. */
+export async function getSessionStatus(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+    const { id: projectId } = req.params;
+    const rawSessionId = req.get('x-canvas-session-id') || req.query.sessionId;
+    const canvasSessionId: string | null =
+      typeof rawSessionId === 'string' ? rawSessionId
+        : Array.isArray(rawSessionId) && typeof rawSessionId[0] === 'string' ? rawSessionId[0]
+          : null;
+
+    const project = await projectRepository.getProject(projectId);
+    if (!project) {
+      throw new ApiError('Project not found', 404);
+    }
+    const hasAccess =
+      project.ownerUid === userId ||
+      project.collaborators.some(c => c.uid === userId);
+    if (!hasAccess) {
+      throw new ApiError('Access denied', 403);
+    }
+
+    const sessionState = getSessionState(projectId, canvasSessionId || null);
+    return res.json(formatApiResponse('success', 'Session status', sessionState));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to get session status', null)
+    );
+  }
+}
+
+export async function respondToSessionTakeover(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+    const { id: projectId } = req.params;
+    const { action } = req.body as { action?: 'accept' | 'reject' };
+    const rawSessionId = req.get('x-canvas-session-id');
+    const sessionId = typeof rawSessionId === 'string' ? rawSessionId.trim() : '';
+
+    if (!sessionId) {
+      throw new ApiError('Session id is required', 400);
+    }
+    if (action !== 'accept' && action !== 'reject') {
+      throw new ApiError('Invalid action', 400);
+    }
+
+    const project = await projectRepository.getProject(projectId);
+    if (!project) {
+      throw new ApiError('Project not found', 404);
+    }
+    const hasAccess =
+      project.ownerUid === userId ||
+      project.collaborators.some(c => c.uid === userId);
+    if (!hasAccess) {
+      throw new ApiError('Access denied', 403);
+    }
+
+    const result = resolveSessionTakeover(projectId, sessionId, action);
+    if (result.requesterSessionId) {
+      if (action === 'accept') {
+        notifySessionTakeoverAccepted(projectId, result.requesterSessionId, sessionId);
+      } else {
+        notifySessionTakeoverRejected(projectId, result.requesterSessionId);
+      }
+    }
+
+    return res.json(formatApiResponse('success', 'Session takeover handled', {
+      action,
+      requesterSessionId: result.requesterSessionId,
+      currentSessionId: result.currentSessionId,
+    }));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to respond to session takeover', null)
+    );
+  }
+}

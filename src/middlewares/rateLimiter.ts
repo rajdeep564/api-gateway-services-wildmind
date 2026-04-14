@@ -48,11 +48,24 @@ export const globalLimiter = rateLimit({
 
 // Auth endpoints - strict limit to prevent brute force
 export const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 attempts per 15 minutes
-  message: {
-    status: 'error',
-    message: 'Too many authentication attempts, please try again in 15 minutes'
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 5, // 5 attempts per 5 minutes
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    const resetTime = (req as any).rateLimit?.resetTime as Date | undefined
+    const retryAfterSeconds = resetTime
+      ? Math.max(1, Math.ceil((new Date(resetTime).getTime() - Date.now()) / 1000))
+      : 5 * 60
+
+    res.setHeader('Retry-After', String(retryAfterSeconds))
+    res.status(429).json({
+      status: 'error',
+      message: 'Too many authentication attempts, please try again later',
+      data: {
+        retryAfterSeconds,
+      },
+    })
   },
   skipSuccessfulRequests: true, // Don't count successful logins
   ...(isRedisEnabled() && {

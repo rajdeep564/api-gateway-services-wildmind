@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
+import { randomUUID } from 'crypto';
 import { ApiError } from '../utils/errorHandler';
 import { getModelCost } from '../repository/creditsRepository';
 import { PRICING_VERSION } from '../data/creditDistribution';
-import { v4 as uuidv4 } from 'uuid';
 import { creditsService } from '../services/creditsService';
 import { logger } from '../utils/logger';
 
@@ -42,7 +42,7 @@ export async function creditCost(req: Request, res: Response, next: NextFunction
       });
     }
 
-    const idempotencyKey = uuidv4();
+    const idempotencyKey = randomUUID();
     (req as any).context = {
       creditCost: cost,
       reason: 'bfl.generate',

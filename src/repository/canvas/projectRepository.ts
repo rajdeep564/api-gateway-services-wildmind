@@ -1,5 +1,5 @@
 import { adminDb, admin } from '../../config/firebaseAdmin';
-import { CanvasProject, CanvasSnapshot } from '../../types/canvas';
+import { CanvasProject, CanvasSnapshot, CanvasInvitation } from '../../types/canvas';
 
 export async function createProject(
   ownerUid: string,
@@ -19,6 +19,7 @@ export async function createProject(
     id: projectRef.id,
     name: data.name,
     ownerUid,
+    collaboratorUids: [ownerUid],
     collaborators: [{
       uid: ownerUid,
       role: 'owner',
@@ -50,6 +51,7 @@ export async function createProject(
       role: 'owner',
       addedAt: nowTimestamp as any,
     }],
+    collaboratorUids: createdData?.collaboratorUids || [ownerUid],
     settings: createdData?.settings || {},
     createdAt: createdData?.createdAt || nowTimestamp as any,
     updatedAt: createdData?.updatedAt || nowTimestamp as any,
@@ -88,9 +90,16 @@ export async function deleteProject(projectId: string): Promise<void> {
   // Or we can list and delete snapshots here if not too many.
   const snapshotsRef = projectRef.collection('snapshots');
   const snapshots = await snapshotsRef.get();
+  const invitationsRef = adminDb.collection('canvasInvitations');
+  const invitations = await invitationsRef
+    .where('projectId', '==', projectId)
+    .get();
 
   const batch = adminDb.batch();
   snapshots.docs.forEach(doc => {
+    batch.delete(doc.ref);
+  });
+  invitations.docs.forEach(doc => {
     batch.delete(doc.ref);
   });
   batch.delete(projectRef);
@@ -120,12 +129,131 @@ export async function addCollaborator(
     // Update existing collaborator
     const collaborators = [...project.collaborators];
     collaborators[existingIndex] = collaborator as any;
-    await projectRef.update({ collaborators });
+    await projectRef.update({
+      collaborators,
+      collaboratorUids: admin.firestore.FieldValue.arrayUnion(uid),
+    });
   } else {
     // Add new collaborator
     await projectRef.update({
       collaborators: admin.firestore.FieldValue.arrayUnion(collaborator as any),
+      collaboratorUids: admin.firestore.FieldValue.arrayUnion(uid),
     });
+  }
+}
+
+export async function removeCollaborator(
+  projectId: string,
+  uid: string
+): Promise<void> {
+  const projectRef = adminDb.collection('canvasProjects').doc(projectId);
+  const project = await getProject(projectId);
+
+  if (!project) throw new Error('Project not found');
+
+  const collaborators = project.collaborators.filter((collaborator) => collaborator.uid !== uid);
+  const collaboratorUids = collaborators.map((collaborator) => collaborator.uid);
+
+  await projectRef.update({
+    collaborators,
+    collaboratorUids,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
+export async function createInvitation(
+  invitation: Omit<CanvasInvitation, 'id' | 'createdAt' | 'updatedAt' | 'status'> & { status?: CanvasInvitation['status'] }
+): Promise<CanvasInvitation> {
+  const invitationRef = adminDb.collection('canvasInvitations').doc();
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const status = invitation.status || 'pending';
+
+  await invitationRef.set({
+    ...invitation,
+    status,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const created = await invitationRef.get();
+  return { id: created.id, ...created.data() } as CanvasInvitation;
+}
+
+export async function getInvitation(invitationId: string): Promise<CanvasInvitation | null> {
+  const invitationRef = adminDb.collection('canvasInvitations').doc(invitationId);
+  const snap = await invitationRef.get();
+  if (!snap.exists) return null;
+  return { id: snap.id, ...snap.data() } as CanvasInvitation;
+}
+
+export async function findPendingInvitation(projectId: string, recipientUid: string): Promise<CanvasInvitation | null> {
+  const snap = await adminDb
+    .collection('canvasInvitations')
+    .where('projectId', '==', projectId)
+    .where('recipientUid', '==', recipientUid)
+    .where('status', '==', 'pending')
+    .limit(1)
+    .get();
+
+  if (snap.empty) return null;
+  const doc = snap.docs[0];
+  return { id: doc.id, ...doc.data() } as CanvasInvitation;
+}
+
+export async function updateInvitation(
+  invitationId: string,
+  updates: Partial<CanvasInvitation>
+): Promise<CanvasInvitation> {
+  const invitationRef = adminDb.collection('canvasInvitations').doc(invitationId);
+  await invitationRef.update({
+    ...updates,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  const updated = await invitationRef.get();
+  return { id: updated.id, ...updated.data() } as CanvasInvitation;
+}
+
+export async function listInvitationsForRecipient(recipientUid: string): Promise<CanvasInvitation[]> {
+  const invitationsRef = adminDb.collection('canvasInvitations');
+
+  try {
+    const snap = await invitationsRef
+      .where('recipientUid', '==', recipientUid)
+      .orderBy('createdAt', 'desc')
+      .get();
+    return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as CanvasInvitation));
+  } catch (error: any) {
+    if (error.message?.includes('index')) {
+      const snap = await invitationsRef
+        .where('recipientUid', '==', recipientUid)
+        .get();
+      return snap.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() } as CanvasInvitation))
+        .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+    }
+    throw error;
+  }
+}
+
+export async function listInvitationsForSender(senderUid: string): Promise<CanvasInvitation[]> {
+  const invitationsRef = adminDb.collection('canvasInvitations');
+
+  try {
+    const snap = await invitationsRef
+      .where('senderUid', '==', senderUid)
+      .orderBy('createdAt', 'desc')
+      .get();
+    return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() } as CanvasInvitation));
+  } catch (error: any) {
+    if (error.message?.includes('index')) {
+      const snap = await invitationsRef
+        .where('senderUid', '==', senderUid)
+        .get();
+      return snap.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() } as CanvasInvitation))
+        .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+    }
+    throw error;
   }
 }
 
@@ -284,12 +412,24 @@ export async function listUserProjects(uid: string, limit: number = 20): Promise
       ownerSnap.docs.map(doc => ensureProjectThumbnail({ id: doc.id, ...doc.data() } as CanvasProject))
     );
 
-    // Also get projects where user is a collaborator
-    // Note: Firestore doesn't support querying array-contains on nested fields easily
-    // So we'll get owner projects and filter client-side, or use a separate query
-    // For now, return owner projects. Can be enhanced later with composite queries
+    const collaboratorQuery = projectsRef
+      .where('collaboratorUids', 'array-contains', uid)
+      .limit(limit);
+    const collaboratorSnap = await collaboratorQuery.get();
+    const collaboratorProjects = await Promise.all(
+      collaboratorSnap.docs
+        .filter(doc => doc.data()?.ownerUid !== uid)
+        .map(doc => ensureProjectThumbnail({ id: doc.id, ...doc.data() } as CanvasProject))
+    );
 
-    return ownerProjects;
+    const deduped = new Map<string, CanvasProject>();
+    [...ownerProjects, ...collaboratorProjects].forEach((project) => {
+      deduped.set(project.id, project);
+    });
+
+    return Array.from(deduped.values())
+      .sort((a, b) => (b.updatedAt?.toMillis?.() || 0) - (a.updatedAt?.toMillis?.() || 0))
+      .slice(0, limit);
   } catch (error: any) {
     // If composite index error, fallback to simple query without orderBy
     if (error.message?.includes('index')) {
@@ -303,14 +443,30 @@ export async function listUserProjects(uid: string, limit: number = 20): Promise
         ownerSnap.docs.map(doc => ensureProjectThumbnail({ id: doc.id, ...doc.data() } as CanvasProject))
       );
 
-      // Sort client-side by updatedAt
-      ownerProjects.sort((a, b) => {
+      let collaboratorProjects: CanvasProject[] = [];
+      try {
+        const collaboratorSnap = await projectsRef
+          .where('collaboratorUids', 'array-contains', uid)
+          .get();
+        collaboratorProjects = await Promise.all(
+          collaboratorSnap.docs
+            .filter(doc => doc.data()?.ownerUid !== uid)
+            .map(doc => ensureProjectThumbnail({ id: doc.id, ...doc.data() } as CanvasProject))
+        );
+      } catch {}
+
+      const mergedProjects = [...ownerProjects, ...collaboratorProjects];
+      const deduped = new Map<string, CanvasProject>();
+      mergedProjects.forEach((project) => deduped.set(project.id, project));
+
+      const allProjects = Array.from(deduped.values());
+      allProjects.sort((a, b) => {
         const aTime = a.updatedAt?.toMillis?.() || 0;
         const bTime = b.updatedAt?.toMillis?.() || 0;
         return bTime - aTime;
       });
 
-      return ownerProjects.slice(0, limit);
+      return allProjects.slice(0, limit);
     }
     throw error;
   }
@@ -321,6 +477,13 @@ export const projectRepository = {
   getProject,
   updateProject,
   addCollaborator,
+  removeCollaborator,
+  createInvitation,
+  getInvitation,
+  findPendingInvitation,
+  updateInvitation,
+  listInvitationsForRecipient,
+  listInvitationsForSender,
   saveSnapshot,
   saveCurrentSnapshot,
   getSnapshot,
@@ -329,4 +492,3 @@ export const projectRepository = {
   listUserProjects,
   deleteProject,
 };
-

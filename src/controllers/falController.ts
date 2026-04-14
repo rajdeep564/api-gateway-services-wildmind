@@ -19,7 +19,9 @@ async function generate(req: Request, res: Response, next: NextFunction) {
     const ctx = (req as any).context || {};
     logger.info({ uid, ctx }, '[CREDITS][FAL] Enter generate with context');
     const result = await falService.generate(uid, payload, ctx);
-    const debitOutcome = 'success'; // Credits deducted atomically in service
+    // Ensure debit is actually written (idempotent by historyId/requestId).
+    // This prevents false-positive "success" responses when service-side debit failed silently.
+    const debitOutcome = await postSuccessDebit(uid, result, ctx, 'fal', 'generate');
     
     // Determine appropriate message based on generation type
     const generationType = payload.generationType || '';
@@ -33,7 +35,8 @@ async function generate(req: Request, res: Response, next: NextFunction) {
       message = 'Music generated';
     }
     
-    res.json(formatApiResponse('success', message, { ...result, debitedCredits: ctx.creditCost, debitStatus: debitOutcome }));
+    const debitedCredits = debitOutcome === 'WRITTEN' ? (Number(ctx.creditCost) || 0) : 0;
+    res.json(formatApiResponse('success', message, { ...result, debitedCredits, debitStatus: debitOutcome }));
   } catch (err) {
     next(err);
   }
@@ -272,6 +275,38 @@ export const falController = {
       const uid = req.uid;
       const ctx = (req as any).context || {};
       const result = await falQueueService.kling26ProI2vSubmit(uid, req.body || {});
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
+  async klingV3StandardT2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.klingV3StandardT2vSubmit(uid, req.body || {});
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
+  async klingV3StandardI2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.klingV3StandardI2vSubmit(uid, req.body || {});
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
+  async klingV3ProT2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.klingV3ProT2vSubmit(uid, req.body || {});
+      res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
+    } catch (err) { next(err); }
+  },
+  async klingV3ProI2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.klingV3ProI2vSubmit(uid, req.body || {});
       res.json(formatApiResponse('success', 'Submitted', { ...result, expectedDebit: ctx.creditCost }));
     } catch (err) { next(err); }
   },

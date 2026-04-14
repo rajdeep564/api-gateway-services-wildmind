@@ -3,6 +3,19 @@ import { validationResult, body, query } from 'express-validator';
 import { ApiError } from '../utils/errorHandler';
 import { validateEmail } from '../utils/emailValidator';
 
+function normalizeForPasswordComparison(value?: string): string {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function passwordContainsUsername(password?: string, username?: string): boolean {
+  const normalizedUsername = normalizeForPasswordComparison(username);
+  if (normalizedUsername.length < 3) {
+    return false;
+  }
+
+  return normalizeForPasswordComparison(password).includes(normalizedUsername);
+}
+
 export const validateSession = [
   body('idToken').isString().notEmpty().withMessage('idToken is required'),
   (req: Request, _res: Response, next: NextFunction) => {
@@ -55,6 +68,22 @@ export const validateOtpVerify = [
   body('code').optional().isLength({ min: 6, max: 6 }).isNumeric().withMessage('Code must be 6 digits'),
   body('otp').optional().isLength({ min: 6, max: 6 }).isNumeric().withMessage('OTP must be 6 digits'),
   body('password').optional({ values: 'falsy' }).isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+  body('username')
+    .optional({ values: 'falsy' })
+    .isLength({ min: 3, max: 30 })
+    .matches(/^[a-z0-9_.-]+$/)
+    .withMessage('Username must be 3-30 chars: a-z0-9_.-'),
+  body('password').custom((password, { req }) => {
+    if (!password || !req.body?.username) {
+      return true;
+    }
+
+    if (passwordContainsUsername(password, req.body.username)) {
+      throw new Error('Password must not contain your username.');
+    }
+
+    return true;
+  }),
   (req: Request, _res: Response, next: NextFunction) => {
     console.log(`[VALIDATION] OTP Verify - Body:`, req.body);
     
@@ -103,9 +132,31 @@ export const validateUpdateMe = [
 ];
 
 export const validateLogin = [
-  body('email').isEmail().withMessage('Valid email is required'),
+  body('identifier')
+    .optional()
+    .isString()
+    .trim()
+    .notEmpty()
+    .withMessage('Email or username is required'),
+  body('email')
+    .optional()
+    .isString()
+    .trim()
+    .notEmpty()
+    .withMessage('Email or username is required'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+  body().custom((_, { req }) => {
+    const identifier = String(req.body?.identifier || req.body?.email || '').trim();
+    if (!identifier) {
+      throw new Error('Email or username is required');
+    }
+    return true;
+  }),
   (req: Request, _res: Response, next: NextFunction) => {
+    if (!req.body?.identifier && req.body?.email) {
+      req.body.identifier = req.body.email;
+    }
+
     console.log(`[VALIDATION] Login - Body:`, req.body);
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -138,6 +189,36 @@ export const validateForgotPassword = [
     }
     
     console.log(`[VALIDATION] Forgot password validation passed`);
+    next();
+  }
+];
+
+export const validateCompleteResetPassword = [
+  body('oobCode').isString().notEmpty().withMessage('Reset code is required'),
+  body('expiresAt')
+    .isInt({ min: 1 })
+    .withMessage('Reset link expiry is required'),
+  body('signature')
+    .isString()
+    .notEmpty()
+    .withMessage('Reset link signature is required'),
+  body('newPassword')
+    .isString()
+    .isLength({ min: 8, max: 14 })
+    .withMessage('Password must be 8-14 characters')
+    .matches(/[A-Z]/)
+    .withMessage('Password must contain at least 1 uppercase letter')
+    .matches(/[a-z]/)
+    .withMessage('Password must contain at least 1 lowercase letter')
+    .matches(/[0-9]/)
+    .withMessage('Password must contain at least 1 number')
+    .matches(/[^A-Za-z0-9]/)
+    .withMessage('Password must contain at least 1 special character'),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return next(new ApiError('Validation failed', 400, errors.array()));
+    }
     next();
   }
 ];

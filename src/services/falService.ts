@@ -74,6 +74,14 @@ function tryConvertProxyResourceToZataUrl(src: string): { key: string; publicUrl
   }
 }
 
+function normalizeVeo31AspectRatio(input: any): 'auto' | '16:9' | '9:16' {
+  const ar = typeof input === 'string' ? input : undefined;
+  if (!ar) return 'auto';
+  if (ar === '16:9' || ar === '9:16' || ar === 'auto') return ar;
+  // Veo 3.1 endpoints currently reject "1:1" and other ratios
+  return 'auto';
+}
+
 /**
  * Resize image to 1MP (1,000,000 pixels) while maintaining aspect ratio
  * @param imageBuffer - The image buffer to resize
@@ -4851,6 +4859,92 @@ async function kling26ProI2vSubmit(uid: string, body: any): Promise<SubmitReturn
   return { requestId: request_id, historyId, model, status: 'submitted' };
 }
 
+async function klingV3Submit(uid: string, body: any, tier: 'standard' | 'pro', mode: 'text-to-video' | 'image-to-video'): Promise<SubmitReturn> {
+  const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
+  fal.config({ credentials: falKey });
+
+  const prompt = typeof body?.prompt === 'string' ? body.prompt : undefined;
+  const multiPrompt = Array.isArray(body?.multi_prompt) ? body.multi_prompt : undefined;
+  if (!prompt && (!multiPrompt || multiPrompt.length === 0)) {
+    throw new ApiError('Prompt or multi_prompt is required', 400);
+  }
+
+  const model = `fal-ai/kling-video/v3/${tier}/${mode}`;
+  const duration = typeof body.duration === 'string' ? body.duration : (body.duration ? `${body.duration}` : '5');
+  const creator = await authRepository.getUserById(uid);
+  const username = creator?.username || uid;
+  const { historyId } = await queueCreateHistory(uid, { prompt: prompt || 'Multi-shot Kling 3 generation', model, isPublic: body.isPublic });
+  const keyPrefix = `users/${username}/input/${historyId}`;
+
+  let startImageUrl = body.start_image_url;
+  let endImageUrl = body.end_image_url;
+
+  if (mode === 'image-to-video') {
+    if (!startImageUrl) throw new ApiError('start_image_url is required', 400);
+    try {
+      if (typeof startImageUrl === 'string' && /^data:/i.test(startImageUrl)) {
+        const stored = await uploadDataUriToZata({ dataUri: startImageUrl, keyPrefix, fileName: 'start-image' });
+        startImageUrl = stored.publicUrl;
+      }
+      if (typeof endImageUrl === 'string' && /^data:/i.test(endImageUrl)) {
+        const stored = await uploadDataUriToZata({ dataUri: endImageUrl, keyPrefix, fileName: 'end-image' });
+        endImageUrl = stored.publicUrl;
+      }
+      const persistedInputUrls = [startImageUrl, endImageUrl].filter((value): value is string => typeof value === 'string' && value.length > 0);
+      if (persistedInputUrls.length > 0) {
+        await persistInputImagesFromUrls(uid, historyId, persistedInputUrls);
+      }
+    } catch (e: any) {
+      console.error(`[falService.klingV3Submit] Failed to upload ${tier} ${mode} image to Zata:`, e);
+    }
+  }
+
+  const input: Record<string, any> = {
+    duration,
+    generate_audio: body.generate_audio !== false,
+    shot_type: body.shot_type ?? 'customize',
+    negative_prompt: body.negative_prompt ?? 'blur, distort, and low quality',
+    cfg_scale: body.cfg_scale ?? 0.5,
+  };
+
+  if (prompt) input.prompt = prompt;
+  if (multiPrompt && multiPrompt.length > 0) input.multi_prompt = multiPrompt;
+  if (mode === 'text-to-video') {
+    input.aspect_ratio = body.aspect_ratio ?? '16:9';
+  } else {
+    input.start_image_url = startImageUrl;
+    if (endImageUrl) input.end_image_url = endImageUrl;
+    if (Array.isArray(body.elements) && body.elements.length > 0) input.elements = body.elements;
+  }
+
+  const { request_id } = await fal.queue.submit(model, { input } as any);
+  await generationHistoryRepository.update(uid, historyId, {
+    provider: 'fal',
+    providerTaskId: request_id,
+    generate_audio: body.generate_audio !== false,
+    duration,
+    aspect_ratio: body.aspect_ratio ?? '16:9',
+  } as any);
+
+  return { requestId: request_id, historyId, model, status: 'submitted' };
+}
+
+async function klingV3StandardT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  return klingV3Submit(uid, body, 'standard', 'text-to-video');
+}
+
+async function klingV3StandardI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  return klingV3Submit(uid, body, 'standard', 'image-to-video');
+}
+
+async function klingV3ProT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  return klingV3Submit(uid, body, 'pro', 'text-to-video');
+}
+
+async function klingV3ProI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+  return klingV3Submit(uid, body, 'pro', 'image-to-video');
+}
+
 export const falQueueService = {
   veoTtvSubmit,
   veoI2vSubmit,
@@ -4858,17 +4952,26 @@ export const falQueueService = {
   klingO1ReferenceSubmit,
   kling26ProT2vSubmit,
   kling26ProI2vSubmit,
+  klingV3StandardT2vSubmit,
+  klingV3StandardI2vSubmit,
+  klingV3ProT2vSubmit,
+  klingV3ProI2vSubmit,
   // Veo 3.1 variants
   async veo31TtvSubmit(uid: string, body: any, fast = false): Promise<SubmitReturn> {
     const falKey = env.falKey as string; if (!falKey) throw new ApiError('FAL AI API key not configured', 500);
     fal.config({ credentials: falKey });
     if (!body?.prompt) throw new ApiError('Prompt is required', 400);
     const model = fast ? 'fal-ai/veo3.1/fast' : 'fal-ai/veo3.1';
+    const resolvedAspectRatio = (() => {
+      // T2V defaults to 16:9; normalize any unsupported ratios to 'auto'
+      if (!body?.aspect_ratio) return '16:9';
+      return normalizeVeo31AspectRatio(body.aspect_ratio);
+    })();
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
     const { request_id } = await fal.queue.submit(model, {
       input: {
         prompt: body.prompt,
-        aspect_ratio: body.aspect_ratio ?? '16:9',
+        aspect_ratio: resolvedAspectRatio,
         duration: body.duration ?? '8s',
         negative_prompt: body.negative_prompt,
         enhance_prompt: body.enhance_prompt ?? true,
@@ -4878,7 +4981,7 @@ export const falQueueService = {
         generate_audio: body.generate_audio ?? true,
       },
     } as any);
-    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: body.aspect_ratio ?? '16:9' } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: resolvedAspectRatio } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   async veo31I2vSubmit(uid: string, body: any, fast = false): Promise<SubmitReturn> {
@@ -4890,6 +4993,7 @@ export const falQueueService = {
     const duration = typeof body.duration === 'number' ? `${body.duration}s` : (body.duration || '8s');
     const resolution = body.resolution || '720p';
 
+    const resolvedAspectRatio = normalizeVeo31AspectRatio(body?.aspect_ratio);
     const { historyId } = await queueCreateHistory(uid, {
       prompt: body.prompt,
       model,
@@ -4897,7 +5001,7 @@ export const falQueueService = {
       // store meta fields for later pricing/debit
       duration,
       resolution,
-      aspect_ratio: body.aspect_ratio ?? 'auto',
+      aspect_ratio: resolvedAspectRatio,
       generate_audio: body.generate_audio ?? true,
     } as any);
 
@@ -4923,7 +5027,7 @@ export const falQueueService = {
       input: {
         prompt: body.prompt,
         image_url: imageUrl,
-        aspect_ratio: body.aspect_ratio ?? 'auto',
+        aspect_ratio: resolvedAspectRatio,
         duration,
         generate_audio: body.generate_audio ?? true,
         resolution,
@@ -4995,6 +5099,7 @@ export const falQueueService = {
 
     const model = 'fal-ai/veo3.1/fast/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    const resolvedAspectRatio = normalizeVeo31AspectRatio(body?.aspect_ratio);
 
     // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
     const creator = await authRepository.getUserById(uid);
@@ -5024,13 +5129,13 @@ export const falQueueService = {
         prompt: body.prompt,
         first_frame_url: firstUrl,
         last_frame_url: lastUrl,
-        aspect_ratio: body.aspect_ratio ?? 'auto',
+        aspect_ratio: resolvedAspectRatio,
         duration: body.duration ?? '8s',
         generate_audio: body.generate_audio ?? true,
         resolution: body.resolution ?? '720p',
       },
     } as any);
-    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: body.aspect_ratio ?? 'auto' } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: resolvedAspectRatio } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   async veo31FirstLastSubmit(uid: string, body: any): Promise<SubmitReturn> {
@@ -5056,6 +5161,7 @@ export const falQueueService = {
 
     const model = 'fal-ai/veo3.1/first-last-frame-to-video';
     const { historyId } = await queueCreateHistory(uid, { prompt: body.prompt, model, isPublic: body.isPublic });
+    const resolvedAspectRatio = normalizeVeo31AspectRatio(body?.aspect_ratio);
 
     // Upload base64 data URIs to Zata and get public URLs (to avoid HTTP 413 errors)
     const creator = await authRepository.getUserById(uid);
@@ -5085,13 +5191,13 @@ export const falQueueService = {
         prompt: body.prompt,
         first_frame_url: firstUrl,
         last_frame_url: lastUrl,
-        aspect_ratio: body.aspect_ratio ?? 'auto',
+        aspect_ratio: resolvedAspectRatio,
         duration: body.duration ?? '8s',
         generate_audio: body.generate_audio ?? true,
         resolution: body.resolution ?? '720p',
       },
     } as any);
-    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: body.aspect_ratio ?? 'auto' } as any);
+    await generationHistoryRepository.update(uid, historyId, { provider: 'fal', providerTaskId: request_id, generate_audio: body.generate_audio ?? true, duration: body.duration ?? '8s', resolution: body.resolution ?? '720p', aspect_ratio: resolvedAspectRatio } as any);
     return { requestId: request_id, historyId, model, status: 'submitted' };
   },
   // Sora 2 - Image to Video (standard)

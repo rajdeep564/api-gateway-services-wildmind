@@ -226,10 +226,24 @@ export async function computeReplicateImageGenCost(req: Request): Promise<{ cost
   else if (normalized.includes('p-image-edit') || normalized.includes('prunaai/p-image-edit')) {
     display = 'P-Image-Edit';
   }
+  else if (normalized.includes('qwen/qwen-image-2-pro')) {
+    display = 'qwen/qwen-image-2-pro';
+  }
+  else if (normalized.includes('qwen/qwen-image-2')) {
+    display = 'qwen/qwen-image-2';
+  }
   else if (normalized.includes('qwen-image')) {
     // Qwen Image 2512 should be charged at 60 credits (matches credit sheet entry: qwen-image-edit-2512)
     // Keep pricing keyed to the creditDistributionData modelName.
     display = normalized.includes('2512') ? 'qwen-image-edit-2512' : 'qwen-image-edit-2511';
+  }
+  else if (normalized.includes('seedream-5-lite')) {
+    display = 'replicate/bytedance/seedream-5-lite';
+  }
+  else if (normalized.includes('google/nano-banana-2') || normalized.includes('nano-banana-2')) {
+    const resValue = String((req.body as any)?.resolution || '1K').toUpperCase();
+    display = `Google nano banana 2 ${resValue}`;
+    meta.resolution = resValue;
   }
 
   // Lookup base cost (per image)
@@ -283,7 +297,15 @@ export async function computeReplicateNextSceneCost(req: Request): Promise<{ cos
 export async function computeQwenImageEditCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   // Credit distribution uses the short model name (no replicate/ prefix)
   const requested = String((req.body as any)?.model || '').toLowerCase();
-  const display = requested.includes('2512') ? 'qwen-image-edit-2512' : 'qwen-image-edit-2511';
+
+  let display = '';
+  if (requested.includes('qwen/qwen-image-2-pro')) {
+    display = 'qwen/qwen-image-2-pro';
+  } else if (requested.includes('qwen/qwen-image-2')) {
+    display = 'qwen/qwen-image-2';
+  } else {
+    display = requested.includes('2512') ? 'qwen-image-edit-2512' : 'qwen-image-edit-2511';
+  }
 
   const base = findCredits(display);
   // Default to 60 credits for 2512 and 80 for 2511 if not found

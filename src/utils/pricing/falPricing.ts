@@ -47,7 +47,12 @@ export async function computeFalImageCost(req: Request): Promise<{ cost: number;
   } else if (m.includes('google/nano-banana-pro') || m.includes('nano-banana-pro')) {
     // Google Nano Banana Pro: resolution-based pricing (same as Replicate)
     const nanoRes = String(res || '2K').toUpperCase();
-    if (nanoRes === '4K') {
+    const is4K =
+      nanoRes === '4K' ||
+      nanoRes.includes('AUTO_4K') ||
+      nanoRes.includes('2160') ||
+      nanoRes.includes('4096');
+    if (is4K) {
       display = 'Nano banana Pro 4K';
     } else {
       display = 'Nano banana Pro 2K'; // Default to 2K (320 credits) or 1K (320 credits)
@@ -295,6 +300,69 @@ export async function computeFalKlingO1SubmitCost(req: Request): Promise<{ cost:
   return { cost: Math.ceil(base), pricingVersion: FAL_PRICING_VERSION, meta: { model: display, duration: dur } };
 }
 
+const KLING_V3_CREDITS_PER_SECOND = {
+  standard: {
+    audioOff: 188,
+    audioOn: 272,
+    voiceControl: 328,
+  },
+  pro: {
+    audioOff: 244,
+    audioOn: 356,
+    voiceControl: 412,
+  },
+} as const;
+
+function getKlingV3VoiceControlFlag(payload: Record<string, any> = {}): boolean {
+  if (payload.voice_control === true) return true;
+  if (typeof payload.voice_id === 'string' && payload.voice_id.trim().length > 0) return true;
+  if (Array.isArray(payload.voice_ids) && payload.voice_ids.length > 0) return true;
+  return false;
+}
+
+function buildKlingV3PricingRecord(tier: 'standard' | 'pro', durationInput: unknown, payload: Record<string, any> = {}) {
+  const parsedDuration = typeof durationInput === 'number'
+    ? durationInput
+    : parseInt(String(durationInput ?? '5').replace(/s$/i, ''), 10);
+  const duration = Number.isFinite(parsedDuration) ? Math.min(15, Math.max(3, parsedDuration)) : 5;
+  const hasVoiceControl = getKlingV3VoiceControlFlag(payload);
+  const hasAudio = payload.generate_audio !== false;
+  const rate = hasVoiceControl
+    ? KLING_V3_CREDITS_PER_SECOND[tier].voiceControl
+    : hasAudio
+      ? KLING_V3_CREDITS_PER_SECOND[tier].audioOn
+      : KLING_V3_CREDITS_PER_SECOND[tier].audioOff;
+  const audioLabel = hasVoiceControl ? ' Voice Control' : hasAudio ? ' Audio On' : ' Audio Off';
+  const model = `Kling 3 ${tier === 'pro' ? 'Pro' : 'Standard'} T2V/I2V ${duration}s${audioLabel}`;
+  return {
+    cost: Math.ceil(duration * rate),
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model,
+      duration: String(duration),
+      generate_audio: hasAudio,
+      voice_control: hasVoiceControl,
+      creditsPerSecond: rate,
+    },
+  };
+}
+
+export async function computeFalKlingV3StandardT2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  return buildKlingV3PricingRecord('standard', req.body?.duration, req.body || {});
+}
+
+export async function computeFalKlingV3StandardI2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  return buildKlingV3PricingRecord('standard', req.body?.duration, req.body || {});
+}
+
+export async function computeFalKlingV3ProT2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  return buildKlingV3PricingRecord('pro', req.body?.duration, req.body || {});
+}
+
+export async function computeFalKlingV3ProI2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
+  return buildKlingV3PricingRecord('pro', req.body?.duration, req.body || {});
+}
+
 export async function computeFalKling26ProT2vSubmitCost(req: Request): Promise<{ cost: number; pricingVersion: string; meta: Record<string, any> }> {
   const { duration, generate_audio } = req.body || {};
   const dur = typeof duration === 'number' ? String(duration) : String(duration || '5').replace(/s$/i, '');
@@ -462,6 +530,16 @@ export function computeFalVeoCostFromModel(model: string, meta?: any): { cost: n
     const hasAudio = meta?.generate_audio !== false; // Default to true
     const audioSuffix = hasAudio ? ' Audio On' : ' Audio Off';
     display = `Kling 2.6 Pro T2V/I2V ${dur}s${audioSuffix}`;
+  } else if (
+    normalized === 'fal-ai/kling-video/v3/standard/text-to-video' ||
+    normalized === 'fal-ai/kling-video/v3/standard/image-to-video'
+  ) {
+    return buildKlingV3PricingRecord('standard', meta?.duration ?? '5', meta || {});
+  } else if (
+    normalized === 'fal-ai/kling-video/v3/pro/text-to-video' ||
+    normalized === 'fal-ai/kling-video/v3/pro/image-to-video'
+  ) {
+    return buildKlingV3PricingRecord('pro', meta?.duration ?? '5', meta || {});
   }
   const base = display ? findCredits(display) : null;
   if (base == null) throw new Error('Unsupported FAL Veo model');

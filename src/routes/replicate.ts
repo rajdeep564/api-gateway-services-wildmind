@@ -9,6 +9,8 @@ import { computeWanVideoCost } from '../utils/pricing/wanPricing';
 import { computeKlingVideoCost, computeKlingLipsyncCost } from '../utils/pricing/klingPricing';
 import { computeSeedanceVideoCost } from '../utils/pricing/seedancePricing';
 import { computePixverseVideoCost } from '../utils/pricing/pixversePricing';
+import { computeLtx23FastVideoCost } from '../utils/pricing/ltx23FastPricing';
+import { computeLtx23ProVideoCost } from '../utils/pricing/ltx23ProPricing';
 import { validateRemoveBg } from '../middlewares/validators/replicate/validateRemoveBg';
 import { validateUpscale } from '../middlewares/validators/replicate/validateUpscale';
 import { validateReplicateGenerate } from '../middlewares/validators/replicate/validateImageGenerate';
@@ -25,6 +27,10 @@ import { validatePixverseT2V } from '../middlewares/validators/replicate/validat
 import { validatePixverseI2V } from '../middlewares/validators/replicate/validatePixverseI2V';
 import { validateWanAnimateReplace } from '../middlewares/validators/replicate/validateWanAnimateReplace';
 import { validateWanAnimateAnimation } from '../middlewares/validators/replicate/validateWanAnimateAnimation';
+import { validateLtx23FastT2V } from '../middlewares/validators/replicate/validateLtx23FastT2V';
+import { validateLtx23FastI2V } from '../middlewares/validators/replicate/validateLtx23FastI2V';
+import { validateLtx23ProT2V } from '../middlewares/validators/replicate/validateLtx23ProT2V';
+import { validateLtx23ProI2V } from '../middlewares/validators/replicate/validateLtx23ProI2V';
 import { validateStorage } from '../middlewares/validators/validateStorageMiddleware';
 
 console.log('[ReplicateRoutes] Reloading routes...'); // Force refresh log
@@ -245,6 +251,44 @@ router.post(
   makeCreditCost('replicate', 'qwen-image-edit', computeQwenImageEditCost),
   validateStorage('image'),
   (replicateController as any).qwenImageEditSubmit
+);
+
+// ============ Queue-style endpoints for Replicate LTX 2.3 Fast ============
+router.post(
+  '/ltx-2-3-fast-t2v/submit',
+  requireAuth,
+  validateLtx23FastT2V,
+  makeCreditCost('replicate', 'ltx-2.3-fast-t2v', computeLtx23FastVideoCost),
+  validateStorage('video'),
+  (replicateController as any).ltx23FastT2vSubmit
+);
+
+router.post(
+  '/ltx-2-3-fast-i2v/submit',
+  requireAuth,
+  validateLtx23FastI2V,
+  makeCreditCost('replicate', 'ltx-2.3-fast-i2v', computeLtx23FastVideoCost),
+  validateStorage('video'),
+  (replicateController as any).ltx23FastI2vSubmit
+);
+
+// ============ Queue-style endpoints for Replicate LTX 2.3 Pro ============
+router.post(
+  '/ltx-2-3-pro-t2v/submit',
+  requireAuth,
+  validateLtx23ProT2V,
+  makeCreditCost('replicate', 'ltx-2.3-pro-t2v', computeLtx23ProVideoCost),
+  validateStorage('video'),
+  (replicateController as any).ltx23ProT2vSubmit
+);
+
+router.post(
+  '/ltx-2-3-pro-i2v/submit',
+  requireAuth,
+  validateLtx23ProI2V,
+  makeCreditCost('replicate', 'ltx-2.3-pro-i2v', computeLtx23ProVideoCost),
+  validateStorage('video'),
+  (replicateController as any).ltx23ProI2vSubmit
 );
 
 export default router;

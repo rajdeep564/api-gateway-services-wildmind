@@ -100,6 +100,125 @@ export async function addCollaborator(req: Request, res: Response) {
   }
 }
 
+export async function inviteCollaborator(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+
+    const { id } = req.params;
+    const invitation = await projectService.inviteCollaboratorToProject(id, userId, req.body);
+
+    res.json(formatApiResponse('success', 'Invitation sent', { invitation }));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to send invitation', null)
+    );
+  }
+}
+
+export async function listInvitations(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+
+    const invitations = await projectService.listInvitationsForUser(userId);
+    res.json(formatApiResponse('success', 'Invitations retrieved', { invitations }));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to list invitations', null)
+    );
+  }
+}
+
+export async function listSentInvitations(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+
+    const invitations = await projectService.listSentInvitationsForUser(userId);
+    res.json(formatApiResponse('success', 'Sent invitations retrieved', { invitations }));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to list sent invitations', null)
+    );
+  }
+}
+
+export async function acceptInvitation(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+
+    const { invitationId } = req.params;
+    const invitation = await projectService.acceptInvitation(invitationId, userId);
+    res.json(formatApiResponse('success', 'Invitation accepted', { invitation }));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to accept invitation', null)
+    );
+  }
+}
+
+export async function dismissInvitation(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+
+    const { invitationId } = req.params;
+    const invitation = await projectService.dismissInvitation(invitationId, userId);
+    res.json(formatApiResponse('success', 'Invitation dismissed', { invitation }));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to dismiss invitation', null)
+    );
+  }
+}
+
+export async function cancelSentInvitation(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+
+    const { invitationId } = req.params;
+    const invitation = await projectService.cancelSentInvitation(invitationId, userId);
+    res.json(formatApiResponse('success', 'Invitation cancelled', { invitation }));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to cancel invitation', null)
+    );
+  }
+}
+
+export async function updateSentInvitationRole(req: Request, res: Response) {
+  try {
+    const userId = (req as any).uid;
+    if (!userId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+
+    const { invitationId } = req.params;
+    const { role } = req.body;
+    const invitation = await projectService.updateSentInvitationRole(invitationId, userId, role);
+    res.json(formatApiResponse('success', 'Invitation role updated', { invitation }));
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json(
+      formatApiResponse('error', error.message || 'Failed to update invitation role', null)
+    );
+  }
+}
+
 export async function listProjects(req: Request, res: Response) {
   try {
     const userId = (req as any).uid;
@@ -117,4 +236,3 @@ export async function listProjects(req: Request, res: Response) {
     );
   }
 }
-

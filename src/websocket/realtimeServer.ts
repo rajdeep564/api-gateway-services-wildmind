@@ -5,6 +5,7 @@ import { logger } from '../utils/logger';
 import { URL } from 'url';
 import { opRepository } from '../repository/canvas/opRepository';
 import { elementRepository } from '../repository/canvas/elementRepository';
+import { registerCanvasSessionBroadcaster } from '../services/canvas/canvasSessionNotifier';
 
 // --- TYPES ---
 export type GeneratorOverlay = {
@@ -105,9 +106,38 @@ function getProjectId(reqUrl: string | undefined): string | null {
   }
 }
 
+function getSessionId(reqUrl: string | undefined): string | null {
+  if (!reqUrl) return null;
+  try {
+    const { env } = require('../config/env');
+    const defaultBase = env.devFrontendUrl;
+    const u = new URL(reqUrl, defaultBase);
+    return u.searchParams.get('sessionId');
+  } catch {
+    return null;
+  }
+}
+
 export function startRealtimeServer(server: HttpServer) {
   const wss = new WebSocketServer({ server, path: '/realtime' });
   const rooms = new Map<string, Set<WebSocket>>(); // projectId -> clients
+
+  // Register "project opened elsewhere" broadcaster: notify all tabs except the one that just opened
+  registerCanvasSessionBroadcaster((projectId: string, payload: any, targetSessionId: string | null = null, exceptSessionId: string | null = null) => {
+    const room = rooms.get(projectId);
+    if (!room) return;
+    const data = JSON.stringify(payload);
+    for (const ws of room) {
+      const sid = (ws as any).canvasSessionId;
+      if (targetSessionId != null && sid !== targetSessionId) continue;
+      if (exceptSessionId != null && sid === exceptSessionId) continue;
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(data);
+        } catch (_e) { /* ignore */ }
+      }
+    }
+  });
 
   // Helper to broadcast messages to clients
   function broadcast(projectId: string, payload: any, except?: WebSocket) {
@@ -341,11 +371,13 @@ export function startRealtimeServer(server: HttpServer) {
 
   wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
     const projectId = getProjectId(req.url) || 'default';
+    const sessionId = getSessionId(req.url);
+    (ws as any).canvasSessionId = sessionId ?? undefined;
 
     if (!rooms.has(projectId)) rooms.set(projectId, new Set());
     rooms.get(projectId)!.add(ws);
 
-    logger.info({ projectId }, 'Realtime WS connected');
+    logger.info({ projectId, hasSessionId: !!sessionId }, 'Realtime WS connected');
 
     // Send init state
     const state = getProjectState(projectId);

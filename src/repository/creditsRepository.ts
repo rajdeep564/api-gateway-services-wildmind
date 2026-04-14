@@ -167,9 +167,26 @@ export async function writeDebitIfAbsent(
   reason?: string,
   meta?: Record<string, any>,
   modelName?: string,
-  params?: { resolution?: string; duration?: number }
+  params?: {
+    resolution?: string;
+    duration?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+  }
 ): Promise<'SKIPPED' | 'WRITTEN'> {
   try {
+    logger.info(
+      {
+        uid,
+        requestId,
+        amount,
+        modelName,
+        params,
+        reason,
+        meta,
+      },
+      '[CREDITS_REPO] Sending debit request'
+    );
     const res = await axios.post(`${CREDIT_SERVICE_URL}/credits/debit`, {
       userId: uid,
       transactionId: requestId,
@@ -185,13 +202,22 @@ export async function writeDebitIfAbsent(
         logger.info({ uid, requestId }, '[CREDITS_REPO] Debit skipped (idempotent)');
         return 'SKIPPED';
       }
+      logger.info(
+        {
+          uid,
+          requestId,
+          amount: res.data.data?.amount ?? amount,
+          modelName,
+        },
+        '[CREDITS_REPO] Debit confirmed'
+      );
       return 'WRITTEN';
     }
     throw new Error('Debit failed');
   } catch (e: any) {
     if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
-      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, skipping debit');
-      return 'WRITTEN';
+      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, debit not written');
+      return 'SKIPPED';
     }
 
     handleAxiosError(e, 'writeDebitIfAbsent');

@@ -1,6 +1,6 @@
 import axios, { AxiosError } from 'axios';
 import { env } from '../config/env';
-import { generateGeminiTextResponse, PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION } from './genai/geminiTextService';
+import { generateGeminiTextResponse, generateGeminiTextWithReferenceImages, PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION } from './genai/geminiTextService';
 import { generateReplicateTextResponse } from './genai/replicateTextService';
 
 // Get the prompt enhancer service URL from environment
@@ -244,19 +244,50 @@ export interface CanvasQueryResult {
   response: string | null;
 }
 
+export interface QueryCanvasPromptOptions {
+  referenceImageUrls?: string[];
+}
+
 /**
  * Query canvas prompt enhancement endpoint
- * Calls the /canvas/query endpoint on the prompt enhancer service
+ * When reference images are provided and Gemini is available, uses vision to understand images and produce a better prompt/answer.
  */
 export async function queryCanvasPrompt(
   text: string,
-  maxNewTokens?: number
+  maxNewTokens?: number,
+  options?: QueryCanvasPromptOptions
 ): Promise<CanvasQueryResult> {
   if (!text || typeof text !== 'string' || !text.trim()) {
     throw new Error('Text is required');
   }
 
-  // Use GPT-5 (Replicate) for chat
+  const referenceImageUrls = options?.referenceImageUrls?.filter((u) => typeof u === 'string' && u.trim()) ?? [];
+  const hasGeminiKey = Boolean(
+    env.googleGenAIApiKey ||
+    process.env.GOOGLE_GENAI_API_KEY ||
+    process.env.GENAI_API_KEY ||
+    process.env.GEMINI_API_KEY
+  );
+
+  // When user attached reference images, use Gemini vision so the agent "sees" the image and can produce a better prompt
+  if (referenceImageUrls.length > 0 && hasGeminiKey) {
+    try {
+      console.log('[CanvasPlan][BACKEND] canvas/query using vision (Gemini) with', referenceImageUrls.length, 'reference image(s)');
+      const enhancedText = await generateGeminiTextWithReferenceImages(text, referenceImageUrls, {
+        maxOutputTokens: maxNewTokens ?? 512,
+      });
+      return {
+        type: 'answer',
+        enhanced_prompt: enhancedText,
+        response: enhancedText,
+      };
+    } catch (err: any) {
+      console.warn('[Canvas Query] Gemini vision failed, falling back to text-only:', err?.message);
+      // Fall through to Replicate/text-only path
+    }
+  }
+
+  // Use GPT-5 (Replicate) for chat when no reference images or vision failed
   const hasReplicateKey = Boolean(env.replicateApiKey);
 
   if (!hasReplicateKey) {
@@ -265,18 +296,18 @@ export async function queryCanvasPrompt(
   }
 
   try {
-    console.log('[Canvas Query] ✅ Using GPT-5 (ChatGPT 5) via Replicate for chat');
-      const enhancedText = await generateReplicateTextResponse(text, {
-        maxOutputTokens: maxNewTokens,
-        systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
-      });
+    console.log('[CanvasPlan][BACKEND] canvas/query using text-only (GPT-5 via Replicate)');
+    const enhancedText = await generateReplicateTextResponse(text, {
+      maxOutputTokens: maxNewTokens,
+      systemInstruction: PROMPT_ENHANCEMENT_SYSTEM_INSTRUCTION,
+    });
 
     console.log('[Canvas Query] ✅ GPT-5 response received successfully');
-      return {
-        type: 'answer',
-        enhanced_prompt: enhancedText,
-        response: enhancedText,
-      };
+    return {
+      type: 'answer',
+      enhanced_prompt: enhancedText,
+      response: enhancedText,
+    };
   } catch (err: any) {
     console.error('[Canvas Query] ❌ GPT-5 (Replicate) failed:', {
       error: err?.message,

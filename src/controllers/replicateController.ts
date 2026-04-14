@@ -56,7 +56,7 @@ async function generateImage(req: Request, res: Response, next: NextFunction) {
     const ctx = (req as any).context || {};
     const data = await replicateService.generateImage(uid, req.body || {}, ctx);
     (res as any).locals = { ...(res as any).locals, success: true };
-    
+
     // Debit handled atomically in service
     res.json(
       formatApiResponse('success', 'OK', {
@@ -185,7 +185,7 @@ export async function seedanceT2vSubmit(req: Request, res: Response, next: NextF
             console.log('[seedanceT2vSubmit][background] finalization completed for requestId:', requestId);
           } catch (err: any) {
             console.error('[seedanceT2vSubmit][background] finalization failed:', err);
-            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-t2v.failed', { error: err?.message }); } catch(_){}
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-t2v.failed', { error: err?.message }); } catch (_) { }
           }
         })().catch((e) => console.error('[seedanceT2vSubmit][background] unexpected error', e));
       });
@@ -223,7 +223,7 @@ export async function seedanceI2vSubmit(req: Request, res: Response, next: NextF
             console.log('[seedanceI2vSubmit][background] finalization completed for requestId:', requestId);
           } catch (err: any) {
             console.error('[seedanceI2vSubmit][background] finalization failed:', err);
-            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-i2v.failed', { error: err?.message }); } catch(_){}
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-i2v.failed', { error: err?.message }); } catch (_) { }
           }
         })().catch((e) => console.error('[seedanceI2vSubmit][background] unexpected error', e));
       });
@@ -263,7 +263,7 @@ export async function seedanceProFastT2vSubmit(req: Request, res: Response, next
             console.log('[seedanceProFastT2vSubmit][background] finalization completed for requestId:', requestId);
           } catch (err: any) {
             console.error('[seedanceProFastT2vSubmit][background] finalization failed:', err);
-            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-pro-fast-t2v.failed', { error: err?.message }); } catch(_){}
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-pro-fast-t2v.failed', { error: err?.message }); } catch (_) { }
           }
         })().catch((e) => console.error('[seedanceProFastT2vSubmit][background] unexpected error', e));
       });
@@ -300,7 +300,7 @@ export async function seedanceProFastI2vSubmit(req: Request, res: Response, next
             console.log('[seedanceProFastI2vSubmit][background] finalization completed for requestId:', requestId);
           } catch (err: any) {
             console.error('[seedanceProFastI2vSubmit][background] finalization failed:', err);
-            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-pro-fast-i2v.failed', { error: err?.message }); } catch(_){}
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.seedance-pro-fast-i2v.failed', { error: err?.message }); } catch (_) { }
           }
         })().catch((e) => console.error('[seedanceProFastI2vSubmit][background] unexpected error', e));
       });
@@ -360,5 +360,151 @@ export async function wanAnimateAnimationSubmit(req: Request, res: Response, nex
 }
 
 Object.assign(replicateController, { wanAnimateAnimationSubmit });
+
+// ============ LTX 2.3 Fast queue handlers ============
+export async function ltx23FastT2vSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).ltx23FastT2vSubmit(uid, req.body || {});
+
+    const ctx = (req as any).context || {};
+
+    // Return immediately after submission to prevent 524 timeout
+    res.json(formatApiResponse('success', 'Submitted', {
+      ...result,
+      expectedDebit: typeof ctx.creditCost === 'number' ? ctx.creditCost : undefined,
+      requestId: result.requestId,
+      message: 'Video generation started. Use /api/replicate/queue/result with requestId to check status.'
+    }));
+
+    // Process finalization asynchronously
+    const requestId = result.requestId;
+    if (requestId) {
+      const delay = Math.random() * 2000;
+      setImmediate(() => {
+        (async () => {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          try {
+            const finalPrediction = await waitForPrediction(requestId);
+            await (replicateService as any).replicateQueueResult(uid, requestId);
+            console.log('[ltx23FastT2vSubmit][background] finalization completed for requestId:', requestId);
+          } catch (err: any) {
+            console.error('[ltx23FastT2vSubmit][background] finalization failed:', err);
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.ltx-2.3-fast-t2v.failed', { error: err?.message }); } catch (_) { }
+          }
+        })().catch((e) => console.error('[ltx23FastT2vSubmit][background] unexpected error', e));
+      });
+    }
+  } catch (e) { next(e); }
+}
+
+export async function ltx23FastI2vSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).ltx23FastI2vSubmit(uid, req.body || {});
+
+    const ctx = (req as any).context || {};
+
+    // Return immediately after submission to prevent 524 timeout
+    res.json(formatApiResponse('success', 'Submitted', {
+      ...result,
+      expectedDebit: typeof ctx.creditCost === 'number' ? ctx.creditCost : undefined,
+      requestId: result.requestId,
+      message: 'Video generation started. Use /api/replicate/queue/result with requestId to check status.'
+    }));
+
+    // Process finalization asynchronously
+    const requestId = result.requestId;
+    if (requestId) {
+      const delay = Math.random() * 2000;
+      setImmediate(() => {
+        (async () => {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          try {
+            const finalPrediction = await waitForPrediction(requestId);
+            await (replicateService as any).replicateQueueResult(uid, requestId);
+            console.log('[ltx23FastI2vSubmit][background] finalization completed for requestId:', requestId);
+          } catch (err: any) {
+            console.error('[ltx23FastI2vSubmit][background] finalization failed:', err);
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.ltx-2.3-fast-i2v.failed', { error: err?.message }); } catch (_) { }
+          }
+        })().catch((e) => console.error('[ltx23FastI2vSubmit][background] unexpected error', e));
+      });
+    }
+  } catch (e) { next(e); }
+}
+
+Object.assign(replicateController, { ltx23FastT2vSubmit, ltx23FastI2vSubmit });
+
+// ============ LTX 2.3 Pro queue handlers ============
+export async function ltx23ProT2vSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).ltx23ProT2vSubmit(uid, req.body || {});
+
+    const ctx = (req as any).context || {};
+
+    res.json(formatApiResponse('success', 'Submitted', {
+      ...result,
+      expectedDebit: typeof ctx.creditCost === 'number' ? ctx.creditCost : undefined,
+      requestId: result.requestId,
+      message: 'Video generation started. Use /api/replicate/queue/result with requestId to check status.'
+    }));
+
+    const requestId = result.requestId;
+    if (requestId) {
+      const delay = Math.random() * 2000;
+      setImmediate(() => {
+        (async () => {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          try {
+            await waitForPrediction(requestId);
+            await (replicateService as any).replicateQueueResult(uid, requestId);
+            console.log('[ltx23ProT2vSubmit][background] finalization completed for requestId:', requestId);
+          } catch (err: any) {
+            console.error('[ltx23ProT2vSubmit][background] finalization failed:', err);
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.ltx-2.3-pro-t2v.failed', { error: err?.message }); } catch (_) { }
+          }
+        })().catch((e) => console.error('[ltx23ProT2vSubmit][background] unexpected error', e));
+      });
+    }
+  } catch (e) { next(e); }
+}
+
+export async function ltx23ProI2vSubmit(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const result = await (replicateService as any).ltx23ProI2vSubmit(uid, req.body || {});
+
+    const ctx = (req as any).context || {};
+
+    res.json(formatApiResponse('success', 'Submitted', {
+      ...result,
+      expectedDebit: typeof ctx.creditCost === 'number' ? ctx.creditCost : undefined,
+      requestId: result.requestId,
+      message: 'Video generation started. Use /api/replicate/queue/result with requestId to check status.'
+    }));
+
+    const requestId = result.requestId;
+    if (requestId) {
+      const delay = Math.random() * 2000;
+      setImmediate(() => {
+        (async () => {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          try {
+            await waitForPrediction(requestId);
+            await (replicateService as any).replicateQueueResult(uid, requestId);
+            console.log('[ltx23ProI2vSubmit][background] finalization completed for requestId:', requestId);
+          } catch (err: any) {
+            console.error('[ltx23ProI2vSubmit][background] finalization failed:', err);
+            try { await issueRefund(uid, requestId, ctx.creditCost, 'replicate.ltx-2.3-pro-i2v.failed', { error: err?.message }); } catch (_) { }
+          }
+        })().catch((e) => console.error('[ltx23ProI2vSubmit][background] unexpected error', e));
+      });
+    }
+  } catch (e) { next(e); }
+}
+
+Object.assign(replicateController, { ltx23ProT2vSubmit, ltx23ProI2vSubmit });
 
 
