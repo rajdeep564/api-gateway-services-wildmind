@@ -73,9 +73,12 @@ export const validateFalGenerate = [
     ])
     .withMessage("invalid generationType"),
   body("model").isString().isIn(ALLOWED_FAL_MODELS),
+  // Union of FAL aspect_ratio enums used by image routes (e.g. Nano Banana Pro / Nano Banana 2).
+  // Pro: auto + ratios below (no 4:1 family). NB2: adds 4:1, 1:4, 8:1, 1:8. Accept all here so the gateway does not reject valid FAL values.
   body("aspect_ratio")
     .optional()
     .isIn([
+      "auto",
       "21:9",
       "16:9",
       "3:2",
@@ -86,6 +89,10 @@ export const validateFalGenerate = [
       "3:4",
       "2:3",
       "9:16",
+      "4:1",
+      "1:4",
+      "8:1",
+      "1:8",
     ]),
   body("image_size")
     .optional()
