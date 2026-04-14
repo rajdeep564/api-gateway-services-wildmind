@@ -73,27 +73,80 @@ export const validateFalGenerate = [
     ])
     .withMessage("invalid generationType"),
   body("model").isString().isIn(ALLOWED_FAL_MODELS),
-  // Union of FAL aspect_ratio enums used by image routes (e.g. Nano Banana Pro / Nano Banana 2).
-  // Pro: auto + ratios below (no 4:1 family). NB2: adds 4:1, 1:4, 8:1, 1:8. Accept all here so the gateway does not reject valid FAL values.
+  // google/nano-banana-2: auto + extreme ratios; gemini-25-flash-image: fixed enum (no auto); nano-banana-pro: auto + fixed enum; others: legacy + match_input_image.
   body("aspect_ratio")
     .optional()
-    .isIn([
-      "auto",
-      "21:9",
-      "16:9",
-      "3:2",
-      "4:3",
-      "5:4",
-      "1:1",
-      "4:5",
-      "3:4",
-      "2:3",
-      "9:16",
-      "4:1",
-      "1:4",
-      "8:1",
-      "1:8",
-    ]),
+    .custom((value, { req }) => {
+      const v = String(value ?? "").trim();
+      if (!v) return true;
+      const model = String(req.body?.model || "").toLowerCase();
+      const isNanoBanana2 =
+        model.includes("google/nano-banana-2") ||
+        (model.includes("nano-banana-2") && !model.includes("nano-banana-pro"));
+      const isGemini25Flash = model.includes("gemini-25-flash-image");
+      const isNanoBananaPro =
+        model.includes("google/nano-banana-pro") ||
+        model.includes("nano-banana-pro");
+      const nanoBanana2Ratios = new Set([
+        "auto",
+        "21:9",
+        "16:9",
+        "3:2",
+        "4:3",
+        "5:4",
+        "1:1",
+        "4:5",
+        "3:4",
+        "2:3",
+        "9:16",
+        "4:1",
+        "1:4",
+        "8:1",
+        "1:8",
+      ]);
+      const geminiFlashRatios = new Set([
+        "21:9",
+        "16:9",
+        "3:2",
+        "4:3",
+        "5:4",
+        "1:1",
+        "4:5",
+        "3:4",
+        "2:3",
+        "9:16",
+      ]);
+      const nanoBananaProRatios = new Set([
+        "auto",
+        "21:9",
+        "16:9",
+        "3:2",
+        "4:3",
+        "5:4",
+        "1:1",
+        "4:5",
+        "3:4",
+        "2:3",
+        "9:16",
+      ]);
+      const generalRatios = new Set([
+        "21:9",
+        "16:9",
+        "3:2",
+        "4:3",
+        "5:4",
+        "1:1",
+        "4:5",
+        "3:4",
+        "2:3",
+        "9:16",
+        "match_input_image",
+      ]);
+      if (isNanoBanana2) return nanoBanana2Ratios.has(v);
+      if (isGemini25Flash) return geminiFlashRatios.has(v);
+      if (isNanoBananaPro) return nanoBananaProRatios.has(v);
+      return generalRatios.has(v);
+    }),
   body("image_size")
     .optional()
     .custom((value) => {
@@ -125,13 +178,38 @@ export const validateFalGenerate = [
     .withMessage(
       "image_size must be a valid enum string or object with width and height",
     ),
-  body("safety_tolerance").optional().isIn(["1", "2", "3", "4", "5"]),
+  body("safety_tolerance").optional().isIn(["1", "2", "3", "4", "5", "6"]),
   body("enable_safety_checker").optional().isBoolean(),
   body("n").optional().isInt({ min: 1, max: 15 }),
   body("num_images").optional().isInt({ min: 1, max: 15 }),
   body("uploadedImages").optional().isArray(),
-  body("output_format").optional().isIn(["jpeg", "png", "webp"]),
-  body("resolution").optional().isIn(["1K", "2K", "4K"]),
+  // FAL image APIs expect "jpeg" (not "jpg"); accept both and normalize before validation.
+  body("output_format")
+    .optional()
+    .customSanitizer((value) => {
+      if (value == null || value === "") return value;
+      const s = String(value).toLowerCase().trim();
+      return s === "jpg" ? "jpeg" : s;
+    })
+    .isIn(["jpeg", "png", "webp"]),
+  body("resolution")
+    .optional()
+    .custom((value, { req }) => {
+      const v = String(value ?? "").trim();
+      if (!v) return true;
+      const model = String(req.body?.model || "").toLowerCase();
+      const isNanoBanana2 =
+        model.includes("google/nano-banana-2") ||
+        (model.includes("nano-banana-2") && !model.includes("nano-banana-pro"));
+      const isGemini25Flash = model.includes("gemini-25-flash-image");
+      // Gemini 25 Flash image API does not take resolution; reject if client sends it.
+      if (isGemini25Flash) return false;
+      if (isNanoBanana2) return ["0.5K", "1K", "2K", "4K"].includes(v);
+      return ["1K", "2K", "4K"].includes(v);
+    })
+    .withMessage(
+      "invalid resolution for this model (omit for gemini-25-flash-image; Nano Banana 2: 0.5K–4K; others: 1K–4K)",
+    ),
   body("seed").optional().isInt(),
   body("negative_prompt").optional().isString(),
   body("thinking_level").optional().isIn(["minimal", "high"]),
@@ -2305,6 +2383,103 @@ export const validateFalSeedvrUpscaleImage = [
       }
     }
 
+    next();
+  },
+];
+
+// PixVerse V6 Text-to-Video (FAL)
+export const validateFalPixverseV6T2v = [
+  body("prompt").isString().notEmpty().withMessage("prompt is required"),
+  body("aspect_ratio")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["16:9", "4:3", "1:1", "3:4", "9:16", "2:3", "3:2", "21:9"])
+    .withMessage("invalid aspect_ratio"),
+  body("resolution")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["360p", "540p", "720p", "1080p"])
+    .withMessage("resolution must be 360p, 540p, 720p, or 1080p"),
+  body("duration")
+    .optional({ nullable: true, checkFalsy: false })
+    .custom((value) => {
+      const numValue =
+        typeof value === "number" ? value : parseInt(String(value), 10);
+      if (!Number.isFinite(numValue)) return false;
+      return numValue >= 5 && numValue <= 15;
+    })
+    .withMessage("duration must be between 5 and 15 seconds"),
+  body("negative_prompt")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString(),
+  body("style")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["anime", "3d_animation", "clay", "comic", "cyberpunk"]),
+  body("seed").optional({ nullable: true, checkFalsy: false }).isInt(),
+  body("generate_audio_switch")
+    .optional({ nullable: true, checkFalsy: false })
+    .isBoolean(),
+  body("generate_multi_clip_switch")
+    .optional({ nullable: true, checkFalsy: false })
+    .isBoolean(),
+  body("thinking_type")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["enabled", "disabled", "auto"]),
+  body("api_key").optional({ nullable: true, checkFalsy: false }).isString(),
+  body("originalPrompt")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString(),
+  body("isPublic").optional({ nullable: true, checkFalsy: false }).isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return next(new ApiError("Validation failed", 400, errors.array()));
+    }
+    next();
+  },
+];
+
+// PixVerse V6 Image-to-Video (FAL)
+export const validateFalPixverseV6I2v = [
+  body("prompt").isString().notEmpty().withMessage("prompt is required"),
+  body("image_url").isString().notEmpty().withMessage("image_url is required"),
+  body("resolution")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["360p", "540p", "720p", "1080p"])
+    .withMessage("resolution must be 360p, 540p, 720p, or 1080p"),
+  body("duration")
+    .optional({ nullable: true, checkFalsy: false })
+    .custom((value) => {
+      const numValue =
+        typeof value === "number" ? value : parseInt(String(value), 10);
+      if (!Number.isFinite(numValue)) return false;
+      return numValue >= 5 && numValue <= 15;
+    })
+    .withMessage("duration must be between 5 and 15 seconds"),
+  body("negative_prompt")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString(),
+  body("style")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["anime", "3d_animation", "clay", "comic", "cyberpunk"]),
+  body("seed").optional({ nullable: true, checkFalsy: false }).isInt(),
+  body("generate_audio_switch")
+    .optional({ nullable: true, checkFalsy: false })
+    .isBoolean(),
+  body("generate_multi_clip_switch")
+    .optional({ nullable: true, checkFalsy: false })
+    .isBoolean(),
+  body("thinking_type")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["enabled", "disabled", "auto"]),
+  body("api_key").optional({ nullable: true, checkFalsy: false }).isString(),
+  body("originalPrompt")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString(),
+  body("isPublic").optional({ nullable: true, checkFalsy: false }).isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return next(new ApiError("Validation failed", 400, errors.array()));
+    }
     next();
   },
 ];

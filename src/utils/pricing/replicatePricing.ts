@@ -290,11 +290,17 @@ export async function computeReplicateImageGenCost(
     normalized.includes("google/nano-banana-2") ||
     normalized.includes("nano-banana-2")
   ) {
-    const resValue = String(
-      (req.body as any)?.resolution || "1K",
-    ).toUpperCase();
-    display = `Google nano banana 2 ${resValue}`;
-    meta.resolution = resValue;
+    const resRaw = String((req.body as any)?.resolution || "1K").toUpperCase();
+    const tier =
+      resRaw === "0.5K"
+        ? "0.5K"
+        : resRaw === "2K"
+          ? "2K"
+          : resRaw === "4K"
+            ? "4K"
+            : "1K";
+    display = `Google nano banana 2 ${tier}`;
+    meta.resolution = resRaw;
   }
 
   // Lookup base cost (per image)

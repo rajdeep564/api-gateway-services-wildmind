@@ -250,7 +250,7 @@ async function generate(
     aspect_ratio,
     frameSize,
     uploadedImages = [],
-    output_format = "jpeg",
+    output_format: outputFormatFromPayload,
     generationType,
     tags,
     nsfw,
@@ -270,6 +270,31 @@ async function generate(
 
   // Declare modelLower early so it can be used for Flux 2 Pro image resizing check
   const modelLower = (model || "").toLowerCase();
+
+  const output_format = (() => {
+    const explicit = outputFormatFromPayload;
+    const isGeminiFlash = modelLower.includes("gemini-25-flash-image");
+    const isNanoPro =
+      modelLower.includes("google/nano-banana-pro") ||
+      modelLower.includes("nano-banana-pro");
+    const isNano2 =
+      modelLower.includes("google/nano-banana-2") ||
+      (modelLower.includes("nano-banana-2") &&
+        !modelLower.includes("nano-banana-pro"));
+    const pngDefaultModel = isGeminiFlash || isNanoPro || isNano2;
+    const raw =
+      explicit !== undefined &&
+      explicit !== null &&
+      String(explicit).trim() !== ""
+        ? String(explicit).trim()
+        : pngDefaultModel
+          ? "png"
+          : "jpeg";
+    let low = raw.toLowerCase();
+    if (low === "jpg") low = "jpeg";
+    if (["jpeg", "png", "webp"].includes(low)) return low;
+    return pngDefaultModel ? "png" : "jpeg";
+  })();
 
   const falKey = env.falKey as string;
   if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
@@ -2166,21 +2191,39 @@ async function generate(
       `[falService] 🚀 Handling Nano Banana 2 request: ${modelEndpoint}`,
     );
 
+    let nb2Fmt = String(
+      (payload as any).output_format || output_format || "png",
+    )
+      .toLowerCase()
+      .trim();
+    if (nb2Fmt === "jpg") nb2Fmt = "jpeg";
+    const nb2OutputFormat = ["jpeg", "png", "webp"].includes(nb2Fmt)
+      ? nb2Fmt
+      : "png";
+
+    let nb2Aspect =
+      (payload as any).aspect_ratio || resolvedAspect || "auto";
+    if (String(nb2Aspect) === "match_input_image") nb2Aspect = "auto";
+
     const inputBody: any = {
       prompt: finalPrompt || prompt,
       num_images: imagesRequestedClamped,
-      aspect_ratio: (payload as any).aspect_ratio || resolvedAspect || "auto",
-      output_format: (payload as any).output_format || output_format || "png",
+      aspect_ratio: nb2Aspect,
+      output_format: nb2OutputFormat,
       resolution: (payload as any).resolution || "1K",
       sync_mode: (payload as any).sync_mode || false,
       limit_generations: (payload as any).limit_generations ?? true,
       enable_web_search: (payload as any).enable_web_search ?? false,
+      safety_tolerance: String(
+        (payload as any).safety_tolerance != null &&
+          (payload as any).safety_tolerance !== ""
+          ? (payload as any).safety_tolerance
+          : "4",
+      ),
     };
 
     if ((payload as any).seed != null)
       inputBody.seed = Number((payload as any).seed);
-    if ((payload as any).safety_tolerance != null)
-      inputBody.safety_tolerance = String((payload as any).safety_tolerance);
     if ((payload as any).thinking_level)
       inputBody.thinking_level = (payload as any).thinking_level;
 
@@ -2572,6 +2615,38 @@ async function generate(
               input.image_size = map[String(resolvedAspect)] || "square";
             }
           }
+        } else if (modelEndpoint.includes("gemini-25-flash-image")) {
+          // FAL fal-ai/gemini-25-flash-image (Nano Banana / Gemini 2.5 Flash image)
+          if (finalPrompt) input.prompt = finalPrompt;
+          const numImg = (payload as any).num_images || (payload as any).n || 1;
+          input.num_images = Math.max(1, Math.min(10, Number(numImg)));
+          const arRaw =
+            (payload as any).aspect_ratio != null &&
+            String((payload as any).aspect_ratio).trim() !== ""
+              ? String((payload as any).aspect_ratio).trim()
+              : resolvedAspect && String(resolvedAspect).trim() !== ""
+                ? String(resolvedAspect).trim()
+                : "1:1";
+          input.aspect_ratio = arRaw;
+          let fmt =
+            (payload as any).output_format != null &&
+            String((payload as any).output_format).trim() !== ""
+              ? String((payload as any).output_format).toLowerCase().trim()
+              : output_format;
+          if (fmt === "jpg") fmt = "jpeg";
+          if (!["jpeg", "png", "webp"].includes(fmt)) fmt = "png";
+          input.output_format = fmt;
+          input.safety_tolerance = String(
+            (payload as any).safety_tolerance ?? "4",
+          );
+          if ((payload as any).seed != null)
+            input.seed = Number((payload as any).seed);
+          if ((payload as any).sync_mode !== undefined)
+            input.sync_mode = Boolean((payload as any).sync_mode);
+          if ((payload as any).limit_generations !== undefined)
+            input.limit_generations = Boolean(
+              (payload as any).limit_generations,
+            );
         } else if (modelEndpoint.includes("nano-banana-pro")) {
           // Google Nano Banana Pro specific schema mapping
           // prompt is required for T2I, optional for I2I
@@ -2590,12 +2665,18 @@ async function generate(
             input.aspect_ratio = "auto";
           }
 
-          // output_format (default "png")
-          if ((payload as any).output_format) {
-            input.output_format = String((payload as any).output_format);
-          } else {
-            input.output_format = output_format || "png";
-          }
+          let proFmt =
+            (payload as any).output_format != null &&
+            String((payload as any).output_format).trim() !== ""
+              ? String((payload as any).output_format).toLowerCase().trim()
+              : output_format;
+          if (proFmt === "jpg") proFmt = "jpeg";
+          if (!["jpeg", "png", "webp"].includes(proFmt)) proFmt = "png";
+          input.output_format = proFmt;
+
+          input.safety_tolerance = String(
+            (payload as any).safety_tolerance ?? "4",
+          );
 
           // sync_mode (boolean, optional)
           if ((payload as any).sync_mode !== undefined) {
@@ -9688,6 +9769,152 @@ export const falQueueService = {
       aspect_ratio: body.aspect_ratio ?? "16:9",
       fps: body.fps ?? 25,
       generate_audio: body.generate_audio ?? true,
+    } as any);
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  },
+  async pixverseV6T2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string;
+    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+    const pixverseV6DefaultNegative =
+      "blurry, low quality, low resolution, pixelated, noisy, grainy, out of focus, poorly lit, poorly exposed, poorly composed, poorly framed, poorly cropped, poorly color corrected, poorly color graded";
+    const model = "fal-ai/pixverse/v6/text-to-video";
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt: body.prompt,
+      model,
+      isPublic: body.isPublic,
+    });
+    let duration =
+      typeof body.duration === "number"
+        ? body.duration
+        : parseInt(String(body.duration ?? 5), 10);
+    if (!Number.isFinite(duration)) duration = 5;
+    duration = Math.min(15, Math.max(5, duration));
+    const resolutionRaw = String(body.resolution || "720p").toLowerCase();
+    const resolution = ["360p", "540p", "720p", "1080p"].includes(
+      resolutionRaw,
+    )
+      ? resolutionRaw
+      : "720p";
+    const allowedAspect = new Set([
+      "16:9",
+      "4:3",
+      "1:1",
+      "3:4",
+      "9:16",
+      "2:3",
+      "3:2",
+      "21:9",
+    ]);
+    const aspect_ratio = allowedAspect.has(String(body.aspect_ratio))
+      ? String(body.aspect_ratio)
+      : "16:9";
+    const negRaw =
+      typeof body.negative_prompt === "string" ? body.negative_prompt.trim() : "";
+    const input: any = {
+      prompt: body.prompt,
+      aspect_ratio,
+      resolution,
+      duration,
+      negative_prompt: negRaw || pixverseV6DefaultNegative,
+      generate_audio_switch: Boolean(body.generate_audio_switch),
+      generate_multi_clip_switch: Boolean(body.generate_multi_clip_switch),
+      thinking_type: ["enabled", "disabled", "auto"].includes(
+        String(body.thinking_type),
+      )
+        ? body.thinking_type
+        : "auto",
+    };
+    const style = String(body.style || "").trim();
+    const allowedStyle = new Set([
+      "anime",
+      "3d_animation",
+      "clay",
+      "comic",
+      "cyberpunk",
+    ]);
+    if (allowedStyle.has(style)) input.style = style;
+    if (body.seed != null && body.seed !== "") {
+      const s = parseInt(String(body.seed), 10);
+      if (Number.isFinite(s)) input.seed = s;
+    }
+    if (body.api_key) input.api_key = body.api_key;
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      duration,
+      resolution,
+      aspect_ratio,
+      generate_audio_switch: Boolean(body.generate_audio_switch),
+    } as any);
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  },
+  async pixverseV6I2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string;
+    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+    if (!body?.image_url) throw new ApiError("image_url is required", 400);
+    const pixverseV6DefaultNegative =
+      "blurry, low quality, low resolution, pixelated, noisy, grainy, out of focus, poorly lit, poorly exposed, poorly composed, poorly framed, poorly cropped, poorly color corrected, poorly color graded";
+    const model = "fal-ai/pixverse/v6/image-to-video";
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt: body.prompt,
+      model,
+      isPublic: body.isPublic,
+    });
+    await persistInputImagesFromUrls(uid, historyId, [body.image_url]);
+    let duration =
+      typeof body.duration === "number"
+        ? body.duration
+        : parseInt(String(body.duration ?? 5), 10);
+    if (!Number.isFinite(duration)) duration = 5;
+    duration = Math.min(15, Math.max(5, duration));
+    const resolutionRaw = String(body.resolution || "720p").toLowerCase();
+    const resolution = ["360p", "540p", "720p", "1080p"].includes(
+      resolutionRaw,
+    )
+      ? resolutionRaw
+      : "720p";
+    const negRaw =
+      typeof body.negative_prompt === "string" ? body.negative_prompt.trim() : "";
+    const input: any = {
+      prompt: body.prompt,
+      image_url: body.image_url,
+      resolution,
+      duration,
+      negative_prompt: negRaw || pixverseV6DefaultNegative,
+      generate_audio_switch: Boolean(body.generate_audio_switch),
+      generate_multi_clip_switch: Boolean(body.generate_multi_clip_switch),
+      thinking_type: ["enabled", "disabled", "auto"].includes(
+        String(body.thinking_type),
+      )
+        ? body.thinking_type
+        : "auto",
+    };
+    const style = String(body.style || "").trim();
+    const allowedStyle = new Set([
+      "anime",
+      "3d_animation",
+      "clay",
+      "comic",
+      "cyberpunk",
+    ]);
+    if (allowedStyle.has(style)) input.style = style;
+    if (body.seed != null && body.seed !== "") {
+      const s = parseInt(String(body.seed), 10);
+      if (Number.isFinite(s)) input.seed = s;
+    }
+    if (body.api_key) input.api_key = body.api_key;
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      duration,
+      resolution,
+      generate_audio_switch: Boolean(body.generate_audio_switch),
     } as any);
     return { requestId: request_id, historyId, model, status: "submitted" };
   },
