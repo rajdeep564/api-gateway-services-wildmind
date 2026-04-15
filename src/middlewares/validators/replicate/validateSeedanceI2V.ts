@@ -12,7 +12,7 @@ const allowedResolutions = ['480p', '720p', '1080p'];
 export const validateSeedanceI2V = [
   body('model').optional().isString(),
   body('image').isString().withMessage('image is required').isLength({ min: 5 }),
-  body('prompt').isString().withMessage('prompt is required').isLength({ min: 1, max: 2000 }),
+  body('prompt').isString().withMessage('prompt is required').isLength({ min: 1, max: 10000 }),
   body('duration').optional().isInt({ min: 2, max: 12 }).withMessage('duration must be between 2 and 12 seconds'),
   body('resolution').optional().isIn(allowedResolutions),
   body('seed').optional().isInt(),

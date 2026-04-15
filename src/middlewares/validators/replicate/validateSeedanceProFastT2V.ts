@@ -14,7 +14,7 @@ const allowedAspectRatios = ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', '9:21'
 
 export const validateSeedanceProFastT2V = [
   body('model').optional().isString(),
-  body('prompt').isString().withMessage('prompt is required').isLength({ min: 1, max: 2000 }),
+  body('prompt').isString().withMessage('prompt is required').isLength({ min: 1, max: 10000 }),
   body('duration').optional().isInt({ min: 2, max: 12 }).withMessage('duration must be between 2 and 12 seconds'),
   body('resolution').optional().isIn(allowedResolutions),
   body('aspect_ratio').optional().isIn(allowedAspectRatios),
