@@ -2,6 +2,7 @@ import * as replicateService from '../../replicateService';
 import { uploadFromUrlToZata, uploadDataUriToZata } from '../../../utils/storage/zataUpload';
 import { ApiError } from '../../../utils/errorHandler';
 import { env } from '../../../config/env';
+import { authRepository } from '../../../repository/auth/authRepository';
 
 export interface GenerateSelfieVideoImageRequest {
     selfieImageUrl: string;
@@ -25,6 +26,10 @@ export async function generateSelfieVideoImage(
     request: GenerateSelfieVideoImageRequest
 ): Promise<GenerateSelfieVideoImageResponse> {
     const { selfieImageUrl, friendImageUrl, frameSize, customBackground, customClothes } = request;
+
+    // Prefer storing under username (stable public identifier) instead of uid
+    const creator = await authRepository.getUserById(uid);
+    const username = String(creator?.username || '').trim() || uid;
 
     // Validate inputs
     if (!selfieImageUrl || !friendImageUrl) {
@@ -120,8 +125,8 @@ The composition should be ${frameSizeDescription}. Use natural lighting, sharp f
 
     // Prepare Replicate service payload (ensure inputs are publicly accessible)
     const [selfieResolved, friendResolved] = await Promise.all([
-        resolvePublicUrl(selfieImageUrl, `users/${uid}/workflows/selfie-video/input/1`),
-        resolvePublicUrl(friendImageUrl, `users/${uid}/workflows/selfie-video/input/2`),
+        resolvePublicUrl(selfieImageUrl, `users/${username}/workflows/selfie-video/input/1`),
+        resolvePublicUrl(friendImageUrl, `users/${username}/workflows/selfie-video/input/2`),
     ]);
 
     const replicatePayload: any = {
@@ -129,7 +134,7 @@ The composition should be ${frameSizeDescription}. Use natural lighting, sharp f
         prompt,
         aspect_ratio: aspectRatio,
         input_images: [selfieResolved.url, friendResolved.url],
-        storageKeyPrefixOverride: `users/${uid}/workflows/selfie-video`,
+        storageKeyPrefixOverride: `users/${username}/workflows/selfie-video`,
         isPublic: false,
     };
 
@@ -158,7 +163,7 @@ The composition should be ${frameSizeDescription}. Use natural lighting, sharp f
         if (!storagePath || !imageUrl.includes('/users/')) {
             const zataResult = await uploadFromUrlToZata({
                 sourceUrl: imageUrl,
-                keyPrefix: `users/${uid}/workflows/selfie-video`,
+                keyPrefix: `users/${username}/workflows/selfie-video`,
                 fileName: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             });
             imageUrl = zataResult.publicUrl;
