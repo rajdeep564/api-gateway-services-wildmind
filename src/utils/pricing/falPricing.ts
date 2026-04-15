@@ -329,13 +329,17 @@ export async function computeFalImageCost(req: Request): Promise<{
   pricingVersion: string;
   meta: Record<string, any>;
 }> {
-  const { uploadedImages = [], n = 1, model, resolution } = req.body || {};
+  const body: any = req.body || {};
+  const { model, resolution } = body;
+  const nRaw = body?.num_images ?? body?.n ?? 1;
   // Prefer explicit model rows where available (e.g. Imagen 4, Seedream 4.5); otherwise
   // fallback to Google Nano Banana rows (Gemini image).
   let display: string | null = null;
   const m = (model || "").toLowerCase();
-  const hasUploadedImages =
-    Array.isArray(uploadedImages) && uploadedImages.length > 0;
+  const uploadedImages =
+    Array.isArray(body?.uploadedImages) ? body.uploadedImages : [];
+  const imageUrls = Array.isArray(body?.image_urls) ? body.image_urls : [];
+  const hasUploadedImages = uploadedImages.length > 0 || imageUrls.length > 0;
   const res = String(resolution || "").toUpperCase();
 
   // Bytedance Seedream 4.5 on FAL (text-to-image / edit)
@@ -399,12 +403,29 @@ export async function computeFalImageCost(req: Request): Promise<{
   }
   const base = display ? findCredits(display) : null;
   if (base == null) throw new Error("Unsupported FAL image model");
-  const count = Math.max(1, Math.min(10, Number(n)));
-  const cost = Math.ceil(base * count);
+
+  const count = Math.max(1, Math.min(15, Number(nRaw) || 1));
+  const baseCost = Math.ceil(base * count);
+
+  // Exclusive-style surcharge: +5 credits per request (not per image)
+  // We key this off an explicit flag from the client request.
+  const styleMeta = (body?.meta && typeof body.meta === "object") ? body.meta : {};
+  const stylePremium = styleMeta?.style_premium === true;
+  const styleSurcharge = stylePremium ? 5 : 0;
+  const cost = baseCost + styleSurcharge;
   return {
     cost,
     pricingVersion: FAL_PRICING_VERSION,
-    meta: { model: display, n: count },
+    meta: {
+      model: display,
+      n: count,
+      baseCost,
+      stylePremium,
+      styleSurcharge,
+      styleKey: styleMeta?.style_key,
+      styleVersion: styleMeta?.style_version,
+      source: styleMeta?.source,
+    },
   };
 }
 
