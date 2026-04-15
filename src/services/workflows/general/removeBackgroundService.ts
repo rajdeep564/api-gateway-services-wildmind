@@ -2,6 +2,7 @@ import * as replicateService from '../../replicateService';
 import { uploadFromUrlToZata, uploadDataUriToZata } from '../../../utils/storage/zataUpload';
 import { ApiError } from '../../../utils/errorHandler';
 import { env } from '../../../config/env';
+import { authRepository } from '../../../repository/auth/authRepository';
 
 export interface RemoveBackgroundRequest {
     imageUrl: string;
@@ -25,6 +26,10 @@ export async function removeBackground(
     if (!imageUrl) {
         throw new ApiError('Image URL is required', 400);
     }
+
+    // Prefer storing under username (stable public identifier) instead of uid
+    const creator = await authRepository.getUserById(uid);
+    const username = String(creator?.username || '').trim() || uid;
 
     // Helper to resolve public URL for Replicate
     async function resolvePublicUrl(srcUrl: string, keyPrefix: string): Promise<{ url: string; storagePath?: string }> {
@@ -76,14 +81,14 @@ export async function removeBackground(
         }
     }
 
-    const resolvedInput = await resolvePublicUrl(imageUrl, `users/${uid}/workflows/general/remove-bg/input`);
+    const resolvedInput = await resolvePublicUrl(imageUrl, `users/${username}/workflows/general/remove-bg/input`);
 
     const replicatePayload: any = {
         model: '851-labs/background-remover',
         image: resolvedInput.url,
         prompt: 'remove background', // Added prompt as required by model/service wrapper
         // format: 'png', // Model usually defaults to png for transparency
-        storageKeyPrefixOverride: `users/${uid}/workflows/general/remove-bg`,
+        storageKeyPrefixOverride: `users/${username}/workflows/general/remove-bg`,
         isPublic: true, // User requested isPublic: true
     };
 
@@ -107,7 +112,7 @@ export async function removeBackground(
         if (!storagePath || !finalImageUrl.includes('/users/')) {
             const zataResult = await uploadFromUrlToZata({
                 sourceUrl: finalImageUrl,
-                keyPrefix: `users/${uid}/workflows/general/remove-bg`,
+                keyPrefix: `users/${username}/workflows/general/remove-bg`,
                 fileName: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             });
             finalImageUrl = zataResult.publicUrl;
