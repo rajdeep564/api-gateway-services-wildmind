@@ -31,6 +31,7 @@ import logoVariationsRoutes from './branding/logoVariations';
 import businessCardRoutes from './branding/businessCard';
 import hairStyleRoutes from './fashion/hairStyleRoutes';
 import modelingPosesRoutes from './fashion/fashionModelingPosesRoutes';
+import rampwalkRoutes from './fashion/rampwalkRoutes';
 
 const router = Router();
 
@@ -85,5 +86,6 @@ router.use('/architecture/cad-to-3d', cadTo3dRoutes);
 // Fashion workflows
 router.use('/fashion/hair-style', hairStyleRoutes);
 router.use('/fashion/modeling-poses', modelingPosesRoutes);
+router.use('/fashion/rampwalk', rampwalkRoutes);
 
 export default router;
