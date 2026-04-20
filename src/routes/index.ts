@@ -36,6 +36,7 @@ import workflowsRoutes from "./workflows";
 import billingRoutes from "./billing";
 import plansRoutes from "./plans";
 import fxRoutes from "./fx";
+import paymentsRoutes from "./payments";
 import { contentModerationMiddleware } from "../middlewares/contentModeration";
 import { moderationGuard } from "../middlewares/moderationGuard";
 
@@ -74,6 +75,7 @@ router.use(
     "/webhooks",
     "/workflows",
     "/billing",
+    "/payments",
   ],
   moderationGuard,
 );
@@ -123,6 +125,7 @@ router.use("/plans", plansRoutes);
 router.use("/webhooks", webhooksRoutes);
 router.use("/workflows", workflowsRoutes);
 router.use("/billing", billingRoutes);
+router.use("/payments", paymentsRoutes);
 router.use("/fx", fxRoutes);
 
 export default router;
