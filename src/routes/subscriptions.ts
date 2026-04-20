@@ -16,6 +16,9 @@ router.get('/current', subscriptionsController.getCurrentSubscription);
 // Cancel subscription
 router.post('/cancel', subscriptionsController.cancelSubscription);
 
+// Recover halted/past-due subscription
+router.post('/recover', subscriptionsController.recoverSubscription);
+
 // Change plan
 router.post('/change-plan', subscriptionsController.changePlan);
 

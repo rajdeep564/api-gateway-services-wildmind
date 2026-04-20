@@ -154,6 +154,39 @@ export const cancelSubscription = async (req: Request, res: Response) => {
   }
 };
 
+// Recover halted/past-due subscription
+export const recoverSubscription = async (req: Request, res: Response) => {
+  try {
+    const userId = req.uid;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const response = await axios.post(
+      `${CREDIT_SERVICE_URL}/subscriptions/recover`,
+      { userId },
+      { headers: creditServiceAuthHeaders(req) },
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      console.error(
+        "Recover subscription error:",
+        error.response?.data || error.message,
+      );
+      res
+        .status(error.response?.status || 500)
+        .json(
+          error.response?.data || { error: "Failed to recover subscription" },
+        );
+    } else {
+      console.error("Recover subscription error:", error);
+      res.status(500).json({ error: "Failed to recover subscription" });
+    }
+  }
+};
+
 // Change plan
 export const changePlan = async (req: Request, res: Response) => {
   try {
