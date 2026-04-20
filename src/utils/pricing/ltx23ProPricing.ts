@@ -24,9 +24,9 @@ export async function computeLtx23ProVideoCost(
   const resolution = normalizeResolution(body.resolution);
 
   const table: Record<'1080p' | '2k' | '4k', Record<6 | 8 | 10, number>> = {
-    '1080p': { 6: 780, 8: 1020, 10: 1260 },
-    '2k': { 6: 1500, 8: 1980, 10: 2460 },
-    '4k': { 6: 2940, 8: 3900, 10: 4860 },
+    '1080p': { 6: 288, 8: 384, 10: 480 },
+    '2k': { 6: 576, 8: 768, 10: 960 },
+    '4k': { 6: 1152, 8: 1533, 10: 1923 },
   };
 
   const cost = table[resolution][duration];

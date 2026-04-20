@@ -17,6 +17,7 @@ import cctvFootageRoutes from './fun/cctvFootage';
 import changeSeasonsRoutes from './fun/changeSeasons';
 import relightingRoutes from './fun/relighting';
 import replaceElementRoutes from './general/replaceElement';
+import cadTo3dRoutes from './architecture/cadTo3dRoutes';
 import expressionSheetRoutes from './photography/expressionSheet';
 import poseControlRoutes from './photography/poseControl';
 import characterSheetRoutes from './photography/characterSheet';
@@ -28,6 +29,8 @@ import createLogoRoutes from './branding/createLogo';
 import mockupGenerationRoutes from './branding/mockupGeneration';
 import logoVariationsRoutes from './branding/logoVariations';
 import businessCardRoutes from './branding/businessCard';
+import hairStyleRoutes from './fashion/hairStyleRoutes';
+import modelingPosesRoutes from './fashion/fashionModelingPosesRoutes';
 
 const router = Router();
 
@@ -75,5 +78,12 @@ router.use('/fun/vintage-teleport', vintageTeleportRoutes);
 router.use('/fun/cctv-footage', cctvFootageRoutes);
 router.use('/fun/change-seasons', changeSeasonsRoutes);
 router.use('/fun/relighting', relightingRoutes);
+
+// Architecture workflows
+router.use('/architecture/cad-to-3d', cadTo3dRoutes);
+
+// Fashion workflows
+router.use('/fashion/hair-style', hairStyleRoutes);
+router.use('/fashion/modeling-poses', modelingPosesRoutes);
 
 export default router;

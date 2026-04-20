@@ -942,16 +942,17 @@ export async function computeFalKlingO1SubmitCost(req: Request): Promise<{
   };
 }
 
+/** Per-second rates aligned to 3s SKUs: std OFF 201, ON 302; pro OFF 269, ON 403; +56/s voice premium (legacy). */
 const KLING_V3_CREDITS_PER_SECOND = {
   standard: {
-    audioOff: 188,
-    audioOn: 272,
-    voiceControl: 328,
+    audioOff: 67,
+    audioOn: 302 / 3,
+    voiceControl: 302 / 3 + 56,
   },
   pro: {
-    audioOff: 244,
-    audioOn: 356,
-    voiceControl: 412,
+    audioOff: 269 / 3,
+    audioOn: 403 / 3,
+    voiceControl: 403 / 3 + 56,
   },
 } as const;
 

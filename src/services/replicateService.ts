@@ -4529,7 +4529,38 @@ export async function replicateQueueResult(
     const out = (result as any)?.output;
     const urls = await resolveOutputUrls(out);
     const outputUrl = urls[0] || "";
-    if (!outputUrl) return result;
+    if (!outputUrl) {
+      // If the provider reported a terminal failure, persist the failure to history so the UI
+      // doesn't remain stuck in "generating".
+      const status = String((result as any)?.status || "").toLowerCase();
+      const isTerminalFailure =
+        status === "failed" ||
+        status === "canceled" ||
+        status === "cancelled" ||
+        status === "error";
+      if (isTerminalFailure) {
+        const rawErr =
+          (result as any)?.error ??
+          (result as any)?.errors ??
+          (result as any)?.detail ??
+          (result as any)?.message;
+        const msg =
+          typeof rawErr === "string"
+            ? rawErr
+            : typeof rawErr?.message === "string"
+              ? rawErr.message
+              : rawErr
+                ? JSON.stringify(rawErr)
+                : "Generation failed";
+        try {
+          await generationHistoryRepository.update(uid, historyId, {
+            status: "failed",
+            error: msg,
+          } as any);
+        } catch {}
+      }
+      return result;
+    }
     let storedUrl = outputUrl;
     let storagePath = "";
     let canvasProjectId: string | undefined;
