@@ -29,6 +29,8 @@ import createLogoRoutes from './branding/createLogo';
 import mockupGenerationRoutes from './branding/mockupGeneration';
 import logoVariationsRoutes from './branding/logoVariations';
 import businessCardRoutes from './branding/businessCard';
+import hairStyleRoutes from './fashion/hairStyleRoutes';
+import modelingPosesRoutes from './fashion/fashionModelingPosesRoutes';
 
 const router = Router();
 
@@ -79,5 +81,9 @@ router.use('/fun/relighting', relightingRoutes);
 
 // Architecture workflows
 router.use('/architecture/cad-to-3d', cadTo3dRoutes);
+
+// Fashion workflows
+router.use('/fashion/hair-style', hairStyleRoutes);
+router.use('/fashion/modeling-poses', modelingPosesRoutes);
 
 export default router;
