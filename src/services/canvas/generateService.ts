@@ -1092,6 +1092,22 @@ function mapVideoModelToBackend(frontendModel: string): VideoModelConfig {
   if (modelLower.includes('ltx v2 pro') || modelLower === 'ltx v2 pro') {
     return { service: 'fal', method: 'ltx2ProT2vSubmit', backendModel: 'fal-ai/ltxv-2/text-to-video', isFast: false };
   }
+  if (
+    modelLower.includes('seedance 2.0 fast') ||
+    modelLower.includes('seedance 2 fast') ||
+    modelLower.includes('seedance-2.0-fast') ||
+    modelLower.includes('seedance-2-fast')
+  ) {
+    return { service: 'fal', method: 'seedance2FastT2vSubmit', backendModel: 'bytedance/seedance-2.0/fast/text-to-video', isFast: true };
+  }
+  if (
+    modelLower.includes('seedance 2.0') ||
+    modelLower.includes('seedance 2') ||
+    modelLower.includes('seedance-2.0') ||
+    modelLower.includes('seedance-2')
+  ) {
+    return { service: 'fal', method: 'seedance2T2vSubmit', backendModel: 'bytedance/seedance-2.0/text-to-video', isFast: false };
+  }
 
   // Replicate Models
   if (modelLower.includes('seedance 1.0 lite') || modelLower === 'seedance 1.0 lite') {
@@ -1148,9 +1164,9 @@ function mapVideoModelToBackend(frontendModel: string): VideoModelConfig {
     return { service: 'runway', method: 'videoGenerate', backendModel: 'gen3a_turbo', mode: 'text_to_video' };
   }
 
-  // Default to Seedance Pro if model not recognized
-  console.warn(`[mapVideoModelToBackend] Unknown model "${frontendModel}", defaulting to Seedance 1.0 Pro`);
-  return { service: 'replicate', method: 'seedanceT2vSubmit', backendModel: 'bytedance/seedance-1-pro' };
+  // Default to Seedance 2.0 if model not recognized
+  console.warn(`[mapVideoModelToBackend] Unknown model "${frontendModel}", defaulting to Seedance 2.0`);
+  return { service: 'fal', method: 'seedance2T2vSubmit', backendModel: 'bytedance/seedance-2.0/text-to-video' };
 }
 
 /**
@@ -1204,6 +1220,7 @@ export async function generateVideoForCanvas(
   try {
     let result: any;
     const isVeo31Model = modelConfig.method?.startsWith('veo31');
+    const isSeedance2Model = modelConfig.method?.startsWith('seedance2');
     const hasFirstLastFrames = Boolean(isVeo31Model && request.firstFrameUrl && request.lastFrameUrl);
     const hasSingleFrame = Boolean(isVeo31Model && request.firstFrameUrl && !request.lastFrameUrl);
 
@@ -1251,6 +1268,14 @@ export async function generateVideoForCanvas(
         falPayload.image_url = request.firstFrameUrl;
       }
 
+      // Seedance 2.0 I2V on FAL: first frame is required image_url, optional last frame is end_image_url.
+      if (isSeedance2Model && request.firstFrameUrl) {
+        falPayload.image_url = request.firstFrameUrl;
+        if (request.lastFrameUrl) {
+          falPayload.end_image_url = request.lastFrameUrl;
+        }
+      }
+
       // Call FAL service method
       // Some methods take fast parameter, others don't
       if (hasFirstLastFrames) {
@@ -1266,6 +1291,16 @@ export async function generateVideoForCanvas(
           throw new ApiError('FAL method veo31I2vSubmit not available', 500);
         }
         result = await (i2vMethod as any)(uid, falPayload, modelConfig.isFast ?? false);
+      } else if (isSeedance2Model) {
+        const useI2v = Boolean(request.firstFrameUrl);
+        const seedanceMethodName = useI2v
+          ? (modelConfig.isFast ? 'seedance2FastI2vSubmit' : 'seedance2I2vSubmit')
+          : (modelConfig.isFast ? 'seedance2FastT2vSubmit' : 'seedance2T2vSubmit');
+        const seedanceMethod = falQueueService[seedanceMethodName as keyof typeof falQueueService];
+        if (!seedanceMethod) {
+          throw new ApiError(`FAL method ${seedanceMethodName} not available`, 500);
+        }
+        result = await (seedanceMethod as any)(uid, falPayload);
       } else if (modelConfig.method === 'veo31TtvSubmit' || modelConfig.method === 'veo31I2vSubmit') {
         // Veo 3.1 methods take fast parameter
         result = await (method as any)(uid, falPayload, modelConfig.isFast ?? false);

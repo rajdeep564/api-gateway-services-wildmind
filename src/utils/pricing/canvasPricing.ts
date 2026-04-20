@@ -2,7 +2,7 @@
 import { Request } from 'express';
 import { creditDistributionData, PRICING_VERSION } from '../../data/creditDistribution';
 import { mapModelToBackend } from '../../services/canvas/generateService';
-import { computeFalImageCost, computeFalVeoTtvSubmitCost, computeFalVeoI2vSubmitCost, computeFalVeo31TtvSubmitCost, computeFalVeo31I2vSubmitCost, computeFalSora2I2vSubmitCost, computeFalSora2ProI2vSubmitCost, computeFalSora2T2vSubmitCost, computeFalSora2ProT2vSubmitCost, computeFalSora2RemixSubmitCost, computeFalLtxV2ProI2vSubmitCost, computeFalLtxV2FastI2vSubmitCost, computeFalLtxV2ProT2vSubmitCost, computeFalLtxV2FastT2vSubmitCost, computeFalImage2SvgCost, computeFalRecraftVectorizeCost, computeFalBriaGenfillCost, computeFalSeedVrUpscaleCost, computeFalBirefnetVideoCost, computeFalTopazUpscaleImageCost, computeFalElevenTtsCost, computeFalElevenDialogueCost, computeFalChatterboxMultilingualCost, computeFalMayaTtsCost, computeFalOutpaintCost } from './falPricing';
+import { computeFalImageCost, computeFalVeoTtvSubmitCost, computeFalVeoI2vSubmitCost, computeFalVeo31TtvSubmitCost, computeFalVeo31I2vSubmitCost, computeFalSora2I2vSubmitCost, computeFalSora2ProI2vSubmitCost, computeFalSora2T2vSubmitCost, computeFalSora2ProT2vSubmitCost, computeFalSora2RemixSubmitCost, computeFalLtxV2ProI2vSubmitCost, computeFalLtxV2FastI2vSubmitCost, computeFalLtxV2ProT2vSubmitCost, computeFalLtxV2FastT2vSubmitCost, computeFalSeedance2T2vSubmitCost, computeFalSeedance2I2vSubmitCost, computeFalSeedance2FastT2vSubmitCost, computeFalSeedance2FastI2vSubmitCost, computeFalImage2SvgCost, computeFalRecraftVectorizeCost, computeFalBriaGenfillCost, computeFalSeedVrUpscaleCost, computeFalBirefnetVideoCost, computeFalTopazUpscaleImageCost, computeFalElevenTtsCost, computeFalElevenDialogueCost, computeFalChatterboxMultilingualCost, computeFalMayaTtsCost, computeFalOutpaintCost } from './falPricing';
 import { computeBflCost, computeBflFillCost, computeBflExpandCost, computeBflCannyCost, computeBflDepthCost, computeBflExpandWithFillCost } from './bflPricing';
 import { computeReplicateImageGenCost, computeReplicateUpscaleCost, computeReplicateBgRemoveCost, computeReplicateNextSceneCost, computeReplicateVideoCost } from './replicatePricing';
 import { computeRunwayImageCost, computeRunwayVideoCost } from './runwayPricing';
@@ -54,11 +54,11 @@ export async function computeCanvasVideoCost(req: Request): Promise<{ cost: numb
         return computeMinimaxVideoCost(req);
     } else if (m.includes('runway') || m.includes('gen3') || m.includes('act-two')) {
         return computeRunwayVideoCost(req);
-    } else if (m.includes('fal') || m.includes('veo') || m.includes('ltx') || m.includes('sora')) {
+    } else if (m.includes('fal') || m.includes('veo') || m.includes('ltx') || m.includes('sora') || m.includes('seedance 2') || m.includes('seedance-2')) {
         // Route to FAL video pricing functions
         // Determine specific function based on model
         const isFast = m.includes('fast');
-        const isI2v = m.includes('image') || m.includes('i2v');
+        const isI2v = m.includes('image') || m.includes('i2v') || !!(req.body?.firstFrameUrl);
 
         if (m.includes('veo 3.1') || m.includes('veo3.1')) {
             return isI2v ? computeFalVeo31I2vSubmitCost(req, isFast) : computeFalVeo31TtvSubmitCost(req, isFast);
@@ -75,6 +75,9 @@ export async function computeCanvasVideoCost(req: Request): Promise<{ cost: numb
             // Check falPricing.ts: computeLtxCredits takes variant 'Pro' | 'Fast'
             if (isI2v) return isFast ? computeFalLtxV2FastI2vSubmitCost(req) : computeFalLtxV2ProI2vSubmitCost(req);
             return isFast ? computeFalLtxV2FastT2vSubmitCost(req) : computeFalLtxV2ProT2vSubmitCost(req);
+        } else if (m.includes('seedance 2') || m.includes('seedance-2')) {
+            if (isI2v) return isFast ? computeFalSeedance2FastI2vSubmitCost(req) : computeFalSeedance2I2vSubmitCost(req);
+            return isFast ? computeFalSeedance2FastT2vSubmitCost(req) : computeFalSeedance2T2vSubmitCost(req);
         }
     } else if (m.includes('replicate') || m.includes('wan') || m.includes('seedance') || m.includes('kling') || m.includes('pixverse')) {
         return computeReplicateVideoCost(req);
