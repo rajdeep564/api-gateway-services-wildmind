@@ -1,4 +1,4 @@
-import Replicate from "replicate";
+import { fal } from '@fal-ai/client';
 import { env } from '../../../config/env';
 import { ApiError } from '../../../utils/errorHandler';
 import { authRepository } from '../../../repository/auth/authRepository';
@@ -8,12 +8,25 @@ import { uploadDataUriToZata, uploadFromUrlToZata } from '../../../utils/storage
 import { aestheticScoreService } from '../../aestheticScoreService';
 import { syncToMirror } from '../../../utils/mirrorHelper';
 
-const resolveOutputUrls = async (output: any) => {
-    if (!output) return [];
-    if (Array.isArray(output)) return output.map(String);
-    if (typeof output === 'object' && output.url) return [String(output.url())];
-    return [String(output)];
-};
+const FAL_MODEL_EDIT = 'fal-ai/nano-banana-pro/edit';
+const MODEL_DISPLAY = 'google/nano-banana-pro';
+
+export interface RelightDirectionalLightInput {
+    id?: string;
+    type?: string;
+    name?: string;
+    enabled?: boolean;
+    intensity?: number;
+    color?: string;
+    azimuthDeg?: number;
+    elevationDeg?: number;
+    distance?: number;
+}
+
+export interface RelightingLightingPayload {
+    ambientIntensity?: number;
+    lights?: RelightDirectionalLightInput[];
+}
 
 export interface RelightingRequest {
     imageUrl: string;
@@ -23,92 +36,137 @@ export interface RelightingRequest {
     lightDirection?: string;
     lightIntensity?: string;
     shadowControl?: string;
+    /** Rich rig from canvas: ambient + multiple directionals (angles, colors, intensity). */
+    lighting?: RelightingLightingPayload;
 }
 
-
-const buildRelightingPrompt = (lightingStyle: string) => {
-    let specificInstr = "";
-
+function lightingStyleNarrative(lightingStyle: string): string {
     switch (lightingStyle) {
-        case "Natural":
-            specificInstr = "Soft, balanced daylight. Even exposure with natural sun direction. No harsh shadows or artificial tints.";
-            break;
-        case "Studio":
-            specificInstr = "Professional studio photography lighting. Three-point lighting setup with key, fill, and rim light. High contrast, clean shadows, and perfectly lit subject.";
-            break;
-        case "Cinematic":
-            specificInstr = "High-end movie scene lighting. Teal and orange color grading. Dramatic contrast, anamorphic lens flares, and atmospheric depth.";
-            break;
-        case "Dramatic":
-            specificInstr = "High contrast, low key lighting (chiaroscuro). Deep shadows and bright highlights. Emotional and intense atmosphere.";
-            break;
-        case "Soft Diffused":
-            specificInstr = "Extremely soft, wrap-around light. like a cloudy day or softbox. Minimal shadows, dreamy and ethereal look. Flattering for portraits.";
-            break;
-        case "Moody":
-            specificInstr = "Dark, atmospheric, and mysterious. Desaturated colors, heavy vignettes, and localized light pools. Emotional and somber tone.";
-            break;
+        case 'Natural':
+            return 'Soft, balanced daylight. Even exposure with natural sun direction. Avoid harsh artificial tints.';
+        case 'Studio':
+            return 'Professional studio look: three-point feel with key, fill, and rim. Clean readable shadows, controlled contrast.';
+        case 'Cinematic':
+            return 'Cinematic grade: dramatic contrast, depth, and mood; subtle color separation acceptable if it serves the story.';
+        case 'Dramatic':
+            return 'High contrast chiaroscuro: deep shadows, selective highlights, emotional intensity.';
+        case 'Soft Diffused':
+            return 'Very soft wrap-around light (overcast / large softbox). Minimal hard edges, flattering and dreamy.';
+        case 'Moody':
+            return 'Dark atmospheric mood: localized pools of light, desaturated shadows, somber tone.';
         default:
-            specificInstr = "Professional lighting enhancement. Balanced exposure and beautiful color grading.";
-            break;
+            return 'Professional lighting enhancement with balanced exposure and pleasing color.';
+    }
+}
+
+function buildStructuredLightingRig(lighting?: RelightingLightingPayload): string {
+    const ambRaw = lighting?.ambientIntensity;
+    const amb =
+        ambRaw === undefined || ambRaw === null || !Number.isFinite(Number(ambRaw))
+            ? 0.5
+            : Math.max(0, Math.min(2, Number(ambRaw)));
+    const lines: string[] = [];
+    lines.push(
+        `GLOBAL AMBIENT / FILL: ${amb.toFixed(2)} on a 0–2 scale (0 = none, ~1 = natural bounce, 2 = strong fill that lifts shadows).`,
+    );
+    lines.push('');
+
+    const list = Array.isArray(lighting?.lights) ? lighting!.lights! : [];
+    const active = list.filter((l) => l && l.enabled !== false);
+
+    if (active.length === 0) {
+        lines.push(
+            'DIRECTIONAL SOURCES: none marked active — infer a single plausible key + fill that still matches the mood below.',
+        );
+        return lines.join('\n');
     }
 
-    return `Transform the lighting of this image.
-TARGET LIGHTING STYLE: "${lightingStyle}"
+    lines.push(
+        `DIRECTIONAL LIGHTS (${active.length} active — combine all; each contributes tinted illumination and shadow components):`,
+    );
 
-LIGHTING INSTRUCTIONS:
-${specificInstr}
+    active.forEach((l, i) => {
+        const name = String(l.name || `Light ${i + 1}`).replace(/[\r\n]+/g, ' ').slice(0, 48);
+        const col = typeof l.color === 'string' && l.color.trim() ? l.color.trim() : '#ffffff';
+        const inten = Math.max(0, Math.min(3, Number.isFinite(Number(l.intensity)) ? Number(l.intensity) : 0.8));
+        const az = Number.isFinite(Number(l.azimuthDeg)) ? Number(l.azimuthDeg) : 0;
+        const el = Math.max(-80, Math.min(80, Number.isFinite(Number(l.elevationDeg)) ? Number(l.elevationDeg) : 25));
+        const dist = Math.max(2, Math.min(20, Number.isFinite(Number(l.distance)) ? Number(l.distance) : 10));
+        lines.push(
+            `${i + 1}) "${name}": gel / light color ${col}; relative strength ${inten.toFixed(2)} (0–3 vs other lights). ` +
+                `Horizontal azimuth ${az.toFixed(0)}° (0° = from +Z toward subject; 90° = from +X; ±180° = from −Z; −90° = from −X). ` +
+                `Vertical elevation ${el.toFixed(0)}° (positive = above horizon / top-side key; negative = low rim from below). ` +
+                `Distance / softness ${dist.toFixed(1)} (2 = tighter harder source; 20 = broad softer distant source).`,
+        );
+    });
 
-GENERAL RULES:
-- Completely change the light sources, shadows, and color grading to match the target style.
-- Maintain the original subject, pose, and background details EXACTLY.
-- Do NOT change facial features or the identity of the person.
-- The output must be photorealistic and look like it was originally shot with this lighting setup.
+    const disabled = list.filter((l) => l && l.enabled === false);
+    if (disabled.length > 0) {
+        lines.push('');
+        lines.push(
+            `DISABLED (do not use as light sources): ${disabled.map((l) => String(l.name || 'light').slice(0, 24)).join('; ')}.`,
+        );
+    }
 
-OUTPUT: A photorealistic image with the new lighting applied.`;
-};
+    return lines.join('\n');
+}
+
+function buildNanoBananaProRelightPrompt(req: RelightingRequest): string {
+    const style = lightingStyleNarrative(req.lightingStyle || 'Natural');
+    const rig = buildStructuredLightingRig(req.lighting);
+
+    const extras: string[] = [];
+    if (req.lightDirection) extras.push(`LEGACY NOTE — LIGHT DIRECTION: ${req.lightDirection}`);
+    if (req.lightIntensity) extras.push(`LEGACY NOTE — INTENSITY: ${req.lightIntensity}`);
+    if (req.shadowControl) extras.push(`LEGACY NOTE — SHADOWS: ${req.shadowControl}`);
+    if (req.additionalText) extras.push(`USER EXTRA INSTRUCTIONS: ${req.additionalText}`);
+    const extrasBlock = extras.length ? `\n\n${extras.join('\n')}` : '';
+
+    return `You are Google Nano Banana Pro (image-to-image). The attached image is the only source photograph.
+
+PRIMARY TASK: Relight this exact image to match BOTH (1) the numeric multi-light rig below and (2) the artistic mood. Preserve subject identity, face, pose, materials, composition, camera angle, and scene layout. Do not add or remove objects, text, or logos. Do not change art style beyond lighting and grade.
+
+LIGHTING RIG (follow numerically; multiple lights must blend):
+${rig}
+
+ARTISTIC MOOD (overall look on top of the rig):
+Style preset: "${req.lightingStyle || 'Natural'}".
+${style}
+
+CONSTRAINTS:
+- Photorealistic output; match input framing and aspect.
+- Respect each active light's color as illumination tint (key, fill, rim, bounce).
+- Cast and contact shadows should be coherent with the strongest lights; ambient level controls shadow floor.
+- Output one image only.${extrasBlock}`;
+}
 
 export const relighting = async (uid: string, req: RelightingRequest) => {
-    const key = env.replicateApiKey as string;
-    if (!key) throw new ApiError("Replicate API key not configured", 500);
+    const falKey = env.falKey as string;
+    if (!falKey) throw new ApiError('FAL API key not configured', 500);
 
-    const replicate = new Replicate({ auth: key });
-    const modelBase = 'qwen/qwen-image-edit-2511';
+    fal.config({ credentials: falKey });
 
     const creator = await authRepository.getUserById(uid);
-    const basePrompt = buildRelightingPrompt(req.lightingStyle);
+    const finalPrompt = buildNanoBananaProRelightPrompt(req);
 
-    let enhancements = [];
-    if (req.lightDirection) enhancements.push(`LIGHT DIRECTION: ${req.lightDirection}`);
-    if (req.lightIntensity) enhancements.push(`LIGHT INTENSITY: ${req.lightIntensity}`);
-    if (req.shadowControl) enhancements.push(`SHADOW CONTROL: ${req.shadowControl}`);
-    if (req.additionalText) enhancements.push(`USER INSTRUCTIONS: ${req.additionalText}`);
-
-    const finalPrompt = enhancements.length > 0
-        ? `${basePrompt}\n\nADDITIONAL CONTEXT:\n${enhancements.join('\n')}`
-        : basePrompt;
-
-    // 1. Create History Record
     const { historyId } = await generationHistoryRepository.create(uid, {
-        prompt: `Relighting: ${req.lightingStyle}`,
-        model: modelBase,
-        generationType: "image-to-image",
-        visibility: req.isPublic ? "public" : "private",
+        prompt: `Relight (${req.lightingStyle || 'Natural'}): ${finalPrompt.slice(0, 4000)}`,
+        model: MODEL_DISPLAY,
+        generationType: 'image-to-image',
+        visibility: req.isPublic ? 'public' : 'private',
         isPublic: req.isPublic ?? true,
         createdBy: creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid },
     } as any);
 
-    // 2. Create Legacy Record
     const legacyId = await replicateRepository.createGenerationRecord(
         {
             prompt: finalPrompt,
-            model: modelBase,
-            isPublic: req.isPublic ?? true
+            model: MODEL_DISPLAY,
+            isPublic: req.isPublic ?? true,
         },
-        creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid }
+        creator ? { uid, username: creator.username, email: (creator as any)?.email } : { uid },
     );
 
-    // 3. Handle Input Image
     let inputImageUrl = req.imageUrl;
     let inputImageStoragePath: string | undefined;
 
@@ -117,7 +175,7 @@ export const relighting = async (uid: string, req: RelightingRequest) => {
         const stored = await uploadDataUriToZata({
             dataUri: inputImageUrl,
             keyPrefix: `users/${username}/input/relighting/${historyId}`,
-            fileName: "source",
+            fileName: 'source',
         });
         inputImageUrl = stored.publicUrl;
         inputImageStoragePath = (stored as any).key;
@@ -133,62 +191,82 @@ export const relighting = async (uid: string, req: RelightingRequest) => {
 
     if (inputImageUrl && inputImageStoragePath) {
         await generationHistoryRepository.update(uid, historyId, {
-            inputImages: [{ id: "in-1", url: inputImageUrl, storagePath: inputImageStoragePath }]
+            inputImages: [{ id: 'in-1', url: inputImageUrl, storagePath: inputImageStoragePath }],
         } as any);
     }
 
-    // 4. Call Replicate
-    const inputPayload = {
-        image: [inputImageUrl],
+    const inputPayload: Record<string, unknown> = {
         prompt: finalPrompt,
-        frameSize: "match_input_image",
-        style: "none",
-        output_format: "png"
+        image_urls: [inputImageUrl],
+        num_images: 1,
+        aspect_ratio: 'auto',
+        output_format: 'png',
+        resolution: '2K',
     };
 
     try {
-        console.log('[relightingService] Running model', { model: modelBase, input: inputPayload });
-        const output: any = await replicate.run(modelBase as any, { input: inputPayload });
+        console.log('[relightingService] FAL Nano Banana Pro /edit', { model: FAL_MODEL_EDIT, image: String(inputImageUrl).slice(0, 120) });
+        const result: any = await fal.subscribe(FAL_MODEL_EDIT, {
+            input: inputPayload,
+            logs: true,
+            onQueueUpdate: (update) => {
+                if (update.status === 'IN_PROGRESS') {
+                    update.logs?.map((log) => log.message).forEach((msg) => console.log('[relightingService]', msg));
+                }
+            },
+        });
 
-        const urls = await resolveOutputUrls(output);
-        const outputUrl = urls[0];
-        if (!outputUrl) throw new Error("No output URL from Replicate");
+        await generationHistoryRepository.update(uid, historyId, {
+            provider: 'fal',
+            providerTaskId: result?.requestId || 'subscribe-based',
+            status: 'processing',
+        } as any);
 
-        let storedUrl = outputUrl;
-        let storagePath = "";
+        const imagesArray: any[] = Array.isArray(result?.data?.images) ? result.data.images : [];
+        const firstUrl =
+            imagesArray[0]?.url ||
+            (Array.isArray((result as any)?.images) ? (result as any).images[0]?.url : undefined) ||
+            (result as any)?.data?.image?.url ||
+            (result as any)?.image?.url;
+        if (!firstUrl) throw new Error('No output URL from Nano Banana Pro relight');
+
+        let storedUrl = String(firstUrl);
+        let storagePath = '';
         try {
             const username = creator?.username || uid;
             const uploaded = await uploadFromUrlToZata({
-                sourceUrl: outputUrl,
+                sourceUrl: storedUrl,
                 keyPrefix: `users/${username}/image/relighting/${historyId}`,
                 fileName: `relighted-${Date.now()}`,
             });
             storedUrl = uploaded.publicUrl;
             storagePath = uploaded.key;
         } catch (e) {
-            console.warn("Failed to upload output to Zata", e);
+            console.warn('Failed to upload relight output to Zata', e);
         }
 
-        const images = [{
-            id: `replicate-${Date.now()}`,
-            url: storedUrl,
-            storagePath,
-            originalUrl: outputUrl
-        }];
+        const images = [
+            {
+                id: `fal-${Date.now()}`,
+                url: storedUrl,
+                storagePath,
+                originalUrl: String(firstUrl),
+            },
+        ];
 
         const scoredImages = await aestheticScoreService.scoreImages(images);
         const highestScore = aestheticScoreService.getHighestScore(scoredImages);
 
         await generationHistoryRepository.update(uid, historyId, {
-            status: "completed",
+            status: 'completed',
             images: scoredImages,
             aestheticScore: highestScore,
-            updatedAt: new Date().toISOString()
+            updatedAt: new Date().toISOString(),
         } as any);
 
         await replicateRepository.updateGenerationRecord(legacyId, {
-            status: "completed",
-            images: scoredImages as any
+            status: 'completed',
+            images: scoredImages as any,
         });
 
         await syncToMirror(uid, historyId);
@@ -196,20 +274,20 @@ export const relighting = async (uid: string, req: RelightingRequest) => {
         return {
             images: scoredImages,
             historyId,
-            model: modelBase,
-            status: "completed"
+            model: MODEL_DISPLAY,
+            status: 'completed' as const,
         };
-
     } catch (e: any) {
         console.error('[relightingService] Error', e);
+        const msg = e?.body?.detail || e?.message || 'Generation failed';
         await generationHistoryRepository.update(uid, historyId, {
-            status: "failed",
-            error: e?.message || "Replicate failed"
+            status: 'failed',
+            error: typeof msg === 'string' ? msg : JSON.stringify(msg),
         } as any);
         await replicateRepository.updateGenerationRecord(legacyId, {
-            status: "failed",
-            error: e?.message
+            status: 'failed',
+            error: typeof msg === 'string' ? msg : JSON.stringify(msg),
         });
-        throw new ApiError(e?.message || "Generation failed", 502, e);
+        throw new ApiError(typeof msg === 'string' ? msg : 'Relight failed', 502, e);
     }
 };
