@@ -33,6 +33,8 @@ import hairStyleRoutes from './fashion/hairStyleRoutes';
 import modelingPosesRoutes from './fashion/fashionModelingPosesRoutes';
 import rampwalkRoutes from './fashion/rampwalkRoutes';
 import makeupRoutes from './fashion/makeupRoutes';
+import deconstructOutfitRoutes from './fashion/deconstructOutfitRoutes';
+import fashionStylistRoutes from './fashion/fashionStylistRoutes';
 
 const router = Router();
 
@@ -89,5 +91,7 @@ router.use('/fashion/hair-style', hairStyleRoutes);
 router.use('/fashion/modeling-poses', modelingPosesRoutes);
 router.use('/fashion/rampwalk', rampwalkRoutes);
 router.use('/fashion/makeup', makeupRoutes);
+router.use('/fashion/deconstruct-outfit', deconstructOutfitRoutes);
+router.use('/fashion/fashion-stylist', fashionStylistRoutes);
 
 export default router;
