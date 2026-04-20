@@ -920,7 +920,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     const input: any = { prompt: body.prompt };
     // Seedream 4.5 mapping removed – model now handled via FAL.
     // Seedream schema mapping
-    if (modelBase === "bytedance/seedream-4") {
+    if (modelBase === "bytedance/seedream-4" || modelBase === "bytedance/seedream-5-lite") {
       // size handling
       const size = rest.size || "2K";
       if (["1K", "2K", "4K", "custom"].includes(String(size)))

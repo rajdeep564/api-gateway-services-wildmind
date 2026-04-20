@@ -1325,7 +1325,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.034, // approximate based on 90 credits
     overCharge: 0.011,
     userCost: 0.045,
-    creditsPerGeneration: 28,
+    creditsPerGeneration: 90,
     plans: {
       planA: 137.33333333333334,
       planB: 274.6666666666667,

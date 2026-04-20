@@ -17,6 +17,7 @@ import cctvFootageRoutes from './fun/cctvFootage';
 import changeSeasonsRoutes from './fun/changeSeasons';
 import relightingRoutes from './fun/relighting';
 import replaceElementRoutes from './general/replaceElement';
+import cadTo3dRoutes from './architecture/cadTo3dRoutes';
 import expressionSheetRoutes from './photography/expressionSheet';
 import poseControlRoutes from './photography/poseControl';
 import characterSheetRoutes from './photography/characterSheet';
@@ -75,5 +76,8 @@ router.use('/fun/vintage-teleport', vintageTeleportRoutes);
 router.use('/fun/cctv-footage', cctvFootageRoutes);
 router.use('/fun/change-seasons', changeSeasonsRoutes);
 router.use('/fun/relighting', relightingRoutes);
+
+// Architecture workflows
+router.use('/architecture/cad-to-3d', cadTo3dRoutes);
 
 export default router;
