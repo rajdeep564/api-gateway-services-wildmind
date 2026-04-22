@@ -238,6 +238,13 @@ export async function computeReplicateImageGenCost(
     display = `gpt-image-1.5 ${qualityValue}`;
     meta.quality = qualityValue;
   } else if (
+    normalized.includes("openai/gpt-image-2") ||
+    normalized.includes("gpt-image-2")
+  ) {
+    const qualityValue = String(quality || "auto").toLowerCase();
+    display = `gpt-image-2 ${qualityValue}`;
+    meta.quality = qualityValue;
+  } else if (
     normalized.includes("ideogram-ai/ideogram-v3-turbo") ||
     (normalized.includes("ideogram") && normalized.includes("turbo"))
   ) {

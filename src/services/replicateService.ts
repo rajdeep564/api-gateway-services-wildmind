@@ -3117,8 +3117,13 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       // Store num_images for later use in the generation logic
       (body as any).__num_images = numImages;
     }
-    // GPT Image 1.5 mapping
-    if (modelBase === "openai/gpt-image-1.5") {
+    // GPT Image models mapping
+    if (
+      modelBase === "openai/gpt-image-1.5" ||
+      modelBase === "openai/gpt-image-2"
+    ) {
+      const isGptImage2 = modelBase === "openai/gpt-image-2";
+      const gptImageModelLabel = isGptImage2 ? "gpt-image-2" : "gpt-image-1.5";
       const coerceGptImage15AspectRatio = (
         raw: unknown,
       ): "1:1" | "3:2" | "2:3" => {
@@ -3145,7 +3150,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       ) {
         input.quality = String(rest.quality);
       } else {
-        input.quality = "low"; // Default to low quality
+        input.quality = isGptImage2 ? "auto" : "low";
       }
       // Respect requested aspect ratio (coerce to the only supported set: 1:1 | 3:2 | 2:3).
       input.aspect_ratio = coerceGptImage15AspectRatio(
@@ -3174,7 +3179,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         const format = String(rest.output_format);
         input.output_format = format === "jpg" ? "jpeg" : format;
       } else {
-        input.output_format = "jpeg"; // Default to jpeg (jpg)
+        input.output_format = isGptImage2 ? "webp" : "jpeg";
       }
       if (
         rest.background &&
@@ -3200,6 +3205,15 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       } else {
         input.output_compression = 90; // Default per schema
       }
+      if (typeof rest.user_id === "string" && rest.user_id.trim().length > 0) {
+        input.user_id = rest.user_id.trim();
+      }
+      if (
+        typeof rest.openai_api_key === "string" &&
+        rest.openai_api_key.trim().length > 0
+      ) {
+        input.openai_api_key = rest.openai_api_key.trim();
+      }
       // Handle input_images for I2I - map from uploadedImages if present
       const inputImagesSource = rest.input_images || rest.uploadedImages;
       if (
@@ -3219,7 +3233,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
               const uploaded = await uploadDataUriToZata({
                 dataUri: img,
                 keyPrefix,
-                fileName: `gpt-image-1.5-ref-${i + 1}`,
+                fileName: `${gptImageModelLabel}-ref-${i + 1}`,
               });
               resolvedImages.push(uploaded.publicUrl);
               inputPersisted.push({
@@ -3261,7 +3275,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
                       });
                     } else {
                       console.warn(
-                        `[gpt-image-1.5] zataPrefix not configured, cannot convert proxy URL for image ${i + 1}`,
+                        `[${gptImageModelLabel}] zataPrefix not configured, cannot convert proxy URL for image ${i + 1}`,
                       );
                       throw new Error("Zata prefix not configured");
                     }
@@ -3272,7 +3286,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
                   }
                 } catch (uploadErr) {
                   console.error(
-                    `[gpt-image-1.5] Failed to process proxy URL ${i + 1}:`,
+                    `[${gptImageModelLabel}] Failed to process proxy URL ${i + 1}:`,
                     uploadErr,
                   );
                   // If we can't convert, we must fail - proxy URLs can't be used directly with Replicate
@@ -3302,7 +3316,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
                   const uploaded = await uploadFromUrlToZata({
                     sourceUrl: img,
                     keyPrefix,
-                    fileName: `gpt-image-1.5-ref-${i + 1}`,
+                    fileName: `${gptImageModelLabel}-ref-${i + 1}`,
                   });
                   resolvedImages.push(uploaded.publicUrl);
                   inputPersisted.push({
@@ -3312,7 +3326,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
                   });
                 } catch (uploadErr) {
                   console.warn(
-                    `[gpt-image-1.5] Failed to process URL ${i + 1}:`,
+                    `[${gptImageModelLabel}] Failed to process URL ${i + 1}:`,
                     uploadErr,
                   );
                 }
@@ -3320,7 +3334,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
             }
           } catch (e) {
             console.warn(
-              `[gpt-image-1.5] Failed to process input image ${i + 1}:`,
+              `[${gptImageModelLabel}] Failed to process input image ${i + 1}:`,
               e,
             );
           }
@@ -3334,7 +3348,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
           } as any);
         }
       }
-      replicateModelBase = "openai/gpt-image-1.5";
+      replicateModelBase = modelBase;
 
       // Handle num_images for multiple image generation
       const numImages = input.number_of_images || 1;
@@ -3407,7 +3421,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       } catch {}
     }
     // Handle num_images fan-out for models that need parallel calls
-    // Supported: z-image-turbo, P-Image / P-Image-Edit, GPT Image 1.5, and Qwen image models.
+    // Supported: z-image-turbo, P-Image / P-Image-Edit, GPT Image models, and Qwen image models.
     let output: any;
     const numImages = (body as any).__num_images || 1;
     const isZTurbo =
@@ -3415,6 +3429,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     const isPImage = replicateModelBase === "prunaai/p-image";
     const isPImageEdit = replicateModelBase === "prunaai/p-image-edit";
     const isGptImage15 = replicateModelBase === "openai/gpt-image-1.5";
+    const isGptImage2 = replicateModelBase === "openai/gpt-image-2";
     const isRecraftV4 = replicateModelBase === "recraft-ai/recraft-v4";
 
     const lowerReplicateModelBase = String(
@@ -3427,6 +3442,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         isPImage ||
         isPImageEdit ||
         isGptImage15 ||
+        isGptImage2 ||
         isQwenImage ||
         isRecraftV4) &&
       numImages > 1
