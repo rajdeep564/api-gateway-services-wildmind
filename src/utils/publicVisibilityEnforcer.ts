@@ -3,15 +3,15 @@ import { logger } from './logger';
 
 /**
  * Check if user is on a restricted plan (cannot toggle public/private)
- * Restricted plans: FREE, PLAN_A, PLAN_B - All generations MUST be public (cannot toggle to private)
- * Unrestricted plans: PLAN_C, PLAN_D - Users can choose public or private
+ * Restricted plans: FREE / STARTER / SPARK / CREATOR - all generations are public
+ * Unrestricted plans: STUDIO / AGENCY - users can choose public or private
  */
 async function isRestrictedPlanUser(uid: string): Promise<boolean> {
   try {
     const userInfo = await creditsRepository.readUserInfo(uid);
     const planCode = (userInfo?.planCode || 'FREE').toUpperCase();
-    // Only PLAN_C and PLAN_D can toggle
-    return planCode !== 'PLAN_C' && planCode !== 'PLAN_D';
+    const canToggle = planCode.startsWith('STUDIO_') || planCode.startsWith('AGENCY_');
+    return !canToggle;
   } catch (error) {
     logger.error({ uid, error }, '[PublicVisibility] Error checking plan, defaulting to restricted');
     return true; // Default to restricted for safety
@@ -19,7 +19,7 @@ async function isRestrictedPlanUser(uid: string): Promise<boolean> {
 }
 
 /**
- * Enforce public visibility for restricted plan users (FREE, PLAN_A, PLAN_B)
+ * Enforce public visibility for restricted plan users
  * @param uid - User ID
  * @param requestedIsPublic - What the user requested
  * @returns {isPublic, visibility, reason} - Enforced values
@@ -31,7 +31,7 @@ export async function enforcePublicVisibility(
   const isRestricted = await isRestrictedPlanUser(uid);
 
   if (isRestricted) {
-    // Restricted plan users (FREE, PLAN_A, PLAN_B): ALWAYS public, ignore their request
+    // Restricted plan users: ALWAYS public, ignore private request
     if (requestedIsPublic === false) {
       logger.warn({ uid }, '[PublicVisibility] Restricted plan user attempted to create private generation - forcing public');
     }
@@ -42,7 +42,7 @@ export async function enforcePublicVisibility(
     };
   }
 
-  // Unrestricted plan users (PLAN_C, PLAN_D): Respect their choice
+  // Unrestricted plan users: Respect their choice
   const isPublic = requestedIsPublic === true;
   return {
     isPublic,
@@ -52,8 +52,8 @@ export async function enforcePublicVisibility(
 
 /**
  * Check if user can toggle public generation setting
- * Restricted plans (FREE, PLAN_A, PLAN_B): Cannot toggle (always public)
- * Unrestricted plans (PLAN_C, PLAN_D): Can toggle
+ * Restricted plans: Cannot toggle (always public)
+ * Unrestricted plans (STUDIO/AGENCY): Can toggle
  */
 export async function canTogglePublicGeneration(uid: string): Promise<boolean> {
   const isRestricted = await isRestrictedPlanUser(uid);

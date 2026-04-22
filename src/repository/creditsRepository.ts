@@ -52,8 +52,18 @@ export async function getModelCost(modelName: string, params?: any): Promise<num
 // Helper for Axios errors
 function handleAxiosError(e: any, context: string): never {
   const msg = e.response?.data?.message || e.message;
+  const code = e.response?.data?.code;
+  const status = e.response?.status;
   logger.error({ err: msg, status: e.response?.status }, `[CREDITS_REPO] ${context} - Error`);
-  throw new Error(msg);
+  const err: any = new Error(msg);
+  if (typeof code === "string" && code) {
+    err.code = code;
+  }
+  if (typeof status === "number") {
+    err.status = status;
+    err.statusCode = status;
+  }
+  throw err;
 }
 
 export async function readUserCredits(uid: string): Promise<number> {

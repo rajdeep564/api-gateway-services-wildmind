@@ -4,6 +4,7 @@ import '../types/http';
 import { creditsRepository } from '../repository/creditsRepository';
 import { logger } from '../utils/logger';
 import { formatApiResponse } from '../utils/formatApiResponse';
+import { normalizeApiError } from '../utils/errorHandler';
 
 const CREDIT_SERVICE_URL =
   process.env.CREDIT_SERVICE_URL || 'http://credit-service:3000';
@@ -46,9 +47,11 @@ export const billingController = {
         { uid: (req as any).uid, err: error?.message },
         'getBillingSummary failed',
       );
-      return res
-        .status(500)
-        .json(formatApiResponse('error', 'Failed to fetch billing summary', null));
+      const { status, payload } = normalizeApiError(
+        error,
+        'Failed to fetch billing summary',
+      );
+      return res.status(status).json(payload);
     }
   },
 
@@ -62,7 +65,8 @@ export const billingController = {
       return res.json(formatApiResponse('success', 'Invoices fetched successfully', invoices));
     } catch (error: any) {
       logger.error({ uid: (req as any).uid, err: error.message }, 'Failed to fetch invoices');
-      return res.status(500).json(formatApiResponse('error', 'Failed to fetch invoices', null));
+      const { status, payload } = normalizeApiError(error, 'Failed to fetch invoices');
+      return res.status(status).json(payload);
     }
   },
 
@@ -76,7 +80,11 @@ export const billingController = {
       return res.json(formatApiResponse('success', 'Payment history fetched successfully', payments));
     } catch (error: any) {
       logger.error({ uid: (req as any).uid, err: error.message }, 'Failed to fetch payment history');
-      return res.status(500).json(formatApiResponse('error', 'Failed to fetch payment history', null));
+      const { status, payload } = normalizeApiError(
+        error,
+        'Failed to fetch payment history',
+      );
+      return res.status(status).json(payload);
     }
   },
 
@@ -93,18 +101,15 @@ export const billingController = {
       );
       return res.status(response.status).json(response.data);
     } catch (error: any) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        return res
-          .status(error.response.status || 500)
-          .json(error.response.data);
-      }
       logger.error(
         { uid: (req as any).uid, err: error?.message },
         'getInvoiceDetail failed',
       );
-      return res
-        .status(500)
-        .json(formatApiResponse('error', 'Failed to fetch invoice detail', null));
+      const { status, payload } = normalizeApiError(
+        error,
+        'Failed to fetch invoice detail',
+      );
+      return res.status(status).json(payload);
     }
   },
 
@@ -132,17 +137,21 @@ export const billingController = {
       return res.status(response.status).send(Buffer.from(response.data));
     } catch (error: any) {
       if (axios.isAxiosError(error) && error.response?.data) {
-        return res
-          .status(error.response.status || 500)
-          .send(error.response.data);
+        const { status, payload } = normalizeApiError(
+          error,
+          'Failed to download invoice PDF',
+        );
+        return res.status(status).json(payload);
       }
       logger.error(
         { uid: (req as any).uid, err: error?.message },
         'downloadInvoicePdf failed',
       );
-      return res.status(500).json(
-        formatApiResponse('error', 'Failed to download invoice PDF', null),
+      const { status, payload } = normalizeApiError(
+        error,
+        'Failed to download invoice PDF',
       );
+      return res.status(status).json(payload);
     }
   },
 
@@ -158,18 +167,12 @@ export const billingController = {
       );
       return res.status(response.status).json(response.data);
     } catch (error: any) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        return res
-          .status(error.response.status || 500)
-          .json(error.response.data);
-      }
       logger.error(
         { uid: (req as any).uid, err: error?.message },
         'validateGSTIN failed',
       );
-      return res
-        .status(500)
-        .json(formatApiResponse('error', 'GST verification failed', null));
+      const { status, payload } = normalizeApiError(error, 'GST verification failed');
+      return res.status(status).json(payload);
     }
   },
 };

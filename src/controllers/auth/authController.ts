@@ -325,11 +325,10 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
     }
 
     // Derive public-generation policy flags from planCode (computed, not persisted)
-    // Only PLAN_C and PLAN_D can toggle public/private
-    // FREE, PLAN_A, PLAN_B must have all generations public
+    // Only Studio/Agency tiers can toggle public/private generations.
     try {
       const planCode = String((user as any)?.planCode || "FREE").toUpperCase();
-      const canToggle = planCode === "PLAN_C" || planCode === "PLAN_D";
+      const canToggle = planCode.startsWith("STUDIO_") || planCode.startsWith("AGENCY_");
       (user as any).canTogglePublicGenerations = canToggle;
       (user as any).forcePublicGenerations = !canToggle;
     } catch { }
