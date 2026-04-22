@@ -301,7 +301,7 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
     }
 
     // Merge billing/source-of-truth fields from credit-service.
-    // Firestore user object is profile/auth; credit-service is billing/credits/storage authority.
+    // Firestore user object is profile/auth only; credit-service is billing/credits/storage authority.
     try {
       const info = await creditsRepository.readUserInfo(uid);
       if (info) {
@@ -315,13 +315,20 @@ async function getCurrentUser(req: Request, res: Response, next: NextFunction) {
         }
         (user as any).billingSource = "credit-service";
         (user as any).billingSyncedAt = new Date().toISOString();
+        (user as any).billingUnavailable = false;
       } else {
-        (user as any).billingSource = "firestore";
+        (user as any).billingSource = "unavailable";
         (user as any).billingSyncedAt = new Date().toISOString();
+        (user as any).billingUnavailable = true;
+        delete (user as any).creditBalance;
+        delete (user as any).planCode;
       }
     } catch (_e) {
-      (user as any).billingSource = "firestore";
+      (user as any).billingSource = "unavailable";
       (user as any).billingSyncedAt = new Date().toISOString();
+      (user as any).billingUnavailable = true;
+      delete (user as any).creditBalance;
+      delete (user as any).planCode;
     }
 
     // Derive public-generation policy flags from planCode (computed, not persisted)

@@ -76,12 +76,6 @@ export async function readUserCredits(uid: string): Promise<number> {
   } catch (e: any) {
     if (e.response?.status === 404) return 0;
 
-    // DEV FALLBACK: If service is unreachable in dev, return mock credits
-    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
-      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, returning mock credits');
-      return 1000;
-    }
-
     handleAxiosError(e, 'readUserCredits');
     return 0; // Unreachable
   }
@@ -103,17 +97,6 @@ export async function readUserInfo(uid: string): Promise<{ creditBalance: number
     return null;
   } catch (e: any) {
     if (e.response?.status === 404) return null;
-
-    // DEV FALLBACK: If service is unreachable in dev, return mock user
-    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
-      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, returning mock user info');
-      return {
-        creditBalance: 1000,
-        planCode: 'FREE',
-        storageQuotaBytes: '1073741824', // 1GB
-        storageUsedBytes: '0'
-      };
-    }
 
     handleAxiosError(e, 'readUserInfo');
     return null;
