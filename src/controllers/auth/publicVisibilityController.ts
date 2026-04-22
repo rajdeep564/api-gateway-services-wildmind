@@ -6,8 +6,8 @@ import { logger } from '../../utils/logger';
 /**
  * GET /api/auth/can-toggle-public
  * Returns whether user can toggle public generation setting
- * Restricted plans (FREE, PLAN_A, PLAN_B): Cannot toggle (always public)
- * Unrestricted plans (PLAN_C, PLAN_D): Can toggle
+ * Restricted plans: Cannot toggle (always public)
+ * Unrestricted plans (STUDIO/AGENCY): Can toggle
  */
 async function canTogglePublic(req: Request, res: Response, next: NextFunction) {
   try {
@@ -26,7 +26,7 @@ async function canTogglePublic(req: Request, res: Response, next: NextFunction) 
       isRestricted,
       message: canToggle 
         ? 'User can choose public or private generations' 
-        : 'Your plan requires all generations to be public. Upgrade to Plan C or D for private generations.',
+        : 'Your plan requires all generations to be public. Upgrade to Studio or Agency for private generations.',
     }));
   } catch (err) {
     logger.error({ err }, '[Auth] Error checking can toggle public');

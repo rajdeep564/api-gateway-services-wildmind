@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import axios from 'axios';
 import { env } from '../config/env';
+import { normalizeApiError } from '../utils/errorHandler';
 
 const router = Router();
 const CREDIT_SERVICE_URL = env.creditServiceUrl;
@@ -28,21 +29,12 @@ router.post('/razorpay', async (req, res) => {
     console.log('✅ Webhook forwarded successfully');
     res.status(200).json(response.data);
   } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error('❌ Webhook forwarding error:', error.response?.data || error.message);
-      res.status(error.response?.status || 500).json({
-        responseStatus: 'error',
-        message: error.response?.data?.message || 'Webhook forwarding failed',
-        data: null,
-      });
-    } else {
-      console.error('❌ Webhook error:', error);
-      res.status(500).json({
-        responseStatus: 'error',
-        message: 'Internal server error',
-        data: null,
-      });
-    }
+    console.error(
+      '❌ Webhook forwarding error:',
+      axios.isAxiosError(error) ? error.response?.data || error.message : error,
+    );
+    const { status, payload } = normalizeApiError(error, 'Webhook forwarding failed');
+    res.status(status).json(payload);
   }
 });
 

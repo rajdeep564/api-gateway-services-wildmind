@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import axios from "axios";
+import { normalizeApiError } from "../utils/errorHandler";
 
 const CREDIT_SERVICE_URL =
   process.env.CREDIT_SERVICE_URL || "http://credit-service:3000";
@@ -16,17 +17,19 @@ export const getSubscriptionCatalog = async (_req: Request, res: Response) => {
         "Get subscription catalog error:",
         error.response?.data || error.message,
       );
-      res
-        .status(error.response?.status || 500)
-        .json(
-          error.response?.data || {
-            error: "Failed to fetch subscription catalog",
-          },
-        );
+      const { status, payload } = normalizeApiError(
+        error,
+        "Failed to fetch subscription catalog",
+      );
+      res.status(status).json(payload);
       return;
     }
 
     console.error("Get subscription catalog error:", error);
-    res.status(500).json({ error: "Failed to fetch subscription catalog" });
+    const { status, payload } = normalizeApiError(
+      error,
+      "Failed to fetch subscription catalog",
+    );
+    res.status(status).json(payload);
   }
 };

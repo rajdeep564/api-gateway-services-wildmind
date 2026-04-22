@@ -7,6 +7,10 @@ import { createReferenceImage, ReferenceImageItem } from '../../utils/createRefe
 import { uploadBufferToZata } from '../../utils/storage/zataUpload';
 import { postSuccessDebit } from '../../utils/creditDebit';
 
+function resolveDebitUid(req: Request, fallbackUid: string): string {
+  return ((req as any).context?.billingUid as string | undefined) || fallbackUid;
+}
+
 export async function generateVideoForCanvas(req: Request, res: Response) {
   try {
     const userId = (req as any).uid;
@@ -69,7 +73,7 @@ export async function generateVideoForCanvas(req: Request, res: Response) {
       ...result,
       historyId: result.generationId
     };
-    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'generate-video');
+    await postSuccessDebit(resolveDebitUid(req, userId), debitResult, ctx, 'canvas', 'generate-video');
 
     return res.json(formatApiResponse('success', 'Video generation completed', result));
   } catch (error: any) {
@@ -129,7 +133,7 @@ export async function generateForCanvas(req: Request, res: Response) {
       ...result,
       historyId: (result as any).generationId
     };
-    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'generate');
+    await postSuccessDebit(resolveDebitUid(req, userId), debitResult, ctx, 'canvas', 'generate');
 
     console.log('[generateForCanvas] Generation completed:', {
       hasUrl: !!result.url,
@@ -204,7 +208,7 @@ export async function upscaleForCanvas(req: Request, res: Response) {
       ...result,
       historyId: result.generationId
     };
-    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'upscale');
+    await postSuccessDebit(resolveDebitUid(req, userId), debitResult, ctx, 'canvas', 'upscale');
 
     return res.json(formatApiResponse('success', 'Image upscale completed', result));
   } catch (error: any) {
@@ -277,7 +281,7 @@ export async function removeBgForCanvas(req: Request, res: Response) {
       ...result,
       historyId: result.generationId
     };
-    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'removebg');
+    await postSuccessDebit(resolveDebitUid(req, userId), debitResult, ctx, 'canvas', 'removebg');
 
     return res.json(formatApiResponse('success', 'Background removal completed', result));
   } catch (error: any) {
@@ -346,7 +350,7 @@ export async function vectorizeForCanvas(req: Request, res: Response) {
       ...result,
       historyId: result.generationId
     };
-    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'vectorize');
+    await postSuccessDebit(resolveDebitUid(req, userId), debitResult, ctx, 'canvas', 'vectorize');
 
     return res.json(formatApiResponse('success', 'Image vectorization completed', result));
   } catch (error: any) {
@@ -432,7 +436,7 @@ export async function generateNextSceneForCanvas(req: Request, res: Response) {
       ...result,
       historyId: result.generationId
     };
-    await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'generate'); // Using 'generate' for now, or 'next-scene' if priced differently
+    await postSuccessDebit(resolveDebitUid(req, userId), debitResult, ctx, 'canvas', 'generate'); // Using 'generate' for now, or 'next-scene' if priced differently
 
     return res.json(formatApiResponse('success', 'Next Scene generation completed', result));
   } catch (error: any) {
@@ -575,7 +579,7 @@ export async function eraseForCanvas(req: Request, res: Response) {
       ...result,
       historyId: result.generationId
     };
-    const debitStatus = await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'erase');
+    const debitStatus = await postSuccessDebit(resolveDebitUid(req, userId), debitResult, ctx, 'canvas', 'erase');
 
     return res.json(formatApiResponse('success', 'Image erase completed', {
       ...result,
@@ -664,7 +668,7 @@ export async function replaceForCanvas(req: Request, res: Response) {
       ...result,
       historyId: result.generationId
     };
-    const debitStatus = await postSuccessDebit(userId, debitResult, ctx, 'canvas', 'replace');
+    const debitStatus = await postSuccessDebit(resolveDebitUid(req, userId), debitResult, ctx, 'canvas', 'replace');
 
     return res.json(formatApiResponse('success', 'Image replace completed', {
       ...result,
