@@ -13,7 +13,6 @@ import { env } from '../../config/env';
 import { probeImageMeta } from '../../utils/media/imageProbe';
 import sharp from 'sharp';
 import axios from 'axios';
-import { createStoryboard, downloadImageAsBuffer, StoryboardFrame } from '../../utils/createStoryboard';
 import { Agent as HttpsAgent } from 'https';
 import { processGoogleGeminiFlash } from '../replaceService';
 
@@ -876,107 +875,6 @@ export async function generateForCanvas(
       }
 
       generationId = result.historyId;
-    }
-
-    // Generate storyboard if sceneNumber and metadata are provided
-    const sceneNumber = (request as any).sceneNumber as number | undefined;
-    const storyboardMetadata = (request as any).storyboardMetadata as Record<string, string> | undefined;
-    const sourceImageUrl = (request as any).sourceImageUrl as string | undefined;
-    const previousSceneImageUrl = (request as any).previousSceneImageUrl as string | undefined;
-
-    if (sceneNumber && storyboardMetadata && imageUrl) {
-      try {
-        console.log('[generateForCanvas] Generating storyboard for scene:', sceneNumber);
-
-        const frames: StoryboardFrame[] = [];
-
-        // Index 0: Reference image (always present - first image from sourceImageUrl)
-        if (sourceImageUrl) {
-          const referenceImageUrl = sourceImageUrl.split(',')[0].trim();
-          try {
-            const referenceImageBuffer = await downloadImageAsBuffer(referenceImageUrl);
-            frames.push({
-              buffer: referenceImageBuffer,
-              metadata: {
-                character: storyboardMetadata.character || '',
-                background: storyboardMetadata.background || '',
-                objects: storyboardMetadata.objects || '',
-                lighting: storyboardMetadata.lighting || '',
-                camera: storyboardMetadata.camera || '',
-                mood: storyboardMetadata.mood || '',
-                style: storyboardMetadata.style || '',
-                environment: storyboardMetadata.environment || '',
-              },
-            });
-            console.log('[generateForCanvas] ✅ Added reference image to storyboard');
-          } catch (error) {
-            console.warn('[generateForCanvas] ⚠️ Failed to download reference image for storyboard:', error);
-          }
-        }
-
-        // Index 1: Previous scene image (for Scene 2+)
-        if (sceneNumber > 1 && previousSceneImageUrl) {
-          try {
-            const previousSceneBuffer = await downloadImageAsBuffer(previousSceneImageUrl);
-            frames.push({
-              buffer: previousSceneBuffer,
-              metadata: {
-                character: storyboardMetadata.character || '',
-                background: storyboardMetadata.background || '',
-                objects: storyboardMetadata.objects || '',
-                lighting: storyboardMetadata.lighting || '',
-                camera: storyboardMetadata.camera || '',
-                mood: storyboardMetadata.mood || '',
-                style: storyboardMetadata.style || '',
-                environment: storyboardMetadata.environment || '',
-              },
-            });
-            console.log('[generateForCanvas] ✅ Added previous scene image to storyboard');
-          } catch (error) {
-            console.warn('[generateForCanvas] ⚠️ Failed to download previous scene image for storyboard:', error);
-          }
-        }
-
-        // Index 1 (Scene 1) or Index 2 (Scene 2+): Generated image
-        const generatedImageBuffer = await downloadImageAsBuffer(imageUrl);
-        frames.push({
-          buffer: generatedImageBuffer,
-          metadata: {
-            character: storyboardMetadata.character || '',
-            background: storyboardMetadata.background || '',
-            objects: storyboardMetadata.objects || '',
-            lighting: storyboardMetadata.lighting || '',
-            camera: storyboardMetadata.camera || '',
-            mood: storyboardMetadata.mood || '',
-            style: storyboardMetadata.style || '',
-            environment: storyboardMetadata.environment || '',
-          },
-        });
-        console.log('[generateForCanvas] ✅ Added generated image to storyboard');
-
-        // Create storyboard only if we have at least 2 frames (reference + generated)
-        if (frames.length >= 2) {
-          const storyboardBuffer = await createStoryboard(frames);
-
-          // Upload storyboard to Zata
-          const storyboardKey = `${canvasKeyPrefix}/storyboard-scene-${sceneNumber}-${Date.now()}.png`;
-          const storyboardUpload = await uploadBufferToZata(
-            storyboardKey,
-            storyboardBuffer,
-            'image/png'
-          );
-
-          console.log('[generateForCanvas] ✅ Storyboard generated:', storyboardUpload.publicUrl);
-
-          // Store storyboard URL in response (optional - can be used by frontend)
-          (request as any).storyboardUrl = storyboardUpload.publicUrl;
-        } else {
-          console.warn('[generateForCanvas] ⚠️ Not enough frames for storyboard (need at least 2, got', frames.length, ')');
-        }
-      } catch (error) {
-        console.error('[generateForCanvas] ⚠️ Failed to generate storyboard:', error);
-        // Don't fail the entire request if storyboard generation fails
-      }
     }
 
     // If we already processed multiple images, return them

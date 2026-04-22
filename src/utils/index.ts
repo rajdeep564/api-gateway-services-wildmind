@@ -22,7 +22,6 @@ export * from './publicVisibilityEnforcer';
 export * from './securityMonitor';
 export * from './verifyTurnstile';
 export * from './createReferenceImage';
-export * from './createStoryboard';
 export * from './falErrorMapper';
 
 // Storage utilities
