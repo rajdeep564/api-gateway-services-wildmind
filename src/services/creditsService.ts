@@ -60,8 +60,8 @@ export const creditsService = {
       const hasReset = ledgers.some(l => l.id.includes(cycle) && l.entry.reason.includes('monthly')); // Weak check
       
       if (!hasReset) {
-         let credits = 2000;
-         if (planCode === 'FREE') credits = 2000; 
+         let credits = 0;
+         if (planCode === 'FREE') credits = 0; 
 
          await creditsRepository.writeGrantAndSetPlanIfAbsent(uid, reqId, credits, planCode, 'plan.monthly_reset');
       }
@@ -78,10 +78,12 @@ export const creditsService = {
   async validateBeforeGeneration(
     uid: string,
     creditCost: number,
-    estimatedSizeBytes: number = 10 * 1024 * 1024 // Default 10MB estimate
+    estimatedSizeBytes: number = 10 * 1024 * 1024, // Default 10MB estimate
+    modelName?: string,
+    quantity: number = 1
   ): Promise<{ valid: boolean; reason?: string; code?: string }> {
     try {
-      await creditsRepository.validateGeneration(uid, creditCost, estimatedSizeBytes);
+      await creditsRepository.validateGeneration(uid, creditCost, estimatedSizeBytes, modelName, quantity);
       return { valid: true };
     } catch (error: any) {
       // Extract error code and message

@@ -339,6 +339,7 @@ async function generate(
             height: 1024,
             quality: "high",
           }),
+      model,
     );
 
     if (!validation.valid) {
