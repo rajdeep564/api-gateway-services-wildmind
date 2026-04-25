@@ -242,6 +242,40 @@ export const verifyPayment = async (req: Request, res: Response) => {
     res.status(status).json(payload);
   }
 };
+
+export const verifyUpgradeOrder = async (req: Request, res: Response) => {
+  try {
+    const userId = req.uid;
+    if (!userId) {
+      return res
+        .status(401)
+        .json({ message: "Unauthorized", code: "UNAUTHORIZED", status: 401 });
+    }
+
+    const { razorpayPaymentId } = req.body;
+
+    const response = await axios.post(
+      `${CREDIT_SERVICE_URL}/subscriptions/verify-upgrade-order`,
+      {
+        userId,
+        razorpayPaymentId,
+      },
+      { headers: creditServiceAuthHeaders(req) },
+    );
+
+    res.json(response.data);
+  } catch (error: any) {
+    console.error(
+      "Verify upgrade order error:",
+      axios.isAxiosError(error) ? error.response?.data || error.message : error,
+    );
+    const { status, payload } = normalizeApiError(
+      error,
+      "Failed to verify upgrade payment",
+    );
+    res.status(status).json(payload);
+  }
+};
 /**
  * Check for expired subscriptions (Admin/Cron)
  */
