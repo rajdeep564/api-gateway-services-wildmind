@@ -1914,6 +1914,74 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       : { uid },
   );
 
+  // PRE-EMPTIVE DEBIT for Free Turbo models to prevent race conditions.
+  // By debiting upfront with historyId, we ensure that usedCount is updated before parallel requests pass validation.
+  const isFreeTurboModel =
+    modelBase.includes("z-image-turbo") ||
+    modelBase.includes("new-turbo-model") ||
+    modelBase.includes("placeholder-model-name");
+
+  // Fetch plan code from credit service as AppUser doesn't have it
+  const creditUser = isFreeTurboModel
+    ? await creditsRepository.readUserInfo(uid)
+    : null;
+  const planCode = creditUser?.planCode || "FREE";
+
+  if (isFreeTurboModel && planCode === "FREE") {
+    try {
+      const quantity = Number(
+        body?.num_images ||
+          body?.n ||
+          body?.max_images ||
+          body?.number_of_images ||
+          1,
+      );
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        0, // Amount is 0 for promotional bypass, but quantity is recorded in meta
+        `replicate-generate-upfront:${modelBase}`,
+        {
+          model: modelBase,
+          quantity,
+          modelName: modelBase,
+          isUpfront: true,
+          pricingVersion: ctx?.pricingVersion || "v1",
+        },
+        modelBase,
+      );
+      console.log(
+        `[replicateService.generateImage] Upfront debit for ${uid} (model: ${modelBase}, quantity: ${quantity})`,
+      );
+    } catch (e: any) {
+      console.error(
+        "[replicateService.generateImage] Upfront debit failed:",
+        e,
+      );
+      
+      const errorCode = e.response?.data?.code || e.code;
+      const errorMessage = e.response?.data?.message || e.message;
+
+      // MUST NOT continue if promotional limit or insufficient credits
+      if (errorCode === 'FREE_Z_IMAGE_TURBO_LIMIT_REACHED' || errorMessage?.includes('FREE_Z_IMAGE_TURBO_LIMIT_REACHED')) {
+        throw {
+          status: 402,
+          message: errorMessage,
+          code: 'FREE_Z_IMAGE_TURBO_LIMIT_REACHED'
+        };
+      }
+      if (errorCode === 'INSUFFICIENT_CREDITS' || errorMessage?.includes('Insufficient credits')) {
+        throw {
+          status: 402,
+          message: errorMessage || 'Insufficient credits for generation',
+          code: 'INSUFFICIENT_CREDITS'
+        };
+      }
+      
+      // For other errors (like network issues), we continue and the end-of-function debit will catch it
+    }
+  }
+
   // Do not upload input data URIs to Zata; pass directly to provider
   let outputUrls: string[] = [];
   let replicateModelBase = modelBase; // Declare outside try block so it's accessible in catch
@@ -3663,6 +3731,38 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       error: errorMessage || "Replicate failed",
     } as any);
 
+    // Issue refund if we did an upfront debit
+    const planCodeOnFailure =
+      (await creditsRepository.readUserInfo(uid))?.planCode || "FREE";
+    if (isFreeTurboModel && planCodeOnFailure === "FREE") {
+      try {
+        const quantity = Number(
+          body?.num_images ||
+            body?.n ||
+            body?.max_images ||
+            body?.number_of_images ||
+            1,
+        );
+        await creditsRepository.writeRefund(
+          uid,
+          historyId,
+          0,
+          `replicate-generate-failed:${modelBase}`,
+          {
+            model: modelBase,
+            quantity,
+            modelName: modelBase,
+            error: errorMessage,
+          },
+        );
+      } catch (refundErr) {
+        console.error(
+          "[replicateService.generateImage] Failed to issue refund for failed upfront generation:",
+          refundErr,
+        );
+      }
+    }
+
     if (
       isApiError &&
       apiStatusCode &&
@@ -3775,22 +3875,28 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
 
-  // STRICT CREDIT REDUCTION
-  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+  // Record debit if cost > 0 OR if it is a free-tier turbo model (to track lifetime quota)
+  const isFreeTurbo =
+    modelBase.includes("z-image-turbo") ||
+    modelBase.includes("new-turbo-model") ||
+    modelBase.includes("placeholder-model-name");
+
+  if (ctx && (ctx.creditCost > 0 || isFreeTurbo)) {
     try {
       await creditsRepository.writeDebitIfAbsent(
         uid,
         historyId,
-        ctx.creditCost,
-        "replicate-generate",
+        ctx.creditCost || 0,
+        `replicate-generate:${modelBase}`,
         {
           model: modelBase,
           ...(ctx.meta || {}),
           pricingVersion: ctx.pricingVersion || "v1",
         },
+        modelBase, // Passing modelName as 6th argument for cost lookup/tracking
       );
       console.log(
-        `[replicateService.generateImage] Debited ${ctx.creditCost} credits for ${uid}`,
+        `[replicateService.generateImage] Debited ${ctx.creditCost || 0} credits for ${uid} (model: ${modelBase})`,
       );
     } catch (error) {
       console.error(

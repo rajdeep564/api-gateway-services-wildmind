@@ -34,7 +34,10 @@ export function validateStorage(outputType: 'image' | 'video' | 'audio') {
         estimatedSize = 5 * 1024 * 1024; // Audio ~5MB
       }
       
-      const validation = await validateGenerationRequest(uid, creditCost, estimatedSize);
+      const modelName = req.body?.model || context?.modelName || context?.meta?.model;
+      const quantity = req.body?.num_images || req.body?.n || req.body?.max_images || context?.meta?.n || 1;
+      
+      const validation = await validateGenerationRequest(uid, creditCost, estimatedSize, modelName, quantity);
 
       if (!validation.valid) {
         // Map error codes to HTTP status

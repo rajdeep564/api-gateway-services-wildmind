@@ -72,6 +72,8 @@ async function me(req: Request, res: Response, next: NextFunction) {
         creditBalance: finalBalance,
         storageUsedBytes: storageInfo.storageUsedBytes,
         storageQuotaBytes: storageInfo.storageQuotaBytes,
+        freeTurboUsed: info?.freeTurboUsed || 0,
+        freeTurboLimit: info?.freeTurboLimit || 10,
         username: storageInfo.username,
         recentLedgers,
         autoReconciled,

@@ -7,6 +7,7 @@ declare global {
       /** Raw JWT the gateway actually validated (session cookie or ID token). Use when proxying to services that must verify the same credential. */
       verifiedAuthToken?: string;
       uid: string;
+      authMethod?: "cached" | "session" | "idToken";
       email?: string;
       username?: string;
       context?: {

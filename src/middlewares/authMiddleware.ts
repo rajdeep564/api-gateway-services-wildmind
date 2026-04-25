@@ -9,6 +9,7 @@ import {
 } from "../utils/sessionStore";
 
 import { env } from "../config/env";
+import "../types/http";
 
 const COOKIE_NAME = "app_session";
 
@@ -186,8 +187,8 @@ async function verifyTokenAndAttach(req: Request, res: Response, next: NextFunct
                 uidVerified: !!tokenUid,
               });
             }
-            (req as any).uid = cached.uid;
-            (req as any).authMethod = "cached";
+            req.uid = cached.uid;
+            req.authMethod = "cached";
             req.verifiedAuthToken = token;
             return next();
           }
@@ -586,8 +587,8 @@ async function verifyTokenAndAttach(req: Request, res: Response, next: NextFunct
     }
 
     // Set user ID and auth method on request object
-    (req as any).uid = decoded.uid;
-    (req as any).authMethod = isSessionCookie ? "session" : "idToken";
+    req.uid = decoded.uid;
+    req.authMethod = isSessionCookie ? "session" : "idToken";
     req.verifiedAuthToken = token;
 
     // OPTIMIZATION: Mid-life session refresh (refresh when JWT is > 7 days old)

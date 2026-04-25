@@ -31,13 +31,17 @@ export interface ValidationResult {
 export async function validateGenerationRequest(
   uid: string,
   creditCost: number,
-  estimatedSizeBytes: number = 10 * 1024 * 1024 // Default 10MB
+  estimatedSizeBytes: number = 10 * 1024 * 1024, // Default 10MB
+  modelName?: string,
+  quantity: number = 1
 ): Promise<ValidationResult> {
   try {
     return await creditsService.validateBeforeGeneration(
       uid,
       creditCost,
-      estimatedSizeBytes
+      estimatedSizeBytes,
+      modelName,
+      quantity
     );
   } catch (error: any) {
     // If unexpected error, log and return generic error

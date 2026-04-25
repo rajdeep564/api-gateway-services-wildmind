@@ -81,7 +81,7 @@ export async function readUserCredits(uid: string): Promise<number> {
   }
 }
 
-export async function readUserInfo(uid: string): Promise<{ creditBalance: number; planCode: string; launchTrialStartDate?: any; storageQuotaBytes?: string; storageUsedBytes?: string } | null> {
+export async function readUserInfo(uid: string): Promise<{ creditBalance: number; planCode: string; launchTrialStartDate?: any; storageQuotaBytes?: string; storageUsedBytes?: string; freeTurboUsed?: number; freeTurboLimit?: number } | null> {
   try {
     const res = await axios.get(`${CREDIT_SERVICE_URL}/credits/${uid}`); // accessing via credits endpoint which returns user info
     if (res.data.success && res.data.data) {
@@ -91,7 +91,9 @@ export async function readUserInfo(uid: string): Promise<{ creditBalance: number
         planCode: (d.planCode as string) || 'FREE',
         launchTrialStartDate: d.launchTrialStartDate, // If missing in response, it's undefined
         storageQuotaBytes: d.storageQuotaBytes,
-        storageUsedBytes: d.storageUsedBytes
+        storageUsedBytes: d.storageUsedBytes,
+        freeTurboUsed: d.freeTurboUsed,
+        freeTurboLimit: d.freeTurboLimit
       };
     }
     return null;
@@ -361,13 +363,18 @@ export async function initUser(uid: string, email: string): Promise<any> {
 export async function validateGeneration(
   uid: string,
   creditCost: number,
-  estimatedSizeBytes: number = 0
+  estimatedSizeBytes: number = 0,
+  modelName?: string,
+  quantity: number = 1
 ): Promise<{ valid: boolean }> {
   try {
+    console.log(`[CreditsRepository] validateGeneration: uid=${uid}, cost=${creditCost}, model=${modelName || 'N/A'}, quantity=${quantity}`);
     const res = await axios.post(`${CREDIT_SERVICE_URL}/credits/validate-generation`, {
       userId: uid,
       creditCost,
       estimatedSizeBytes,
+      modelName,
+      quantity,
     });
 
     if (res.data.success) {

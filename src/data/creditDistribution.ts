@@ -4002,7 +4002,7 @@ export const creditDistributionData: ModelCreditInfo[] = [
     priceToPay: 0.003,
     overCharge: 0.01,
     userCost: 0.013,
-    creditsPerGeneration: 1,
+    creditsPerGeneration: 4,
     plans: {
       planA: 3090,
       planB: 6180,
