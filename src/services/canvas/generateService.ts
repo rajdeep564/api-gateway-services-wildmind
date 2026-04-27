@@ -180,7 +180,7 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
     return { service: 'replicate', backendModel: 'openai/gpt-image-1.5' };
   }
   if (modelLower.includes('chatgpt 2') || modelLower.includes('chat-gpt-2') || modelLower.includes('gpt image 2') || modelLower === 'openai/gpt-image-2') {
-    return { service: 'replicate', backendModel: 'openai/gpt-image-2' };
+    return { service: 'fal', backendModel: 'openai/gpt-image-2' };
   }
 
   // Explicit mapping for Flux 2 Pro to FAL as requested by user
