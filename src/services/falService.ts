@@ -773,6 +773,17 @@ async function generate(
   } else if (modelLower.includes("seedream")) {
     // Seedream v4 text-to-image on FAL
     modelEndpoint = "fal-ai/bytedance/seedream/v4/text-to-image";
+  } else if (
+    modelLower.includes("openai/gpt-image-2") ||
+    modelLower.includes("gpt-image-2")
+  ) {
+    const hasImages =
+      (Array.isArray(uploadedImages) && uploadedImages.length > 0) ||
+      (Array.isArray((payload as any).image_urls) &&
+        (payload as any).image_urls.length > 0);
+    modelEndpoint = hasImages
+      ? "openai/gpt-image-2/edit"
+      : "fal-ai/gpt-image-2";
   } else {
     // Default to Google Nano Banana (Gemini)
     modelEndpoint =
@@ -2614,6 +2625,79 @@ async function generate(
                 "9:16": "portrait_16_9",
               };
               input.image_size = map[String(resolvedAspect)] || "square";
+            }
+          }
+        } else if (
+          modelEndpoint.includes("gpt-image-2") &&
+          !modelEndpoint.includes("gemini-25-flash-image")
+        ) {
+          if (finalPrompt) input.prompt = finalPrompt;
+
+          const rawQuality =
+            (payload as any).quality != null
+              ? String((payload as any).quality).toLowerCase().trim()
+              : "low";
+          input.quality =
+            rawQuality === "low" || rawQuality === "medium" || rawQuality === "high"
+              ? rawQuality
+              : "low";
+
+          const numImg =
+            (payload as any).num_images ||
+            (payload as any).number_of_images ||
+            (payload as any).n ||
+            1;
+          input.num_images = Math.max(1, Math.min(10, Number(numImg)));
+
+          let fmt =
+            (payload as any).output_format != null &&
+            String((payload as any).output_format).trim() !== ""
+              ? String((payload as any).output_format).toLowerCase().trim()
+              : output_format;
+          if (fmt === "jpg") fmt = "jpeg";
+          if (!["jpeg", "png", "webp"].includes(fmt)) fmt = "jpeg";
+          input.output_format = fmt;
+
+          const explicitSize = (payload as any).image_size;
+          if (explicitSize && typeof explicitSize === "object") {
+            input.image_size = {
+              width: Number((explicitSize as any).width),
+              height: Number((explicitSize as any).height),
+            };
+          } else if (
+            typeof explicitSize === "string" &&
+            explicitSize.trim().length > 0
+          ) {
+            input.image_size = explicitSize;
+          } else {
+            const map: Record<string, string> = {
+              "1:1": "square",
+              "4:3": "landscape_4_3",
+              "3:4": "portrait_4_3",
+              "16:9": "landscape_16_9",
+              "9:16": "portrait_16_9",
+            };
+            input.image_size = map[String(resolvedAspect)] || "landscape_4_3";
+          }
+
+          if (modelEndpoint.includes("/edit")) {
+            const refs =
+              publicImageUrls.length > 0
+                ? publicImageUrls
+                : Array.isArray((payload as any).image_urls)
+                  ? (payload as any).image_urls.filter((url: unknown) =>
+                      isPublicHttpUrl(url),
+                    )
+                  : [];
+            if (!refs.length) {
+              throw new ApiError(
+                "Image-to-image mode requires at least one input image",
+                400,
+              );
+            }
+            input.image_urls = refs.slice(-16);
+            if (typeof (payload as any).mask_image_url === "string") {
+              input.mask_image_url = (payload as any).mask_image_url;
             }
           }
         } else if (modelEndpoint.includes("gemini-25-flash-image")) {

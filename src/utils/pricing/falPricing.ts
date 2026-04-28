@@ -351,6 +351,13 @@ export async function computeFalImageCost(req: Request): Promise<{
   ) {
     // Matches the creditDistribution row for "Bytedance Seedream-4.5".
     display = "Bytedance Seedream-4.5";
+  } else if (m.includes("openai/gpt-image-2") || m.includes("gpt-image-2")) {
+    const rawQuality = String(body?.quality || "low").toLowerCase();
+    const quality =
+      rawQuality === "low" || rawQuality === "medium" || rawQuality === "high"
+        ? rawQuality
+        : "low";
+    display = `gpt-image-2 ${quality}`;
   } else if (
     m.includes("flux-2-pro") ||
     m.includes("flux2pro") ||

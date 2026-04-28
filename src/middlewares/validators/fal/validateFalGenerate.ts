@@ -6,6 +6,7 @@ import { probeImageMeta } from "../../../utils/media/imageProbe";
 import { uploadDataUriToZata } from "../../../utils/storage/zataUpload";
 
 export const ALLOWED_FAL_MODELS = [
+  "openai/gpt-image-2",
   "gemini-25-flash-image",
   "seedream-v4",
   "seedream-4.5",
