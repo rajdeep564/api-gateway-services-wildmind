@@ -7387,6 +7387,14 @@ async function queueStatus(
     );
   }
 
+  const normalizeHappyHorseEditModelForFal = (value: string): string => {
+    const normalized = String(value).trim().toLowerCase();
+    if (normalized === "alibaba/happy-horse/edit-video") {
+      return "alibaba/happy-horse/video-edit";
+    }
+    return value;
+  };
+
   const normalizeQueueStatusValue = (value: unknown): string =>
     String(value || "")
       .trim()
@@ -7486,10 +7494,13 @@ async function queueStatus(
 
   let status: any;
   try {
-    status = await fal.queue.status(resolvedModel, {
+    status = await fal.queue.status(
+      normalizeHappyHorseEditModelForFal(resolvedModel),
+      {
       requestId,
       logs: true,
-    } as any);
+      } as any,
+    );
   } catch (falErr: any) {
     const falError = buildFalApiError(falErr, {
       fallbackMessage: "Failed to fetch FAL queue status",
@@ -7668,6 +7679,22 @@ async function queueResult(
     );
   }
 
+  const isHappyHorseEditModel = (value: string | undefined): boolean => {
+    const normalized = String(value || "").trim().toLowerCase();
+    return (
+      normalized === "alibaba/happy-horse/edit-video" ||
+      normalized === "alibaba/happy-horse/video-edit"
+    );
+  };
+
+  const normalizeHappyHorseEditModelForFal = (value: string): string => {
+    const normalized = String(value).trim().toLowerCase();
+    if (normalized === "alibaba/happy-horse/edit-video") {
+      return "alibaba/happy-horse/video-edit";
+    }
+    return value;
+  };
+
   const normalizeQueueStatusValue = (value: unknown): string =>
     String(value || "")
       .trim()
@@ -7766,9 +7793,36 @@ async function queueResult(
   };
 
   let result: any;
+  const falModel = normalizeHappyHorseEditModelForFal(resolvedModel);
   try {
-    result = await fal.queue.result(resolvedModel, { requestId } as any);
+    result = await fal.queue.result(falModel, { requestId } as any);
   } catch (falErr: any) {
+    // Some Happy Horse Edit jobs complete via queue.status, while queue.result
+    // can return 404 "Path /edit-video not found". In that case, fall back to status.
+    const falErrStatus = Number(
+      falErr?.response?.status || falErr?.statusCode || falErr?.status || 0,
+    );
+    const falErrDetail = String(
+      falErr?.response?.data?.detail ||
+        falErr?.detail ||
+        falErr?.response?.data?.raw?.detail ||
+        falErr?.data?.detail ||
+        falErr?.data?.raw?.detail ||
+        falErr?.message ||
+        "",
+    );
+    const isHappyHorseEditPathNotFound =
+      falErrDetail.toLowerCase().includes("path /edit-video not found") ||
+      falErrDetail.toLowerCase().includes("/edit-video not found");
+    if (
+      isHappyHorseEditModel(resolvedModel) &&
+      (falErrStatus === 404 || isHappyHorseEditPathNotFound)
+    ) {
+      result = await fal.queue.status(falModel, {
+        requestId,
+        logs: true,
+      } as any);
+    } else {
     const falError = buildFalApiError(falErr, {
       fallbackMessage: "Failed to fetch FAL queue result",
       context: "falQueueService.queueResult",
@@ -7784,6 +7838,7 @@ async function queueResult(
       JSON.stringify(falError.data, null, 2),
     );
     throw falError;
+    }
   }
   const located = await generationHistoryRepository.findByProviderTaskId(
     uid,
@@ -8769,7 +8824,13 @@ async function submitSeedance2ReferenceVariant(
   }
 }
 
-export const falQueueService = {
+export const falQueueService: {
+  happyHorseT2vSubmit: (uid: string, body: any) => Promise<SubmitReturn>;
+  happyHorseI2vSubmit: (uid: string, body: any) => Promise<SubmitReturn>;
+  happyHorseReferenceT2vSubmit: (uid: string, body: any) => Promise<SubmitReturn>;
+  happyHorseEditVideoSubmit: (uid: string, body: any) => Promise<SubmitReturn>;
+  [key: string]: any;
+} = {
   veoTtvSubmit,
   veoI2vSubmit,
   klingO1FirstLastSubmit,
@@ -10142,6 +10203,225 @@ export const falQueueService = {
       duration,
       resolution,
       generate_audio_switch: Boolean(body.generate_audio_switch),
+    } as any);
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  },
+  async happyHorseT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string;
+    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+    const model = "alibaba/happy-horse/text-to-video";
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt: body.prompt,
+      model,
+      isPublic: body.isPublic,
+    });
+    let duration =
+      typeof body.duration === "number"
+        ? body.duration
+        : parseInt(String(body.duration ?? 5), 10);
+    if (!Number.isFinite(duration)) duration = 5;
+    duration = Math.min(15, Math.max(3, duration));
+    const resolution =
+      String(body.resolution || "1080p").toLowerCase() === "720p"
+        ? "720p"
+        : "1080p";
+    const aspectRatio = ["16:9", "9:16", "1:1", "4:3", "3:4"].includes(
+      String(body.aspect_ratio),
+    )
+      ? String(body.aspect_ratio)
+      : "16:9";
+    const input: any = {
+      prompt: body.prompt,
+      aspect_ratio: aspectRatio,
+      resolution,
+      duration,
+      enable_safety_checker: body.enable_safety_checker !== false,
+    };
+    if (body.seed != null && body.seed !== "") {
+      const seed = parseInt(String(body.seed), 10);
+      if (Number.isFinite(seed)) input.seed = seed;
+    }
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      duration,
+      resolution,
+      aspect_ratio: aspectRatio,
+      enable_safety_checker: body.enable_safety_checker !== false,
+      ...(input.seed != null ? { seed: input.seed } : {}),
+    } as any);
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  },
+  async happyHorseI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string;
+    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+    fal.config({ credentials: falKey });
+    if (!body?.image_url) throw new ApiError("image_url is required", 400);
+    const model = "alibaba/happy-horse/image-to-video";
+    const prompt =
+      typeof body.prompt === "string" && body.prompt.trim().length > 0
+        ? body.prompt
+        : "Bring the scene in the image to life.";
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt,
+      model,
+      isPublic: body.isPublic,
+    });
+    await persistInputImagesFromUrls(uid, historyId, [body.image_url]);
+    let duration =
+      typeof body.duration === "number"
+        ? body.duration
+        : parseInt(String(body.duration ?? 5), 10);
+    if (!Number.isFinite(duration)) duration = 5;
+    duration = Math.min(15, Math.max(3, duration));
+    const resolution =
+      String(body.resolution || "1080p").toLowerCase() === "720p"
+        ? "720p"
+        : "1080p";
+    const input: any = {
+      image_url: body.image_url,
+      prompt,
+      resolution,
+      duration,
+      enable_safety_checker: body.enable_safety_checker !== false,
+    };
+    if (body.seed != null && body.seed !== "") {
+      const seed = parseInt(String(body.seed), 10);
+      if (Number.isFinite(seed)) input.seed = seed;
+    }
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      image_url: body.image_url,
+      duration,
+      resolution,
+      enable_safety_checker: body.enable_safety_checker !== false,
+      ...(input.seed != null ? { seed: input.seed } : {}),
+    } as any);
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  },
+  async happyHorseReferenceT2vSubmit(
+    uid: string,
+    body: any,
+  ): Promise<SubmitReturn> {
+    const falKey = env.falKey as string;
+    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+    if (!Array.isArray(body?.image_urls) || body.image_urls.length === 0) {
+      throw new ApiError("image_urls is required and must be non-empty", 400);
+    }
+    const model = "alibaba/happy-horse/reference-to-video";
+    const imageUrls = body.image_urls
+      .filter((url: unknown) => typeof url === "string" && url.trim().length > 0)
+      .slice(0, 9);
+    if (imageUrls.length === 0) {
+      throw new ApiError("image_urls is required and must be non-empty", 400);
+    }
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt: body.prompt,
+      model,
+      isPublic: body.isPublic,
+    });
+    await persistInputImagesFromUrls(uid, historyId, imageUrls);
+    let duration =
+      typeof body.duration === "number"
+        ? body.duration
+        : parseInt(String(body.duration ?? 5), 10);
+    if (!Number.isFinite(duration)) duration = 5;
+    duration = Math.min(15, Math.max(3, duration));
+    const resolution =
+      String(body.resolution || "1080p").toLowerCase() === "720p"
+        ? "720p"
+        : "1080p";
+    const aspectRatio = ["16:9", "9:16", "1:1", "4:3", "3:4"].includes(
+      String(body.aspect_ratio),
+    )
+      ? String(body.aspect_ratio)
+      : "16:9";
+    const input: any = {
+      prompt: body.prompt,
+      image_urls: imageUrls,
+      aspect_ratio: aspectRatio,
+      resolution,
+      duration,
+      enable_safety_checker: body.enable_safety_checker !== false,
+    };
+    if (body.seed != null && body.seed !== "") {
+      const seed = parseInt(String(body.seed), 10);
+      if (Number.isFinite(seed)) input.seed = seed;
+    }
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      image_urls: imageUrls,
+      duration,
+      resolution,
+      aspect_ratio: aspectRatio,
+      enable_safety_checker: body.enable_safety_checker !== false,
+      ...(input.seed != null ? { seed: input.seed } : {}),
+    } as any);
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  },
+  async happyHorseEditVideoSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string;
+    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+    fal.config({ credentials: falKey });
+    if (!body?.video_url) throw new ApiError("video_url is required", 400);
+    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+    const model = "alibaba/happy-horse/video-edit";
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt: body.prompt,
+      model,
+      isPublic: body.isPublic,
+    });
+    const referenceImageUrls = Array.isArray(body.reference_image_urls)
+      ? body.reference_image_urls
+          .filter(
+            (url: unknown) => typeof url === "string" && url.trim().length > 0,
+          )
+          .slice(0, 5)
+      : [];
+    if (referenceImageUrls.length > 0) {
+      await persistInputImagesFromUrls(uid, historyId, referenceImageUrls);
+    }
+    const resolution =
+      String(body.resolution || "1080p").toLowerCase() === "720p"
+        ? "720p"
+        : "1080p";
+    const audioSetting =
+      String(body.audio_setting || "auto").toLowerCase() === "origin"
+        ? "origin"
+        : "auto";
+    const input: any = {
+      video_url: body.video_url,
+      prompt: body.prompt,
+      resolution,
+      audio_setting: audioSetting,
+      enable_safety_checker: body.enable_safety_checker !== false,
+    };
+    if (referenceImageUrls.length > 0) {
+      input.reference_image_urls = referenceImageUrls;
+    }
+    if (body.seed != null && body.seed !== "") {
+      const seed = parseInt(String(body.seed), 10);
+      if (Number.isFinite(seed)) input.seed = seed;
+    }
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      video_url: body.video_url,
+      reference_image_urls: referenceImageUrls,
+      resolution,
+      audio_setting: audioSetting,
+      enable_safety_checker: body.enable_safety_checker !== false,
+      ...(input.seed != null ? { seed: input.seed } : {}),
     } as any);
     return { requestId: request_id, historyId, model, status: "submitted" };
   },

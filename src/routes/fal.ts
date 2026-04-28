@@ -49,6 +49,10 @@ import {
   computeFalQwenMultipleAnglesCost,
   computeFalPixverseV6T2vSubmitCost,
   computeFalPixverseV6I2vSubmitCost,
+  computeFalHappyHorseT2vSubmitCost,
+  computeFalHappyHorseI2vSubmitCost,
+  computeFalHappyHorseReferenceSubmitCost,
+  computeFalHappyHorseEditVideoSubmitCost,
 } from "../utils/pricing/falPricing";
 import {
   validateFalGenerate,
@@ -106,6 +110,10 @@ import {
   validateFalQwenMultipleAngles,
   validateFalPixverseV6T2v,
   validateFalPixverseV6I2v,
+  validateFalHappyHorseT2v,
+  validateFalHappyHorseI2v,
+  validateFalHappyHorseReferenceT2v,
+  validateFalHappyHorseEditVideo,
 } from "../middlewares/validators/fal/validateFalGenerate";
 import { validateStorage } from "../middlewares/validators/validateStorageMiddleware";
 
@@ -658,6 +666,46 @@ router.post(
   ) as any,
   validateStorage("video") as any,
   (falController as any).pixverseV6I2vSubmit,
+);
+
+router.post(
+  "/happy-horse/text-to-video/submit",
+  requireAuth as any,
+  validateFalHappyHorseT2v as any,
+  makeCreditCost("fal", "happy_horse_t2v_submit", (req) =>
+    computeFalHappyHorseT2vSubmitCost(req),
+  ) as any,
+  (falController as any).happyHorseT2vSubmit,
+);
+
+router.post(
+  "/happy-horse/image-to-video/submit",
+  requireAuth as any,
+  validateFalHappyHorseI2v as any,
+  makeCreditCost("fal", "happy_horse_i2v_submit", (req) =>
+    computeFalHappyHorseI2vSubmitCost(req),
+  ) as any,
+  (falController as any).happyHorseI2vSubmit,
+);
+
+router.post(
+  "/happy-horse/reference-to-video/submit",
+  requireAuth as any,
+  validateFalHappyHorseReferenceT2v as any,
+  makeCreditCost("fal", "happy_horse_r2v_submit", (req) =>
+    computeFalHappyHorseReferenceSubmitCost(req),
+  ) as any,
+  (falController as any).happyHorseReferenceT2vSubmit,
+);
+
+router.post(
+  "/happy-horse/edit-video/submit",
+  requireAuth as any,
+  validateFalHappyHorseEditVideo as any,
+  makeCreditCost("fal", "happy_horse_edit_video_submit", (req) =>
+    computeFalHappyHorseEditVideoSubmitCost(req),
+  ) as any,
+  (falController as any).happyHorseEditVideoSubmit,
 );
 
 // Sora 2 Text-to-Video (Pro)
