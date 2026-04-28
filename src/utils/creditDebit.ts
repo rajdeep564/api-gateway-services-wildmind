@@ -37,7 +37,15 @@ export async function postSuccessDebit(
       provider,
       pricingVersion: ctx.pricingVersion,
     };
-    const outcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, cost, reason, meta);
+    const modelName = (result && (result as any).model) || (ctx.meta && (ctx.meta as any).model) || undefined;
+    const usage = result && (result as any).usage;
+    const params = usage ? {
+      inputTokens: usage.input_tokens || usage.prompt_tokens,
+      outputTokens: usage.output_tokens || usage.completion_tokens,
+      cachedTokens: usage.cached_tokens || (usage.input_token_details && usage.input_token_details.cached_tokens),
+    } : undefined;
+
+    const outcome = await creditsRepository.writeDebitIfAbsent(uid, requestId, cost, reason, meta, modelName, params);
     logger.info({ uid, requestId, cost, reason, outcome }, '[CREDITS] postSuccessDebit');
     return outcome;
   } catch (e) {

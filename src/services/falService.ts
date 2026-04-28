@@ -10,6 +10,7 @@ import { generationsMirrorRepository } from "../repository/generationsMirrorRepo
 import { authRepository } from "../repository/auth/authRepository";
 import {
   GenerationHistoryItem,
+  GenerationStatus,
   GenerationType,
   VideoMedia,
 } from "../types/generate";
@@ -262,10 +263,12 @@ async function generate(
   const imagesRequested =
     Number.isFinite(num_images) && (num_images as number) > 0
       ? (num_images as number)
-      : Number.isFinite(n) && (n as number) > 0
-        ? (n as number)
-        : 1;
-  const imagesRequestedClamped = Math.max(1, Math.min(10, imagesRequested));
+      : Number.isFinite((payload as any).number_of_images) && (payload as any).number_of_images > 0
+        ? (payload as any).number_of_images
+        : Number.isFinite(n) && (n as number) > 0
+          ? (n as number)
+          : 1;
+  const imagesRequestedClamped = Math.max(1, Math.min(15, imagesRequested));
   const resolvedAspect = (aspect_ratio || frameSize || "1:1") as any;
 
   // Declare modelLower early so it can be used for Flux 2 Pro image resizing check
@@ -409,10 +412,11 @@ async function generate(
     modelLower.includes("google/nano-banana-2") ||
     modelLower.includes("nano-banana-2") ||
     modelLower.includes("nano banana 2");
+  const isGptImage2 = modelLower.includes("gpt-image-2");
 
   // For nano-banana-pro and nano-banana-2, also check image_urls from payload
   const payloadImageUrls =
-    (isNanoBananaPro || isNanoBanana2) &&
+    (isNanoBananaPro || isNanoBanana2 || isGptImage2) &&
     Array.isArray((payload as any).image_urls)
       ? (payload as any).image_urls
       : [];
@@ -736,6 +740,14 @@ async function generate(
     modelEndpoint = hasImages
       ? "fal-ai/nano-banana-2/edit"
       : "fal-ai/nano-banana-2";
+  } else if (modelLower.includes("gpt-image-2")) {
+    const hasImages =
+      (Array.isArray(uploadedImages) && uploadedImages.length > 0) ||
+      (Array.isArray((payload as any).image_urls) &&
+        (payload as any).image_urls.length > 0);
+    modelEndpoint = hasImages
+      ? "openai/gpt-image-2/edit"
+      : "openai/gpt-image-2";
   } else if (isFlux2Pro) {
     // Flux 2 Pro: use /edit endpoint when images are uploaded, otherwise use text-to-image endpoint
     const hasImages =
@@ -1837,6 +1849,136 @@ async function generate(
       } catch (mirrorErr) {
         console.error(
           "[falService.generate][flux-pro] Failed to mirror error state:",
+          mirrorErr,
+        );
+      }
+      throw falError;
+    }
+  }
+
+  // >>> GPT IMAGE 2 HANDLER <<<
+  if (modelLower.includes("gpt-image-2")) {
+    console.log(`[falService] 🚀 Handling GPT Image 2 request: ${modelEndpoint}`);
+
+    const inputBody: any = {
+      prompt: finalPrompt,
+      num_images: imagesRequestedClamped,
+      output_format: (payload as any).output_format || "png",
+      quality: (payload as any).quality || "auto",
+    };
+
+    // Handle image_size (Preset Enum or {width, height})
+    if ((payload as any).image_size) {
+      inputBody.image_size = (payload as any).image_size;
+    } else if ((payload as any).aspect_ratio) {
+      // Map aspect_ratio to image_size for backward compatibility
+      const ar = (payload as any).aspect_ratio;
+      const arMap: Record<string, string> = {
+        "1:1": "square_hd",
+        "4:3": "landscape_4_3",
+        "16:9": "landscape_16_9",
+        "3:4": "portrait_4_3",
+        "9:16": "portrait_16_9",
+      };
+      if (arMap[ar]) {
+        inputBody.image_size = arMap[ar];
+      }
+    } else {
+      // Default mapping if not provided
+      const aspectMap: Record<string, string> = {
+        "1:1": "square_hd",
+        "4:3": "landscape_4_3",
+        "3:4": "portrait_4_3",
+        "16:9": "landscape_16_9",
+        "9:16": "portrait_16_9",
+        square_hd: "square_hd",
+      };
+      inputBody.image_size = aspectMap[resolvedAspect] || "landscape_4_3";
+    }
+
+    // Handle Edit Mode (I2I)
+    if (modelEndpoint.includes("/edit")) {
+      // Use processed public image URLs (including those from payload)
+      inputBody.image_urls = publicImageUrls;
+
+      // Handle mask_url if provided - ensure it's a public URL
+      let maskUrl = (payload as any).mask_url;
+      if (maskUrl && typeof maskUrl === "string") {
+        if (/^data:/i.test(maskUrl) || maskUrl.startsWith("blob:")) {
+          try {
+            const storedMask = await uploadDataUriToZata({
+              dataUri: maskUrl,
+              keyPrefix: `users/${uid}/generations/${historyId}`,
+              fileName: "mask",
+            });
+            maskUrl = storedMask.publicUrl;
+          } catch (e) {
+            console.error("[falService] Failed to upload mask_url:", e);
+          }
+        }
+        inputBody.mask_url = maskUrl;
+      }
+    }
+
+    try {
+      const response = await fal.subscribe(modelEndpoint as any, {
+        input: inputBody,
+        logs: true,
+        onQueueUpdate: (update) => {
+          console.log(`[falService] GPT Image 2 queue update: ${update.status}`);
+        },
+      });
+
+      const data = response.data as any;
+      const validImages: any[] = [];
+
+      if (data.images && Array.isArray(data.images)) {
+        for (let i = 0; i < data.images.length; i++) {
+          const img = data.images[i];
+          const fileName = buildGenerationImageFileName(historyId, i);
+          const zataUrl = await uploadFromUrlToZata({
+            sourceUrl: img.url,
+            keyPrefix: `users/${uid}/generations/${historyId}`,
+            fileName,
+          });
+          validImages.push({
+            id: `img-${historyId}-${i}`,
+            url: zataUrl.publicUrl,
+            originalUrl: img.url,
+            storagePath: zataUrl.key,
+          });
+        }
+      }
+
+      await generationHistoryRepository
+        .update(uid, historyId, {
+          status: GenerationStatus.Completed,
+          images: validImages,
+          isPublic: (payload as any).isPublic === true,
+        } as any)
+        .catch(console.error);
+
+      return {
+        images: validImages,
+        historyId,
+        model: modelEndpoint,
+        status: GenerationStatus.Completed,
+        usage: data.usage,
+      } as any;
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: "Failed to generate image with GPT Image 2",
+        context: "falService.generate.gptImage2",
+      });
+      try {
+        await generationHistoryRepository.update(uid, historyId, {
+          status: GenerationStatus.Failed,
+          error: falError.message,
+          falError: falError.data,
+        } as any);
+      } catch (mirrorErr) {
+        console.error(
+          "[falService.generate][gpt-image-2] Failed to mirror error state:",
           mirrorErr,
         );
       }

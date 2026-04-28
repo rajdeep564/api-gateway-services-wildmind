@@ -51,6 +51,7 @@ export const ALLOWED_FAL_MODELS = [
   "qwen-image-edit-2511-multiple-angles",
   "qwen-multiple-angles",
   "qwen-image-edit-multiple-angles",
+  "openai/gpt-image-2",
 ];
 
 export const validateFalGenerate = [

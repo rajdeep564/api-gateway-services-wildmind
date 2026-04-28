@@ -402,6 +402,9 @@ export async function computeFalImageCost(req: Request): Promise<{
     } else {
       display = "Nano banana Pro 2K"; // Default shared tier for 1K/2K
     }
+  } else if (m.includes("gpt-image-2")) {
+    const quality = (body?.quality || "auto").toLowerCase();
+    display = `gpt-image-2 ${quality}`;
   } else {
     // Map Gemini image to our Google rows (choose I2I when uploadedImages provided)
     display = hasUploadedImages
