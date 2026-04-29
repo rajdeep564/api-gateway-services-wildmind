@@ -4,20 +4,39 @@ on:
   push:
     branches:
       - staging
+      - main
 
 env:
   ECR_REGISTRY: 213128717650.dkr.ecr.ap-south-1.amazonaws.com
   ECR_REPOSITORY: api-gateway
-  IMAGE_TAG: staging
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    environment: staging
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve tags and target
+        id: vars
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "sha_tag=sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+            echo "channel_tag=prod" >> "$GITHUB_OUTPUT"
+            echo "deploy_host=${{ secrets.LIGHTSAIL_PROD_HOST }}" >> "$GITHUB_OUTPUT"
+            echo "deploy_user=${{ secrets.LIGHTSAIL_PROD_USER }}" >> "$GITHUB_OUTPUT"
+            echo "deploy_key=LIGHTSAIL_PROD_SSH_KEY" >> "$GITHUB_OUTPUT"
+            echo "deploy_dir=~/wildmind/api-gateway-services-wildmind/deployment" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel_tag=staging" >> "$GITHUB_OUTPUT"
+            echo "deploy_host=${{ secrets.LIGHTSAIL_HOST }}" >> "$GITHUB_OUTPUT"
+            echo "deploy_user=${{ secrets.LIGHTSAIL_USER }}" >> "$GITHUB_OUTPUT"
+            echo "deploy_key=LIGHTSAIL_SSH_KEY" >> "$GITHUB_OUTPUT"
+            echo "deploy_dir=~/wildmind-staging/api-gateway-services-wildmind/deployment" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -27,14 +46,17 @@ jobs:
           aws-region: ap-south-1
 
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & Push to ECR
+      - name: Build image and tag
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "✅ Pushed $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ steps.vars.outputs.sha_tag }} .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:${{ steps.vars.outputs.sha_tag }} $ECR_REGISTRY/$ECR_REPOSITORY:${{ steps.vars.outputs.channel_tag }}
+
+      - name: Push both tags
+        run: |
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ steps.vars.outputs.sha_tag }}
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ steps.vars.outputs.channel_tag }}
 
       - name: SSH Deploy — API Gateway
         uses: appleboy/ssh-action@v1.0.3
@@ -42,14 +64,14 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         with:
-          host: ${{ secrets.LIGHTSAIL_HOST }}
-          username: ${{ secrets.LIGHTSAIL_USER }}
-          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          host: ${{ steps.vars.outputs.deploy_host }}
+          username: ${{ steps.vars.outputs.deploy_user }}
+          key: ${{ steps.vars.outputs.deploy_key == 'LIGHTSAIL_PROD_SSH_KEY' && secrets.LIGHTSAIL_PROD_SSH_KEY || secrets.LIGHTSAIL_SSH_KEY }}
           port: 22
           envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY
           script: |
             export AWS_DEFAULT_REGION=ap-south-1
-            cd ~/wildmind-staging/api-gateway-services-wildmind/deployment
+            cd ${{ steps.vars.outputs.deploy_dir }}
             chmod +x deploy.sh
             ./deploy.sh api-gateway
 
@@ -59,12 +81,12 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         with:
-          host: ${{ secrets.LIGHTSAIL_HOST }}
-          username: ${{ secrets.LIGHTSAIL_USER }}
-          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          host: ${{ steps.vars.outputs.deploy_host }}
+          username: ${{ steps.vars.outputs.deploy_user }}
+          key: ${{ steps.vars.outputs.deploy_key == 'LIGHTSAIL_PROD_SSH_KEY' && secrets.LIGHTSAIL_PROD_SSH_KEY || secrets.LIGHTSAIL_SSH_KEY }}
           port: 22
           envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY
           script: |
             export AWS_DEFAULT_REGION=ap-south-1
-            cd ~/wildmind-staging/api-gateway-services-wildmind/deployment
+            cd ${{ steps.vars.outputs.deploy_dir }}
             ./deploy.sh mirror-worker
