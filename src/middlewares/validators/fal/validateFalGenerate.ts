@@ -6,6 +6,7 @@ import { probeImageMeta } from "../../../utils/media/imageProbe";
 import { uploadDataUriToZata } from "../../../utils/storage/zataUpload";
 
 export const ALLOWED_FAL_MODELS = [
+  "openai/gpt-image-2",
   "gemini-25-flash-image",
   "seedream-v4",
   "seedream-4.5",
@@ -50,6 +51,7 @@ export const ALLOWED_FAL_MODELS = [
   "qwen-image-edit-2511-multiple-angles",
   "qwen-multiple-angles",
   "qwen-image-edit-multiple-angles",
+  "openai/gpt-image-2",
 ];
 
 export const validateFalGenerate = [
@@ -2471,6 +2473,162 @@ export const validateFalPixverseV6I2v = [
     .optional({ nullable: true, checkFalsy: false })
     .isIn(["enabled", "disabled", "auto"]),
   body("api_key").optional({ nullable: true, checkFalsy: false }).isString(),
+  body("originalPrompt")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString(),
+  body("isPublic").optional({ nullable: true, checkFalsy: false }).isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return next(new ApiError("Validation failed", 400, errors.array()));
+    }
+    next();
+  },
+];
+
+export const validateFalHappyHorseT2v = [
+  body("prompt").isString().notEmpty().withMessage("prompt is required"),
+  body("aspect_ratio")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["16:9", "9:16", "1:1", "4:3", "3:4"])
+    .withMessage("aspect_ratio must be one of 16:9, 9:16, 1:1, 4:3, 3:4"),
+  body("resolution")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["720p", "1080p"])
+    .withMessage("resolution must be 720p or 1080p"),
+  body("duration")
+    .optional({ nullable: true, checkFalsy: false })
+    .isInt({ min: 3, max: 15 })
+    .withMessage("duration must be an integer between 3 and 15"),
+  body("seed")
+    .optional({ nullable: true, checkFalsy: false })
+    .isInt({ min: 0, max: 2147483647 })
+    .withMessage("seed must be an integer between 0 and 2147483647"),
+  body("enable_safety_checker")
+    .optional({ nullable: true, checkFalsy: false })
+    .isBoolean()
+    .withMessage("enable_safety_checker must be a boolean"),
+  body("originalPrompt")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString(),
+  body("isPublic").optional({ nullable: true, checkFalsy: false }).isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return next(new ApiError("Validation failed", 400, errors.array()));
+    }
+    next();
+  },
+];
+
+export const validateFalHappyHorseI2v = [
+  body("image_url").isString().notEmpty().withMessage("image_url is required"),
+  body("prompt")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString()
+    .isLength({ max: 2500 })
+    .withMessage("prompt must be <= 2500 characters"),
+  body("resolution")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["720p", "1080p"])
+    .withMessage("resolution must be 720p or 1080p"),
+  body("duration")
+    .optional({ nullable: true, checkFalsy: false })
+    .isInt({ min: 3, max: 15 })
+    .withMessage("duration must be an integer between 3 and 15"),
+  body("seed")
+    .optional({ nullable: true, checkFalsy: false })
+    .isInt({ min: 0, max: 2147483647 })
+    .withMessage("seed must be an integer between 0 and 2147483647"),
+  body("enable_safety_checker")
+    .optional({ nullable: true, checkFalsy: false })
+    .isBoolean()
+    .withMessage("enable_safety_checker must be a boolean"),
+  body("originalPrompt")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString(),
+  body("isPublic").optional({ nullable: true, checkFalsy: false }).isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return next(new ApiError("Validation failed", 400, errors.array()));
+    }
+    next();
+  },
+];
+
+export const validateFalHappyHorseReferenceT2v = [
+  body("prompt").isString().notEmpty().withMessage("prompt is required"),
+  body("image_urls")
+    .isArray({ min: 1, max: 9 })
+    .withMessage("image_urls must contain 1 to 9 image URLs"),
+  body("image_urls.*")
+    .isString()
+    .notEmpty()
+    .withMessage("each image_urls entry must be a non-empty string"),
+  body("aspect_ratio")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["16:9", "9:16", "1:1", "4:3", "3:4"])
+    .withMessage("aspect_ratio must be one of 16:9, 9:16, 1:1, 4:3, 3:4"),
+  body("resolution")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["720p", "1080p"])
+    .withMessage("resolution must be 720p or 1080p"),
+  body("duration")
+    .optional({ nullable: true, checkFalsy: false })
+    .isInt({ min: 3, max: 15 })
+    .withMessage("duration must be an integer between 3 and 15"),
+  body("seed")
+    .optional({ nullable: true, checkFalsy: false })
+    .isInt({ min: 0, max: 2147483647 })
+    .withMessage("seed must be an integer between 0 and 2147483647"),
+  body("enable_safety_checker")
+    .optional({ nullable: true, checkFalsy: false })
+    .isBoolean()
+    .withMessage("enable_safety_checker must be a boolean"),
+  body("originalPrompt")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString(),
+  body("isPublic").optional({ nullable: true, checkFalsy: false }).isBoolean(),
+  (req: Request, _res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return next(new ApiError("Validation failed", 400, errors.array()));
+    }
+    next();
+  },
+];
+
+export const validateFalHappyHorseEditVideo = [
+  body("video_url").isString().notEmpty().withMessage("video_url is required"),
+  body("prompt").isString().notEmpty().withMessage("prompt is required"),
+  body("reference_image_urls")
+    .optional({ nullable: true, checkFalsy: false })
+    .isArray({ max: 5 })
+    .withMessage("reference_image_urls must be an array with max 5 items"),
+  body("reference_image_urls.*")
+    .optional({ nullable: true, checkFalsy: false })
+    .isString()
+    .notEmpty()
+    .withMessage(
+      "each reference_image_urls entry must be a non-empty string URL",
+    ),
+  body("resolution")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["720p", "1080p"])
+    .withMessage("resolution must be 720p or 1080p"),
+  body("audio_setting")
+    .optional({ nullable: true, checkFalsy: false })
+    .isIn(["auto", "origin"])
+    .withMessage("audio_setting must be auto or origin"),
+  body("seed")
+    .optional({ nullable: true, checkFalsy: false })
+    .isInt({ min: 0, max: 2147483647 })
+    .withMessage("seed must be an integer between 0 and 2147483647"),
+  body("enable_safety_checker")
+    .optional({ nullable: true, checkFalsy: false })
+    .isBoolean()
+    .withMessage("enable_safety_checker must be a boolean"),
   body("originalPrompt")
     .optional({ nullable: true, checkFalsy: false })
     .isString(),

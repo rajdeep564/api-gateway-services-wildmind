@@ -59,15 +59,26 @@ export function makeCreditCost(provider: string, operation: string, computeCost:
         return next();
       }
       
-      const creditBalance = await creditsRepository.readUserCredits(billingUid);
-      if (creditBalance < cost) {
-        return res.status(402).json({
+      // Centralized validation (credits + special bypass logic + optional storage)
+      const modelName = (req.body as any)?.model || meta?.model || operation;
+      const quantity = meta?.n || (req.body as any)?.num_images || (req.body as any)?.n || 1;
+      
+      const validation = await creditsService.validateBeforeGeneration(
+        billingUid,
+        cost,
+        0, // Passing 0 because storage is checked by a separate middleware
+        modelName,
+        quantity
+      );
+
+      if (!validation.valid) {
+        return res.status(validation.code === 'STORAGE_QUOTA_EXCEEDED' ? 507 : 402).json({
           responseStatus: 'error',
-          message: 'Credits are not available, please recharge.',
+          message: validation.reason || 'Payment Required',
           data: {
             requiredCredits: cost,
-            currentBalance: creditBalance,
-            suggestion: 'Please recharge your credits to continue.',
+            code: validation.code,
+            suggestion: 'Buy plan or reduce n/size',
           },
         });
       }

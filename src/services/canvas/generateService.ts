@@ -179,6 +179,9 @@ export function mapModelToBackend(frontendModel: string): { service: 'bfl' | 're
   if (modelLower.includes('chatgpt 1.5') || modelLower.includes('chat-gpt-1.5') || modelLower === 'openai/gpt-image-1.5') {
     return { service: 'replicate', backendModel: 'openai/gpt-image-1.5' };
   }
+  if (modelLower.includes('chatgpt 2') || modelLower.includes('chat-gpt-2') || modelLower.includes('gpt image 2') || modelLower === 'openai/gpt-image-2') {
+    return { service: 'fal', backendModel: 'openai/gpt-image-2' };
+  }
 
   // Explicit mapping for Flux 2 Pro to FAL as requested by user
   if (modelLower.includes('flux 2 pro') || modelLower.includes('flux-2-pro')) {
@@ -261,7 +264,8 @@ export async function generateForCanvas(
   });
 
   const imageCount = request.imageCount || 1;
-  const clampedImageCount = Math.max(1, Math.min(4, imageCount)); // Limit to 1-4 images
+  const maxImageCount = backendModel === 'openai/gpt-image-2' ? 10 : 4;
+  const clampedImageCount = Math.max(1, Math.min(maxImageCount, imageCount));
 
   let imageUrl: string;
   let imageStoragePath: string | undefined;
@@ -410,19 +414,20 @@ export async function generateForCanvas(
         ...(request.options || {}),
       };
 
-      // Enforce 90% compression for ChatGPT 1.5 as per user requirement
-      if (backendModel === 'openai/gpt-image-1.5') {
+      // Enforce default compression for GPT Image models
+      if (backendModel === 'openai/gpt-image-1.5' || backendModel === 'openai/gpt-image-2') {
         replicatePayload.output_compression = 90;
-        console.log('[generateForCanvas] Enforcing 90% compression for ChatGPT 1.5');
+        console.log('[generateForCanvas] Enforcing 90% compression for GPT Image model');
       }
 
-      // Add num_images for models that support multiple images (z-image-turbo, p-image, gpt-image-1.5, qwen)
+      // Add num_images for models that support multiple images (z-image-turbo, p-image, GPT Image models, qwen)
       const isZTurbo = backendModel === 'z-image-turbo' || backendModel === 'new-turbo-model';
       const isPImage = backendModel === 'prunaai/p-image' || backendModel === 'p-image';
       const isGptImage15 = backendModel === 'openai/gpt-image-1.5';
+      const isGptImage2 = backendModel === 'openai/gpt-image-2';
       const isQwen = backendModel.startsWith('qwen/');
 
-      if ((isZTurbo || isPImage || isGptImage15 || isQwen) && clampedImageCount > 1) {
+      if ((isZTurbo || isPImage || isGptImage15 || isGptImage2 || isQwen) && clampedImageCount > 1) {
         (replicatePayload as any).__num_images = clampedImageCount;
       }
 

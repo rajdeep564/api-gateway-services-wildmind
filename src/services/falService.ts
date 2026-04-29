@@ -10,6 +10,7 @@ import { generationsMirrorRepository } from "../repository/generationsMirrorRepo
 import { authRepository } from "../repository/auth/authRepository";
 import {
   GenerationHistoryItem,
+  GenerationStatus,
   GenerationType,
   VideoMedia,
 } from "../types/generate";
@@ -262,10 +263,12 @@ async function generate(
   const imagesRequested =
     Number.isFinite(num_images) && (num_images as number) > 0
       ? (num_images as number)
-      : Number.isFinite(n) && (n as number) > 0
-        ? (n as number)
-        : 1;
-  const imagesRequestedClamped = Math.max(1, Math.min(10, imagesRequested));
+      : Number.isFinite((payload as any).number_of_images) && (payload as any).number_of_images > 0
+        ? (payload as any).number_of_images
+        : Number.isFinite(n) && (n as number) > 0
+          ? (n as number)
+          : 1;
+  const imagesRequestedClamped = Math.max(1, Math.min(15, imagesRequested));
   const resolvedAspect = (aspect_ratio || frameSize || "1:1") as any;
 
   // Declare modelLower early so it can be used for Flux 2 Pro image resizing check
@@ -339,6 +342,7 @@ async function generate(
             height: 1024,
             quality: "high",
           }),
+      model,
     );
 
     if (!validation.valid) {
@@ -408,10 +412,11 @@ async function generate(
     modelLower.includes("google/nano-banana-2") ||
     modelLower.includes("nano-banana-2") ||
     modelLower.includes("nano banana 2");
+  const isGptImage2 = modelLower.includes("gpt-image-2");
 
   // For nano-banana-pro and nano-banana-2, also check image_urls from payload
   const payloadImageUrls =
-    (isNanoBananaPro || isNanoBanana2) &&
+    (isNanoBananaPro || isNanoBanana2 || isGptImage2) &&
     Array.isArray((payload as any).image_urls)
       ? (payload as any).image_urls
       : [];
@@ -735,6 +740,14 @@ async function generate(
     modelEndpoint = hasImages
       ? "fal-ai/nano-banana-2/edit"
       : "fal-ai/nano-banana-2";
+  } else if (modelLower.includes("gpt-image-2")) {
+    const hasImages =
+      (Array.isArray(uploadedImages) && uploadedImages.length > 0) ||
+      (Array.isArray((payload as any).image_urls) &&
+        (payload as any).image_urls.length > 0);
+    modelEndpoint = hasImages
+      ? "openai/gpt-image-2/edit"
+      : "openai/gpt-image-2";
   } else if (isFlux2Pro) {
     // Flux 2 Pro: use /edit endpoint when images are uploaded, otherwise use text-to-image endpoint
     const hasImages =
@@ -772,6 +785,17 @@ async function generate(
   } else if (modelLower.includes("seedream")) {
     // Seedream v4 text-to-image on FAL
     modelEndpoint = "fal-ai/bytedance/seedream/v4/text-to-image";
+  } else if (
+    modelLower.includes("openai/gpt-image-2") ||
+    modelLower.includes("gpt-image-2")
+  ) {
+    const hasImages =
+      (Array.isArray(uploadedImages) && uploadedImages.length > 0) ||
+      (Array.isArray((payload as any).image_urls) &&
+        (payload as any).image_urls.length > 0);
+    modelEndpoint = hasImages
+      ? "openai/gpt-image-2/edit"
+      : "fal-ai/gpt-image-2";
   } else {
     // Default to Google Nano Banana (Gemini)
     modelEndpoint =
@@ -1832,6 +1856,136 @@ async function generate(
     }
   }
 
+  // >>> GPT IMAGE 2 HANDLER <<<
+  if (modelLower.includes("gpt-image-2")) {
+    console.log(`[falService] 🚀 Handling GPT Image 2 request: ${modelEndpoint}`);
+
+    const inputBody: any = {
+      prompt: finalPrompt,
+      num_images: imagesRequestedClamped,
+      output_format: (payload as any).output_format || "png",
+      quality: (payload as any).quality || "auto",
+    };
+
+    // Handle image_size (Preset Enum or {width, height})
+    if ((payload as any).image_size) {
+      inputBody.image_size = (payload as any).image_size;
+    } else if ((payload as any).aspect_ratio) {
+      // Map aspect_ratio to image_size for backward compatibility
+      const ar = (payload as any).aspect_ratio;
+      const arMap: Record<string, string> = {
+        "1:1": "square_hd",
+        "4:3": "landscape_4_3",
+        "16:9": "landscape_16_9",
+        "3:4": "portrait_4_3",
+        "9:16": "portrait_16_9",
+      };
+      if (arMap[ar]) {
+        inputBody.image_size = arMap[ar];
+      }
+    } else {
+      // Default mapping if not provided
+      const aspectMap: Record<string, string> = {
+        "1:1": "square_hd",
+        "4:3": "landscape_4_3",
+        "3:4": "portrait_4_3",
+        "16:9": "landscape_16_9",
+        "9:16": "portrait_16_9",
+        square_hd: "square_hd",
+      };
+      inputBody.image_size = aspectMap[resolvedAspect] || "landscape_4_3";
+    }
+
+    // Handle Edit Mode (I2I)
+    if (modelEndpoint.includes("/edit")) {
+      // Use processed public image URLs (including those from payload)
+      inputBody.image_urls = publicImageUrls;
+
+      // Handle mask_url if provided - ensure it's a public URL
+      let maskUrl = (payload as any).mask_url;
+      if (maskUrl && typeof maskUrl === "string") {
+        if (/^data:/i.test(maskUrl) || maskUrl.startsWith("blob:")) {
+          try {
+            const storedMask = await uploadDataUriToZata({
+              dataUri: maskUrl,
+              keyPrefix: `users/${uid}/generations/${historyId}`,
+              fileName: "mask",
+            });
+            maskUrl = storedMask.publicUrl;
+          } catch (e) {
+            console.error("[falService] Failed to upload mask_url:", e);
+          }
+        }
+        inputBody.mask_url = maskUrl;
+      }
+    }
+
+    try {
+      const response = await fal.subscribe(modelEndpoint as any, {
+        input: inputBody,
+        logs: true,
+        onQueueUpdate: (update) => {
+          console.log(`[falService] GPT Image 2 queue update: ${update.status}`);
+        },
+      });
+
+      const data = response.data as any;
+      const validImages: any[] = [];
+
+      if (data.images && Array.isArray(data.images)) {
+        for (let i = 0; i < data.images.length; i++) {
+          const img = data.images[i];
+          const fileName = buildGenerationImageFileName(historyId, i);
+          const zataUrl = await uploadFromUrlToZata({
+            sourceUrl: img.url,
+            keyPrefix: `users/${uid}/generations/${historyId}`,
+            fileName,
+          });
+          validImages.push({
+            id: `img-${historyId}-${i}`,
+            url: zataUrl.publicUrl,
+            originalUrl: img.url,
+            storagePath: zataUrl.key,
+          });
+        }
+      }
+
+      await generationHistoryRepository
+        .update(uid, historyId, {
+          status: GenerationStatus.Completed,
+          images: validImages,
+          isPublic: (payload as any).isPublic === true,
+        } as any)
+        .catch(console.error);
+
+      return {
+        images: validImages,
+        historyId,
+        model: modelEndpoint,
+        status: GenerationStatus.Completed,
+        usage: data.usage,
+      } as any;
+    } catch (err: any) {
+      const falError = buildFalApiError(err, {
+        fallbackMessage: "Failed to generate image with GPT Image 2",
+        context: "falService.generate.gptImage2",
+      });
+      try {
+        await generationHistoryRepository.update(uid, historyId, {
+          status: GenerationStatus.Failed,
+          error: falError.message,
+          falError: falError.data,
+        } as any);
+      } catch (mirrorErr) {
+        console.error(
+          "[falService.generate][gpt-image-2] Failed to mirror error state:",
+          mirrorErr,
+        );
+      }
+      throw falError;
+    }
+  }
+
   // >>> FLUX PRO HANDLER (v1.1 Ultra, v1.1, and Flux 2 Pro) <<<
   // Update: Exclude 'flux-2-pro' so it falls through to the specific handler below (which handles parallel requests)
   if (modelLower.includes("flux-pro") && !modelLower.includes("flux-2-pro")) {
@@ -2613,6 +2767,79 @@ async function generate(
                 "9:16": "portrait_16_9",
               };
               input.image_size = map[String(resolvedAspect)] || "square";
+            }
+          }
+        } else if (
+          modelEndpoint.includes("gpt-image-2") &&
+          !modelEndpoint.includes("gemini-25-flash-image")
+        ) {
+          if (finalPrompt) input.prompt = finalPrompt;
+
+          const rawQuality =
+            (payload as any).quality != null
+              ? String((payload as any).quality).toLowerCase().trim()
+              : "low";
+          input.quality =
+            rawQuality === "low" || rawQuality === "medium" || rawQuality === "high"
+              ? rawQuality
+              : "low";
+
+          const numImg =
+            (payload as any).num_images ||
+            (payload as any).number_of_images ||
+            (payload as any).n ||
+            1;
+          input.num_images = Math.max(1, Math.min(10, Number(numImg)));
+
+          let fmt =
+            (payload as any).output_format != null &&
+            String((payload as any).output_format).trim() !== ""
+              ? String((payload as any).output_format).toLowerCase().trim()
+              : output_format;
+          if (fmt === "jpg") fmt = "jpeg";
+          if (!["jpeg", "png", "webp"].includes(fmt)) fmt = "jpeg";
+          input.output_format = fmt;
+
+          const explicitSize = (payload as any).image_size;
+          if (explicitSize && typeof explicitSize === "object") {
+            input.image_size = {
+              width: Number((explicitSize as any).width),
+              height: Number((explicitSize as any).height),
+            };
+          } else if (
+            typeof explicitSize === "string" &&
+            explicitSize.trim().length > 0
+          ) {
+            input.image_size = explicitSize;
+          } else {
+            const map: Record<string, string> = {
+              "1:1": "square",
+              "4:3": "landscape_4_3",
+              "3:4": "portrait_4_3",
+              "16:9": "landscape_16_9",
+              "9:16": "portrait_16_9",
+            };
+            input.image_size = map[String(resolvedAspect)] || "landscape_4_3";
+          }
+
+          if (modelEndpoint.includes("/edit")) {
+            const refs =
+              publicImageUrls.length > 0
+                ? publicImageUrls
+                : Array.isArray((payload as any).image_urls)
+                  ? (payload as any).image_urls.filter((url: unknown) =>
+                      isPublicHttpUrl(url),
+                    )
+                  : [];
+            if (!refs.length) {
+              throw new ApiError(
+                "Image-to-image mode requires at least one input image",
+                400,
+              );
+            }
+            input.image_urls = refs.slice(-16);
+            if (typeof (payload as any).mask_image_url === "string") {
+              input.mask_image_url = (payload as any).mask_image_url;
             }
           }
         } else if (modelEndpoint.includes("gemini-25-flash-image")) {
@@ -7160,6 +7387,14 @@ async function queueStatus(
     );
   }
 
+  const normalizeHappyHorseEditModelForFal = (value: string): string => {
+    const normalized = String(value).trim().toLowerCase();
+    if (normalized === "alibaba/happy-horse/edit-video") {
+      return "alibaba/happy-horse/video-edit";
+    }
+    return value;
+  };
+
   const normalizeQueueStatusValue = (value: unknown): string =>
     String(value || "")
       .trim()
@@ -7259,10 +7494,13 @@ async function queueStatus(
 
   let status: any;
   try {
-    status = await fal.queue.status(resolvedModel, {
+    status = await fal.queue.status(
+      normalizeHappyHorseEditModelForFal(resolvedModel),
+      {
       requestId,
       logs: true,
-    } as any);
+      } as any,
+    );
   } catch (falErr: any) {
     const falError = buildFalApiError(falErr, {
       fallbackMessage: "Failed to fetch FAL queue status",
@@ -7441,6 +7679,22 @@ async function queueResult(
     );
   }
 
+  const isHappyHorseEditModel = (value: string | undefined): boolean => {
+    const normalized = String(value || "").trim().toLowerCase();
+    return (
+      normalized === "alibaba/happy-horse/edit-video" ||
+      normalized === "alibaba/happy-horse/video-edit"
+    );
+  };
+
+  const normalizeHappyHorseEditModelForFal = (value: string): string => {
+    const normalized = String(value).trim().toLowerCase();
+    if (normalized === "alibaba/happy-horse/edit-video") {
+      return "alibaba/happy-horse/video-edit";
+    }
+    return value;
+  };
+
   const normalizeQueueStatusValue = (value: unknown): string =>
     String(value || "")
       .trim()
@@ -7539,9 +7793,36 @@ async function queueResult(
   };
 
   let result: any;
+  const falModel = normalizeHappyHorseEditModelForFal(resolvedModel);
   try {
-    result = await fal.queue.result(resolvedModel, { requestId } as any);
+    result = await fal.queue.result(falModel, { requestId } as any);
   } catch (falErr: any) {
+    // Some Happy Horse Edit jobs complete via queue.status, while queue.result
+    // can return 404 "Path /edit-video not found". In that case, fall back to status.
+    const falErrStatus = Number(
+      falErr?.response?.status || falErr?.statusCode || falErr?.status || 0,
+    );
+    const falErrDetail = String(
+      falErr?.response?.data?.detail ||
+        falErr?.detail ||
+        falErr?.response?.data?.raw?.detail ||
+        falErr?.data?.detail ||
+        falErr?.data?.raw?.detail ||
+        falErr?.message ||
+        "",
+    );
+    const isHappyHorseEditPathNotFound =
+      falErrDetail.toLowerCase().includes("path /edit-video not found") ||
+      falErrDetail.toLowerCase().includes("/edit-video not found");
+    if (
+      isHappyHorseEditModel(resolvedModel) &&
+      (falErrStatus === 404 || isHappyHorseEditPathNotFound)
+    ) {
+      result = await fal.queue.status(falModel, {
+        requestId,
+        logs: true,
+      } as any);
+    } else {
     const falError = buildFalApiError(falErr, {
       fallbackMessage: "Failed to fetch FAL queue result",
       context: "falQueueService.queueResult",
@@ -7557,6 +7838,7 @@ async function queueResult(
       JSON.stringify(falError.data, null, 2),
     );
     throw falError;
+    }
   }
   const located = await generationHistoryRepository.findByProviderTaskId(
     uid,
@@ -8542,7 +8824,13 @@ async function submitSeedance2ReferenceVariant(
   }
 }
 
-export const falQueueService = {
+export const falQueueService: {
+  happyHorseT2vSubmit: (uid: string, body: any) => Promise<SubmitReturn>;
+  happyHorseI2vSubmit: (uid: string, body: any) => Promise<SubmitReturn>;
+  happyHorseReferenceT2vSubmit: (uid: string, body: any) => Promise<SubmitReturn>;
+  happyHorseEditVideoSubmit: (uid: string, body: any) => Promise<SubmitReturn>;
+  [key: string]: any;
+} = {
   veoTtvSubmit,
   veoI2vSubmit,
   klingO1FirstLastSubmit,
@@ -9915,6 +10203,225 @@ export const falQueueService = {
       duration,
       resolution,
       generate_audio_switch: Boolean(body.generate_audio_switch),
+    } as any);
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  },
+  async happyHorseT2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string;
+    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+    const model = "alibaba/happy-horse/text-to-video";
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt: body.prompt,
+      model,
+      isPublic: body.isPublic,
+    });
+    let duration =
+      typeof body.duration === "number"
+        ? body.duration
+        : parseInt(String(body.duration ?? 5), 10);
+    if (!Number.isFinite(duration)) duration = 5;
+    duration = Math.min(15, Math.max(3, duration));
+    const resolution =
+      String(body.resolution || "1080p").toLowerCase() === "720p"
+        ? "720p"
+        : "1080p";
+    const aspectRatio = ["16:9", "9:16", "1:1", "4:3", "3:4"].includes(
+      String(body.aspect_ratio),
+    )
+      ? String(body.aspect_ratio)
+      : "16:9";
+    const input: any = {
+      prompt: body.prompt,
+      aspect_ratio: aspectRatio,
+      resolution,
+      duration,
+      enable_safety_checker: body.enable_safety_checker !== false,
+    };
+    if (body.seed != null && body.seed !== "") {
+      const seed = parseInt(String(body.seed), 10);
+      if (Number.isFinite(seed)) input.seed = seed;
+    }
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      duration,
+      resolution,
+      aspect_ratio: aspectRatio,
+      enable_safety_checker: body.enable_safety_checker !== false,
+      ...(input.seed != null ? { seed: input.seed } : {}),
+    } as any);
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  },
+  async happyHorseI2vSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string;
+    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+    fal.config({ credentials: falKey });
+    if (!body?.image_url) throw new ApiError("image_url is required", 400);
+    const model = "alibaba/happy-horse/image-to-video";
+    const prompt =
+      typeof body.prompt === "string" && body.prompt.trim().length > 0
+        ? body.prompt
+        : "Bring the scene in the image to life.";
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt,
+      model,
+      isPublic: body.isPublic,
+    });
+    await persistInputImagesFromUrls(uid, historyId, [body.image_url]);
+    let duration =
+      typeof body.duration === "number"
+        ? body.duration
+        : parseInt(String(body.duration ?? 5), 10);
+    if (!Number.isFinite(duration)) duration = 5;
+    duration = Math.min(15, Math.max(3, duration));
+    const resolution =
+      String(body.resolution || "1080p").toLowerCase() === "720p"
+        ? "720p"
+        : "1080p";
+    const input: any = {
+      image_url: body.image_url,
+      prompt,
+      resolution,
+      duration,
+      enable_safety_checker: body.enable_safety_checker !== false,
+    };
+    if (body.seed != null && body.seed !== "") {
+      const seed = parseInt(String(body.seed), 10);
+      if (Number.isFinite(seed)) input.seed = seed;
+    }
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      image_url: body.image_url,
+      duration,
+      resolution,
+      enable_safety_checker: body.enable_safety_checker !== false,
+      ...(input.seed != null ? { seed: input.seed } : {}),
+    } as any);
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  },
+  async happyHorseReferenceT2vSubmit(
+    uid: string,
+    body: any,
+  ): Promise<SubmitReturn> {
+    const falKey = env.falKey as string;
+    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+    fal.config({ credentials: falKey });
+    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+    if (!Array.isArray(body?.image_urls) || body.image_urls.length === 0) {
+      throw new ApiError("image_urls is required and must be non-empty", 400);
+    }
+    const model = "alibaba/happy-horse/reference-to-video";
+    const imageUrls = body.image_urls
+      .filter((url: unknown) => typeof url === "string" && url.trim().length > 0)
+      .slice(0, 9);
+    if (imageUrls.length === 0) {
+      throw new ApiError("image_urls is required and must be non-empty", 400);
+    }
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt: body.prompt,
+      model,
+      isPublic: body.isPublic,
+    });
+    await persistInputImagesFromUrls(uid, historyId, imageUrls);
+    let duration =
+      typeof body.duration === "number"
+        ? body.duration
+        : parseInt(String(body.duration ?? 5), 10);
+    if (!Number.isFinite(duration)) duration = 5;
+    duration = Math.min(15, Math.max(3, duration));
+    const resolution =
+      String(body.resolution || "1080p").toLowerCase() === "720p"
+        ? "720p"
+        : "1080p";
+    const aspectRatio = ["16:9", "9:16", "1:1", "4:3", "3:4"].includes(
+      String(body.aspect_ratio),
+    )
+      ? String(body.aspect_ratio)
+      : "16:9";
+    const input: any = {
+      prompt: body.prompt,
+      image_urls: imageUrls,
+      aspect_ratio: aspectRatio,
+      resolution,
+      duration,
+      enable_safety_checker: body.enable_safety_checker !== false,
+    };
+    if (body.seed != null && body.seed !== "") {
+      const seed = parseInt(String(body.seed), 10);
+      if (Number.isFinite(seed)) input.seed = seed;
+    }
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      image_urls: imageUrls,
+      duration,
+      resolution,
+      aspect_ratio: aspectRatio,
+      enable_safety_checker: body.enable_safety_checker !== false,
+      ...(input.seed != null ? { seed: input.seed } : {}),
+    } as any);
+    return { requestId: request_id, historyId, model, status: "submitted" };
+  },
+  async happyHorseEditVideoSubmit(uid: string, body: any): Promise<SubmitReturn> {
+    const falKey = env.falKey as string;
+    if (!falKey) throw new ApiError("FAL AI API key not configured", 500);
+    fal.config({ credentials: falKey });
+    if (!body?.video_url) throw new ApiError("video_url is required", 400);
+    if (!body?.prompt) throw new ApiError("Prompt is required", 400);
+    const model = "alibaba/happy-horse/video-edit";
+    const { historyId } = await queueCreateHistory(uid, {
+      prompt: body.prompt,
+      model,
+      isPublic: body.isPublic,
+    });
+    const referenceImageUrls = Array.isArray(body.reference_image_urls)
+      ? body.reference_image_urls
+          .filter(
+            (url: unknown) => typeof url === "string" && url.trim().length > 0,
+          )
+          .slice(0, 5)
+      : [];
+    if (referenceImageUrls.length > 0) {
+      await persistInputImagesFromUrls(uid, historyId, referenceImageUrls);
+    }
+    const resolution =
+      String(body.resolution || "1080p").toLowerCase() === "720p"
+        ? "720p"
+        : "1080p";
+    const audioSetting =
+      String(body.audio_setting || "auto").toLowerCase() === "origin"
+        ? "origin"
+        : "auto";
+    const input: any = {
+      video_url: body.video_url,
+      prompt: body.prompt,
+      resolution,
+      audio_setting: audioSetting,
+      enable_safety_checker: body.enable_safety_checker !== false,
+    };
+    if (referenceImageUrls.length > 0) {
+      input.reference_image_urls = referenceImageUrls;
+    }
+    if (body.seed != null && body.seed !== "") {
+      const seed = parseInt(String(body.seed), 10);
+      if (Number.isFinite(seed)) input.seed = seed;
+    }
+    const { request_id } = await fal.queue.submit(model, { input } as any);
+    await generationHistoryRepository.update(uid, historyId, {
+      provider: "fal",
+      providerTaskId: request_id,
+      video_url: body.video_url,
+      reference_image_urls: referenceImageUrls,
+      resolution,
+      audio_setting: audioSetting,
+      enable_safety_checker: body.enable_safety_checker !== false,
+      ...(input.seed != null ? { seed: input.seed } : {}),
     } as any);
     return { requestId: request_id, historyId, model, status: "submitted" };
   },

@@ -9,6 +9,10 @@ export const FAL_PRICING_VERSION = "fal-v1";
 
 // Credits conversion helper for legacy cost estimation paths.
 const CREDITS_PER_USD = 2000;
+const HAPPY_HORSE_720P_USD_PER_SECOND = 0.14;
+const HAPPY_HORSE_1080P_USD_PER_SECOND = 0.28;
+const HAPPY_HORSE_720P_CREDITS_PER_SECOND = 112;
+const HAPPY_HORSE_1080P_CREDITS_PER_SECOND = 224;
 const SEEDANCE_2_USD_PER_1K_TOKENS = 0.014;
 const SEEDANCE_2_FAST_USD_PER_1K_TOKENS = 0.0112;
 const SEEDANCE_2_CREDITS_PER_USD = 4000 / 5.003;
@@ -351,6 +355,13 @@ export async function computeFalImageCost(req: Request): Promise<{
   ) {
     // Matches the creditDistribution row for "Bytedance Seedream-4.5".
     display = "Bytedance Seedream-4.5";
+  } else if (m.includes("openai/gpt-image-2") || m.includes("gpt-image-2")) {
+    const rawQuality = String(body?.quality || "low").toLowerCase();
+    const quality =
+      rawQuality === "low" || rawQuality === "medium" || rawQuality === "high"
+        ? rawQuality
+        : "low";
+    display = `gpt-image-2 ${quality}`;
   } else if (
     m.includes("flux-2-pro") ||
     m.includes("flux2pro") ||
@@ -395,6 +406,9 @@ export async function computeFalImageCost(req: Request): Promise<{
     } else {
       display = "Nano banana Pro 2K"; // Default shared tier for 1K/2K
     }
+  } else if (m.includes("gpt-image-2")) {
+    const quality = (body?.quality || "auto").toLowerCase();
+    display = `gpt-image-2 ${quality}`;
   } else {
     // Map Gemini image to our Google rows (choose I2I when uploadedImages provided)
     display = hasUploadedImages
@@ -884,6 +898,119 @@ export async function computeFalPixverseV6I2vSubmitCost(req: Request): Promise<{
   return computeFalPixverseV6T2vSubmitCost(req);
 }
 
+export async function computeFalHappyHorseT2vSubmitCost(
+  req: Request,
+): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  const body = (req as any).body || {};
+  const durationRaw =
+    typeof body.duration === "number"
+      ? body.duration
+      : parseInt(String(body.duration ?? "5"), 10);
+  const durationSec = Number.isFinite(durationRaw)
+    ? Math.min(15, Math.max(3, durationRaw))
+    : 5;
+  const resolution =
+    String(body.resolution || "1080p").toLowerCase() === "720p"
+      ? "720p"
+      : "1080p";
+  const creditsPerSecond =
+    resolution === "720p"
+      ? HAPPY_HORSE_720P_CREDITS_PER_SECOND
+      : HAPPY_HORSE_1080P_CREDITS_PER_SECOND;
+  const usdPerSecond =
+    resolution === "720p"
+      ? HAPPY_HORSE_720P_USD_PER_SECOND
+      : HAPPY_HORSE_1080P_USD_PER_SECOND;
+  const cost = Math.max(1, durationSec * creditsPerSecond);
+
+  return {
+    cost,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: `Happy Horse T2V ${durationSec}s ${resolution}`,
+      duration: durationSec,
+      resolution,
+      aspect_ratio: body.aspect_ratio || "16:9",
+      enable_safety_checker: body.enable_safety_checker !== false,
+      creditsPerSecond,
+      usdPerSecond,
+      usdCost: durationSec * usdPerSecond,
+    },
+  };
+}
+
+export async function computeFalHappyHorseI2vSubmitCost(
+  req: Request,
+): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  return computeFalHappyHorseT2vSubmitCost(req);
+}
+
+export async function computeFalHappyHorseReferenceSubmitCost(
+  req: Request,
+): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  const base = await computeFalHappyHorseT2vSubmitCost(req);
+  return {
+    ...base,
+    meta: {
+      ...base.meta,
+      model: String(base.meta.model || "").replace("T2V", "R2V"),
+      image_count: Array.isArray((req as any)?.body?.image_urls)
+        ? (req as any).body.image_urls.length
+        : 0,
+    },
+  };
+}
+
+export async function computeFalHappyHorseEditVideoSubmitCost(
+  req: Request,
+): Promise<{
+  cost: number;
+  pricingVersion: string;
+  meta: Record<string, any>;
+}> {
+  const body = (req as any).body || {};
+  const durationRaw =
+    typeof body.duration === "number"
+      ? body.duration
+      : parseInt(String(body.duration ?? "5"), 10);
+  const durationSec = Number.isFinite(durationRaw)
+    ? Math.min(15, Math.max(3, durationRaw))
+    : 5;
+  const resolution =
+    String(body.resolution || "1080p").toLowerCase() === "720p"
+      ? "720p"
+      : "1080p";
+  const creditsPerSecond = resolution === "720p" ? 224 : 448;
+  const usdPerSecond = resolution === "720p" ? 0.28 : 0.56;
+  const cost = Math.max(1, durationSec * creditsPerSecond);
+  return {
+    cost,
+    pricingVersion: FAL_PRICING_VERSION,
+    meta: {
+      model: `Happy Horse Edit ${durationSec}s ${resolution}`,
+      duration: durationSec,
+      resolution,
+      audio_setting: body.audio_setting || "auto",
+      enable_safety_checker: body.enable_safety_checker !== false,
+      creditsPerSecond,
+      usdPerSecond,
+      usdCost: durationSec * usdPerSecond,
+    },
+  };
+}
+
 // LTX V2 pricing (Image-to-Video)
 function computeLtxCredits(
   req: Request,
@@ -1224,6 +1351,80 @@ export function computeFalVeoCostFromModel(
       display = hasAudio
         ? "Veo 3.1 Fast I2V 8s AUDIO ON"
         : "Veo 3.1 Fast I2V 8s AUDIO OFF";
+  } else if (
+    normalized === "alibaba/happy-horse/image-to-video" ||
+    normalized === "fal-ai/alibaba/happy-horse/image-to-video" ||
+    normalized === "alibaba/happy-horse/text-to-video" ||
+    normalized === "fal-ai/alibaba/happy-horse/text-to-video" ||
+    normalized === "alibaba/happy-horse/reference-to-video" ||
+    normalized === "fal-ai/alibaba/happy-horse/reference-to-video"
+  ) {
+    const durationRaw =
+      typeof meta?.duration === "number"
+        ? meta.duration
+        : parseInt(String(meta?.duration ?? "5").replace(/s$/i, ""), 10);
+    const durationSec = Number.isFinite(durationRaw)
+      ? Math.min(15, Math.max(3, durationRaw))
+      : 5;
+    const resolution =
+      String(meta?.resolution || "1080p").toLowerCase() === "720p"
+        ? "720p"
+        : "1080p";
+    const creditsPerSecond =
+      resolution === "720p"
+        ? HAPPY_HORSE_720P_CREDITS_PER_SECOND
+        : HAPPY_HORSE_1080P_CREDITS_PER_SECOND;
+    const usdPerSecond =
+      resolution === "720p"
+        ? HAPPY_HORSE_720P_USD_PER_SECOND
+        : HAPPY_HORSE_1080P_USD_PER_SECOND;
+    return {
+      cost: Math.max(1, durationSec * creditsPerSecond),
+      pricingVersion: FAL_PRICING_VERSION,
+      meta: {
+        model: `Happy Horse ${normalized.includes("reference") ? "R2V" : "T2V"} ${durationSec}s ${resolution}`,
+        duration: durationSec,
+        resolution,
+        aspect_ratio: meta?.aspect_ratio || "16:9",
+        enable_safety_checker: meta?.enable_safety_checker !== false,
+        creditsPerSecond,
+        usdPerSecond,
+        usdCost: durationSec * usdPerSecond,
+      },
+    };
+  } else if (
+    normalized === "alibaba/happy-horse/edit-video" ||
+    normalized === "fal-ai/alibaba/happy-horse/edit-video" ||
+    normalized === "alibaba/happy-horse/video-edit" ||
+    normalized === "fal-ai/alibaba/happy-horse/video-edit"
+  ) {
+    const durationRaw =
+      typeof meta?.duration === "number"
+        ? meta.duration
+        : parseInt(String(meta?.duration ?? "5").replace(/s$/i, ""), 10);
+    const durationSec = Number.isFinite(durationRaw)
+      ? Math.min(15, Math.max(3, durationRaw))
+      : 5;
+    const resolution =
+      String(meta?.resolution || "1080p").toLowerCase() === "720p"
+        ? "720p"
+        : "1080p";
+    const creditsPerSecond = resolution === "720p" ? 224 : 448;
+    const usdPerSecond = resolution === "720p" ? 0.28 : 0.56;
+    return {
+      cost: Math.max(1, durationSec * creditsPerSecond),
+      pricingVersion: FAL_PRICING_VERSION,
+      meta: {
+        model: `Happy Horse Edit ${durationSec}s ${resolution}`,
+        duration: durationSec,
+        resolution,
+        audio_setting: meta?.audio_setting || "auto",
+        enable_safety_checker: meta?.enable_safety_checker !== false,
+        creditsPerSecond,
+        usdPerSecond,
+        usdCost: durationSec * usdPerSecond,
+      },
+    };
   } else if (normalized === "fal-ai/veo3.1/first-last-frame-to-video") {
     // Handle duration and audio flag for Veo 3.1 first-last-frame I2V
     const dur = String(meta?.duration ?? "8");

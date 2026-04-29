@@ -42,6 +42,8 @@ export function validateReplicateGenerate(
   const isPImage = m.includes("p-image") && !isPImageEdit; // avoid double-validating p-image-edit
   const isGptImage15 =
     m.includes("openai/gpt-image-1.5") || m.includes("gpt-image-1.5");
+  const isGptImage2 =
+    m.includes("openai/gpt-image-2") || m.includes("gpt-image-2");
   const isNanoBanana2 =
     m.includes("google/nano-banana-2") || m.includes("nano-banana-2");
   const isQwen2 = m.includes("qwen/qwen-image-2");
@@ -685,8 +687,8 @@ export function validateReplicateGenerate(
       }
     }
   }
-  // GPT Image 1.5 (openai/gpt-image-1.5) validations
-  if (isGptImage15) {
+  // GPT Image models validations
+  if (isGptImage15 || isGptImage2) {
     const allowedQuality = new Set(["low", "medium", "high", "auto"]);
     const allowedAspect = new Set(["1:1", "3:2", "2:3"]);
     const allowedBackground = new Set(["auto", "transparent", "opaque"]);
@@ -811,6 +813,15 @@ export function validateReplicateGenerate(
       return next(
         new ApiError("input_fidelity must be one of: low, high", 400),
       );
+    }
+    if (req.body.user_id != null && typeof req.body.user_id !== "string") {
+      return next(new ApiError("user_id must be a string", 400));
+    }
+    if (
+      req.body.openai_api_key != null &&
+      typeof req.body.openai_api_key !== "string"
+    ) {
+      return next(new ApiError("openai_api_key must be a string", 400));
     }
   }
 

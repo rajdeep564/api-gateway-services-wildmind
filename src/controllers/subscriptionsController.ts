@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import axios from "axios";
 import "../types/http";
+import { normalizeApiError } from "../utils/errorHandler";
 
 const CREDIT_SERVICE_URL =
   process.env.CREDIT_SERVICE_URL || "http://credit-service:3000";
@@ -25,7 +26,9 @@ export const createSubscription = async (req: Request, res: Response) => {
   try {
     const userId = req.uid;
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res
+        .status(401)
+        .json({ message: "Unauthorized", code: "UNAUTHORIZED", status: 401 });
     }
 
     const { planCode, billingDetails } = req.body;
@@ -41,21 +44,16 @@ export const createSubscription = async (req: Request, res: Response) => {
     );
 
     res.json(response.data);
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error(
-        "Create subscription error:",
-        error.response?.data || error.message,
-      );
-      res
-        .status(error.response?.status || 500)
-        .json(
-          error.response?.data || { error: "Failed to create subscription" },
-        );
-    } else {
-      console.error("Create subscription error:", error);
-      res.status(500).json({ error: "Failed to create subscription" });
-    }
+  } catch (error: any) {
+    console.error(
+      "Create subscription error:",
+      axios.isAxiosError(error) ? error.response?.data || error.message : error,
+    );
+    const { status, payload } = normalizeApiError(
+      error,
+      "Failed to create subscription",
+    );
+    res.status(status).json(payload);
   }
 };
 
@@ -64,7 +62,9 @@ export const getCurrentSubscription = async (req: Request, res: Response) => {
   try {
     const userId = req.uid;
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res
+        .status(401)
+        .json({ message: "Unauthorized", code: "UNAUTHORIZED", status: 401 });
     }
 
     const response = await axios.get(
@@ -73,7 +73,7 @@ export const getCurrentSubscription = async (req: Request, res: Response) => {
     );
 
     res.json(response.data);
-  } catch (error) {
+  } catch (error: any) {
     if (axios.isAxiosError(error)) {
       if (error.response?.status === 404) {
         return res.json({ success: true, data: null });
@@ -90,29 +90,21 @@ export const getCurrentSubscription = async (req: Request, res: Response) => {
           error.response?.data || error.message,
         );
         return res.status(503).json({
-          success: false,
-          status: "UNKNOWN",
-          data: null,
           message: "Subscription status is temporarily unavailable",
+          code: "SUBSCRIPTION_STATUS_UNAVAILABLE",
+          status: 503,
         });
       }
-
-      console.error(
-        "Get subscription error:",
-        error.response?.data || error.message,
-      );
-      res
-        .status(error.response?.status || 500)
-        .json(error.response?.data || { error: "Failed to get subscription" });
-    } else {
-      console.error("Get subscription error:", error);
-      res.status(500).json({
-        success: false,
-        status: "UNKNOWN",
-        data: null,
-        message: "Failed to get subscription",
-      });
     }
+    console.error(
+      "Get subscription error:",
+      axios.isAxiosError(error) ? error.response?.data || error.message : error,
+    );
+    const { status, payload } = normalizeApiError(
+      error,
+      "Failed to get subscription",
+    );
+    res.status(status).json(payload);
   }
 };
 
@@ -121,7 +113,9 @@ export const cancelSubscription = async (req: Request, res: Response) => {
   try {
     const userId = req.uid;
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res
+        .status(401)
+        .json({ message: "Unauthorized", code: "UNAUTHORIZED", status: 401 });
     }
 
     const { immediate = false } = req.body;
@@ -136,21 +130,16 @@ export const cancelSubscription = async (req: Request, res: Response) => {
     );
 
     res.json(response.data);
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error(
-        "Cancel subscription error:",
-        error.response?.data || error.message,
-      );
-      res
-        .status(error.response?.status || 500)
-        .json(
-          error.response?.data || { error: "Failed to cancel subscription" },
-        );
-    } else {
-      console.error("Cancel subscription error:", error);
-      res.status(500).json({ error: "Failed to cancel subscription" });
-    }
+  } catch (error: any) {
+    console.error(
+      "Cancel subscription error:",
+      axios.isAxiosError(error) ? error.response?.data || error.message : error,
+    );
+    const { status, payload } = normalizeApiError(
+      error,
+      "Failed to cancel subscription",
+    );
+    res.status(status).json(payload);
   }
 };
 
@@ -159,7 +148,9 @@ export const recoverSubscription = async (req: Request, res: Response) => {
   try {
     const userId = req.uid;
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res
+        .status(401)
+        .json({ message: "Unauthorized", code: "UNAUTHORIZED", status: 401 });
     }
 
     const response = await axios.post(
@@ -169,21 +160,16 @@ export const recoverSubscription = async (req: Request, res: Response) => {
     );
 
     res.json(response.data);
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error(
-        "Recover subscription error:",
-        error.response?.data || error.message,
-      );
-      res
-        .status(error.response?.status || 500)
-        .json(
-          error.response?.data || { error: "Failed to recover subscription" },
-        );
-    } else {
-      console.error("Recover subscription error:", error);
-      res.status(500).json({ error: "Failed to recover subscription" });
-    }
+  } catch (error: any) {
+    console.error(
+      "Recover subscription error:",
+      axios.isAxiosError(error) ? error.response?.data || error.message : error,
+    );
+    const { status, payload } = normalizeApiError(
+      error,
+      "Failed to recover subscription",
+    );
+    res.status(status).json(payload);
   }
 };
 
@@ -192,7 +178,9 @@ export const changePlan = async (req: Request, res: Response) => {
   try {
     const userId = req.uid;
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res
+        .status(401)
+        .json({ message: "Unauthorized", code: "UNAUTHORIZED", status: 401 });
     }
 
     const { newPlanCode, immediate = true } = req.body;
@@ -208,19 +196,13 @@ export const changePlan = async (req: Request, res: Response) => {
     );
 
     res.json(response.data);
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error(
-        "Change plan error:",
-        error.response?.data || error.message,
-      );
-      res
-        .status(error.response?.status || 500)
-        .json(error.response?.data || { error: "Failed to change plan" });
-    } else {
-      console.error("Change plan error:", error);
-      res.status(500).json({ error: "Failed to change plan" });
-    }
+  } catch (error: any) {
+    console.error(
+      "Change plan error:",
+      axios.isAxiosError(error) ? error.response?.data || error.message : error,
+    );
+    const { status, payload } = normalizeApiError(error, "Failed to change plan");
+    res.status(status).json(payload);
   }
 };
 
@@ -229,7 +211,9 @@ export const verifyPayment = async (req: Request, res: Response) => {
   try {
     const userId = req.uid;
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+      return res
+        .status(401)
+        .json({ message: "Unauthorized", code: "UNAUTHORIZED", status: 401 });
     }
 
     const { razorpayPaymentId, razorpaySubscriptionId, razorpaySignature } =
@@ -246,19 +230,50 @@ export const verifyPayment = async (req: Request, res: Response) => {
     );
 
     res.json(response.data);
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error(
-        "Verify payment error:",
-        error.response?.data || error.message,
-      );
-      res
-        .status(error.response?.status || 500)
-        .json(error.response?.data || { error: "Failed to verify payment" });
-    } else {
-      console.error("Verify payment error:", error);
-      res.status(500).json({ error: "Failed to verify payment" });
+  } catch (error: any) {
+    console.error(
+      "Verify payment error:",
+      axios.isAxiosError(error) ? error.response?.data || error.message : error,
+    );
+    const { status, payload } = normalizeApiError(
+      error,
+      "Failed to verify payment",
+    );
+    res.status(status).json(payload);
+  }
+};
+
+export const verifyUpgradeOrder = async (req: Request, res: Response) => {
+  try {
+    const userId = req.uid;
+    if (!userId) {
+      return res
+        .status(401)
+        .json({ message: "Unauthorized", code: "UNAUTHORIZED", status: 401 });
     }
+
+    const { razorpayPaymentId } = req.body;
+
+    const response = await axios.post(
+      `${CREDIT_SERVICE_URL}/subscriptions/verify-upgrade-order`,
+      {
+        userId,
+        razorpayPaymentId,
+      },
+      { headers: creditServiceAuthHeaders(req) },
+    );
+
+    res.json(response.data);
+  } catch (error: any) {
+    console.error(
+      "Verify upgrade order error:",
+      axios.isAxiosError(error) ? error.response?.data || error.message : error,
+    );
+    const { status, payload } = normalizeApiError(
+      error,
+      "Failed to verify upgrade payment",
+    );
+    res.status(status).json(payload);
   }
 };
 /**
@@ -278,18 +293,15 @@ export const checkExpiry = async (req: Request, res: Response) => {
     );
 
     res.json(response.data);
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error(
-        "Check expiry error:",
-        error.response?.data || error.message,
-      );
-      res
-        .status(error.response?.status || 500)
-        .json(error.response?.data || { error: "Failed to check expiry" });
-    } else {
-      console.error("Check expiry error:", error);
-      res.status(500).json({ error: "Failed to check expiry" });
-    }
+  } catch (error: any) {
+    console.error(
+      "Check expiry error:",
+      axios.isAxiosError(error) ? error.response?.data || error.message : error,
+    );
+    const { status, payload } = normalizeApiError(
+      error,
+      "Failed to check expiry",
+    );
+    res.status(status).json(payload);
   }
 };

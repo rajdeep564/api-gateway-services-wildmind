@@ -52,8 +52,18 @@ export async function getModelCost(modelName: string, params?: any): Promise<num
 // Helper for Axios errors
 function handleAxiosError(e: any, context: string): never {
   const msg = e.response?.data?.message || e.message;
+  const code = e.response?.data?.code;
+  const status = e.response?.status;
   logger.error({ err: msg, status: e.response?.status }, `[CREDITS_REPO] ${context} - Error`);
-  throw new Error(msg);
+  const err: any = new Error(msg);
+  if (typeof code === "string" && code) {
+    err.code = code;
+  }
+  if (typeof status === "number") {
+    err.status = status;
+    err.statusCode = status;
+  }
+  throw err;
 }
 
 export async function readUserCredits(uid: string): Promise<number> {
@@ -66,18 +76,12 @@ export async function readUserCredits(uid: string): Promise<number> {
   } catch (e: any) {
     if (e.response?.status === 404) return 0;
 
-    // DEV FALLBACK: If service is unreachable in dev, return mock credits
-    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
-      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, returning mock credits');
-      return 1000;
-    }
-
     handleAxiosError(e, 'readUserCredits');
     return 0; // Unreachable
   }
 }
 
-export async function readUserInfo(uid: string): Promise<{ creditBalance: number; planCode: string; launchTrialStartDate?: any; storageQuotaBytes?: string; storageUsedBytes?: string } | null> {
+export async function readUserInfo(uid: string): Promise<{ creditBalance: number; planCode: string; launchTrialStartDate?: any; storageQuotaBytes?: string; storageUsedBytes?: string; freeTurboUsed?: number; freeTurboLimit?: number } | null> {
   try {
     const res = await axios.get(`${CREDIT_SERVICE_URL}/credits/${uid}`); // accessing via credits endpoint which returns user info
     if (res.data.success && res.data.data) {
@@ -87,23 +91,14 @@ export async function readUserInfo(uid: string): Promise<{ creditBalance: number
         planCode: (d.planCode as string) || 'FREE',
         launchTrialStartDate: d.launchTrialStartDate, // If missing in response, it's undefined
         storageQuotaBytes: d.storageQuotaBytes,
-        storageUsedBytes: d.storageUsedBytes
+        storageUsedBytes: d.storageUsedBytes,
+        freeTurboUsed: d.freeTurboUsed,
+        freeTurboLimit: d.freeTurboLimit
       };
     }
     return null;
   } catch (e: any) {
     if (e.response?.status === 404) return null;
-
-    // DEV FALLBACK: If service is unreachable in dev, return mock user
-    if (env.nodeEnv === 'development' && (e.code === 'ECONNREFUSED' || e.code === 'ENOTFOUND' || e.code === 'ETIMEDOUT')) {
-      logger.warn({ uid, err: e.message }, '[CREDITS_REPO] Dev mode: Credit service unreachable, returning mock user info');
-      return {
-        creditBalance: 1000,
-        planCode: 'FREE',
-        storageQuotaBytes: '1073741824', // 1GB
-        storageUsedBytes: '0'
-      };
-    }
 
     handleAxiosError(e, 'readUserInfo');
     return null;
@@ -368,13 +363,18 @@ export async function initUser(uid: string, email: string): Promise<any> {
 export async function validateGeneration(
   uid: string,
   creditCost: number,
-  estimatedSizeBytes: number = 0
+  estimatedSizeBytes: number = 0,
+  modelName?: string,
+  quantity: number = 1
 ): Promise<{ valid: boolean }> {
   try {
+    console.log(`[CreditsRepository] validateGeneration: uid=${uid}, cost=${creditCost}, model=${modelName || 'N/A'}, quantity=${quantity}`);
     const res = await axios.post(`${CREDIT_SERVICE_URL}/credits/validate-generation`, {
       userId: uid,
       creditCost,
       estimatedSizeBytes,
+      modelName,
+      quantity,
     });
 
     if (res.data.success) {

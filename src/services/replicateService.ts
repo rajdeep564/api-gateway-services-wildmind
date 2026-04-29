@@ -1914,6 +1914,74 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       : { uid },
   );
 
+  // PRE-EMPTIVE DEBIT for Free Turbo models to prevent race conditions.
+  // By debiting upfront with historyId, we ensure that usedCount is updated before parallel requests pass validation.
+  const isFreeTurboModel =
+    modelBase.includes("z-image-turbo") ||
+    modelBase.includes("new-turbo-model") ||
+    modelBase.includes("placeholder-model-name");
+
+  // Fetch plan code from credit service as AppUser doesn't have it
+  const creditUser = isFreeTurboModel
+    ? await creditsRepository.readUserInfo(uid)
+    : null;
+  const planCode = creditUser?.planCode || "FREE";
+
+  if (isFreeTurboModel && planCode === "FREE") {
+    try {
+      const quantity = Number(
+        body?.num_images ||
+          body?.n ||
+          body?.max_images ||
+          body?.number_of_images ||
+          1,
+      );
+      await creditsRepository.writeDebitIfAbsent(
+        uid,
+        historyId,
+        0, // Amount is 0 for promotional bypass, but quantity is recorded in meta
+        `replicate-generate-upfront:${modelBase}`,
+        {
+          model: modelBase,
+          quantity,
+          modelName: modelBase,
+          isUpfront: true,
+          pricingVersion: ctx?.pricingVersion || "v1",
+        },
+        modelBase,
+      );
+      console.log(
+        `[replicateService.generateImage] Upfront debit for ${uid} (model: ${modelBase}, quantity: ${quantity})`,
+      );
+    } catch (e: any) {
+      console.error(
+        "[replicateService.generateImage] Upfront debit failed:",
+        e,
+      );
+      
+      const errorCode = e.response?.data?.code || e.code;
+      const errorMessage = e.response?.data?.message || e.message;
+
+      // MUST NOT continue if promotional limit or insufficient credits
+      if (errorCode === 'FREE_Z_IMAGE_TURBO_LIMIT_REACHED' || errorMessage?.includes('FREE_Z_IMAGE_TURBO_LIMIT_REACHED')) {
+        throw {
+          status: 402,
+          message: errorMessage,
+          code: 'FREE_Z_IMAGE_TURBO_LIMIT_REACHED'
+        };
+      }
+      if (errorCode === 'INSUFFICIENT_CREDITS' || errorMessage?.includes('Insufficient credits')) {
+        throw {
+          status: 402,
+          message: errorMessage || 'Insufficient credits for generation',
+          code: 'INSUFFICIENT_CREDITS'
+        };
+      }
+      
+      // For other errors (like network issues), we continue and the end-of-function debit will catch it
+    }
+  }
+
   // Do not upload input data URIs to Zata; pass directly to provider
   let outputUrls: string[] = [];
   let replicateModelBase = modelBase; // Declare outside try block so it's accessible in catch
@@ -3117,8 +3185,13 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       // Store num_images for later use in the generation logic
       (body as any).__num_images = numImages;
     }
-    // GPT Image 1.5 mapping
-    if (modelBase === "openai/gpt-image-1.5") {
+    // GPT Image models mapping
+    if (
+      modelBase === "openai/gpt-image-1.5" ||
+      modelBase === "openai/gpt-image-2"
+    ) {
+      const isGptImage2 = modelBase === "openai/gpt-image-2";
+      const gptImageModelLabel = isGptImage2 ? "gpt-image-2" : "gpt-image-1.5";
       const coerceGptImage15AspectRatio = (
         raw: unknown,
       ): "1:1" | "3:2" | "2:3" => {
@@ -3145,7 +3218,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       ) {
         input.quality = String(rest.quality);
       } else {
-        input.quality = "low"; // Default to low quality
+        input.quality = isGptImage2 ? "auto" : "low";
       }
       // Respect requested aspect ratio (coerce to the only supported set: 1:1 | 3:2 | 2:3).
       input.aspect_ratio = coerceGptImage15AspectRatio(
@@ -3174,7 +3247,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         const format = String(rest.output_format);
         input.output_format = format === "jpg" ? "jpeg" : format;
       } else {
-        input.output_format = "jpeg"; // Default to jpeg (jpg)
+        input.output_format = isGptImage2 ? "webp" : "jpeg";
       }
       if (
         rest.background &&
@@ -3200,6 +3273,15 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       } else {
         input.output_compression = 90; // Default per schema
       }
+      if (typeof rest.user_id === "string" && rest.user_id.trim().length > 0) {
+        input.user_id = rest.user_id.trim();
+      }
+      if (
+        typeof rest.openai_api_key === "string" &&
+        rest.openai_api_key.trim().length > 0
+      ) {
+        input.openai_api_key = rest.openai_api_key.trim();
+      }
       // Handle input_images for I2I - map from uploadedImages if present
       const inputImagesSource = rest.input_images || rest.uploadedImages;
       if (
@@ -3219,7 +3301,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
               const uploaded = await uploadDataUriToZata({
                 dataUri: img,
                 keyPrefix,
-                fileName: `gpt-image-1.5-ref-${i + 1}`,
+                fileName: `${gptImageModelLabel}-ref-${i + 1}`,
               });
               resolvedImages.push(uploaded.publicUrl);
               inputPersisted.push({
@@ -3261,7 +3343,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
                       });
                     } else {
                       console.warn(
-                        `[gpt-image-1.5] zataPrefix not configured, cannot convert proxy URL for image ${i + 1}`,
+                        `[${gptImageModelLabel}] zataPrefix not configured, cannot convert proxy URL for image ${i + 1}`,
                       );
                       throw new Error("Zata prefix not configured");
                     }
@@ -3272,7 +3354,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
                   }
                 } catch (uploadErr) {
                   console.error(
-                    `[gpt-image-1.5] Failed to process proxy URL ${i + 1}:`,
+                    `[${gptImageModelLabel}] Failed to process proxy URL ${i + 1}:`,
                     uploadErr,
                   );
                   // If we can't convert, we must fail - proxy URLs can't be used directly with Replicate
@@ -3302,7 +3384,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
                   const uploaded = await uploadFromUrlToZata({
                     sourceUrl: img,
                     keyPrefix,
-                    fileName: `gpt-image-1.5-ref-${i + 1}`,
+                    fileName: `${gptImageModelLabel}-ref-${i + 1}`,
                   });
                   resolvedImages.push(uploaded.publicUrl);
                   inputPersisted.push({
@@ -3312,7 +3394,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
                   });
                 } catch (uploadErr) {
                   console.warn(
-                    `[gpt-image-1.5] Failed to process URL ${i + 1}:`,
+                    `[${gptImageModelLabel}] Failed to process URL ${i + 1}:`,
                     uploadErr,
                   );
                 }
@@ -3320,7 +3402,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
             }
           } catch (e) {
             console.warn(
-              `[gpt-image-1.5] Failed to process input image ${i + 1}:`,
+              `[${gptImageModelLabel}] Failed to process input image ${i + 1}:`,
               e,
             );
           }
@@ -3334,7 +3416,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
           } as any);
         }
       }
-      replicateModelBase = "openai/gpt-image-1.5";
+      replicateModelBase = modelBase;
 
       // Handle num_images for multiple image generation
       const numImages = input.number_of_images || 1;
@@ -3407,7 +3489,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       } catch {}
     }
     // Handle num_images fan-out for models that need parallel calls
-    // Supported: z-image-turbo, P-Image / P-Image-Edit, GPT Image 1.5, and Qwen image models.
+    // Supported: z-image-turbo, P-Image / P-Image-Edit, GPT Image models, and Qwen image models.
     let output: any;
     const numImages = (body as any).__num_images || 1;
     const isZTurbo =
@@ -3415,6 +3497,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
     const isPImage = replicateModelBase === "prunaai/p-image";
     const isPImageEdit = replicateModelBase === "prunaai/p-image-edit";
     const isGptImage15 = replicateModelBase === "openai/gpt-image-1.5";
+    const isGptImage2 = replicateModelBase === "openai/gpt-image-2";
     const isRecraftV4 = replicateModelBase === "recraft-ai/recraft-v4";
 
     const lowerReplicateModelBase = String(
@@ -3427,6 +3510,7 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
         isPImage ||
         isPImageEdit ||
         isGptImage15 ||
+        isGptImage2 ||
         isQwenImage ||
         isRecraftV4) &&
       numImages > 1
@@ -3647,6 +3731,38 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
       error: errorMessage || "Replicate failed",
     } as any);
 
+    // Issue refund if we did an upfront debit
+    const planCodeOnFailure =
+      (await creditsRepository.readUserInfo(uid))?.planCode || "FREE";
+    if (isFreeTurboModel && planCodeOnFailure === "FREE") {
+      try {
+        const quantity = Number(
+          body?.num_images ||
+            body?.n ||
+            body?.max_images ||
+            body?.number_of_images ||
+            1,
+        );
+        await creditsRepository.writeRefund(
+          uid,
+          historyId,
+          0,
+          `replicate-generate-failed:${modelBase}`,
+          {
+            model: modelBase,
+            quantity,
+            modelName: modelBase,
+            error: errorMessage,
+          },
+        );
+      } catch (refundErr) {
+        console.error(
+          "[replicateService.generateImage] Failed to issue refund for failed upfront generation:",
+          refundErr,
+        );
+      }
+    }
+
     if (
       isApiError &&
       apiStatusCode &&
@@ -3759,22 +3875,28 @@ export async function generateImage(uid: string, body: any, ctx: any = {}) {
   // Robust mirror sync with retry logic
   await syncToMirror(uid, historyId);
 
-  // STRICT CREDIT REDUCTION
-  if (ctx && ctx.creditCost && ctx.creditCost > 0) {
+  // Record debit if cost > 0 OR if it is a free-tier turbo model (to track lifetime quota)
+  const isFreeTurbo =
+    modelBase.includes("z-image-turbo") ||
+    modelBase.includes("new-turbo-model") ||
+    modelBase.includes("placeholder-model-name");
+
+  if (ctx && (ctx.creditCost > 0 || isFreeTurbo)) {
     try {
       await creditsRepository.writeDebitIfAbsent(
         uid,
         historyId,
-        ctx.creditCost,
-        "replicate-generate",
+        ctx.creditCost || 0,
+        `replicate-generate:${modelBase}`,
         {
           model: modelBase,
           ...(ctx.meta || {}),
           pricingVersion: ctx.pricingVersion || "v1",
         },
+        modelBase, // Passing modelName as 6th argument for cost lookup/tracking
       );
       console.log(
-        `[replicateService.generateImage] Debited ${ctx.creditCost} credits for ${uid}`,
+        `[replicateService.generateImage] Debited ${ctx.creditCost || 0} credits for ${uid} (model: ${modelBase})`,
       );
     } catch (error) {
       console.error(

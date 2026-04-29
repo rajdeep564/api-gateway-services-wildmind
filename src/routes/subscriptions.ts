@@ -24,6 +24,7 @@ router.post('/change-plan', subscriptionsController.changePlan);
 
 // Verify payment (optional - for embedded modal)
 router.post('/verify-payment', subscriptionsController.verifyPayment);
+router.post('/verify-upgrade-order', subscriptionsController.verifyUpgradeOrder);
 
 // Check expiry (Admin/Cron) - Ensure this is protected by appropriate roles in prod
 router.post('/check-expiry', subscriptionsController.checkExpiry);

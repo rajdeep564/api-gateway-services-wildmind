@@ -1,11 +1,13 @@
 export class ApiError extends Error {
   statusCode: number;
+  code?: string;
   data?: any;
 
-  constructor(message: string, statusCode = 500, data?: any) {
+  constructor(message: string, statusCode = 500, data?: any, code?: string) {
     super(message);
     this.statusCode = statusCode;
     this.data = data;
+    this.code = code;
     Object.setPrototypeOf(this, ApiError.prototype);
   }
 }
@@ -13,22 +15,39 @@ export class ApiError extends Error {
 // Express error-handling middleware
 import { Request, Response, NextFunction } from "express";
 
-function safeSerialize(value: any): any {
-  const seen = new WeakSet();
-  try {
-    return JSON.parse(
-      JSON.stringify(value, (_key, val) => {
-        if (typeof val === "object" && val !== null) {
-          if (seen.has(val)) return "[Circular]";
-          seen.add(val);
-        }
-        if (typeof val === "function") return "[Function]";
-        return val;
-      })
-    );
-  } catch {
-    return null;
-  }
+export type ApiErrorPayload = {
+  message: string;
+  code?: string;
+  status?: number;
+};
+
+export function normalizeApiError(
+  err: any,
+  fallbackMessage = "Internal Server Error",
+): { status: number; payload: ApiErrorPayload } {
+  const status =
+    (typeof err?.statusCode === "number" && err.statusCode) ||
+    (typeof err?.status === "number" && err.status) ||
+    (typeof err?.response?.status === "number" && err.response.status) ||
+    500;
+
+  const message =
+    err?.response?.data?.message ||
+    err?.message ||
+    fallbackMessage;
+  const code =
+    err?.response?.data?.code ||
+    err?.code ||
+    undefined;
+
+  return {
+    status,
+    payload: {
+      message,
+      ...(typeof code === "string" && code ? { code } : {}),
+      status,
+    },
+  };
 }
 
 export function errorHandler(
@@ -37,9 +56,7 @@ export function errorHandler(
   res: Response,
   next: NextFunction
 ) {
-  const status = err.statusCode || 500;
-  const message = err.message || "Internal Server Error";
-  const data = safeSerialize(err.data || null);
+  const { status, payload } = normalizeApiError(err);
   try {
     const origin = req.headers.origin as string | undefined;
     if (origin) {
@@ -48,9 +65,5 @@ export function errorHandler(
       res.setHeader('Access-Control-Allow-Credentials', 'true');
     }
   } catch {}
-  res.status(status).json({
-    responseStatus: "error",
-    message,
-    data,
-  });
+  res.status(status).json(payload);
 }

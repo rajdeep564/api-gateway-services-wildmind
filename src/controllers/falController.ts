@@ -619,6 +619,86 @@ export const falController = {
       next(err);
     }
   },
+  async happyHorseT2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.happyHorseT2vSubmit(
+        uid,
+        req.body || {},
+      );
+      res.json(
+        formatApiResponse("success", "Submitted", {
+          ...result,
+          expectedDebit: ctx.creditCost,
+        }),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
+  async happyHorseI2vSubmit(req: Request, res: Response, next: NextFunction) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.happyHorseI2vSubmit(
+        uid,
+        req.body || {},
+      );
+      res.json(
+        formatApiResponse("success", "Submitted", {
+          ...result,
+          expectedDebit: ctx.creditCost,
+        }),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
+  async happyHorseReferenceT2vSubmit(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.happyHorseReferenceT2vSubmit(
+        uid,
+        req.body || {},
+      );
+      res.json(
+        formatApiResponse("success", "Submitted", {
+          ...result,
+          expectedDebit: ctx.creditCost,
+        }),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
+  async happyHorseEditVideoSubmit(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const uid = req.uid;
+      const ctx = (req as any).context || {};
+      const result = await falQueueService.happyHorseEditVideoSubmit(
+        uid,
+        req.body || {},
+      );
+      res.json(
+        formatApiResponse("success", "Submitted", {
+          ...result,
+          expectedDebit: ctx.creditCost,
+        }),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
   async seedance2T2vSubmit(req: Request, res: Response, next: NextFunction) {
     try {
       const uid = req.uid;
