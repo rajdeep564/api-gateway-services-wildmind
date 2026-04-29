@@ -91,11 +91,11 @@ export async function creativelyUpscaleController(req: Request, res: Response, n
         if (creditBalance < creditCost) {
             return res.status(402).json({
                 responseStatus: 'error',
-                message: 'Payment Required',
+                message: 'Credits are not available, please recharge.',
                 data: {
                     requiredCredits: creditCost,
                     currentBalance: creditBalance,
-                    suggestion: 'Buy plan or reduce upscale factor',
+                    suggestion: 'Please recharge your credits to continue.',
                 },
             });
         }

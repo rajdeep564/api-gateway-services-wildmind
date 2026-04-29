@@ -24,6 +24,7 @@ export interface EnvConfig {
   // Third-party providers
   bflApiKey?: string;
   falKey?: string;
+  beebleApiKey?: string;
   runwayApiKey?: string;
   minimaxApiKey?: string;
   minimaxGroupId?: string;
@@ -134,6 +135,7 @@ export const env: EnvConfig = {
   zataSecretAccessKey: process.env.ZATA_SECRET_ACCESS_KEY || "",
   bflApiKey: process.env.BFL_API_KEY,
   falKey: process.env.FAL_KEY,
+  beebleApiKey: process.env.BEEBLE_API_KEY || process.env.BEEBLE_KEY,
   runwayApiKey: process.env.RUNWAY_API_KEY,
   minimaxApiKey: process.env.MINIMAX_API_KEY,
   minimaxGroupId: process.env.MINIMAX_GROUP_ID,

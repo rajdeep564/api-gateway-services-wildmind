@@ -63,11 +63,11 @@ export function makeCreditCost(provider: string, operation: string, computeCost:
       if (creditBalance < cost) {
         return res.status(402).json({
           responseStatus: 'error',
-          message: 'Payment Required',
+          message: 'Credits are not available, please recharge.',
           data: {
             requiredCredits: cost,
             currentBalance: creditBalance,
-            suggestion: 'Buy plan or reduce n/size',
+            suggestion: 'Please recharge your credits to continue.',
           },
         });
       }

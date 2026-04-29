@@ -109,6 +109,13 @@ router.post(
 );
 
 router.post(
+  '/hunyuan-3d',
+  requireAuth,
+  validateStorage('image'),
+  (replicateController as any).hunyuan3d
+);
+
+router.post(
   '/wan-2-5-i2v/submit',
   requireAuth,
   validateWan25I2V,

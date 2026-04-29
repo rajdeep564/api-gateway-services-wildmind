@@ -71,9 +71,20 @@ async function generateImage(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+async function hunyuan3d(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = (req as any).uid as string;
+    const ctx = (req as any).context || {};
+    const data = await (replicateService as any).hunyuan3d(uid, req.body || {}, ctx);
+    (res as any).locals = { ...(res as any).locals, success: true };
+    res.json(formatApiResponse("success", "3D model generated", data));
+  } catch (e) {
+    next(e);
+    return;
+  }
+}
 
-
-export const replicateController = { removeBackground, upscale, generateImage, multiangle } as any;
+export const replicateController = { removeBackground, upscale, generateImage, multiangle, hunyuan3d } as any;
 // Queue-style handlers for Replicate WAN 2.5
 export async function wanT2vSubmit(req: Request, res: Response, next: NextFunction) {
   try {

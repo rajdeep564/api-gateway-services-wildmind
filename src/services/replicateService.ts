@@ -4038,37 +4038,97 @@ export async function qwenImageEditSubmit(
   } as any;
 }
 
+export async function hunyuan3d(
+  uid: string,
+  body: { image?: string; imageUrl?: string },
+  _ctx: any = {},
+) {
+  const replicate = ensureReplicate();
+  const rawUrl = String(body?.image || body?.imageUrl || "").trim();
+  if (!rawUrl) throw new ApiError("image is required", 400);
+
+  const publicImageUrl = resolveToPublicUrl(rawUrl);
+  const modelCandidates = [
+    "prunaai/hunyuan3d-2", // user-requested primary
+    "tencent/hunyuan3d-2",
+    "hunyuan/hunyuan3d-2",
+  ];
+  const inputCandidates = [
+    {
+      image_path: publicImageUrl,
+      file_type: "glb",
+      speed_mode: "Juiced 🔥 (fast)",
+      num_inference_steps: 50,
+      octree_resolution: 200,
+      num_chunks: 20000,
+      generator_seed: 12345,
+      face_count: 40000,
+    },
+    { image: publicImageUrl },
+    { image_url: publicImageUrl },
+    { input_image: publicImageUrl },
+  ] as any[];
+  let lastErr: any = null;
+  for (const modelBase of modelCandidates) {
+    for (const input of inputCandidates) {
+      try {
+        // eslint-disable-next-line no-console
+        console.log("[replicateService.hunyuan3d] run", { modelBase, inputKeys: Object.keys(input) });
+        const output: any = await Promise.race([
+          replicate.run(modelBase as any, { input }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Replicate Hunyuan3D timeout")), 20000),
+          ),
+        ]);
+        const modelMeshUrl =
+          (output as any)?.mesh_paint ||
+          (output as any)?.model_mesh?.url ||
+          (output as any)?.modelMesh?.url ||
+          (output as any)?.output?.mesh_paint ||
+          (output as any)?.output?.model_mesh?.url ||
+          (output as any)?.output?.modelMesh?.url ||
+          (Array.isArray(output) && typeof output[0] === "string" ? output[0] : null) ||
+          null;
+        if (modelMeshUrl) {
+          return {
+            model: modelBase,
+            depthSource: "replicate-hunyuan3d-mesh",
+            modelMeshUrl,
+            images: [{ id: `hunyuan3d-${Date.now()}`, url: publicImageUrl, originalUrl: publicImageUrl }],
+          } as any;
+        }
+        throw new Error("No model mesh URL returned by Hunyuan3D output");
+      } catch (_e) {
+        lastErr = _e;
+      }
+    }
+  }
+  // eslint-disable-next-line no-console
+  console.error("[replicateService.hunyuan3d] Replicate request failed", {
+    error: (lastErr as any)?.message || String(lastErr),
+  });
+  const mapped = mapReplicateError(lastErr);
+  throw new ApiError(mapped.message || "Hunyuan 3D request failed", 502, {
+    title: mapped.title,
+    code: mapped.code || "REPLICATE_HUNYUAN3D_FAILED",
+    technical: (lastErr as any)?.message || String(lastErr || ""),
+    model: modelCandidates.join(","),
+  });
+}
+
 export const replicateService = {
   removeBackground,
   upscale,
   generateImage,
   multiangle,
+  hunyuan3d,
   wanI2V: wanI2vSubmit,
   wanT2V: wanT2vSubmit,
   nextScene,
   qwenImageEditSubmit,
 };
 
-// All duplicate functions removed. Queue functions continue below.
 
-// ============ Queue-style API for Replicate WAN 2.5 ============
-// SubmitReturn, resolveWanModelFast, ensureReplicate, and getLatestModelVersion
-// are imported from ./replicate/replicateUtils
-
-// All duplicate functions (wanT2vSubmit, multiangle, generateImage, wanI2V, wanT2V)
-// have been removed. They are now in ./replicate/replicateImageService.ts or below.
-// Video functions continue below
-
-// All duplicate functions (wanT2V, multiangle, generateImage, wanI2V) have been removed.
-// They are now in ./replicate/replicateImageService.ts or below.
-// Video functions continue below
-
-// Wan 2.5 Text-to-Video via Replicate
-
-// All duplicate image functions (upscale, multiangle, generateImage, etc.) have been removed.
-// They are now in ./replicate/replicateImageService.ts
-
-// ============ Queue-style API for Replicate WAN 2.5 ============
 
 type SubmitReturn = {
   requestId: string;

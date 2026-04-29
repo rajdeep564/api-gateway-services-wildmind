@@ -795,18 +795,33 @@ async function depth(uid: string, body: any, ctx: any) {
   if (!apiKey) throw new ApiError("API key not configured", 500);
   const creator = await authRepository.getUserById(uid);
   const createdBy = { uid, username: creator?.username, email: (creator as any)?.email };
-  const endpoint = `${env.bflApiBase}/v1/flux-pro-1.0-depth`;
-  const response = await axios.post(endpoint, body, {
-    headers: {
-      accept: "application/json",
-      "x-key": apiKey,
-      "Content-Type": "application/json",
-    },
-    validateStatus: () => true,
-  });
-  if (response.status < 200 || response.status >= 300) {
-      const mapped = mapBflError({ response });
-      throw new ApiError(mapped.message, response.status, { title: mapped.title, code: mapped.code, originalError: mapped.originalError });
+  const base = (env.bflApiBase || "https://api.bfl.ai").replace(/\/$/, "");
+  const endpointCandidates = Array.from(new Set([
+    `${base}/v1/flux-pro-1.0-depth`,
+    `https://api.us.bfl.ai/v1/flux-pro-1.0-depth`,
+    `https://api.eu.bfl.ai/v1/flux-pro-1.0-depth`,
+  ]));
+  let response: any = null;
+  let lastMapped: any = null;
+  for (const endpoint of endpointCandidates) {
+    response = await axios.post(endpoint, body, {
+      headers: {
+        accept: "application/json",
+        "x-key": apiKey,
+        "Content-Type": "application/json",
+      },
+      validateStatus: () => true,
+    });
+    if (response.status >= 200 && response.status < 300) {
+      break;
+    }
+    lastMapped = mapBflError({ response });
+    // Continue trying alternate BFL regions if endpoint/model is unavailable.
+    console.warn("[bflService.depth] endpoint failed", { endpoint, status: response.status, code: lastMapped?.code });
+  }
+  if (!response || response.status < 200 || response.status >= 300) {
+    const mapped = lastMapped || mapBflError({ response });
+    throw new ApiError(mapped.message, response?.status || 502, { title: mapped.title, code: mapped.code });
   }
   const { polling_url, id } = response.data || {};
   if (!polling_url) throw new ApiError("No polling URL received", 502);

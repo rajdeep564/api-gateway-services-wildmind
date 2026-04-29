@@ -13,6 +13,24 @@ export class ApiError extends Error {
 // Express error-handling middleware
 import { Request, Response, NextFunction } from "express";
 
+function safeSerialize(value: any): any {
+  const seen = new WeakSet();
+  try {
+    return JSON.parse(
+      JSON.stringify(value, (_key, val) => {
+        if (typeof val === "object" && val !== null) {
+          if (seen.has(val)) return "[Circular]";
+          seen.add(val);
+        }
+        if (typeof val === "function") return "[Function]";
+        return val;
+      })
+    );
+  } catch {
+    return null;
+  }
+}
+
 export function errorHandler(
   err: any,
   req: Request,
@@ -21,7 +39,7 @@ export function errorHandler(
 ) {
   const status = err.statusCode || 500;
   const message = err.message || "Internal Server Error";
-  const data = err.data || null;
+  const data = safeSerialize(err.data || null);
   try {
     const origin = req.headers.origin as string | undefined;
     if (origin) {

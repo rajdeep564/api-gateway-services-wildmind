@@ -1,4 +1,3 @@
-import { fal } from '@fal-ai/client';
 import { env } from '../../../config/env';
 import { ApiError } from '../../../utils/errorHandler';
 import { authRepository } from '../../../repository/auth/authRepository';
@@ -7,9 +6,50 @@ import { replicateRepository } from '../../../repository/replicateRepository';
 import { uploadDataUriToZata, uploadFromUrlToZata } from '../../../utils/storage/zataUpload';
 import { aestheticScoreService } from '../../aestheticScoreService';
 import { syncToMirror } from '../../../utils/mirrorHelper';
+import sharp from 'sharp';
 
-const FAL_MODEL_EDIT = 'fal-ai/nano-banana-pro/edit';
-const MODEL_DISPLAY = 'google/nano-banana-pro';
+const BEEBLE_BASE_URL = 'https://api.beeble.ai/v1';
+const MODEL_DISPLAY = 'beeble/switchx';
+const BEEBLE_MAX_SOURCE_PIXELS = 2_770_000;
+
+type SwitchXStatus = 'in_queue' | 'processing' | 'completed' | 'failed';
+
+interface SwitchXStatusResponse {
+    id: string;
+    status: SwitchXStatus | string;
+    progress?: number | null;
+    output?: {
+        render?: string | null;
+        source?: string | null;
+        alpha?: string | null;
+    } | null;
+    error?: string | null;
+    created_at?: string | null;
+    modified_at?: string | null;
+    completed_at?: string | null;
+}
+
+interface BeebleUploadResponse {
+    id: string;
+    upload_url: string;
+    beeble_uri: string;
+}
+
+function extractProviderErrorMessage(payload: any, fallback: string): string {
+    if (!payload) return fallback;
+    if (typeof payload === 'string' && payload.trim()) return payload;
+    if (typeof payload?.message === 'string' && payload.message.trim()) return payload.message;
+    if (typeof payload?.error === 'string' && payload.error.trim()) return payload.error;
+    if (typeof payload?.error?.message === 'string' && payload.error.message.trim()) return payload.error.message;
+    if (typeof payload?.detail === 'string' && payload.detail.trim()) return payload.detail;
+    try {
+        const str = JSON.stringify(payload);
+        if (str && str !== '{}' && str !== 'null') return str;
+    } catch {
+        // ignore
+    }
+    return fallback;
+}
 
 export interface RelightDirectionalLightInput {
     id?: string;
@@ -38,6 +78,12 @@ export interface RelightingRequest {
     shadowControl?: string;
     /** Rich rig from canvas: ambient + multiple directionals (angles, colors, intensity). */
     lighting?: RelightingLightingPayload;
+    // Beeble-native request controls
+    beeblePrompt?: string;
+    referenceImageUri?: string;
+    alphaMode?: 'auto' | 'fill' | 'custom' | 'select';
+    alphaUri?: string;
+    maxResolution?: 720 | 1080;
 }
 
 function lightingStyleNarrative(lightingStyle: string): string {
@@ -140,11 +186,125 @@ CONSTRAINTS:
 - Output one image only.${extrasBlock}`;
 }
 
-export const relighting = async (uid: string, req: RelightingRequest) => {
-    const falKey = env.falKey as string;
-    if (!falKey) throw new ApiError('FAL API key not configured', 500);
+function extensionFromMime(mime: string | null | undefined): string {
+    const m = (mime || '').toLowerCase();
+    if (m.includes('image/png')) return '.png';
+    if (m.includes('image/webp')) return '.webp';
+    if (m.includes('image/jpeg') || m.includes('image/jpg')) return '.jpg';
+    if (m.includes('video/mp4')) return '.mp4';
+    if (m.includes('video/quicktime')) return '.mov';
+    return '.png';
+}
 
-    fal.config({ credentials: falKey });
+function extensionFromUrl(url: string): string {
+    const clean = url.split('?')[0].toLowerCase();
+    if (clean.endsWith('.png')) return '.png';
+    if (clean.endsWith('.webp')) return '.webp';
+    if (clean.endsWith('.jpg') || clean.endsWith('.jpeg')) return '.jpg';
+    if (clean.endsWith('.mp4')) return '.mp4';
+    if (clean.endsWith('.mov')) return '.mov';
+    return '.png';
+}
+
+async function uploadToBeeble(beebleKey: string, sourceUri: string, historyId: string): Promise<string> {
+    if (sourceUri.startsWith('beeble://')) return sourceUri;
+
+    let bytes: Uint8Array;
+    let contentType = 'image/png';
+    let ext = '.png';
+
+    if (sourceUri.startsWith('data:')) {
+        const match = sourceUri.match(/^data:([^;,]+)?(?:;base64)?,(.*)$/);
+        if (!match || !match[2]) throw new ApiError('Invalid data URI for Beeble upload', 400);
+        contentType = match[1] || 'image/png';
+        ext = extensionFromMime(contentType);
+        const payload = match[2];
+        const isBase64 = sourceUri.includes(';base64,');
+        const raw = isBase64 ? Buffer.from(payload, 'base64') : Buffer.from(decodeURIComponent(payload), 'utf8');
+        bytes = new Uint8Array(raw);
+    } else {
+        const srcRes = await fetch(sourceUri);
+        if (!srcRes.ok) {
+            throw new ApiError(`Failed to fetch source for Beeble upload (${srcRes.status})`, 502);
+        }
+        const arrBuf = await srcRes.arrayBuffer();
+        bytes = new Uint8Array(arrBuf);
+        contentType = srcRes.headers.get('content-type') || 'image/png';
+        ext = extensionFromMime(contentType) || extensionFromUrl(sourceUri);
+    }
+
+    // Beeble rejects sources above 2,770,000 pixels.
+    // Downscale oversized images automatically before upload.
+    try {
+        if (contentType.startsWith('image/')) {
+            const srcBuffer = Buffer.from(bytes);
+            const img = sharp(srcBuffer);
+            const meta = await img.metadata();
+            const width = Number(meta.width || 0);
+            const height = Number(meta.height || 0);
+            const pixels = width * height;
+
+            if (width > 0 && height > 0 && pixels > BEEBLE_MAX_SOURCE_PIXELS) {
+                const scale = Math.sqrt(BEEBLE_MAX_SOURCE_PIXELS / pixels);
+                const targetW = Math.max(1, Math.floor(width * scale));
+                const targetH = Math.max(1, Math.floor(height * scale));
+                const resized = await img
+                    .resize(targetW, targetH, { fit: 'inside', withoutEnlargement: true })
+                    .png()
+                    .toBuffer();
+                bytes = new Uint8Array(resized);
+                contentType = 'image/png';
+                ext = '.png';
+                console.log('[relightingService] Downscaled source for Beeble', {
+                    from: `${width}x${height}`,
+                    to: `${targetW}x${targetH}`,
+                    pixelsBefore: pixels,
+                    pixelsAfter: targetW * targetH,
+                });
+            }
+        }
+    } catch (resizeErr) {
+        console.warn('[relightingService] Failed to inspect/resize source before Beeble upload', resizeErr);
+    }
+
+    const filename = `relight-${historyId}${ext}`;
+    const createUploadRes = await fetch(`${BEEBLE_BASE_URL}/uploads`, {
+        method: 'POST',
+        headers: {
+            'x-api-key': beebleKey,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ filename }),
+    });
+    const createUploadText = await createUploadRes.text();
+    let uploadData: BeebleUploadResponse;
+    try {
+        uploadData = createUploadText ? JSON.parse(createUploadText) : ({} as BeebleUploadResponse);
+    } catch {
+        throw new ApiError(`Beeble upload URL response parse failed (${createUploadRes.status})`, 502, createUploadText);
+    }
+    if (!createUploadRes.ok || !uploadData?.upload_url || !uploadData?.beeble_uri) {
+        throw new ApiError('Failed to create Beeble upload URL', 502, uploadData);
+    }
+
+    const putRes = await fetch(uploadData.upload_url, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': contentType,
+        },
+        body: Buffer.from(bytes),
+    });
+    if (!putRes.ok) {
+        const body = await putRes.text().catch(() => '');
+        throw new ApiError(`Beeble upload PUT failed (${putRes.status})`, 502, body);
+    }
+
+    return uploadData.beeble_uri;
+}
+
+export const relighting = async (uid: string, req: RelightingRequest) => {
+    const beebleKey = env.beebleApiKey as string;
+    if (!beebleKey) throw new ApiError('BEEBLE API key not configured', 500);
 
     const creator = await authRepository.getUserById(uid);
     const finalPrompt = buildNanoBananaProRelightPrompt(req);
@@ -195,40 +355,116 @@ export const relighting = async (uid: string, req: RelightingRequest) => {
         } as any);
     }
 
-    const inputPayload: Record<string, unknown> = {
-        prompt: finalPrompt,
-        image_urls: [inputImageUrl],
-        num_images: 1,
-        aspect_ratio: 'auto',
-        output_format: 'png',
-        resolution: '2K',
+    const pollSwitchX = async (jobId: string, timeoutMs = 480000): Promise<SwitchXStatusResponse> => {
+        const startedAt = Date.now();
+        let attempts = 0;
+        while (Date.now() - startedAt < timeoutMs) {
+            attempts += 1;
+            const statusRes = await fetch(`${BEEBLE_BASE_URL}/switchx/generations/${encodeURIComponent(jobId)}`, {
+                method: 'GET',
+                headers: {
+                    'x-api-key': beebleKey,
+                    'Content-Type': 'application/json',
+                },
+            });
+            const statusText = await statusRes.text();
+            let statusData: SwitchXStatusResponse;
+            try {
+                statusData = statusText ? JSON.parse(statusText) : ({} as SwitchXStatusResponse);
+            } catch {
+                throw new ApiError(`Beeble status parse failed (${statusRes.status})`, 502, statusText);
+            }
+            if (!statusRes.ok) {
+                const msg = extractProviderErrorMessage(statusData, `Beeble status failed with ${statusRes.status}`);
+                throw new ApiError(msg, 502, statusData);
+            }
+            if (statusData.status === 'completed' || statusData.status === 'failed') {
+                return statusData;
+            }
+            if (attempts % 5 === 0) {
+                console.log('[relightingService] Waiting Beeble SwitchX job', {
+                    jobId,
+                    status: statusData.status,
+                    progress: statusData.progress ?? null,
+                });
+            }
+            // Slightly slower poll to reduce provider pressure during long renders.
+            await new Promise((resolve) => setTimeout(resolve, 3000));
+        }
+        throw new ApiError('Beeble SwitchX job timed out while processing (8m). Please retry.', 504);
     };
 
     try {
-        console.log('[relightingService] FAL Nano Banana Pro /edit', { model: FAL_MODEL_EDIT, image: String(inputImageUrl).slice(0, 120) });
-        const result: any = await fal.subscribe(FAL_MODEL_EDIT, {
-            input: inputPayload,
-            logs: true,
-            onQueueUpdate: (update) => {
-                if (update.status === 'IN_PROGRESS') {
-                    update.logs?.map((log) => log.message).forEach((msg) => console.log('[relightingService]', msg));
-                }
-            },
+        const beebleSourceUri = await uploadToBeeble(beebleKey, inputImageUrl, historyId);
+        const alphaMode = req.alphaMode || 'auto';
+        const maxResolution = req.maxResolution === 720 ? 720 : 1080;
+        const beeblePrompt = String(req.beeblePrompt || '').trim();
+        if (!beeblePrompt) {
+            throw new ApiError('Prompt is required for Beeble relight', 400);
+        }
+        if (beeblePrompt.length > 2000) {
+            throw new ApiError('Prompt must be 2000 characters or fewer', 400);
+        }
+
+        let beebleReferenceUri: string | undefined;
+        if (req.referenceImageUri) {
+            beebleReferenceUri = await uploadToBeeble(beebleKey, req.referenceImageUri, `${historyId}-ref`);
+        }
+
+        let beebleAlphaUri: string | undefined;
+        if (req.alphaUri && (alphaMode === 'custom' || alphaMode === 'select')) {
+            beebleAlphaUri = await uploadToBeeble(beebleKey, req.alphaUri, `${historyId}-alpha`);
+        }
+
+        console.log('[relightingService] Beeble SwitchX create job', {
+            image: String(beebleSourceUri).slice(0, 120),
+            generationType: 'image',
         });
+        const createBody: Record<string, unknown> = {
+            generation_type: 'image',
+            source_uri: beebleSourceUri,
+            alpha_mode: alphaMode,
+            prompt: beeblePrompt,
+            max_resolution: maxResolution,
+            idempotency_key: `relight-${historyId}-${uid}`.slice(0, 255),
+        };
+        if (beebleReferenceUri) createBody.reference_image_uri = beebleReferenceUri;
+        if (beebleAlphaUri) createBody.alpha_uri = beebleAlphaUri;
+
+        const createRes = await fetch(`${BEEBLE_BASE_URL}/switchx/generations`, {
+            method: 'POST',
+            headers: {
+                'x-api-key': beebleKey,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(createBody),
+        });
+        const createText = await createRes.text();
+        let createdJob: SwitchXStatusResponse;
+        try {
+            createdJob = createText ? JSON.parse(createText) : ({} as SwitchXStatusResponse);
+        } catch {
+            throw new ApiError(`Beeble create response parse failed (${createRes.status})`, 502, createText);
+        }
+        if (!createRes.ok || !createdJob?.id) {
+            const msg = extractProviderErrorMessage(createdJob, `Beeble create failed with ${createRes.status}`);
+            throw new ApiError(msg, 502, createdJob);
+        }
+
+        const result = await pollSwitchX(createdJob.id);
 
         await generationHistoryRepository.update(uid, historyId, {
-            provider: 'fal',
-            providerTaskId: result?.requestId || 'subscribe-based',
+            provider: 'beeble',
+            providerTaskId: result?.id || createdJob.id,
             status: 'processing',
         } as any);
 
-        const imagesArray: any[] = Array.isArray(result?.data?.images) ? result.data.images : [];
-        const firstUrl =
-            imagesArray[0]?.url ||
-            (Array.isArray((result as any)?.images) ? (result as any).images[0]?.url : undefined) ||
-            (result as any)?.data?.image?.url ||
-            (result as any)?.image?.url;
-        if (!firstUrl) throw new Error('No output URL from Nano Banana Pro relight');
+        if (result.status === 'failed') {
+            throw new ApiError(result.error || 'Beeble SwitchX generation failed', 502, result);
+        }
+
+        const firstUrl = result?.output?.render || result?.output?.source;
+        if (!firstUrl) throw new Error('No output URL from Beeble SwitchX relight');
 
         let storedUrl = String(firstUrl);
         let storagePath = '';
@@ -241,6 +477,22 @@ export const relighting = async (uid: string, req: RelightingRequest) => {
             });
             storedUrl = uploaded.publicUrl;
             storagePath = uploaded.key;
+            // Validate uploaded URL is actually reachable; fallback to original Beeble URL if not.
+            try {
+                const verifyRes = await fetch(storedUrl, { method: 'HEAD' });
+                if (!verifyRes.ok) {
+                    console.warn('[relightingService] Uploaded Zata URL not reachable, falling back to Beeble URL', {
+                        status: verifyRes.status,
+                        zataUrl: storedUrl.slice(0, 140),
+                    });
+                    storedUrl = String(firstUrl);
+                    storagePath = '';
+                }
+            } catch (verifyErr) {
+                console.warn('[relightingService] Failed to verify Zata URL, falling back to Beeble URL', verifyErr);
+                storedUrl = String(firstUrl);
+                storagePath = '';
+            }
         } catch (e) {
             console.warn('Failed to upload relight output to Zata', e);
         }
