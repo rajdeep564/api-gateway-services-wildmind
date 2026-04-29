@@ -35,6 +35,8 @@ interface BeebleUploadResponse {
     beeble_uri: string;
 }
 
+type BeebleMediaType = 'image' | 'video';
+
 function extractProviderErrorMessage(payload: any, fallback: string): string {
     if (!payload) return fallback;
     if (typeof payload === 'string' && payload.trim()) return payload;
@@ -206,17 +208,23 @@ function extensionFromUrl(url: string): string {
     return '.png';
 }
 
-async function uploadToBeeble(beebleKey: string, sourceUri: string, historyId: string): Promise<string> {
-    if (sourceUri.startsWith('beeble://')) return sourceUri;
+async function uploadToBeeble(beebleKey: string, sourceUri: string, historyId: string): Promise<{ beebleUri: string; mediaType: BeebleMediaType }> {
+    if (sourceUri.startsWith('beeble://')) {
+        const lower = sourceUri.toLowerCase();
+        const mediaType: BeebleMediaType = (lower.endsWith('.mp4') || lower.endsWith('.mov')) ? 'video' : 'image';
+        return { beebleUri: sourceUri, mediaType };
+    }
 
     let bytes: Uint8Array;
     let contentType = 'image/png';
     let ext = '.png';
+    let mediaType: BeebleMediaType = 'image';
 
     if (sourceUri.startsWith('data:')) {
         const match = sourceUri.match(/^data:([^;,]+)?(?:;base64)?,(.*)$/);
         if (!match || !match[2]) throw new ApiError('Invalid data URI for Beeble upload', 400);
         contentType = match[1] || 'image/png';
+        mediaType = contentType.startsWith('video/') ? 'video' : 'image';
         ext = extensionFromMime(contentType);
         const payload = match[2];
         const isBase64 = sourceUri.includes(';base64,');
@@ -230,7 +238,9 @@ async function uploadToBeeble(beebleKey: string, sourceUri: string, historyId: s
         const arrBuf = await srcRes.arrayBuffer();
         bytes = new Uint8Array(arrBuf);
         contentType = srcRes.headers.get('content-type') || 'image/png';
+        mediaType = contentType.startsWith('video/') ? 'video' : 'image';
         ext = extensionFromMime(contentType) || extensionFromUrl(sourceUri);
+        if (ext === '.mp4' || ext === '.mov') mediaType = 'video';
     }
 
     // Beeble rejects sources above 2,770,000 pixels.
@@ -299,7 +309,7 @@ async function uploadToBeeble(beebleKey: string, sourceUri: string, historyId: s
         throw new ApiError(`Beeble upload PUT failed (${putRes.status})`, 502, body);
     }
 
-    return uploadData.beeble_uri;
+    return { beebleUri: uploadData.beeble_uri, mediaType };
 }
 
 export const relighting = async (uid: string, req: RelightingRequest) => {
@@ -395,7 +405,8 @@ export const relighting = async (uid: string, req: RelightingRequest) => {
     };
 
     try {
-        const beebleSourceUri = await uploadToBeeble(beebleKey, inputImageUrl, historyId);
+        const sourceUpload = await uploadToBeeble(beebleKey, inputImageUrl, historyId);
+        const beebleSourceUri = sourceUpload.beebleUri;
         const alphaMode = req.alphaMode || 'auto';
         const maxResolution = req.maxResolution === 720 ? 720 : 1080;
         const beeblePrompt = String(req.beeblePrompt || '').trim();
@@ -408,20 +419,22 @@ export const relighting = async (uid: string, req: RelightingRequest) => {
 
         let beebleReferenceUri: string | undefined;
         if (req.referenceImageUri) {
-            beebleReferenceUri = await uploadToBeeble(beebleKey, req.referenceImageUri, `${historyId}-ref`);
+            const refUpload = await uploadToBeeble(beebleKey, req.referenceImageUri, `${historyId}-ref`);
+            beebleReferenceUri = refUpload.beebleUri;
         }
 
         let beebleAlphaUri: string | undefined;
         if (req.alphaUri && (alphaMode === 'custom' || alphaMode === 'select')) {
-            beebleAlphaUri = await uploadToBeeble(beebleKey, req.alphaUri, `${historyId}-alpha`);
+            const alphaUpload = await uploadToBeeble(beebleKey, req.alphaUri, `${historyId}-alpha`);
+            beebleAlphaUri = alphaUpload.beebleUri;
         }
 
         console.log('[relightingService] Beeble SwitchX create job', {
             image: String(beebleSourceUri).slice(0, 120),
-            generationType: 'image',
+            generationType: sourceUpload.mediaType,
         });
         const createBody: Record<string, unknown> = {
-            generation_type: 'image',
+            generation_type: sourceUpload.mediaType,
             source_uri: beebleSourceUri,
             alpha_mode: alphaMode,
             prompt: beeblePrompt,
