@@ -86,7 +86,15 @@ export interface RelightingRequest {
     alphaMode?: 'auto' | 'fill' | 'custom' | 'select';
     alphaUri?: string;
     maxResolution?: 720 | 1080;
+    /** When true, wrap the user prompt with strict instructions to only change illumination and preserve background/scene. */
+    lightingOnly?: boolean;
 }
+
+/** Strict relight-only instruction for locked-background mode. */
+const RELIGHT_LIGHTING_ONLY_INSTRUCTION =
+    'Relight only. Keep subject identity, pose, camera angle, framing, background, and object positions exactly the same. ' +
+    'Do not add, remove, move, or replace any subject/object/background element. ' +
+    'Change only lighting and its effects: light direction, intensity, color temperature, exposure, highlights, and shadows.';
 
 function lightingStyleNarrative(lightingStyle: string): string {
     switch (lightingStyle) {
@@ -416,6 +424,17 @@ export const relighting = async (uid: string, req: RelightingRequest) => {
         if (beeblePrompt.length > 2000) {
             throw new ApiError('Prompt must be 2000 characters or fewer', 400);
         }
+        // Temporarily disabled for testing: do not apply base prompt instruction.
+        const shouldApplyLightingOnly = false;
+        const finalBeeblePrompt = shouldApplyLightingOnly
+            ? `${RELIGHT_LIGHTING_ONLY_INSTRUCTION}\nLighting request: ${beeblePrompt}`
+            : beeblePrompt;
+        if (finalBeeblePrompt.length > 2000) {
+            throw new ApiError(
+                'Combined prompt exceeds 2000 characters. Shorten your text or turn off base prompt (lighting-only) mode.',
+                400,
+            );
+        }
 
         let beebleReferenceUri: string | undefined;
         if (req.referenceImageUri) {
@@ -437,7 +456,7 @@ export const relighting = async (uid: string, req: RelightingRequest) => {
             generation_type: sourceUpload.mediaType,
             source_uri: beebleSourceUri,
             alpha_mode: alphaMode,
-            prompt: beeblePrompt,
+            prompt: finalBeeblePrompt,
             max_resolution: maxResolution,
             idempotency_key: `relight-${historyId}-${uid}`.slice(0, 255),
         };

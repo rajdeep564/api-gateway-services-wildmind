@@ -22,6 +22,7 @@ export const handleRelighting = async (req: Request, res: Response, next: NextFu
             alphaMode,
             alphaUri,
             maxResolution,
+            lightingOnly,
         } = req.body;
 
         if (!image) {
@@ -49,6 +50,7 @@ export const handleRelighting = async (req: Request, res: Response, next: NextFu
             alphaMode,
             alphaUri,
             maxResolution,
+            lightingOnly: lightingOnly === true || lightingOnly === 'true',
         });
 
         // Credit deduction logic (90 credits for this workflow)
