@@ -509,22 +509,9 @@ export const relighting = async (uid: string, req: RelightingRequest) => {
             });
             storedUrl = uploaded.publicUrl;
             storagePath = uploaded.key;
-            // Validate uploaded URL is actually reachable; fallback to original Beeble URL if not.
-            try {
-                const verifyRes = await fetch(storedUrl, { method: 'HEAD' });
-                if (!verifyRes.ok) {
-                    console.warn('[relightingService] Uploaded Zata URL not reachable, falling back to Beeble URL', {
-                        status: verifyRes.status,
-                        zataUrl: storedUrl.slice(0, 140),
-                    });
-                    storedUrl = String(firstUrl);
-                    storagePath = '';
-                }
-            } catch (verifyErr) {
-                console.warn('[relightingService] Failed to verify Zata URL, falling back to Beeble URL', verifyErr);
-                storedUrl = String(firstUrl);
-                storagePath = '';
-            }
+            // Keep persisted Zata URL once upload succeeds.
+            // The previous HEAD verification could incorrectly fail on some environments
+            // and caused fallback to temporary provider URLs, which then disappear from library.
         } catch (e) {
             console.warn('Failed to upload relight output to Zata', e);
         }
